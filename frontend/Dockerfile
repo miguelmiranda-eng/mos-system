@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Instalar dependencias
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install
 
 # Evitar errores de memoria o advertencias bloqueantes de eslint
 ENV CI=false
