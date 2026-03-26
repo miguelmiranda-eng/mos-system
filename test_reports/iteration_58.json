@@ -1,0 +1,71 @@
+{
+  "iteration": 58,
+  "test_type": "both",
+  "date": "2026-03-20",
+  "summary": "Tested new CalendarView component for SCHEDULING board. All 16 UI features and 7 backend API tests passed. Calendar displays orders by cancel_date, supports month/week views, drag & drop date changes, move-to-board functionality, configurable visible fields with localStorage persistence, and dark/light theme support.",
+  "features_tested": [
+    "Backend: GET /api/orders?board=SCHEDULING returns orders with cancel_date - PASS",
+    "Backend: Orders have all 8 default calendar fields (client, quantity, blank_status, screens, production_status, trim_status, artwork_status, cancel_date) - PASS",
+    "Backend: PUT /api/orders/{id} updates cancel_date (drag & drop support) - PASS",
+    "Backend: POST /api/orders/bulk-move moves orders between boards - PASS",
+    "Backend: bulk-move requires authentication - PASS",
+    "Backend: Order data structure includes all required fields for CalendarView component - PASS",
+    "Backend: cancel_date format is YYYY-MM-DD compatible with date-fns parseISO - PASS",
+    "Frontend: Calendar toggle button appears on SCHEDULING board - PASS",
+    "Frontend: CalendarView component renders when toggle clicked - PASS",
+    "Frontend: Month view shows correct month grid (MARZO 2026) - PASS",
+    "Frontend: Navigation buttons (prev/next/Hoy) work correctly - PASS",
+    "Frontend: '3 sin fecha' badge shows orders without cancel_date - PASS",
+    "Frontend: Week/Month view toggle works (Semana shows '16 mar - 22 mar 2026' format) - PASS",
+    "Frontend: Settings gear opens column configuration panel - PASS",
+    "Frontend: 'Restaurar predeterminados' button present in config panel - PASS",
+    "Frontend: All 8 default field toggles present in config panel - PASS",
+    "Frontend: Order cards show fields (Cliente, QTY, Blank Status, Screens, Production Status) - PASS",
+    "Frontend: Move-to-board button appears on card hover - PASS",
+    "Frontend: Move-to-board dropdown opens with board options - PASS",
+    "Frontend: Today's date (March 20) highlighted with blue circle - PASS",
+    "Frontend: Toggle back to table view preserves data - PASS",
+    "Frontend: Theme toggle works on calendar view (dark/light) - PASS",
+    "Frontend: Field toggle persists to localStorage (cal_visible_fields) - PASS",
+    "Frontend: Reset button restores all 8 default fields - PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration58_calendar_view.py",
+    "/app/test_reports/pytest/pytest_results_iteration58.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CalendarView.js: Well-structured component with proper date handling using date-fns library",
+    "CalendarView.js lines 40-44: parseDate function correctly handles both YYYY-MM-DD and ISO datetime formats",
+    "CalendarView.js lines 175-180: visibleFields state properly initializes from localStorage with fallback to DEFAULT_VISIBLE",
+    "CalendarView.js lines 218-236: handleDrop correctly updates cancel_date via PUT API and refreshes orders",
+    "CalendarView.js lines 241-250: handleMoveToBoard correctly uses POST /api/orders/bulk-move API",
+    "Dashboard.js lines 556-561: Calendar toggle only shows when currentBoard === 'SCHEDULING'",
+    "Dashboard.js line 708: CalendarView rendered conditionally based on calendarMode && currentBoard === 'SCHEDULING'",
+    "StatusBadge component (lines 47-57) properly handles status colors from STATUS_COLORS constant",
+    "ColumnConfig component (lines 60-99) properly handles localStorage persistence and reset functionality"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration58_calendar_view.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 passed)",
+    "frontend": "100% (16/16 UI tests passed)"
+  },
+  "test_credentials": {
+    "admin": {"email": "admin@test.com", "password": "admin123"}
+  },
+  "seed_data_creation": "No new seed data created. Used existing orders in SCHEDULING board.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 58 tests the new CalendarView component on SCHEDULING board. Key data: 7 orders in SCHEDULING, 4 with cancel_date (62970: 2026-03-14, 814: 2026-04-07, 815: 2026-04-07, 808: 2026-04-06), 3 without cancel_date shown in 'sin fecha' badge. CalendarView uses date-fns for date operations, localStorage key 'cal_visible_fields' for persistence, and supports both dark/light themes. APIs: PUT /api/orders/{id} for drag/drop date update, POST /api/orders/bulk-move for board move."
+}

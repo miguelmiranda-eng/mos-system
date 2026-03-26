@@ -1,0 +1,77 @@
+{
+  "iteration": 36,
+  "test_type": "both",
+  "date": "2026-03-06",
+  "summary": "Tested two new features: (1) Form Fields Configuration - admin can customize which fields appear in 'Crear Orden' form via FormFieldsManagerModal, (2) MASTER board mirror icon - column headers show a mirror/reflection SVG icon only when on MASTER board. All backend API tests pass (9/9). All frontend features verified working.",
+  "features_tested": [
+    "Backend: GET /api/config/form-fields returns form field configuration - PASS",
+    "Backend: GET /api/config/form-fields requires authentication (401 for unauthenticated) - PASS",
+    "Backend: GET /api/config/form-fields allows regular users to read (needed for form) - PASS",
+    "Backend: PUT /api/config/form-fields saves field list (admin only) - PASS",
+    "Backend: PUT /api/config/form-fields returns 403 for non-admin - PASS",
+    "Backend: PUT /api/config/form-fields returns 401 for unauthenticated - PASS",
+    "Backend: PUT /api/config/form-fields accepts empty fields list - PASS",
+    "Backend: PUT /api/config/form-fields works with custom column keys - PASS",
+    "Backend: Form fields config persists correctly in database - PASS",
+    "Frontend: Admin sees 'Campos del Formulario' button (ClipboardList icon) in header - PASS",
+    "Frontend: Non-admin does NOT see FormFieldsManagerModal button - PASS",
+    "Frontend: FormFieldsManagerModal opens and shows all available columns as toggleable items - PASS (23 fields visible)",
+    "Frontend: Admin can toggle fields on/off and save configuration - PASS",
+    "Frontend: Success toast 'Campos del formulario actualizados' shows after save - PASS",
+    "Frontend: NewOrderModal loads form fields from /api/config/form-fields on open - PASS",
+    "Frontend: NewOrderModal shows only the configured fields dynamically - PASS",
+    "Frontend: NewOrderModal supports select, date, text, number field types - PASS",
+    "Frontend: Order creation with configured form fields works correctly - PASS (created TEST-FORM-46354)",
+    "Frontend: When in MASTER board, column headers show mirror SVG icon - PASS",
+    "Frontend: When NOT in MASTER board (e.g., SCHEDULING), column headers do NOT show mirror icon - PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard table",
+        "issues": ["Existing hydration warnings in console (cosmetic, does not affect functionality)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration36_form_fields.py",
+    "/app/test_reports/pytest/pytest_results_iteration36.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration36_form_fields.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 API tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": {
+    "admin_session": "test_session_formfields_1772820928605",
+    "regular_session": "test_session_regular_1772820928630"
+  },
+  "seed_data_creation": "Created test order TEST-FORM-46354 during form creation test",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Two new features added and verified: (1) Form Fields Configuration allows admin to customize 'Crear Orden' form fields via FormFieldsManagerModal. Config stored in form_fields_config collection. (2) Mirror icon appears in MASTER board column headers only. Both features working correctly. Test file: test_iteration36_form_fields.py",
+  "feature_verification_summary": {
+    "form_fields_config": {
+      "backend_api": "GET/PUT /api/config/form-fields working correctly",
+      "admin_only_write": "Non-admin gets 403 on PUT",
+      "modal_component": "FormFieldsManagerModal shows all DEFAULT_COLUMNS + custom columns",
+      "form_integration": "NewOrderModal dynamically loads configured fields on open"
+    },
+    "master_board_mirror_icon": {
+      "implementation": "Inline SVG with path 'M9 3H5...' shown in column headers",
+      "condition": "Only displayed when currentBoard === 'MASTER'",
+      "verified_on_master": "SVG path detected in column header HTML",
+      "verified_not_on_scheduling": "SVG path NOT present on SCHEDULING board"
+    }
+  }
+}

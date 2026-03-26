@@ -1,0 +1,71 @@
+{
+  "iteration": 49,
+  "test_type": "both",
+  "date": "2026-03-18",
+  "summary": "Comprehensive smoke test of all recent CRM changes. Backend: 12/12 tests passed including auth flows (login, create-user, forgot-password, reset-password), user management (profile update, password change), and orders (custom_fields at top level). Frontend: All UI elements verified via Playwright and code inspection.",
+  "features_tested": [
+    "Backend health: GET /api/config/boards returns board list - PASS (24 boards)",
+    "Backend auth: POST /api/auth/login with valid credentials - PASS (returns user without password_hash)",
+    "Backend auth: POST /api/auth/login with wrong credentials - PASS (returns 401)",
+    "Backend auth: POST /api/auth/create-user (admin) - PASS (creates email user)",
+    "Backend auth: POST /api/auth/create-user duplicate email - PASS (returns 400)",
+    "Backend auth: POST /api/auth/forgot-password - PASS (returns reset_link when RESEND_API_KEY empty)",
+    "Backend auth: POST /api/auth/reset-password valid token - PASS (resets password)",
+    "Backend users: PUT /api/users/{email}/profile - PASS (updates name)",
+    "Backend users: PUT /api/users/{email}/password - PASS (changes password)",
+    "Backend users: GET /api/users - PASS (excludes password_hash from all users)",
+    "Backend orders: POST /api/orders with custom_fields - PASS (merged at top level)",
+    "Backend orders: GET /api/orders - PASS (returns list)",
+    "Frontend landing page: Dual auth (Google + Email) - PASS (both buttons visible)",
+    "Frontend email login form: All elements - PASS (email, password, show/hide, forgot link)",
+    "Frontend /reset-password page: Renders correctly - PASS (password inputs, submit button)",
+    "Frontend FILTER_COLUMNS: Has 8 entries, NO cancel_date - PASS (verified in constants.js)",
+    "Frontend Dashboard: cancel_date excluded from date range filters - PASS (line 592)",
+    "Frontend Dashboard: 'Custom Date' label for created_at date range - PASS (line 595)",
+    "Frontend Dashboard: Group-by-date dropdown dynamic from columns - PASS (lines 634-650)",
+    "Frontend Dashboard: PO (order_number) column sticky with left-20 - PASS (lines 706, 727, 782)",
+    "Frontend InviteUsersModal: Tabs for Google invite and Email create - PASS (lines 182, 185)",
+    "Frontend InviteUsersModal: Email users show edit/change-pw buttons - PASS (lines 277-290)"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration49_comprehensive_smoke.py",
+    "/app/test_reports/pytest/pytest_results_iteration49.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All recent changes verified working correctly:",
+    "1. Dual Auth (Google + Email): Landing page shows both options, email form has all required fields",
+    "2. Email auth flow: login/create-user/forgot-password/reset-password all working",
+    "3. cancel_date excluded from FILTER_COLUMNS (8 entries without cancel_date)",
+    "4. cancel_date excluded from date range filters (excludeDateKeys includes 'cancel_date')",
+    "5. Date range filter for created_at labeled 'Custom Date'",
+    "6. PO (order_number/Orden) column has sticky classes (left-20) in header, body, footer",
+    "7. custom_fields merged at top level when creating orders (line 72-73 in orders.py)",
+    "8. Admin can edit profile and change password for email-type users via InviteUsersModal",
+    "9. GET /api/users excludes password_hash from all users",
+    "10. All backend auth endpoints properly validate inputs and return appropriate error codes"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration49_comprehensive_smoke.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "note": "Test users created and cleaned up during pytest execution"
+  },
+  "seed_data_creation": "Test users created and cleaned up automatically by pytest fixtures",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All features from iterations 46-49 are working correctly. Key implementations verified: (1) Dual auth with Google OAuth and Email/Password, (2) FILTER_COLUMNS has exactly 8 entries without cancel_date, (3) Date range filters exclude cancel_date, (4) created_at date range labeled 'Custom Date', (5) order_number column has sticky positioning (left-20), (6) custom_fields are merged to top level on order creation, (7) InviteUsersModal has tabs for Google invite vs Email create with edit/change-password buttons for email users. The mocked API is Resend email (RESEND_API_KEY empty) - reset_link returned in response when email would be sent."
+}

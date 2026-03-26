@@ -1,0 +1,64 @@
+{
+  "iteration": 42,
+  "test_type": "frontend",
+  "date": "2026-03-09",
+  "summary": "Tested two UI fixes: 1) Screens filter column in FILTER_COLUMNS, 2) Saved views X and Pin icons visibility and clickability. All features working correctly.",
+  "features_tested": [
+    "Frontend: Filter section shows 'Screens' filter dropdown: PASS",
+    "Frontend: Screens filter shows dynamic values extracted from orders (e.g., 'true') + '—Ninguno—': PASS",
+    "Frontend: Screens filter works correctly - selecting a value filters orders (6→0 when filtering by screens=true): PASS",
+    "Frontend: Saved views X and Pin icons are fully visible on hover: PASS (icons at y=129px, well within viewport)",
+    "Frontend: Saved views X and Pin icons are clickable: PASS (Pin icon click successfully unpinned a view)",
+    "Frontend: Pin icon size is w-5 h-5 (20x20 pixels, larger than before w-4 h-4=16x16): PASS",
+    "Frontend: Views bar has enough top padding (pt-1) and bottom padding (pb-3) so icons are not clipped: PASS",
+    "Frontend: All 8 filter columns are visible (blank_status, production_status, trim_status, sample, artwork_status, client, priority, screens): PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    ".screenshots/dashboard_initial.png",
+    ".screenshots/screens_filter_dropdown.png",
+    ".screenshots/icons_hover_test.png",
+    ".screenshots/after_pin_click.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Console warnings about HTML hydration errors (<span> inside <tr>, <th> inside <span>, etc.) - these are React dev warnings that should be addressed for cleaner code but don't affect functionality"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only testing)",
+    "frontend": "100% (all 8 features verified)"
+  },
+  "test_credentials": {
+    "session_token": "debug_session",
+    "admin_user_id": "admin-1772744415808"
+  },
+  "seed_data_creation": "None - used existing data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Screens filter added to FILTER_COLUMNS (line 135 in constants.js). getFilterOptions in Dashboard.js (lines 289-299) has fallback logic that extracts distinct values from orders when options mapping is empty. Saved view icons are now w-5 h-5 (20x20px), positioned at -top-1.5 -right-1.5, with shadow-sm, z-10. Views bar has pt-1 pb-3 padding, flex-shrink-0 on view containers. Icon container uses 'hidden group-hover:flex' for hover reveal. Existing saved views: 'PARA BLANKS' (was pinned, tested unpinning), 'ready to scheduled' (pinned).",
+  "verified_data": {
+    "filter_columns_count": 8,
+    "filter_columns": ["blank_status", "production_status", "trim_status", "sample", "artwork_status", "client", "priority", "screens"],
+    "screens_filter_options": ["true", "—Ninguno—"],
+    "icon_sizes": {
+      "width": 20,
+      "height": 20,
+      "css_class": "w-5 h-5"
+    },
+    "icon_positions": {
+      "pin_icon": {"x": 181, "y": 129},
+      "delete_icon": {"x": 203, "y": 129}
+    },
+    "icons_clickable": true,
+    "icons_visible_on_hover": true
+  }
+}

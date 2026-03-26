@@ -1,0 +1,133 @@
+{
+  "identity": {
+    "persona": "E1: The Anti-AI Designer",
+    "core_principles": [
+      "Fusion over Imitation: Mix Industrial Precision with Swiss Clarity.",
+      "Emotion First: The UI must feel 'Reliable' and 'Heavy-Duty'.",
+      "Content is King: Data density is the feature, not the bug.",
+      "Contrast: High contrast is non-negotiable for factory floor visibility.",
+      "Negative Space: Use it to group complex data, not just for aesthetics."
+    ],
+    "anti_patterns": [
+      "No generic 'SaaS Blue' primary buttons.",
+      "No 'Inter' for Headings (Use Barlow Condensed).",
+      "No low-contrast gray text on dark backgrounds.",
+      "No 'Card' overuse - use clean lines and borders instead."
+    ]
+  },
+  "typography": {
+    "primary_font": "Inter",
+    "heading_font": "Barlow Condensed",
+    "mono_font": "JetBrains Mono",
+    "rules": [
+      "Headings (h1-h3): Barlow Condensed, Weight 600/700, Uppercase for section titles.",
+      "Body Text: Inter, Weight 400/500.",
+      "Data/IDs/Quantities: JetBrains Mono, Weight 500.",
+      "Labels: Inter, Uppercase, Tracking-Wide (0.05em), Text-XS.",
+      "Import: Add this to index.css: @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');"
+    ]
+  },
+  "colors": {
+    "theme": "dark",
+    "palette": {
+      "background": "#09090b",
+      "surface": "#18181b",
+      "surface_highlight": "#27272a",
+      "border": "#27272a",
+      "text_primary": "#fafafa",
+      "text_secondary": "#a1a1aa",
+      "primary": "#3b82f6",
+      "primary_foreground": "#ffffff",
+      "accent_rush": "#ef4444",
+      "accent_priority": "#f97316",
+      "accent_event": "#a855f7",
+      "accent_done": "#22c55e",
+      "accent_neutral": "#71717a"
+    },
+    "usage": [
+      "Background: #09090b (Zinc 950) - The infinite canvas.",
+      "Cards/Panels: #18181b (Zinc 900) - Distinct modules.",
+      "Borders: 1px solid #27272a (Zinc 800) - Precise separation.",
+      "Active States: #3b82f6 (Blue 500) - Clear indicators.",
+      "Critical Alerts (RUSH): #ef4444 (Red 500) with subtle glow."
+    ]
+  },
+  "components": {
+    "Ticket_Card": {
+      "description": "A high-density Kanban card.",
+      "style": "bg-card border border-border rounded-sm p-3 hover:border-primary/50 transition-colors cursor-pointer group relative overflow-hidden",
+      "structure": [
+        "Left Border: 4px solid status color (Rush=Red, etc).",
+        "Header: Flex row, Order # (Mono) | Client Name (Truncate).",
+        "Body: Grid cols-2, Branding (Text-xs text-muted-foreground) | Qty (Mono Text-sm).",
+        "Footer: Due Date (Badge variant='outline') | Priority (Badge variant='default')."
+      ]
+    },
+    "Board_Column": {
+      "description": "A vertical swimlane for orders.",
+      "style": "min-w-[320px] max-w-[320px] bg-secondary/20 rounded-lg p-2 flex flex-col gap-2 h-full border border-border/50",
+      "header_style": "flex justify-between items-center p-2 mb-2 font-barlow font-bold uppercase tracking-wider text-sm sticky top-0 bg-background/80 backdrop-blur z-10"
+    },
+    "Filter_Bar": {
+      "description": "Top control panel.",
+      "style": "h-14 border-b bg-background/95 backdrop-blur flex items-center px-4 gap-4 sticky top-0 z-50"
+    },
+    "Detail_Modal": {
+      "description": "Order editing interface.",
+      "style": "max-w-4xl max-h-[90vh] overflow-hidden grid grid-cols-1 md:grid-cols-3",
+      "layout": "Left: 2 cols (Form Fields). Right: 1 col (Comments/History/Files) with distinct bg-muted/30."
+    }
+  },
+  "layout": {
+    "dashboard": "The 'Control Tower'. Full viewport height (h-screen). Hidden overflow on body.",
+    "structure": [
+      "Top: Navbar (Logo, User, Global Search).",
+      "Middle: Filter Bar (Board Selector, Date Range, Status Filters).",
+      "Main: Horizontal Scroll Canvas (flex-row gap-4 p-4 overflow-x-auto h-[calc(100vh-8rem)])."
+    ],
+    "spacing": "Compact. Use gap-2 for lists, gap-4 for layout sections."
+  },
+  "visual_enhancers": {
+    "stripes": "Use 'bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.05)_25%,rgba(255,255,255,0.05)_50%,transparent_50%,transparent_75%,rgba(255,255,255,0.05)_75%,rgba(255,255,255,0.05)_100%)] bg-[length:20px_20px]' for 'In Production' backgrounds.",
+    "glass": "Use 'backdrop-blur-md bg-background/80' for sticky headers.",
+    "mono_numbers": "All financial, quantity, and date data MUST use JetBrains Mono."
+  },
+  "assets": {
+    "avatars": [
+      "https://images.pexels.com/photos/31336021/pexels-photo-31336021.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "https://images.pexels.com/photos/31199562/pexels-photo-31199562.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "https://images.unsplash.com/photo-1680726122244-d8d4a7734eba?crop=entropy&cs=srgb&fm=jpg&q=85"
+    ],
+    "thumbnails": [
+      "https://images.unsplash.com/photo-1651761179569-4ba2aa054997?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "https://images.unsplash.com/photo-1618354691373-d851c5c3a990?crop=entropy&cs=srgb&fm=jpg&q=85"
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure all text on badges has 4.5:1 contrast. Avoid white text on yellow/orange backgrounds - use dark text instead.",
+    "focus_states": "Visible ring-2 ring-primary ring-offset-2 ring-offset-background on all interactive elements.",
+    "reduced_motion": "Respect prefers-reduced-motion for drag-and-drop animations."
+  },
+  "instructions_to_main_agent": [
+    "1. INSTALL FONTS: Add the Google Fonts import to index.css immediately.",
+    "2. CONFIGURE TAILWIND: Update tailwind.config.js to include the new font families (barlow, inter, mono) and custom colors.",
+    "3. SCAFFOLD LAYOUT: Create the DashboardLayout component with the fixed header and horizontal scroll area.",
+    "4. BUILD TICKET COMPONENT: Create the 'OrderCard' component. It is the atom of this app. Make it dense but legible.",
+    "5. IMPLEMENT BOARD: Use 'react-beautiful-dnd' or '@hello-pangea/dnd' (if available) for the Kanban columns.",
+    "6. DATA MOCKING: Create a robust 'mockData.js' with 20+ orders across different statuses to test the density.",
+    "7. DETAILS MODAL: Use Shadcn Dialog. Make it wide (max-w-4xl). Split it into 'Order Details' (left) and 'Collaboration' (right).",
+    "8. GLOBAL SEARCH: Implement a 'Cmd+K' style command palette using Shadcn Command component.",
+    "CRITICAL: Do not use gradient backgrounds for the main dashboard. It must be solid dark for readability."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts. Use full-width, dense grids.",
+    "Create depth through 1px borders and subtle background differences (Zinc 900 vs Zinc 950).",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing (padding) inside containers than you think, but keep GAPS tight (gap-2) to group related data.",
+    "Use 'sonner' for toasts.",
+    "Export components as named exports.",
+    "All interactive elements MUST include data-testid attributes."
+  ]
+}

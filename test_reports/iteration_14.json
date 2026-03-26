@@ -1,0 +1,121 @@
+{
+  "summary": "Iteration 14: i18n System & Total Pieces System Feature Testing Complete. All backend tests passed (9/9). Frontend i18n toggle working on Dashboard. Total Pieces in System displayed in CapacityPlanModal, GanttView, and ProductionScreen.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Landing Page",
+        "issues": ["No language toggle on landing page - user cannot switch language until logged into Dashboard. Landing page uses localStorage preference but has no way to change it."],
+        "priority": "MEDIUM"
+      }
+    ]
+  },
+
+  "passed_tests": [
+    "BACKEND: GET /api/gantt-data requires authentication (401 without token)",
+    "BACKEND: GET /api/gantt-data returns total_pieces_system field (32,260)",
+    "BACKEND: GET /api/gantt-data structure includes bars, pending, and total_pieces_system",
+    "BACKEND: GET /api/capacity-plan requires authentication (401 without token)",
+    "BACKEND: GET /api/capacity-plan returns total_pieces_system field (32,260)",
+    "BACKEND: GET /api/capacity-plan returns exactly 14 machines with required fields",
+    "BACKEND: total_pieces_system is consistent between both APIs (same value)",
+    "BACKEND: All machine load_status values are valid (idle/green/yellow/red)",
+    "BACKEND: GET /api/gantt-data accepts date filter parameters",
+    "FRONTEND: Landing page displays Spanish text by default (Control Total de Producción)",
+    "FRONTEND: Landing page hero, description, login button, feature cards use translation keys",
+    "FRONTEND: Dashboard language toggle (data-testid='lang-toggle-btn') works - switches ES↔EN",
+    "FRONTEND: Dashboard header buttons translated: Nueva Orden → New Order, Producción → Production",
+    "FRONTEND: Production Monitor button translated: Monitor de Producción → Production Monitor",
+    "FRONTEND: CapacityPlanModal title translated: Plan de Capacidad Productiva → Production Capacity Plan",
+    "FRONTEND: CapacityPlanModal shows Total Pieces in System card (data-testid='plan-total-pieces-system') with value 32,260",
+    "FRONTEND: CapacityPlanModal labels translated: Máquinas Activas → Active Machines, Total Producido → Total Produced, etc.",
+    "FRONTEND: CapacityPlanModal machine status translated: Sin actividad → No activity, Disponible → Available, Cargada → Loaded, Sobrecargada → Overloaded",
+    "FRONTEND: GanttView shows Total Pieces in System badge (data-testid='gantt-total-pieces-system') with value 32,260",
+    "FRONTEND: GanttView badge text translated: Total Piezas en Sistema → Total Pieces in System",
+    "FRONTEND: ProductionScreen shows Total Pieces in System in header (data-testid='prod-screen-total-pieces') with value 32,260",
+    "FRONTEND: ProductionScreen title translated: Monitor de Producción → Production Monitor",
+    "FRONTEND: Language preference persists in localStorage key 'app_language'"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_i18n_total_pieces.py",
+    "/app/test_reports/pytest/pytest_results_iteration14.xml"
+  ],
+
+  "action_items": [
+    "OPTIONAL: Add language toggle to landing page header so users can switch language before login"
+  ],
+
+  "critical_code_review_comments": [
+    "translations.js: Complete ES/EN translations for ~200 keys covering all components including landing page",
+    "LanguageContext.js: LanguageProvider with t(), lang, toggleLang - localStorage persistence works",
+    "App.js: Landing page uses useLang() for translations but lacks toggle button in header",
+    "Dashboard.js: Language toggle button (data-testid='lang-toggle-btn') in header with Languages icon",
+    "CapacityPlanModal.js: Shows total_pieces_system from API in first summary card (data-testid='plan-total-pieces-system')",
+    "GanttView.js: Shows total_pieces_system badge in toolbar (data-testid='gantt-total-pieces-system')",
+    "ProductionScreen.js: Shows total_pieces_system in header stats (data-testid='prod-screen-total-pieces')",
+    "server.py line 1350: gantt-data returns total_pieces_system calculated from all orders",
+    "server.py line 1439: capacity-plan returns total_pieces_system calculated from all orders"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_i18n_total_pieces.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "100% - All requested i18n and Total Pieces features verified"
+  },
+
+  "test_credentials": {
+    "session_token": "test_i18n_session_1772572027445",
+    "user": "Miguel Miranda i18n Test",
+    "role": "admin"
+  },
+
+  "seed_data_creation": "N/A - Used existing data from previous iterations",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "i18n system fully verified. Language toggle on Dashboard works for ES↔EN. All three views (CapacityPlanModal, GanttView, ProductionScreen) display Total Pieces in System from backend API (32,260 pieces). Backend APIs /api/gantt-data and /api/capacity-plan both return total_pieces_system field consistently. Note: Landing page uses translations but has no language toggle - user must login to Dashboard to change language.",
+
+  "features_verified": {
+    "i18n_system": {
+      "language_toggle_location": "Dashboard header only (data-testid='lang-toggle-btn')",
+      "landing_page_toggle": "NOT PRESENT - translations work via localStorage but no toggle button",
+      "localstorage_key": "app_language",
+      "default_language": "es",
+      "supported_languages": ["es", "en"],
+      "status": "WORKING (Dashboard only)"
+    },
+    "total_pieces_system": {
+      "api_gantt_data": "returns total_pieces_system: 32260",
+      "api_capacity_plan": "returns total_pieces_system: 32260",
+      "capacity_plan_modal": "data-testid='plan-total-pieces-system' shows 32,260",
+      "gantt_view": "data-testid='gantt-total-pieces-system' badge shows Total Piezas en Sistema: 32,260",
+      "production_screen": "data-testid='prod-screen-total-pieces' shows 32,260",
+      "status": "VERIFIED in all 3 views"
+    },
+    "translated_components": {
+      "LandingPage": "Uses t() - translates when localStorage changes",
+      "Dashboard": "Full i18n with toggle",
+      "CapacityPlanModal": "Full i18n",
+      "GanttView": "Full i18n",
+      "ProductionScreen": "Full i18n"
+    }
+  },
+
+  "mocked_apis": {
+    "email": "Resend email MOCKED (no API key configured)",
+    "slack": "Slack webhook MOCKED (no URL configured)"
+  }
+}

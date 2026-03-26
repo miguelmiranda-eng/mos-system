@@ -1,0 +1,141 @@
+{
+  "iteration": 21,
+  "test_type": "both",
+  "date": "2026-03-05",
+  "summary": "Complete testing of three new features: @mentions in comments, duplicate order warning, and enhanced search. All backend APIs working correctly - 13/13 tests pass. All frontend features verified: @mention autocomplete dropdown, duplicate warning banner, multi-result search popup.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "users_list_endpoint": {
+      "status": "PASS",
+      "tests": [
+        {"test": "GET /api/users/list returns users for authenticated user", "status": "PASS"},
+        {"test": "Users list does not expose sensitive data (password, session)", "status": "PASS"}
+      ]
+    },
+    "check_order_number_endpoint": {
+      "status": "PASS",
+      "tests": [
+        {"test": "Returns exists=true for existing order number", "status": "PASS"},
+        {"test": "Returns exists=false for non-existent order number", "status": "PASS"},
+        {"test": "Case-insensitive matching", "status": "PASS"},
+        {"test": "Handles empty input gracefully", "status": "PASS"}
+      ]
+    },
+    "enhanced_search": {
+      "status": "PASS",
+      "tests": [
+        {"test": "Search finds orders by store_po", "status": "PASS"},
+        {"test": "Search finds orders by customer_po", "status": "PASS"},
+        {"test": "Search still works with order_number", "status": "PASS"}
+      ]
+    },
+    "mentions_in_comments": {
+      "status": "PASS",
+      "tests": [
+        {"test": "@mention creates mention notification for matched user", "status": "PASS"},
+        {"test": "Comment without @mention saved correctly with empty mentions array", "status": "PASS"},
+        {"test": "GET comments includes mentions field in response", "status": "PASS"},
+        {"test": "Notifications endpoint accessible", "status": "PASS"}
+      ]
+    },
+    "frontend_duplicate_warning": {
+      "status": "PASS",
+      "tests": [
+        {"test": "NewOrderModal opens correctly", "status": "PASS"},
+        {"test": "Duplicate warning appears on blur when order exists", "status": "PASS"},
+        {"test": "Warning shows board name and order number", "status": "PASS"}
+      ]
+    },
+    "frontend_mention_autocomplete": {
+      "status": "PASS",
+      "tests": [
+        {"test": "CommentsModal opens correctly", "status": "PASS"},
+        {"test": "@mention dropdown appears when typing '@'", "status": "PASS"},
+        {"test": "Dropdown filters users as you type", "status": "PASS"},
+        {"test": "Clicking user inserts mention into textarea", "status": "PASS"},
+        {"test": "@mentions highlighted in blue in rendered comments", "status": "PASS"}
+      ]
+    },
+    "frontend_search_results_modal": {
+      "status": "PASS",
+      "tests": [
+        {"test": "Search with multiple results shows modal", "status": "PASS"},
+        {"test": "Modal shows Order, Store PO, Customer PO, Client, Board columns", "status": "PASS"},
+        {"test": "Clicking result navigates to order's board", "status": "PASS"},
+        {"test": "Modal closes after navigation", "status": "PASS"}
+      ]
+    }
+  },
+  "features_verified": {
+    "users_list_api": {
+      "endpoint": "GET /api/users/list",
+      "access": "All authenticated users (not admin-only)",
+      "fields_returned": ["email", "name", "picture", "user_id"]
+    },
+    "check_order_number_api": {
+      "endpoint": "GET /api/orders/check-number?order_number=X",
+      "response": "{exists: boolean, order: {order_id, order_number, board}}",
+      "case_sensitive": false
+    },
+    "enhanced_search_api": {
+      "endpoint": "GET /api/orders?search=X",
+      "fields_searched": ["order_number", "store_po", "customer_po", "client", "branding", "notes"]
+    },
+    "mentions_in_comments": {
+      "endpoint": "POST /api/orders/{order_id}/comments",
+      "mention_regex": "@(\\S+)",
+      "notification_type_with_mentions": "mention",
+      "notification_type_without_mentions": "comment"
+    },
+    "frontend_duplicate_warning": {
+      "trigger": "onBlur of order_number field",
+      "ui_element": "[data-testid='duplicate-warning']",
+      "style": "Yellow background with AlertTriangle icon"
+    },
+    "frontend_mention_autocomplete": {
+      "trigger": "Typing '@' in comment textarea",
+      "ui_element": "[data-testid='mention-dropdown']",
+      "user_selection": "Click or Enter/Tab key",
+      "highlight_style": "text-primary font-semibold bg-primary/10"
+    },
+    "frontend_search_results_modal": {
+      "trigger": "Multiple search results from handleGlobalSearch",
+      "ui_element": "[data-testid='search-results-modal']",
+      "columns_displayed": ["Order Number", "Store PO", "Customer PO", "Client", "Board"],
+      "navigation": "Click row to go to order's board"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_mentions_search_duplicate.py",
+    "/app/test_reports/pytest/pytest_results_iteration21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration21_mentions_search_duplicate.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "session_token": "test_mention_session_1772735205318",
+    "user_id": "test-user-mention-1772735205318"
+  },
+  "seed_data_creation": "Created test users John Smith and Jane Doe for @mention testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All three new features fully tested and working: 1) @mentions with autocomplete dropdown and 'mention' type notifications, 2) Duplicate order warning with yellow banner on blur, 3) Enhanced search including store_po/customer_po with multi-result modal popup. Backend tests at /app/backend/tests/test_iteration21_mentions_search_duplicate.py.",
+  "mocked_apis": {
+    "resend_email": "MOCKED - No RESEND_API_KEY configured",
+    "slack_notifications": "MOCKED - No SLACK_WEBHOOK_URL configured"
+  }
+}

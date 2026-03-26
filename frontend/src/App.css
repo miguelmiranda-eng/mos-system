@@ -1,0 +1,208 @@
+.App-header {
+    background-color: hsl(220 30% 8%);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: hsl(210 40% 96%);
+}
+
+/* Scrollbar Styles */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: hsl(220 28% 11%);
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(220 18% 28%);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(220 18% 38%);
+}
+
+.light-theme ::-webkit-scrollbar-track {
+    background: hsl(208 50% 94%);
+}
+
+.light-theme ::-webkit-scrollbar-thumb {
+    background: hsl(210 30% 78%);
+}
+
+.light-theme ::-webkit-scrollbar-thumb:hover {
+    background: hsl(210 30% 65%);
+}
+
+/* Sticky Header Glass Effect */
+.glass-header {
+    backdrop-filter: blur(12px);
+    background-color: hsl(220 30% 8% / 0.85);
+}
+
+.light-theme .glass-header {
+    background-color: hsl(206 60% 98% / 0.90);
+    border-color: hsl(210 35% 84%);
+}
+
+/* Table Styles */
+table {
+    border-spacing: 0;
+}
+
+table th {
+    position: sticky;
+    top: 0;
+    backdrop-filter: blur(8px);
+}
+
+/* Dark theme table headers (default) */
+:root table th {
+    background: hsl(220 28% 11% / 0.95);
+}
+
+/* Light theme table headers */
+.light-theme table th {
+    background: hsl(208 50% 94% / 0.95);
+}
+
+table tr:hover td {
+    background-color: hsl(220 20% 16% / 0.3);
+}
+
+.light-theme table tr:hover td {
+    background-color: hsl(208 40% 90% / 0.5);
+}
+
+/* Editable Cell Hover */
+[data-editable]:hover {
+    background-color: hsl(220 20% 16% / 0.5);
+}
+
+.light-theme [data-editable]:hover {
+    background-color: hsl(208 40% 90% / 0.6);
+}
+
+/* Priority Badges */
+.badge-rush {
+    background-color: hsl(0 84% 60% / 0.15);
+    color: hsl(0 84% 65%);
+    border: 1px solid hsl(0 84% 60% / 0.3);
+}
+
+.badge-priority {
+    background-color: hsl(25 95% 53% / 0.15);
+    color: hsl(25 95% 58%);
+    border: 1px solid hsl(25 95% 53% / 0.3);
+}
+
+.badge-event {
+    background-color: hsl(271 91% 65% / 0.15);
+    color: hsl(271 91% 70%);
+    border: 1px solid hsl(271 91% 65% / 0.3);
+}
+
+/* Modal Transitions */
+.modal-enter {
+    animation: modalEnter 0.2s ease;
+}
+
+@keyframes modalEnter {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Focus States */
+*:focus-visible {
+    outline: 2px solid hsl(217 91% 60%);
+    outline-offset: 2px;
+}
+
+/* Selection highlight */
+tr.selected {
+    background-color: hsl(217 91% 60% / 0.1) !important;
+}
+
+/* Search result highlight */
+tr.search-result {
+    background-color: hsl(45 93% 47% / 0.2) !important;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* Comment thread indent */
+.comment-reply {
+    margin-left: 1.5rem;
+    border-left: 2px solid hsl(220 18% 28%);
+    padding-left: 1rem;
+}
+
+/* Camera preview */
+.camera-preview video {
+    max-width: 100%;
+    border-radius: 0.5rem;
+}
+
+/* Loader overlay */
+.loader-overlay {
+    animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* Toast custom styles */
+[data-sonner-toast] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Input focus ring */
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: hsl(217 91% 60%);
+    box-shadow: 0 0 0 1px hsl(217 91% 60% / 0.3);
+}
+
+.light-theme input:focus,
+.light-theme select:focus,
+.light-theme textarea:focus {
+    border-color: hsl(217 91% 50%);
+    box-shadow: 0 0 0 1px hsl(217 91% 50% / 0.3);
+}
+
+/* Checkbox styles */
+input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: hsl(217 91% 60%);
+}

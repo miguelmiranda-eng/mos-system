@@ -1,0 +1,116 @@
+{
+  "iteration": 25,
+  "test_type": "both",
+  "date": "2026-03-05",
+  "summary": "Bug fix VERIFIED: MAQUINA3 correctly shows 0 orders, 0 remaining pieces, and 'idle' status. Historical production_logs (12 for M3) no longer affect machine order counts in capacity-plan. Backend: 15/15 tests passed. Frontend: CapacityPlanModal and ProductionScreen both correctly display MAQUINA3 as 'Sin actividad' with 0 pending pieces.",
+  "feature_tested": {
+    "name": "MAQUINA3 Capacity Plan Bug Fix",
+    "description": "MAQUINA3 showed 3 orders when there were 0 physical orders in that board. Root cause: production_logs from old/moved orders were being counted. Fix: capacity-plan now ONLY uses orders physically present in each machine board (orders.board == MAQUINA*)",
+    "endpoints": {
+      "GET /api/capacity-plan": "Returns machine stats based on physical orders only, not historical production_logs",
+      "GET /api/gantt-data": "Still shows historical production_logs for Gantt visualization"
+    }
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_pytest": {
+      "file": "/app/backend/tests/test_iteration25_capacity_plan_maquina3_fix.py",
+      "total_tests": 15,
+      "passed": 15,
+      "failed": 0,
+      "test_cases": [
+        "test_01_capacity_plan_endpoint_accessible - PASS",
+        "test_02_maquina3_has_zero_orders - PASS (order_count=0)",
+        "test_03_maquina3_has_zero_remaining_pieces - PASS (remaining_pieces=0)",
+        "test_04_maquina3_load_status_is_idle - PASS (load_status='idle')",
+        "test_05_maquina3_orders_in_progress_empty - PASS ([])",
+        "test_06_maquina1_has_one_order - PASS (order_count=1, remaining_pieces=6000)",
+        "test_07_maquina1_order_details_correct - PASS (order 2014, qty=6000)",
+        "test_08_maquina2_through_14_all_idle - PASS",
+        "test_09_total_completed_equals_completos_qty_sum - PASS (5288)",
+        "test_10_in_production_equals_machine_boards_qty_sum - PASS (6000)",
+        "test_11_gantt_data_endpoint_accessible - PASS",
+        "test_12_gantt_shows_maquina3_historical_bars - PASS (8 historical bars)",
+        "test_13_gantt_total_logs_count - PASS (43 total logs)",
+        "test_14_response_has_required_fields - PASS",
+        "test_15_machine_object_structure - PASS"
+      ]
+    },
+    "frontend_playwright": {
+      "capacity_plan_modal": {
+        "total_completed": "PASS - Shows 5,288 (green)",
+        "in_production": "PASS - Shows 6,000 (blue)",
+        "maquina1_status": "PASS - Disponible, 1 order, 6000 pz",
+        "maquina3_status": "PASS - Sin actividad, 0 pz pendiente"
+      },
+      "production_screen": {
+        "header_completed": "PASS - 5,288 (green)",
+        "header_in_production": "PASS - 6,000 (blue)",
+        "m1_card": "PASS - DISPONIBLE, Pendiente 6,000, 1 órdenes",
+        "m3_card": "PASS - SIN ACTIVIDAD, Pendiente 0",
+        "m2_to_m14": "PASS - All show SIN ACTIVIDAD"
+      }
+    }
+  },
+  "verification_evidence": {
+    "database_state": {
+      "MAQUINA1_orders": "1 order (order_id: order_1e94f2771ec5, order_number: 2014, qty: 6000)",
+      "MAQUINA3_orders": "0 orders (empty board)",
+      "MAQUINA3_production_logs": "12 historical logs (from moved/deleted orders)",
+      "COMPLETOS_orders": "3 orders (qty: 288 + 0 + 5000 = 5288)",
+      "total_production_logs": "43 logs"
+    },
+    "api_response": {
+      "total_completed": 5288,
+      "in_production": 6000,
+      "total_pieces_system": 28238,
+      "maquina3_order_count": 0,
+      "maquina3_remaining_pieces": 0,
+      "maquina3_load_status": "idle"
+    }
+  },
+  "features_verified": [
+    "GET /api/capacity-plan: MAQUINA3 has order_count=0 (bug fixed)",
+    "GET /api/capacity-plan: MAQUINA3 has remaining_pieces=0",
+    "GET /api/capacity-plan: MAQUINA3 load_status='idle'",
+    "GET /api/capacity-plan: MAQUINA1 has 1 order (order 2014, qty=6000)",
+    "GET /api/capacity-plan: MAQUINA2-14 all idle with 0 orders",
+    "GET /api/capacity-plan: total_completed=5288 (COMPLETOS qty sum)",
+    "GET /api/capacity-plan: in_production=6000 (MAQUINA* qty sum)",
+    "GET /api/gantt-data: Historical production_logs still visible (43 logs)",
+    "Frontend CapacityPlanModal: MAQUINA3 shows 'Sin actividad' with 0 pz",
+    "Frontend ProductionScreen: MAQUINA3 shows 'SIN ACTIVIDAD' with 0 pending"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_capacity_plan_maquina3_fix.py",
+    "/app/test_reports/pytest/pytest_results_iteration25.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_capacity_plan_maquina3_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "session_token": "test_session_iteration25_1772740945623"
+  },
+  "seed_data_creation": "Created test user and session for capacity plan API testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "MAQUINA3 bug fixed and verified. Backend capacity-plan endpoint now uses orders_by_machine dict built from orders.board field to determine which orders are physically in each machine. Historical production_logs are only used for avg_daily_production stats of orders currently in machines. Gantt endpoint still shows all historical data. DB state: MAQUINA1 has order 2014 (qty=6000), all other machines empty. COMPLETOS has 5288 qty total.",
+  "mocked_apis": {
+    "resend_email": "MOCKED - No RESEND_API_KEY configured",
+    "slack_notifications": "MOCKED - No SLACK_WEBHOOK_URL configured"
+  }
+}

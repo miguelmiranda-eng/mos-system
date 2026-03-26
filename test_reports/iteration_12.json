@@ -1,0 +1,168 @@
+{
+  "summary": "Phase 5 (Gantt View + Capacity Plan) Testing Complete. All 17 backend tests passed, frontend features fully verified. Both modals work correctly with proper data-testid attributes.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard Table",
+        "issues": ["React hydration warnings (span inside tr/tbody) - cosmetic only, does not affect functionality. Previously noted in iterations 9-11."]
+      }
+    ]
+  },
+
+  "passed_tests": [
+    "BACKEND: GET /api/gantt-data requires authentication (401 without token)",
+    "BACKEND: GET /api/gantt-data returns bars and pending arrays",
+    "BACKEND: GET /api/gantt-data bars include machine, order_id, order_number, client, quantity_total, quantity_produced, start_date, end_date, status, priority",
+    "BACKEND: GET /api/gantt-data bar status is 'completed' or 'in_progress'",
+    "BACKEND: GET /api/gantt-data pending orders have remaining quantity > 0",
+    "BACKEND: GET /api/gantt-data supports start_date and end_date query params",
+    "BACKEND: GET /api/gantt-data filters results by date range",
+    "BACKEND: GET /api/capacity-plan requires authentication (401 without token)",
+    "BACKEND: GET /api/capacity-plan returns exactly 14 machines",
+    "BACKEND: GET /api/capacity-plan machine names are MAQUINA1-14 in order",
+    "BACKEND: GET /api/capacity-plan includes total_produced, active_days, avg_daily_production, remaining_pieces, estimated_days, load_status per machine",
+    "BACKEND: GET /api/capacity-plan load_status is idle/green/yellow/red",
+    "BACKEND: GET /api/capacity-plan load_status thresholds: <=3=green, 3-7=yellow, >7=red, 0=idle",
+    "BACKEND: GET /api/capacity-plan MAQUINA3 is red (7.3 days)",
+    "BACKEND: GET /api/capacity-plan MAQUINA5 is green (0.1 days)",
+    "BACKEND: GET /api/capacity-plan includes orders_in_progress per machine",
+    "FRONTEND: Gantt button (data-testid='gantt-btn') visible in header with GanttChart icon and text 'Gantt'",
+    "FRONTEND: PLAN button (data-testid='capacity-plan-btn') visible in header with orange bg and text 'PLAN'",
+    "FRONTEND: Gantt modal (data-testid='gantt-modal') opens when clicking Gantt button",
+    "FRONTEND: Gantt range selector (data-testid='gantt-range-select') with Semana/2 Semanas/Mes options",
+    "FRONTEND: Gantt navigation arrows (data-testid='gantt-prev', 'gantt-next') present",
+    "FRONTEND: Gantt chart (data-testid='gantt-chart') renders correctly",
+    "FRONTEND: Gantt chart shows 14 machine rows (data-testid='gantt-row-MAQUINA{N}')",
+    "FRONTEND: Gantt bars (data-testid='gantt-bar-{order_id}') render for completed/in_progress orders (33 bars found)",
+    "FRONTEND: Gantt pending section shows 13 orders with remaining pieces",
+    "FRONTEND: Gantt 'Hoy' button (data-testid='gantt-today-btn') present",
+    "FRONTEND: Capacity Plan modal (data-testid='capacity-plan-modal') opens when clicking PLAN button",
+    "FRONTEND: Capacity Plan summary cards: active machines (14), total produced (2,180), pending pieces (13,425), overloaded (2)",
+    "FRONTEND: Capacity Plan shows 14 machine cards (data-testid='plan-machine-MAQUINA{N}')",
+    "FRONTEND: Capacity Plan machine cards show load status with color coding",
+    "FRONTEND: MAQUINA3 shows 'Sobrecargada' (red) with 7.3 est. days",
+    "FRONTEND: MAQUINA5 shows 'Disponible' (green) with 0.1 est. days",
+    "FRONTEND: MAQUINA6 shows 'Sobrecargada' (red) with 8.7 est. days",
+    "FRONTEND: Machine cards show avg daily production, remaining pieces, estimated days",
+    "FRONTEND: Modals close properly with Escape key"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_phase5_gantt_capacity.py",
+    "/app/test_reports/pytest/pytest_results_iteration12.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "GanttView.js: Clean implementation with custom HTML/CSS chart (no external library)",
+    "GanttView.js: Date range handling with week/2weeks/month presets",
+    "GanttView.js: All 14 machine rows rendered with data-testid",
+    "GanttView.js: Bars show order_number, colored by order (green=completed)",
+    "GanttView.js: Pending orders section at bottom with remaining pieces",
+    "CapacityPlanModal.js: Summary cards with active/produced/pending/overloaded counts",
+    "CapacityPlanModal.js: All 14 machine cards with load status color coding",
+    "CapacityPlanModal.js: Status labels: idle='Sin actividad', green='Disponible', yellow='Cargada', red='Sobrecargada'",
+    "Dashboard.js lines 2283-2290: Gantt and PLAN buttons correctly positioned with proper data-testid",
+    "server.py /api/gantt-data: Returns bars with machine/order/dates and pending orders with remaining qty",
+    "server.py /api/capacity-plan: Returns 14 machines with stats and load_status based on estimated_days thresholds"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_phase5_gantt_capacity.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (17/17 tests passed)",
+    "frontend": "100% - All Phase 5 Gantt and Capacity Plan features verified"
+  },
+
+  "test_credentials": {
+    "session_token": "test_undo_c3f0af7baf5a",
+    "user": "Miguel Miranda",
+    "role": "admin",
+    "email": "miguel.miranda@prosper-mfg.com"
+  },
+
+  "seed_data_creation": "Using existing production data. Backend has 33 Gantt bars and 13 pending orders. MAQUINA3 has order with 8000 remaining pieces (red). MAQUINA5 has order with 25 remaining pieces (green).",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Phase 5 Gantt View and Capacity Plan fully verified. Gantt shows machine rows, order bars with dates, pending orders. Capacity Plan shows 14 machine cards with load status (idle/green/yellow/red) based on estimated_days thresholds. Summary shows 14 active machines, 2 overloaded (MAQUINA3 and MAQUINA6). Both modals accessible via header buttons with proper data-testid attributes.",
+
+  "features_verified": {
+    "gantt_button": {
+      "data_testid": "gantt-btn",
+      "icon": "GanttChart",
+      "text": "Gantt",
+      "status": "VERIFIED"
+    },
+    "plan_button": {
+      "data_testid": "capacity-plan-btn",
+      "icon": "TrendingUp",
+      "text": "PLAN",
+      "background": "bg-orange-600",
+      "status": "VERIFIED"
+    },
+    "gantt_modal": {
+      "data_testid": "gantt-modal",
+      "range_select": "data-testid='gantt-range-select' with Semana/2 Semanas/Mes",
+      "navigation": "data-testid='gantt-prev', 'gantt-next'",
+      "today_button": "data-testid='gantt-today-btn'",
+      "chart": "data-testid='gantt-chart'",
+      "machine_rows": "data-testid='gantt-row-MAQUINA{N}' (14 rows)",
+      "bars": "data-testid='gantt-bar-{order_id}' (33 bars found)",
+      "pending": "data-testid='gantt-pending-{order_id}' (13 items)",
+      "status": "VERIFIED"
+    },
+    "capacity_plan_modal": {
+      "data_testid": "capacity-plan-modal",
+      "summary_cards": {
+        "active_machines": "data-testid='plan-active-machines' = 14",
+        "total_produced": "data-testid='plan-total-produced' = 2,180",
+        "pending_pieces": "data-testid='plan-total-remaining' = 13,425",
+        "overloaded": "data-testid='plan-overloaded' = 2"
+      },
+      "machine_cards": "data-testid='plan-machine-MAQUINA{N}' (14 cards)",
+      "capacity_bars": "data-testid='plan-bar-MAQUINA{N}' (14 bars)",
+      "load_status_verified": {
+        "MAQUINA3": "red (7.3 days)",
+        "MAQUINA5": "green (0.1 days)",
+        "MAQUINA6": "red (8.7 days)"
+      },
+      "status": "VERIFIED"
+    }
+  },
+
+  "backend_api_data": {
+    "gantt_data": {
+      "bars_count": 33,
+      "pending_count": 13,
+      "date_filtering": "working"
+    },
+    "capacity_plan": {
+      "machines_count": 14,
+      "load_status_distribution": {
+        "idle": 10,
+        "green": 1,
+        "yellow": 0,
+        "red": 2
+      }
+    }
+  },
+
+  "mocked_apis": {
+    "email": "Resend email MOCKED (no API key configured)",
+    "slack": "Slack webhook MOCKED (no URL configured)"
+  }
+}

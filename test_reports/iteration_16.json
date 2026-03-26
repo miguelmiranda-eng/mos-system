@@ -1,0 +1,57 @@
+{
+  "iteration": 16,
+  "test_type": "regression_after_refactoring",
+  "date": "2026-03-04",
+  "summary": "Comprehensive regression test after backend and frontend refactoring",
+  "backend_tests": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "results": [
+      {"endpoint": "GET /api/config/boards", "status": "PASS", "details": "22 boards returned"},
+      {"endpoint": "GET /api/config/options", "status": "PASS", "details": "16 categories"},
+      {"endpoint": "GET /api/orders", "status": "PASS", "details": "Orders list returned"},
+      {"endpoint": "GET /api/orders?board=SCHEDULING", "status": "PASS", "details": "Filtered orders"},
+      {"endpoint": "GET /api/auth/me", "status": "PASS", "details": "Miguel Miranda admin"},
+      {"endpoint": "GET /api/gantt-data", "status": "PASS", "details": "bars, pending, total_pieces"},
+      {"endpoint": "GET /api/capacity-plan", "status": "PASS", "details": "machines, total_pieces"},
+      {"endpoint": "GET /api/activity", "status": "PASS", "details": "646 logs"},
+      {"endpoint": "GET /api/notifications", "status": "PASS", "details": "0 unread"},
+      {"endpoint": "GET /api/automations", "status": "PASS", "details": "3 rules"},
+      {"endpoint": "GET /api/saved-views", "status": "PASS", "details": "Views list"},
+      {"endpoint": "GET /api/config/columns", "status": "PASS", "details": "custom_columns"},
+      {"endpoint": "GET /api/config/colors", "status": "PASS", "details": "13 entries"},
+      {"endpoint": "GET /api/production-summary", "status": "PASS", "details": "10 entries"},
+      {"endpoint": "POST /api/orders (CREATE)", "status": "PASS", "details": "Order created"},
+      {"endpoint": "PUT /api/orders/:id (UPDATE)", "status": "PASS", "details": "Fields updated"},
+      {"endpoint": "DELETE /api/orders/:id", "status": "PASS", "details": "Moved to trash"}
+    ]
+  },
+  "frontend_tests": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "results": [
+      {"test": "Landing page renders", "status": "PASS"},
+      {"test": "Google login button visible", "status": "PASS"},
+      {"test": "Key texts present (CRM, Produccion)", "status": "PASS"},
+      {"test": "Frontend compiles without errors", "status": "PASS"},
+      {"test": "Dashboard component tree renders", "status": "PASS"}
+    ]
+  },
+  "refactoring_metrics": {
+    "backend": {
+      "server_py_before": 1525,
+      "server_py_after": 45,
+      "total_router_lines": 802,
+      "deps_lines": 203
+    },
+    "frontend": {
+      "dashboard_before": 2855,
+      "dashboard_after": 503,
+      "extracted_components": 9,
+      "hooks": 1,
+      "constants_file": 1
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "iteration": 29,
+  "test_type": "backend",
+  "date": "2026-03-05",
+  "summary": "Automation boolean value matching bug fix VERIFIED. The _values_match() function correctly handles comparison between MongoDB boolean values (True/False) and automation string values ('true'/'false'). The 'move to neck' automation now fires correctly when screens checkbox is set to True.",
+  "feature_tested": {
+    "name": "Automation Boolean Value Matching Fix",
+    "bug_description": "Automation 'when screens changes to true, move to NECK' was NOT working because MongoDB stores checkbox as boolean True/False but automation watch_value is string 'true'. Strict comparison True != 'true' was failing.",
+    "fix_applied": "New _values_match() function converts both values to lowercase strings before comparing: str(actual).lower() == str(expected).lower()",
+    "files_modified": [
+      "/app/backend/routers/automations.py - Added _values_match() function (lines 90-102)",
+      "/app/backend/routers/automations.py - check_conditions() now uses _values_match() (line 77)"
+    ]
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_pytest": {
+      "file": "/app/backend/tests/test_iteration29_automation_bool_fix.py",
+      "total_tests": 9,
+      "passed": 9,
+      "failed": 0,
+      "test_classes": [
+        {
+          "class": "TestValuesMatchLogic",
+          "tests": ["test_01_values_match_bool_to_string - PASS"]
+        },
+        {
+          "class": "TestAutomationExists",
+          "tests": ["test_02_automation_exists - PASS (verified 'move to neck' automation config)"]
+        },
+        {
+          "class": "TestAutomationTrigger",
+          "tests": [
+            "test_03_create_test_order - PASS (created order with screens=False)",
+            "test_04_update_screens_to_true_triggers_automation - PASS (automation fired, board -> NECK)",
+            "test_05_verify_board_persisted - PASS (board=NECK persisted in DB)"
+          ]
+        },
+        {
+          "class": "TestReverseScenario",
+          "tests": ["test_06_screens_false_does_not_trigger - PASS (automation does NOT fire for screens=False)"]
+        },
+        {
+          "class": "TestCodeVerification",
+          "tests": [
+            "test_07_verify_automations_code - PASS (_values_match function exists)",
+            "test_08_verify_orders_code - PASS (status_change triggered with changed_fields)"
+          ]
+        },
+        {
+          "class": "TestCleanup",
+          "tests": ["test_99_cleanup - PASS"]
+        }
+      ]
+    },
+    "manual_curl_test": {
+      "description": "Manual curl test to verify exact bug scenario",
+      "steps": [
+        "1. Created order with screens=false in SCHEDULING board",
+        "2. PUT /api/orders/{id} with {screens: true} (boolean)",
+        "3. Response contained _automations_executed: [{name: 'move to neck', action: 'move_board', params: {target_board: 'NECK'}}]",
+        "4. Order board changed to 'NECK'"
+      ],
+      "result": "SUCCESS - Automation fired correctly"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration29_automation_bool_fix.py",
+    "/app/test_reports/pytest/pytest_results_iteration29.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIX VERIFIED: _values_match() function correctly handles bool vs string comparison",
+    "str(True).lower() == 'true' enables MongoDB boolean to match automation string 'true'",
+    "Case-insensitive comparison works for both 'true'/'TRUE'/'True' and other string values",
+    "Automation fires on status_change trigger when watch_field is in changed_fields",
+    "String comparisons for other fields (blank_status, etc.) continue to work correctly"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration29_automation_bool_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "test_credentials": {
+    "admin_session_token": "test_session_iter29_1772745952422",
+    "user_id": "test_admin_iter29_1772745952422"
+  },
+  "seed_data_creation": "Created admin test session via MongoDB for API testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Automation boolean fix verified working. The _values_match() function in /app/backend/routers/automations.py (lines 90-102) correctly handles comparison between MongoDB boolean values and automation string values. The 'move to neck' automation (watch_field: screens, watch_value: 'true') fires correctly when order.screens is set to True (boolean). Test session: test_session_iter29_1772745952422",
+  "bug_rca": {
+    "root_cause": "MongoDB stores checkbox values as boolean (True/False) but automation watch_value is stored as string ('true'). The original check_conditions() function did strict comparison: order.get(watch_field) != watch_value which meant True != 'true' => False",
+    "reproduction_steps": [
+      "1. Create order with screens=false",
+      "2. Create automation with watch_field='screens', watch_value='true', action=move_board to NECK",
+      "3. Update order: PUT /api/orders/{id} with {screens: true}",
+      "4. Before fix: Automation did NOT fire (True != 'true')",
+      "5. After fix: Automation fires correctly (str(True).lower() == 'true')"
+    ],
+    "mitigation": "Added _values_match() function that converts both values to lowercase strings before comparing. This handles: (1) bool to string comparison, (2) case-insensitive string comparison"
+  }
+}

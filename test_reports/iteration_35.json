@@ -1,0 +1,73 @@
+{
+  "iteration": 35,
+  "test_type": "both",
+  "date": "2026-03-06",
+  "summary": "WebSocket bug fix tested and VERIFIED. Bug: when updating a status, orders would flash/disappear and only reappear on page reload. Root cause: connectWs depended on fetchOrders which changed on every state change, causing constant WS reconnection. Also, same user received WS echo and triggered refetch. Fix: use refs (fetchOrdersRef, fetchProdRef) for stable WS callback and selfUpdateRef flag to ignore echo from same user. All tests pass - orders remain visible after status updates.",
+  "features_tested": [
+    "Backend: WebSocket endpoint accepts connections - PASS",
+    "Backend: WebSocket stays open for 3+ seconds - PASS", 
+    "Backend: WebSocket broadcasts on order create - PASS",
+    "Backend: WebSocket broadcasts on order update with type='order_change' - PASS",
+    "Backend: WebSocket broadcasts on order move - PASS",
+    "Backend: WebSocket broadcasts on order delete - PASS",
+    "Backend: WebSocket broadcasts on bulk-move - PASS",
+    "Backend: WebSocket message format is JSON with 'type' and 'data' fields - PASS",
+    "Frontend: Orders do NOT disappear after status update - PASS",
+    "Frontend: Orders remain visible after selecting orders for bulk operations - PASS",
+    "Frontend: WebSocket connection is stable (connectWs has empty dependency array) - PASS",
+    "Frontend: selfUpdateRef prevents echo from same user - PASS (code review verified)",
+    "Frontend: handleCellUpdate sets selfUpdateRef=true before PUT - PASS (code review verified)",
+    "Frontend: handleBulkMove sets selfUpdateRef=true before API call - PASS (code review verified)"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard table",
+        "issues": ["Existing hydration warnings in console - cosmetic, does not affect functionality", "WebSocket initial connection warning during test automation (not reproducible in normal usage)"]
+      }
+    ]
+  },
+  "code_review": {
+    "useOrders.js_lines_134-173": {
+      "refs_pattern": "Uses wsRef, reconnectTimer, fetchOrdersRef, fetchProdRef, selfUpdateRef for stable references",
+      "connectWs": "Has empty dependency array [] - prevents reconnection on state changes",
+      "ws_message_handler": "Checks selfUpdateRef.current before refetching - if true (self update), skips refetch and resets flag",
+      "cleanup": "Properly clears reconnect timer and closes WS on unmount"
+    },
+    "useOrders.js_lines_184-206": {
+      "handleCellUpdate": "Sets selfUpdateRef.current = true BEFORE PUT call (line 186), provides optimistic update (line 185)",
+      "handleBulkMove": "Sets selfUpdateRef.current = true BEFORE bulk-move call (line 204)"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration32_websocket.py",
+    "/app/test_reports/pytest/pytest_results_iteration34.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (9/9 WebSocket tests passed)",
+    "frontend": "100% (all manual UI tests passed)"
+  },
+  "test_credentials": {
+    "session_token": "test_session_ws_bug_1772816221333"
+  },
+  "seed_data_creation": "Created test order 'WS BUG TEST CLIENT' for testing, moved to trash after tests",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "WebSocket bug fix verified. The fix uses refs pattern to prevent connectWs from recreating on state changes, and selfUpdateRef flag to skip WS echo from same user. Key files: useOrders.js lines 134-206. Backend WS tests in test_iteration32_websocket.py all pass.",
+  "rca_of_the_issue": {
+    "bug_description": "When updating a status field, orders would flash/disappear and only reappear on page reload",
+    "root_cause_1": "connectWs had fetchOrders and fetchProductionSummary as dependencies, which changed on every boardFilters/currentBoard state change, causing WebSocket to reconnect constantly",
+    "root_cause_2": "Same user who made the update received the WebSocket echo message and triggered a refetch that replaced the optimistically updated orders state",
+    "fix_applied": "1) Used refs (fetchOrdersRef, fetchProdRef) so connectWs has empty dependency array [] and stays stable. 2) Added selfUpdateRef flag - set to true before mutations, checked in WS handler to skip echo from same user",
+    "verification": "Frontend tests confirmed orders remain visible (2 before, 2 after, 2 final) after status updates and bulk operations"
+  }
+}

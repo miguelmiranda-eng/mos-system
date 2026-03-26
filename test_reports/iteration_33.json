@@ -1,0 +1,75 @@
+{
+  "iteration": 33,
+  "test_type": "frontend only",
+  "date": "2026-03-06",
+  "summary": "Both bug fixes verified working. Bug 1: NewOrderModal no longer closes when clicking outside or pressing Escape, data is preserved. Modal only closes via Cancel button, X button, or successful order creation. Bug 2: Column management buttons (Add column, Column manager) only visible for admins. Column drag-and-drop is disabled for regular users (draggable=false). All 12 test cases passed.",
+  "features_tested": [
+    "Bug 1: NewOrderModal does NOT close on overlay click - PASS",
+    "Bug 1: NewOrderModal does NOT close on Escape key - PASS",
+    "Bug 1: Form data preserved after overlay click - PASS",
+    "Bug 1: Form data preserved after Escape key - PASS",
+    "Bug 1: NewOrderModal CLOSES via Cancel button - PASS",
+    "Bug 1: Custom X button visible (default hidden via CSS) - PASS",
+    "Bug 1: NewOrderModal CLOSES via custom X button - PASS",
+    "Bug 1: NewOrderModal CLOSES after successful order creation - PASS",
+    "Bug 2: Add Column button visible for admin - PASS",
+    "Bug 2: Column Manager button visible for admin - PASS",
+    "Bug 2: Column Manager panel opens for admin - PASS",
+    "Bug 2: Column draggable=true for admin - PASS",
+    "Bug 2: Add Column button NOT visible for regular user - PASS",
+    "Bug 2: Column Manager button NOT visible for regular user - PASS",
+    "Bug 2: Column draggable=false for regular user - PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard table",
+        "issues": ["Hydration warnings in console (span inside tr/tbody) - cosmetic, does not affect functionality - existing issue from previous iterations"]
+      },
+      {
+        "screen": "Dialog components",
+        "issues": ["Warning: Missing Description or aria-describedby for DialogContent - accessibility warning, not affecting functionality"]
+      }
+    ]
+  },
+  "code_review": {
+    "NewOrderModal.js": {
+      "line_137": "onOpenChange={(open) => { if (!open) return; }} - correctly blocks closing via state change",
+      "line_138": "onInteractOutside={(e) => e.preventDefault()} - correctly blocks overlay clicks",
+      "line_138_2": "onEscapeKeyDown={(e) => e.preventDefault()} - correctly blocks Escape key",
+      "line_138_3": "[&>button:last-child]:hidden - hides default Radix DialogClose X button",
+      "line_141": "Custom X button with onClick={onClose} correctly closes modal",
+      "line_152": "Cancel button correctly closes modal via onClose prop"
+    },
+    "Dashboard.js": {
+      "line_370": "isAdmin && wraps Add column button - correct",
+      "line_371": "isAdmin && wraps Column manager button - correct",
+      "line_376": "showColumnManager && isAdmin && wraps column manager panel - correct",
+      "line_517": "draggable={isAdmin} on th elements - correctly disables drag for non-admins",
+      "lines_126-128": "User view config only loads filters and group_by_date (not hidden_columns/column_order) - correct",
+      "lines_143-149": "Config save only includes filters and group_by_date - correct"
+    }
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend only testing)",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "admin_session_token": "test_session_admin_iter33_1772814284943 (cleaned up)",
+    "regular_session_token": "test_session_user_iter33_1772814284943 (cleaned up)"
+  },
+  "seed_data_creation": "Created admin and regular user test sessions via MongoDB for UI testing. Cleaned up after tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fixes for NewOrderModal and admin-only column management verified. NewOrderModal uses onInteractOutside, onEscapeKeyDown with preventDefault(), and custom X button with hidden default close button via CSS class [&>button:last-child]:hidden. Dashboard.js wraps column management UI in isAdmin checks and sets draggable={isAdmin} on column headers."
+}

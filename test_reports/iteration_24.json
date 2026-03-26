@@ -1,0 +1,96 @@
+{
+  "iteration": 24,
+  "test_type": "both",
+  "date": "2026-03-05",
+  "summary": "Bug fix verified: Total Produced metric corrected. Backend API returns correct 'total_completed' (5,288 from COMPLETOS orders) and 'in_production' (6,000 from MAQUINA* boards). Old 10,030 production_logs value no longer appears. All 10 backend tests passed. Frontend verified both CapacityPlanModal and ProductionScreen show correct values.",
+  "feature_tested": {
+    "name": "Capacity Plan Bug Fix - Total Completed and In Production metrics",
+    "description": "After deleting orders, Total Produced still showed 10,030 from old production_logs. Fix: 'total_completed' = sum of qty from COMPLETOS orders, 'in_production' = sum of qty from MAQUINA* boards",
+    "endpoints": {
+      "GET /api/capacity-plan": "Returns total_completed (COMPLETOS qty sum), in_production (MAQUINA* qty sum), and machine stats filtered by existing orders"
+    }
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_pytest": {
+      "file": "/app/backend/tests/test_iteration24_capacity_plan_fix.py",
+      "total_tests": 10,
+      "passed": 10,
+      "failed": 0,
+      "test_cases": [
+        "test_01_capacity_plan_returns_total_completed - PASS",
+        "test_02_capacity_plan_returns_in_production - PASS",
+        "test_03_total_completed_equals_completos_qty_sum - PASS (5288)",
+        "test_04_in_production_equals_machine_boards_qty_sum - PASS (6000)",
+        "test_05_no_old_total_produced_field - PASS",
+        "test_06_machine_total_produced_excludes_deleted_orders - PASS (750 not 10030)",
+        "test_07_machines_array_has_14_entries - PASS",
+        "test_08_machine_structure_correct - PASS",
+        "test_09_unauthorized_returns_401 - PASS",
+        "test_10_total_pieces_system_present - PASS"
+      ]
+    },
+    "frontend_playwright": {
+      "capacity_plan_modal_completado": "PASS - Shows 5,288 in green card",
+      "capacity_plan_modal_en_produccion": "PASS - Shows 6,000 in blue card",
+      "production_screen_completado": "PASS - Header shows 5,288 in green",
+      "production_screen_en_produccion": "PASS - Header shows 6,000 in blue",
+      "old_10030_not_visible": "PASS - Old Total Produced value not visible anywhere"
+    }
+  },
+  "verification_evidence": {
+    "database_state": {
+      "COMPLETOS_orders": "3 orders (qty: 288 + 0 + 5000 = 5288)",
+      "MAQUINA_orders": "1 order in MAQUINA1 (qty: 6000)",
+      "production_logs_total": "10,030 (from historical data - NOT shown in UI)"
+    },
+    "api_response": {
+      "total_completed": 5288,
+      "in_production": 6000,
+      "total_pieces_system": 28238,
+      "machine_total_produced_sum": 750
+    }
+  },
+  "features_verified": [
+    "GET /api/capacity-plan returns 'total_completed' = sum of qty from COMPLETOS board (5288)",
+    "GET /api/capacity-plan returns 'in_production' = sum of qty from MAQUINA* boards (6000)",
+    "Old 'total_produced' field removed from root API response",
+    "Machine 'total_produced' only counts logs for orders in COMPLETOS (filtered by completed_order_ids)",
+    "Frontend CapacityPlanModal shows 'Completado' card with green color (5,288)",
+    "Frontend CapacityPlanModal shows 'En Produccion' card with blue color (6,000)",
+    "Frontend ProductionScreen shows both new metrics in header",
+    "Old 'Total Produced' (10,030) no longer appears in UI"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24_capacity_plan_fix.py",
+    "/app/test_reports/pytest/pytest_results_iteration24.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration24_capacity_plan_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "session_token": "test_session_capacity_1772740447233"
+  },
+  "seed_data_creation": "Created test user and session for capacity plan API testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Capacity plan bug fix verified. Backend correctly filters production data by existing orders only. 'total_completed' = COMPLETOS orders qty sum, 'in_production' = MAQUINA* boards qty sum. Frontend components CapacityPlanModal.js and ProductionScreen.js correctly display new metrics with data-testid attributes: plan-total-completed, plan-in-production, prod-screen-completed, prod-screen-in-production.",
+  "mocked_apis": {
+    "resend_email": "MOCKED - No RESEND_API_KEY configured",
+    "slack_notifications": "MOCKED - No SLACK_WEBHOOK_URL configured"
+  }
+}

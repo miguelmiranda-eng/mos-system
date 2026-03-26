@@ -1,0 +1,166 @@
+<analysis>**original_problem_statement:**
+El usuario inicialmente solicitó migrar una aplicación CRM desde Google Apps Script a una pila moderna de FastAPI y React. Desde entonces, el proyecto ha evolucionado para convertirse en un completo sistema de gestión de producción con funcionalidades avanzadas.
+
+**PRODUCT REQUIREMENTS (Recientes y en curso):**
+1.  **Corrección de Filtros (En progreso)**: Solucionar un bug donde el filtro —Ninguno— (para campos vacíos) se deselecciona al cambiar entre vistas de filtro guardadas.
+2.  **Mejoras en el Monitor de Producción (Completado)**: Añadir métricas de piezas restantes y un resumen del total de piezas por production status.
+3.  **Gestión de Operadores (Completado)**: Convertir el campo de texto Operador en un menú desplegable y añadir una interfaz de administración (CRUD) para los operadores.
+4.  **Automatizaciones por Tablero (Completado)**: Permitir que las automatizaciones se apliquen solo a tableros específicos mediante un selector múltiple.
+5.  **Actualizaciones en Tiempo Real (Completado)**: Implementar WebSockets para que los cambios en las órdenes (ej. actualización de estado) se reflejen en todas las sesiones de usuario activas sin necesidad de recargar la página.
+6.  **Formulario de Creación de Órdenes Dinámico (Completado)**: Permitir a los administradores elegir qué campos (incluyendo columnas personalizadas) son visibles en el formulario de Nueva Orden.
+7.  **Refactorización de UI del Dashboard (Completado)**: Reorganizar la barra de herramientas superior, que estaba sobrecargada, en una estructura más limpia y organizada de dos filas.
+8.  **Gestión de Visibilidad de Tableros (Completado)**: Permitir a los administradores ocultar/mostrar tableros de la vista principal para el resto de los usuarios.
+9.  **Correcciones de Bugs (Completados)**: Se han solucionado numerosos bugs, incluyendo errores de validación al crear órdenes, problemas de renderizado de iconos, lógica incorrecta en filtros booleanos y persistencia del orden de las columnas para administradores.
+
+**User's preferred language**: Spanish
+
+**what currently exists?**
+Una aplicación CRM/ERP full-stack para gestión de producción industrial. Utiliza FastAPI (con WebSockets) para el backend y React para el frontend.
+Funcionalidades clave:
+-   Gestión de órdenes en tableros Kanban.
+-   Tableros y columnas dinámicos y personalizables.
+-   Roles de usuario (Admin/Usuario) con permisos diferenciados.
+-   Sistema de automatización (trigger/condition/action) con alcance por tablero y condiciones complejas.
+-   Monitor de producción con métricas en tiempo real, gráficos y reportes.
+-   Formularios dinámicos cuya visibilidad de campos es configurable por el administrador.
+-   Actualizaciones de UI en tiempo real a través de WebSockets.
+-   Autenticación gestionada por Google OAuth.
+
+**Last working item**:
+*   **Last item agent was working**: Corregir un bug donde al aplicar un filtro de —Ninguno— y luego cambiar a una vista guardada, la selección de —Ninguno— se pierde, aunque otros filtros de la vista se apliquen correctamente.
+*   **Status**: IN PROGRESS
+*   **Agent Testing Done**: N
+*   **Which testing method agent to use?**: frontend testing agent
+*   **User Testing Done**: N
+
+**All Pending/In progress Issue list**:
+*   **Issue 1: El filtro —Ninguno— se deselecciona solo al cambiar entre vistas guardadas (P0)**
+    *   **Attempted fixes**: El agente diagnosticó correctamente que el problema se debe a que las opciones del menú desplegable de filtros se regeneran a partir de una lista de órdenes ya filtrada. Cuando el filtro —Ninguno— se aplica, la lista de órdenes cambia, las opciones del desplegable se recalculan y la selección se pierde.
+    *   **Next debug checklist**: El agente ya comenzó la implementación de la solución, que consiste en separar los datos crudos de los filtrados en el hook . Los siguientes pasos son:
+        1.  En , asegurarse de que el estado  (que contiene todas las órdenes del tablero sin filtrar) se exponga correctamente. (Este paso parece estar completado).
+        2.  En , recibir  del hook .
+        3.  Modificar la función  para que siempre use  como fuente para generar las opciones de los desplegables de filtros, en lugar de  (los datos ya filtrados).
+        4.  Verificar que la selección de filtros, incluido —Ninguno—, se mantenga estable al cambiar entre vistas guardadas.
+    *   **Why fix this issue and what will be achieved with the fix?**: Solucionar este bug proporcionará una experiencia de usuario consistente y permitirá a los usuarios filtrar de manera fiable por campos vacíos en combinación con las vistas guardadas.
+    *   **Status**: IN PROGRESS
+    *   **Is recurring issue?**: N
+    *   **Should Test frontend/backend/both after fix?**: Frontend.
+    *   **Blocked on other issue**: No.
+
+**In progress Task List**:
+No hay tareas en progreso además del bug mencionado.
+
+**Upcoming and Future Tasks**
+*   **Future Tasks**:
+    *   **Implementar Lógica de Espejo del Tablero MASTER (P1)**: Requisito pendiente y pospuesto por el usuario para que el tablero  refleje todas las órdenes de los demás tableros.
+    *   **Configurar Integraciones (P2)**: Activar notificaciones por email (Resend) y Slack. La lógica base ya existe en el backend.
+    *   **Añadir Toggle de Idioma en Landing Page (P3)**: Mejora de UI para permitir el cambio de idioma.
+
+**Completed work in this session**
+- **Gestión de Operadores**: Implementado CRUD de operadores con modal de admin y desplegable en el formulario de producción.
+- **Alcance de Automatizaciones por Tablero**: Añadido selector de tableros en las automatizaciones.
+- **Actualizaciones en Tiempo Real con WebSockets**: Implementado para reflejar cambios de órdenes instantáneamente.
+- **Formulario de Nueva Orden Dinámico**: Los administradores ahora pueden configurar qué campos se muestran.
+- **Refactorización del Header del Dashboard**: La UI superior fue rediseñada para ser más limpia y organizada.
+- **Gestión de Visibilidad de Tableros**: Añadida funcionalidad para que los admins oculten tableros.
+- **Mejoras al Monitor de Producción**: Añadidas las métricas Piezas Restantes y desglose por Production Status.
+- **Filtro -Ninguno-**: Implementada la capacidad de filtrar por campos vacíos.
+- **Múltiples Correcciones de Bugs**: Solucionados ~10 bugs reportados por el usuario, incluyendo:
+    -   Error 422 al crear órdenes (manejo de campos  y ).
+    -   Lógica incorrecta en filtros booleanos (campo ).
+    -   Pérdida de la persistencia del orden de las columnas para admins.
+    -   Parpadeo de la UI en actualizaciones por WebSocket (implementación de anti-echo).
+    -   Iconos de UI cortados por .
+    -   Pérdida de datos en modales al hacer clic fuera.
+
+**Earlier issues found/mentioned but not fixed**
+- Ninguno.
+
+**Known issue recurrence from previous fork**
+- **Issue recurrence in previous fork**: La lógica del tablero  como espejo de los demás.
+- **Recurrence count**: Alto
+- **Status**: NOT STARTED (explícitamente omitido por el usuario en múltiples sesiones).
+
+**Code Architecture**
+
+
+**Key Technical Concepts**
+- **Backend**: FastAPI, Pydantic, MongoDB (con ), WebSockets, APIRouter.
+- **Frontend**: React.js, Tailwind CSS, shadcn/ui, Context API, Custom Hooks (, ), , .
+- **Patrones**: Debouncing (para guardar configuraciones de UI), gestión de estado con hooks, renderizado dinámico de formularios.
+
+**key DB schema**
+- : 
+- : 
+- : 
+- : 
+- :  (campo añadido)
+
+**changes in tech stack**
+- Ninguno.
+
+**All files of reference**
+- : Fichero clave para el bug actual. Contiene la lógica de fetching, filtrado y conexión WebSocket.
+- : Componente principal que integra casi todas las funcionalidades y donde se renderizan los filtros.
+- : Añadido el endpoint WebSocket .
+- : Añadidas las llamadas de broadcast a WebSocket tras cada mutación de órdenes.
+- : Nuevo router para gestionar configuraciones globales (layout de columnas, campos de formulario, tableros ocultos).
+- : Nuevo router para el CRUD de operadores.
+- : Modificado para ser dinámico y corregir bugs de creación.
+- : Modificado para añadir condiciones y alcance por tablero.
+
+**Areas that need refactoring**:
+- El hook  ha crecido considerablemente en complejidad. Maneja la carga inicial de datos, la conexión WebSocket, la lógica de anti-eco, el filtrado complejo del lado del cliente, y el mantenimiento de estados de datos filtrados y sin filtrar. Sería beneficioso dividirlo en hooks más pequeños y especializados (ej. , ).
+
+**key api endpoints**
+- : Endpoint para la comunicación en tiempo real.
+- : Para gestionar la configuración global de columnas.
+- : Para gestionar los campos del formulario de nueva orden.
+- : Para gestionar la visibilidad de los tableros.
+- : CRUD para los operadores.
+
+**Critical Info for New Agent**
+- **Prioridad Inmediata (P0)**: Tu única tarea es finalizar la corrección del bug del filtro —Ninguno—. El agente anterior ya ha diagnosticado la causa raíz y ha comenzado la implementación. Debes continuar donde lo dejó, pasando el estado  a la función que genera las opciones de los filtros.
+- **Metodología de Pruebas**: El uso del  después de cada cambio ha sido clave para el éxito y la estabilidad del proyecto. Continúa con esta práctica rigurosa.
+- **Interacción con el Usuario**: El usuario es técnico y proporciona feedback claro. Presenta un plan antes de actuar y confirma la corrección de los bugs.
+- **Tarea Postergada**: NO trabajes en la lógica de espejo del tablero . Sigue siendo una tarea explícitamente pausada por el usuario.
+
+**documents and test reports created in this job**
+- El  se utilizó más de 15 veces, generando reportes de prueba para cada funcionalidad y corrección de bug.
+-  fue actualizado después de cada tarea finalizada.
+
+**Last 10 User Messages and any pending HUMAN messages**
+1.  : el problema es que si tengo filtrado label listo y ninguno, al salir de la vista y regresar, ya solo tengo seleccionado label listo, ese es el bug - **BUG ACTUAL, EN PROGRESO.**
+2.  : no, general estaba bien, el problema es que al seleccionar -Ninguno-... al salir de la vista este se deselecciona - Clarificación del bug.
+3.  : el filtro Ninguno se deselecciona solo al interactuar entre filtros vistas - Reporte inicial del bug actual.
+4.  : los filtros de screens no funcionan... - Reporte de bug. **(Resuelto)**
+5.  : en los filtros me falta la columna de screens... el icono de la x y el pin no se ven por completo... - Reporte de bug. **(Resuelto)**
+6.  : en los filtros debes agregar... la opcion tambien de marcar los espacios -Ninguno- - Petición de funcionalidad. **(Resuelto)**
+7.  : en Dashboard de Producción agrega las piezas restantes... - Petición de funcionalidad. **(Resuelto)**
+8.  : en palabras breves y tecnicas dime como funciona... el programa - Petición de resumen. **(Resuelto)**
+9.  : ME DA ERROR AL CREAR ORDEN - Reporte de bug. **(Resuelto)**
+10. : REGRESA EL NOMBRE DEL TABLERO FINAL BILL A PAPELERA DE RECICLAJE Y PERMITE QUE EL ADMIN OCULTE TABLEROS... - Petición de funcionalidad y reversión. **(Resuelto)**
+
+**Project Health Check:**
+- **Broken**: Nada está fundamentalmente roto. Hay un bug de UX menor en los filtros que está siendo corregido.
+- **Mocked**: Las integraciones de Resend (email) y Slack siguen preparadas en el backend pero no están activas.
+
+**3rd Party Integrations**
+- **Emergent-managed Google Auth**: Activa y en uso.
+- **Resend / Slack**: Preparadas en el backend, inactivas.
+- **recharts**: Usado para gráficos en el Monitor de Producción.
+- **react-beautiful-dnd**: Usado para reordenar columnas.
+- **xlsxwriter** y **fpdf**: Usados para la exportación a Excel y PDF.
+
+**Testing status**
+- **Testing agent used after significant changes**: YES. El  fue invocado sistemáticamente después de cada funcionalidad y corrección de bug, con tasas de éxito del 100% en las últimas ejecuciones.
+- **Troubleshoot agent used after agent stuck in loop**: NO.
+- **Test files created**: Múltiples reportes en .
+- **Known regressions**: Ninguna.
+
+**Credentials to test flow:**
+- **Rol de Administrador**:  (vía Google Auth).
+- **Rol de Usuario**: Cualquier otro correo de Google.
+
+**What agent forgot to execute**
+- Nada. El agente ha sido muy metódico, abordando todas las solicitudes del usuario en orden y respetando las tareas pospuestas.</analysis>

@@ -1,0 +1,117 @@
+{
+  "iteration": 19,
+  "test_type": "both",
+  "date": "2026-03-05",
+  "summary": "Complete testing of column deletion feature. Both backend APIs (PUT/GET /api/config/columns with removed_default_columns) and frontend column manager functionality (delete X button for ALL columns, persistence after reload) working correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Console", "issues": ["React hydration warnings for nested span/tr/th/td elements - non-blocking but should be addressed"]}
+    ]
+  },
+  "test_results": {
+    "backend": {
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "tests": [
+        {"test": "GET /api/config/columns returns removed_default_columns field", "status": "PASS"},
+        {"test": "GET /api/config/columns returns custom_columns array", "status": "PASS"},
+        {"test": "PUT /api/config/columns accepts removed_default_columns", "status": "PASS"},
+        {"test": "PUT /api/config/columns still works with custom_columns", "status": "PASS"},
+        {"test": "PUT /api/config/columns handles both custom and removed_defaults", "status": "PASS"},
+        {"test": "PUT /api/config/columns requires admin role (401/403 for invalid)", "status": "PASS"},
+        {"test": "PUT /api/config/columns handles empty removed_default_columns", "status": "PASS"},
+        {"test": "Removing default column persists after reload", "status": "PASS"},
+        {"test": "Cleanup column config to default state", "status": "PASS"}
+      ]
+    },
+    "frontend": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "tests": [
+        {"test": "Column manager panel opens with Settings gear button", "status": "PASS"},
+        {"test": "Delete (X) button shown for ALL columns (not just custom)", "status": "PASS"},
+        {"test": "Delete button for 'notes' default column - FOUND", "status": "PASS"},
+        {"test": "Delete button for 'order_number' default column - FOUND", "status": "PASS"},
+        {"test": "Delete button for 'client' default column - FOUND", "status": "PASS"},
+        {"test": "Deleting default column removes it immediately", "status": "PASS"},
+        {"test": "Deleted default column persists after page reload", "status": "PASS"}
+      ]
+    }
+  },
+  "features_tested": {
+    "put_config_columns_endpoint": {
+      "endpoint": "PUT /api/config/columns",
+      "status": "WORKING",
+      "behaviors": [
+        "Accepts 'removed_default_columns' array alongside 'custom_columns'",
+        "Stores removed_default_columns in MongoDB column_config collection",
+        "Returns 200 on success with {message: 'Columns updated'}",
+        "Requires admin role (returns 401/403 for invalid credentials)"
+      ]
+    },
+    "get_config_columns_endpoint": {
+      "endpoint": "GET /api/config/columns",
+      "status": "WORKING",
+      "behaviors": [
+        "Returns 'removed_default_columns' if set",
+        "Returns 'custom_columns' array",
+        "Requires authentication"
+      ]
+    },
+    "frontend_column_manager": {
+      "status": "WORKING",
+      "features": [
+        "Delete (X) button shown for ALL columns (default + custom)",
+        "21 columns with 21 delete buttons (all columns deletable)",
+        "Confirmation dialog on delete",
+        "Toast notification 'Columna eliminada' on success",
+        "Immediate UI update after deletion",
+        "Persistence after page reload (removed_default_columns stored in DB)"
+      ]
+    },
+    "add_column_modal": {
+      "status": "WORKING",
+      "features": [
+        "Modal opens with 'Agregar Nueva Columna' title",
+        "NOMBRE input field for column name",
+        "TIPO dropdown for column type",
+        "Agregar button to add column"
+      ]
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_column_deletion.py",
+    "/app/test_reports/pytest/pytest_results_iteration19.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "React hydration warnings in console: nested <span> inside <tr>/<tbody> - doesn't break functionality but should be addressed for clean console output"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration19_column_deletion.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "session_token": "test_admin_cols_1772726752013",
+    "user_id": "test-user-admin-cols-1772726752013"
+  },
+  "seed_data_creation": "Test user with admin role created for column config testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Column deletion feature fully working. PUT /api/config/columns now accepts 'removed_default_columns' array. GET /api/config/columns returns this field. Frontend column manager shows delete (X) button for ALL columns. Deleting a default column adds its key to removed_default_columns array and persists after page reload. Custom column deletion still works as before.",
+  "mocked_apis": {
+    "resend_email": "MOCKED - No RESEND_API_KEY configured",
+    "slack_notifications": "MOCKED - No SLACK_WEBHOOK_URL configured"
+  }
+}

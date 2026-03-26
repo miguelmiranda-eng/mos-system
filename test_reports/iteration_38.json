@@ -1,0 +1,53 @@
+{
+  "iteration": 38,
+  "test_type": "both",
+  "date": "2026-03-06",
+  "summary": "Tested extended automation watch fields feature. Date columns now show 'Cuando se actualice la fecha' option. Text columns show 'Celda vacia' and 'Celda NO vacia' options. Backend check_conditions handles date_updated, is_empty, not_empty correctly. All tests passed.",
+  "features_tested": [
+    "Frontend: WATCH_FIELDS dropdown includes date columns (Cancel Date, FINAL BILL): PASS",
+    "Frontend: Date columns show 'Cuando se actualice la fecha' option: PASS",
+    "Frontend: WATCH_FIELDS dropdown includes text columns (Customer PO, Store PO, Notas, COLOR): PASS",
+    "Frontend: Text columns show 'Celda vacia' option: PASS",
+    "Frontend: Text columns show 'Celda NO vacia' option: PASS",
+    "Frontend: Select/checkbox columns (SCREENS) still show original options (true/false): PASS",
+    "Frontend: Summary text shows friendly label 'este vacia' for is_empty condition: PASS",
+    "Frontend: CONDITION_FIELDS uses activeBoards (dynamic) for board options: PASS",
+    "Backend: Automation CRUD - create with date_updated condition: PASS",
+    "Backend: Automation CRUD - create with is_empty condition: PASS",
+    "Backend: Automation CRUD - create with not_empty condition: PASS",
+    "Backend: Automation CRUD - create with regular select value: PASS",
+    "Backend: Order create and update for date fields: PASS",
+    "Backend: Order create and update for text fields (empty/not_empty): PASS",
+    "Backend: Config columns endpoint returns date/text/select columns: PASS",
+    "Backend: Config boards endpoint returns dynamic boards: PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration38_automation_extended_conditions.py",
+    "/app/test_reports/pytest/pytest_results_iteration38.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration38_automation_extended_conditions.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": {
+    "admin_session": "ui_header_test_1772822138822"
+  },
+  "seed_data_creation": "Created test automations with date_updated, is_empty, not_empty conditions (cleaned up after tests)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Extended automation watch fields tested. Date columns have 'date_updated' option (shown as 'Cuando se actualice la fecha'). Text columns have 'is_empty' (Celda vacia) and 'not_empty' (Celda NO vacia) options. Backend check_conditions in automations.py lines 76-105 handles these special values. Frontend AutomationsModal.js lines 24-52 build WATCH_FIELDS with dateFields and textFields. Summary display uses friendly labels at line 110."
+}

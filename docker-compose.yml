@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: mos_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URL=${MONGODB_URL:-mongodb://miranda:Mirandam2@187.124.232.150:27017/mos-system?authSource=admin}
+      - JWT_SECRET=${JWT_SECRET:-cambiame_por_un_secreto_seguro}
+
+  frontend:
+    build: ./frontend
+    container_name: mos_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

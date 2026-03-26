@@ -1,0 +1,73 @@
+{
+  "iteration": 47,
+  "test_type": "both",
+  "date": "2026-03-17",
+  "summary": "Verified all 3 bug fixes: Bug 1 (custom_fields merge at top level), Bug 2 (dynamic group-by-date), Bug 3 (date filters in filter bar). All tests passed. Backend and frontend working correctly.",
+  "features_tested": [
+    "Bug 1: POST /api/orders - custom_fields merged at top level: ✅ PASSED",
+    "Bug 1: POST /api/orders - model_extra merged at top level: ✅ PASSED",
+    "Bug 1: GET /api/orders/{id} - custom_fields persist at top level: ✅ PASSED",
+    "Bug 2: Dashboard group-by-date dropdown shows dynamic date columns: ✅ PASSED",
+    "Bug 2: Group-by dropdown includes 'Cancel Date', 'FINAL BILL', 'Creacion': ✅ VERIFIED",
+    "Bug 3: Dashboard filter bar includes CANCEL DATE, FINAL BILL, CREACION filters: ✅ VERIFIED",
+    "Bug 3: getFilterOptions formats date values with toLocaleDateString(): ✅ CODE VERIFIED",
+    "Bug 3: useOrders.js filter comparison handles date formatting: ✅ CODE VERIFIED",
+    "Frontend loads without critical JS errors: ✅ PASS",
+    "Backend API responds correctly: ✅ PASS"
+  ],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "notes": [
+      "React hydration warnings present (span in tr/tbody) - these are related to Emergent dev tooling, not production code issues"
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bug_fixes_iteration47.py",
+    "/app/test_reports/pytest/pytest_results_iteration47.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug 1 Fix Verified in orders.py lines 71-77:",
+    "  - Lines 72-73: if order.custom_fields: order_doc.update(order.custom_fields)",
+    "  - Lines 75-77: extra = order.model_extra or {}; if extra: order_doc.update(extra)",
+    "  - Both custom_fields and model_extra are correctly merged at top level",
+    "Bug 2 Fix Verified in Dashboard.js lines 591-607:",
+    "  - Line 591: const dateCols = columns.filter(c => c.type === 'date')",
+    "  - Lines 592-593: Adds 'created_at' if not present",
+    "  - Line 601: dateCols.map(dc => <SelectItem>) - dynamic options",
+    "Bug 3 Fix Verified in Dashboard.js lines 551-555 and 338-344:",
+    "  - Line 552: dateColsFromColumns = columns.filter(c => c.type === 'date')",
+    "  - Line 555: allFilterCols = [...FILTER_COLUMNS, ...dateColsFromColumns]",
+    "  - Lines 339-343: getFilterOptions formats dates using toLocaleDateString()",
+    "Bug 3 Filter Logic in useOrders.js line 57:",
+    "  - if (v) { try { const fd = new Date(v).toLocaleDateString(); if (realVals.includes(fd)) return true; } catch {} }"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "note": "Test user and session dynamically created and cleaned up during testing",
+    "manual_test_token_used": "test_session_1773785949634"
+  },
+  "seed_data_creation": "None - test orders cleaned up after testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 bugs from this iteration are fixed and verified. Bug 1: custom_fields and model_extra are properly merged at top level of order documents when created via POST /api/orders. Bug 2: Group-by-date dropdown dynamically shows all columns with type='date' plus 'created_at'. Bug 3: Filter bar now includes date-type columns as filter options, and filter logic compares formatted dates using toLocaleDateString(). Database may have some test orders that were cleaned up.",
+  "verified_data": {
+    "bug1_custom_fields_merge": {
+      "test_response_keys": ["color", "size", "extra_field"],
+      "nested_custom_fields": true,
+      "top_level_merge": true
+    },
+    "bug2_group_by_options": ["Sin agrupar", "Cancel Date", "FINAL BILL", "Creacion"],
+    "bug3_date_filters_visible": ["CANCEL DATE", "FINAL BILL", "CREACION"]
+  }
+}
