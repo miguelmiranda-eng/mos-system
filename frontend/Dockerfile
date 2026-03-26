@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Instalar dependencias
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Evitar errores de memoria o advertencias bloqueantes de eslint
 ENV CI=false
