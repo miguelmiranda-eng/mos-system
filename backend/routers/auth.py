@@ -13,10 +13,13 @@ resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
 # Direct Google OAuth Config
-GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
 FRONTEND_URL = "https://mosdatabase-frontend.k9pirj.easypanel.host"
 REDIRECT_URI = "https://mosdatabase-backend.k9pirj.easypanel.host/api/auth/google/callback"
+
+# Diagnostic logs for Easypanel
+logger.info(f"OAUTH DIAGNOSTIC: ID={GOOGLE_CLIENT_ID[:5]}... | SECRET={GOOGLE_CLIENT_SECRET[:5]}...")
 
 async def _create_session(user_id, response):
     session_token = f"session_{uuid.uuid4().hex}"
