@@ -512,7 +512,6 @@ const Dashboard = () => {
             <SelectTrigger className="w-36 md:w-52 bg-white/15 border-white/25 text-white font-barlow font-bold text-xs md:text-sm backdrop-blur-sm flex-shrink-0" data-testid="board-selector"><SelectValue /></SelectTrigger>
             <SelectContent className="bg-popover border-border z-[100]">{visibleBoards.map(board => <SelectItem key={board} value={board}>{board}</SelectItem>)}</SelectContent>
           </Select>
-          <button onClick={fetchOrders} className="p-1.5 md:p-2 bg-white/15 rounded-lg hover:bg-white/25 backdrop-blur-sm transition-all flex-shrink-0" title={t('search')} data-testid="refresh-btn"><RefreshCw className="w-3.5 md:w-4 h-3.5 md:h-4" /></button>
           <div className="flex flex-col min-w-0 hidden md:flex"><span className="font-barlow font-black text-base md:text-2xl uppercase tracking-wider drop-shadow-lg truncate" data-testid="board-name-display">{currentBoard}</span><span className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-70 font-medium">{currentBoard === 'MASTER' ? 'Vista consolidada' : 'Tablero Activo'}</span></div>
           <span className="text-xs md:text-sm font-barlow font-bold bg-white/15 backdrop-blur-sm px-2 md:px-3 py-1 rounded-lg flex-shrink-0 whitespace-nowrap" data-testid="order-count">{orders.length} <span className="text-[10px] font-normal opacity-80">ord</span></span>
         </div>
