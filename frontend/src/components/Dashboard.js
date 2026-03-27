@@ -495,60 +495,6 @@ const Dashboard = () => {
             <button onClick={() => setShowOptionsManager(true)} className={`p-1.5 rounded flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('manage_options')} data-testid="manage-options-btn"><Settings className="w-3.5 h-3.5" /></button>
             <button onClick={() => setShowOperators(true)} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
             <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
-            <button onClick={async () => {
-              try {
-                toast.info('Respaldando base de datos...');
-                const res = await fetch(`${API}/admin/backup`, { method: 'POST', credentials: 'include' });
-                if (res.ok) { const d = await res.json(); toast.success('Respaldo completado: ' + Object.values(d.stats || {}).reduce((a, b) => a + b, 0) + ' registros'); }
-                else { toast.error('Error al respaldar'); }
-              } catch (e) { toast.error('Error de conexion'); }
-            }} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title="Respaldar Base de Datos" data-testid="backup-db-btn"><DatabaseBackup className="w-3.5 h-3.5" /></button>
-            {/* Export Images */}
-            <button onClick={async () => {
-              try {
-                toast.info('Obteniendo info de imágenes...');
-                const statsRes = await fetch(`${API}/admin/images-stats`, { credentials: 'include' });
-                if (!statsRes.ok) { toast.error('Error al obtener stats'); return; }
-                const stats = await statsRes.json();
-                if (stats.total_images === 0) { toast.info('No hay imágenes para exportar'); return; }
-                toast.info(`Exportando ${stats.total_images} imágenes en ${stats.total_batches} lotes...`);
-                const allImages = [];
-                for (let i = 0; i < stats.total_batches; i++) {
-                  const bRes = await fetch(`${API}/admin/export-images/${i}`, { credentials: 'include' });
-                  if (bRes.ok) { const d = await bRes.json(); allImages.push(...d.images); }
-                  toast.info(`Lote ${i + 1}/${stats.total_batches} descargado`);
-                }
-                const blob = new Blob([JSON.stringify({ total: allImages.length, images: allImages })], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.href = url; a.download = `images_backup_${new Date().toISOString().slice(0, 10)}.json`; a.click();
-                URL.revokeObjectURL(url);
-                toast.success(`${allImages.length} imágenes exportadas correctamente`);
-              } catch (e) { toast.error('Error al exportar: ' + e.message); }
-            }} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-green-900/50 border border-green-700 hover:bg-green-800/50' : 'bg-green-50 border border-green-300 hover:bg-green-100'}`} title="Exportar Imágenes (Comentarios)" data-testid="export-images-btn"><ImageDown className="w-3.5 h-3.5 text-green-500" /></button>
-            {/* Import Images */}
-            <button onClick={() => {
-              const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
-              input.onchange = async (e) => {
-                const file = e.target.files[0]; if (!file) return;
-                toast.info('Leyendo archivo...');
-                try {
-                  const text = await file.text();
-                  const data = JSON.parse(text);
-                  const images = data.images || [];
-                  if (!images.length) { toast.error('No se encontraron imágenes en el archivo'); return; }
-                  const batchSize = 10;
-                  let imported = 0, skipped = 0;
-                  for (let i = 0; i < images.length; i += batchSize) {
-                    const batch = images.slice(i, i + batchSize);
-                    const res = await fetch(`${API}/admin/import-images`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ images: batch }) });
-                    if (res.ok) { const d = await res.json(); imported += d.imported; skipped += d.skipped; }
-                    toast.info(`Procesando ${Math.min(i + batchSize, images.length)}/${images.length}...`);
-                  }
-                  toast.success(`Importación completa: ${imported} nuevas, ${skipped} ya existentes`);
-                } catch (err) { toast.error('Error al importar: ' + err.message); }
-              };
-              input.click();
-            }} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-blue-900/50 border border-blue-700 hover:bg-blue-800/50' : 'bg-blue-50 border border-blue-300 hover:bg-blue-100'}`} title="Importar Imágenes (Comentarios)" data-testid="import-images-btn"><ImageUp className="w-3.5 h-3.5 text-blue-500" /></button>
           </>)}
         </div>
         <div className="w-px h-5 bg-border mx-0.5 flex-shrink-0"></div>
