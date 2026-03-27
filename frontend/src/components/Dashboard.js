@@ -826,8 +826,9 @@ const Dashboard = () => {
                         {currentBoard === 'MASTER' && <th className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'}`} style={{ minWidth: 160 }}>Board</th>}
                         {visibleColumns.map(col => {
                           const isOrderNum = col.key === 'order_number';
+                          const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
                           return (
-                            <th key={col.key} className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'} ${draggedCol === col.key ? 'opacity-50' : ''} ${isOrderNum ? `sticky left-[84px] z-30 ${isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}` : ''}`} style={{ minWidth: columnWidths[col.key] || col.width }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                            <th key={col.key} className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'} ${draggedCol === col.key ? 'opacity-50' : ''} ${isOrderNum ? `sticky left-[88px] z-30 ${isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderNum ? 120 : 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="cursor-grab active:cursor-grabbing select-none">{currentBoard === 'MASTER' && <svg className="w-3.5 h-3.5 inline-block mr-1 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}{col.label}</span>
                                 <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
@@ -847,13 +848,17 @@ const Dashboard = () => {
                               <td className={`py-2 px-2 sticky left-0 z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}`}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded" /></td>
                               <td className={`py-2 px-1 sticky left-[44px] z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}`}><button onClick={() => setCommentsOrder(order)} className="p-1 rounded transition-colors hover:bg-secondary" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" /></button></td>
                               {currentBoard === 'MASTER' && <td className="py-2 px-3"><span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span></td>}
-                              {visibleColumns.map(col => (
-                                <td key={col.key} className={`py-2 px-3 ${col.key === 'order_number' ? `sticky left-[84px] z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}` : ''}`} style={{ minWidth: columnWidths[col.key] || col.width }}>
-                                  {col.key === 'order_number' ? <span className={`font-mono font-medium ${isSearchMatch ? 'text-primary font-bold' : ''}`}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
-                                    <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
-                                  )}
-                                </td>
-                              ))}
+                              {visibleColumns.map(col => {
+                                const isOrderNum = col.key === 'order_number';
+                                const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
+                                return (
+                                  <td key={col.key} className={`py-2 px-3 ${isOrderNum ? `sticky left-[88px] z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderNum ? 120 : 'none' }}>
+                                    {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
+                                      <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
+                                    )}
+                                  </td>
+                                );
+                              })}
                               {(() => {
                                 const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
                                   <td className="py-2 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold">{remaining}</span><span className={`font-bold ${pct >= 100 ? 'text-green-400' : pct >= 50 ? 'text-yellow-400' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground">—</span>}</td>
@@ -895,17 +900,17 @@ const Dashboard = () => {
                     </tbody>
                     <tfoot className={`sticky bottom-0 z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}>
                       <tr className={isDark ? 'bg-zinc-900/95 border-t-2 border-border' : 'bg-gray-200/95 border-t-2 border-gray-300'}>
-                        <td className={`py-2 px-2 sticky left-0 z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}></td>
-                        <td className={`py-2 px-1 sticky left-[44px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}></td>
-                        {currentBoard === 'MASTER' && <td className="py-2 px-3"></td>}
+                        <td className={`py-2 px-2 sticky left-0 z-20 font-barlow font-bold text-sm text-primary ${isDark ? 'bg-zinc-900' : 'bg-gray-200'}`} style={{ minWidth: 110 }}>{t('total')}</td>
+                        <td className={`py-2 px-1 sticky left-[48px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}></td>
                         {visibleColumns.map(col => {
                           const isNumeric = col.type === 'number' || col.key === 'quantity';
                           const isFormula = col.type === 'formula';
                           const isOrderCol = col.key === 'order_number';
+                          const width = isOrderCol ? 120 : (columnWidths[col.key] || col.width);
                           let total = null;
                           if (isNumeric) total = orders.reduce((sum, o) => sum + (parseFloat(o[col.key]) || 0), 0);
                           else if (isFormula) total = orders.reduce((sum, o) => { const v = parseFloat(evaluateFormula(col.key, o, columns)); return sum + (isNaN(v) ? 0 : v); }, 0);
-                          return <td key={col.key} className={`py-2 px-3 ${isOrderCol ? `sticky left-[84px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}` : ''}`} style={{ minWidth: columnWidths[col.key] || col.width }}>{total !== null ? <span className="font-barlow font-bold text-sm text-primary" data-testid={`footer-total-${col.key}`}>{Number.isInteger(total) ? total.toLocaleString() : total.toFixed(2)}</span> : isOrderCol ? <span className="font-barlow font-bold text-sm text-primary">{t('total')}</span> : null}</td>;
+                          return <td key={col.key} className={`py-2 px-3 ${isOrderCol ? `sticky left-[88px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderCol ? 120 : 'none' }}>{total !== null ? <span className="font-barlow font-bold text-sm text-primary" data-testid={`footer-total-${col.key}`}>{Number.isInteger(total) ? total.toLocaleString() : total.toFixed(2)}</span> : isOrderCol ? <span className="font-barlow font-bold text-sm text-primary">{t('total')}</span> : null}</td>;
                         })}
                         {(() => { const totalRemaining = orders.reduce((sum, o) => { const ps = productionSummary[o.order_id]; return sum + Math.max(0, (o.quantity || 0) - (ps ? ps.total_produced : 0)); }, 0); return <td className="py-2 px-3" style={{ minWidth: 180 }}><span className="font-barlow font-bold text-sm text-primary" data-testid="footer-total-restante">{totalRemaining.toLocaleString()}</span></td>; })()}
                       </tr>
