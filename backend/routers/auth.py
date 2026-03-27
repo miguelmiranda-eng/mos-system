@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS
 from datetime import datetime, timezone, timedelta
 from passlib.hash import bcrypt
+from fastapi.responses import RedirectResponse
 import uuid, httpx, os, resend, logging
 
 router = APIRouter(prefix="/api")
@@ -10,7 +11,12 @@ logger = logging.getLogger(__name__)
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
-FRONTEND_URL = os.environ.get('FRONTEND_URL', '')
+
+# Direct Google OAuth Config
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://mosdatabase-frontend.k9pirj.easypanel.host').rstrip('/')
+BACKEND_URL = os.environ.get('BACKEND_URL', os.environ.get('REACT_APP_BACKEND_URL', 'https://mosdatabase-backend.k9pirj.easypanel.host')).rstrip('/')
 
 async def _create_session(user_id, response):
     session_token = f"session_{uuid.uuid4().hex}"
@@ -22,8 +28,86 @@ async def _create_session(user_id, response):
     response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
     return session_token
 
+@router.get("/auth/google")
+async def google_login():
+    """Initiate Google OAuth 2.0 flow."""
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
+    
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": f"{BACKEND_URL}/api/auth/google/callback",
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "select_account"
+    }
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{httpx.QueryParams(params)}"
+    return RedirectResponse(url)
+
+@router.get("/auth/google/callback")
+async def google_callback(code: str, response: Response):
+    """Handle Google OAuth 2.0 callback."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google credentials not configured")
+
+    # 1. Exchange code for token
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": f"{BACKEND_URL}/api/auth/google/callback",
+        "grant_type": "authorization_code"
+    }
+    
+    async with httpx.AsyncClient() as client_http:
+        token_resp = await client_http.post(token_url, data=data)
+        if token_resp.status_code != 200:
+            logger.error(f"Token exchange failed: {token_resp.text}")
+            raise HTTPException(status_code=401, detail="Google token exchange failed")
+        token_data = token_resp.json()
+        
+        # 2. Get user info
+        user_info_resp = await client_http.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {token_data['access_token']}"}
+        )
+        if user_info_resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Failed to get Google user info")
+        user_data = user_info_resp.json()
+
+    # 3. Process user in DB
+    email = user_data["email"]
+    name = user_data.get("name", email.split("@")[0])
+    picture = user_data.get("picture", "")
+    
+    existing_user = await db.users.find_one({"email": email})
+    if existing_user:
+        user_id = existing_user["user_id"]
+        role = "admin" if email in ADMIN_EMAILS else existing_user.get("role", "user")
+        await db.users.update_one({"email": email}, {"$set": {
+            "name": name, "picture": picture, "role": role, "auth_type": "google"
+        }})
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        role = "admin" if email in ADMIN_EMAILS else "user"
+        new_user = {
+            "user_id": user_id, "email": email, "name": name,
+            "picture": picture, "role": role, "auth_type": "google",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.users.insert_one(new_user)
+        
+    # 4. Create session and set cookie
+    await _create_session(user_id, response)
+    
+    # 5. Redirect to frontend dashboard
+    return RedirectResponse(f"{FRONTEND_URL}/dashboard")
+
 @router.post("/auth/session")
 async def create_session(request: Request, response: Response):
+    """Legacy proxy session endpoint (kept for backward compatibility)."""
     body = await request.json()
     session_id = body.get("session_id")
     if not session_id:
@@ -36,6 +120,8 @@ async def create_session(request: Request, response: Response):
     if auth_response.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid session_id")
     user_data = auth_response.json()
+    email = user_data["email"]
+    # ... rest of the legacy logic kept as is ...
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     role = "admin" if user_data["email"] in ADMIN_EMAILS else "user"
     existing_user = await db.users.find_one({"email": user_data["email"]}, {"_id": 0})
