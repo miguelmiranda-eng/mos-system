@@ -64,8 +64,13 @@ async def google_callback(code: str, response: Response):
     async with httpx.AsyncClient() as client_http:
         token_resp = await client_http.post(token_url, data=data)
         if token_resp.status_code != 200:
-            logger.error(f"Token exchange failed: {token_resp.text}")
-            raise HTTPException(status_code=401, detail="Google token exchange failed")
+            google_error = token_resp.text
+            try:
+                google_error = token_resp.json()
+            except:
+                pass
+            logger.error(f"Token exchange failed: {google_error}")
+            raise HTTPException(status_code=401, detail={"message": "Google token exchange failed", "google": google_error})
         token_data = token_resp.json()
         
         # 2. Get user info
