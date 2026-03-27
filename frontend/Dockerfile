@@ -12,8 +12,7 @@ ENV CI=false
 
 # Copiar código fuente y construir
 COPY . .
-ARG VITE_API_URL
-ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_API_URL=https://mosdatabase-backend.k9pirj.easypanel.host
 RUN npm run build
 
 # Etapa 2: Servidor Nginx para archivos estáticos
