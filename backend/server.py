@@ -17,7 +17,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=[
+        "https://mosdatabase-frontend.k9pirj.easypanel.host",
+        "http://localhost:3000",
+        "http://localhost:5173"
+    ] + [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
