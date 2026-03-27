@@ -777,35 +777,49 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Bulk Actions Modal */}
+      {/* Floating Bulk Actions Bar */}
       {selectedOrders.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={(e) => { if (e.target === e.currentTarget) { setSelectedOrders([]); } }} data-testid="bulk-actions-overlay">
-          <div className={`rounded-xl shadow-2xl border p-4 md:p-5 w-[90vw] max-w-md ${isDark ? 'bg-card border-border' : 'bg-white border-gray-200'}`} data-testid="bulk-actions-modal">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-base font-semibold">{selectedOrders.length} {t('selected')}</span>
-              <button onClick={() => setSelectedOrders([])} className="p-1 rounded hover:bg-secondary transition-colors" data-testid="close-bulk-modal"><X className="w-4 h-4" /></button>
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="bulk-actions-bar">
+          <div className={`flex items-center gap-4 px-6 py-3 rounded-full shadow-2xl border backdrop-blur-md ${isDark ? 'bg-zinc-900/90 border-primary/30' : 'bg-white/90 border-gray-200'}`}>
+            <div className="flex items-center gap-2 border-r border-border pr-4 mr-1">
+              <span className="text-sm font-bold text-primary">{selectedOrders.length}</span>
+              <span className="text-xs uppercase tracking-wider opacity-70 font-bold">{t('selected')}</span>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-1.5 block">{t('move_to')}</label>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-bold opacity-50">{t('move_to')}:</span>
                 <Select onValueChange={(board) => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }}>
-                  <SelectTrigger className={`w-full h-9 text-sm ${isDark ? 'bg-secondary border-border' : 'bg-gray-50 border-gray-300'}`} data-testid="bulk-move-select"><SelectValue placeholder={`${t('move_to')}...`} /></SelectTrigger>
+                  <SelectTrigger className={`w-36 h-8 text-[11px] font-bold ${isDark ? 'bg-secondary/50 border-border' : 'bg-gray-100 border-gray-300'}`} data-testid="bulk-move-select"><SelectValue placeholder={`${t('move_to')}...`} /></SelectTrigger>
                   <SelectContent className={`z-[200] ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`}>{allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE').map(board => <SelectItem key={board} value={board}>{board}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="flex gap-2 pt-1">
-                <button onClick={handleExportExcel} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-500/15 text-green-600 rounded-lg text-sm font-medium hover:bg-green-500/25 transition-colors" data-testid="export-excel-btn"><Download className="w-4 h-4" /> Excel</button>
-                <button onClick={() => handleExportComplete(true)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/15 text-blue-500 rounded-lg text-sm font-medium hover:bg-blue-500/25 transition-colors" data-testid="export-complete-btn"><FileJson className="w-4 h-4" /> Completo</button>
+
+              <div className="h-6 w-px bg-border mx-1"></div>
+
+              <div className="flex items-center gap-2">
+                <button onClick={handleExportExcel} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-green-50 text-green-600 hover:bg-green-100'}`} title="Exportar a Excel" data-testid="export-excel-btn">
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Excel</span>
+                </button>
+                <button onClick={() => handleExportComplete(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="Exportar completo (JSON)" data-testid="export-complete-btn">
+                  <FileJson className="w-3.5 h-3.5" />
+                  <span>Completo</span>
+                </button>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => { if (selectedOrders.length === 0) return; if (!window.confirm(`${t('delete')} ${selectedOrders.length} ${t('orders')}?`)) return; handleBulkMove(selectedOrders, "PAPELERA DE RECICLAJE"); setSelectedOrders([]); }} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-destructive/15 text-destructive rounded-lg text-sm font-medium hover:bg-destructive/25 transition-colors" data-testid="bulk-delete-btn"><Trash2 className="w-4 h-4" /> {t('trash')}</button>
-                <button onClick={handleImportComplete} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-purple-500/15 text-purple-500 rounded-lg text-sm font-medium hover:bg-purple-500/25 transition-colors" data-testid="import-complete-btn"><ImageUp className="w-4 h-4" /> Importar</button>
-              </div>
-              <div className="flex items-center justify-center gap-3 pt-1 border-t border-border">
-                <button onClick={handleSelectAll} className="text-xs text-primary hover:underline pt-2">{t('all')}</button>
-                <span className="text-muted-foreground pt-2">|</span>
-                <button onClick={handleDeselectAll} className="text-xs text-primary hover:underline pt-2">{t('none')}</button>
-              </div>
+
+              <div className="h-6 w-px bg-border mx-1"></div>
+
+              <button onClick={() => { if (selectedOrders.length === 0) return; if (!window.confirm(`${t('delete')} ${selectedOrders.length} ${t('orders')}?`)) return; handleBulkMove(selectedOrders, "PAPELERA DE RECICLAJE"); setSelectedOrders([]); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{t('trash')}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1 border-l border-border pl-4 ml-1">
+              <button onClick={handleDeselectAll} className="p-1.5 hover:bg-secondary rounded-full text-muted-foreground hover:text-foreground transition-all" title={t('none')} data-testid="close-bulk-bar">
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
