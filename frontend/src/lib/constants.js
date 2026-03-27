@@ -171,7 +171,7 @@ export const BOARD_COLORS = {
 
 export const getBoardStyle = (board) => {
   const colors = BOARD_COLORS[board];
-  if (colors) return { background: `linear-gradient(135deg, ${colors.bg} 0%, ${colors.accent}33 100%)`, borderLeft: `5px solid ${colors.accent}` };
+  if (colors) return { background: `linear-gradient(135deg, ${colors.bg} 0%, ${colors.accent}99 100%)`, borderLeft: `5px solid ${colors.accent}` };
   if (board.startsWith('MAQUINA')) {
     const num = parseInt(board.replace('MAQUINA', '')) || 1;
     const hue = (num * 25) % 360;
