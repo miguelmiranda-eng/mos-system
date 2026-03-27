@@ -11,7 +11,9 @@ import os, uuid, logging
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB
+# Environment detection
+ENV = os.environ.get('ENV', 'local').lower()
+IS_PROD = ENV == 'production'
 mongo_url = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URL')
 if not mongo_url:
     raise KeyError("Neither MONGO_URL, MONGODB_URI, nor MONGODB_URL found in environment variables")

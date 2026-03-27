@@ -12,11 +12,18 @@ logger = logging.getLogger(__name__)
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
+from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS, IS_PROD
+
 # Direct Google OAuth Config
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
-FRONTEND_URL = "https://mosdatabase-frontend.k9pirj.easypanel.host"
-REDIRECT_URI = "https://mosdatabase-backend.k9pirj.easypanel.host/api/auth/google/callback"
+
+if IS_PROD:
+    FRONTEND_URL = "https://mosdatabase-frontend.k9pirj.easypanel.host"
+    REDIRECT_URI = "https://mosdatabase-backend.k9pirj.easypanel.host/api/auth/google/callback"
+else:
+    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+    REDIRECT_URI = os.environ.get('REDIRECT_URI', 'http://localhost:8000/api/auth/google/callback')
 
 
 async def _create_session(user_id, response):

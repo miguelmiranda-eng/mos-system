@@ -86,7 +86,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
           });
           if (imgRes.ok) {
             const imgData = await imgRes.json();
-            finalContent = finalContent ? `${finalContent}\n[img]${imgData.url}[/img]` : `[img]${imgData.url}[/img]`;
+            // Store ONLY the storage_key in the tag for environment-agnostic links
+            const key = imgData.storage_key || imgData.url;
+            finalContent = finalContent ? `${finalContent}\n[img]${key}[/img]` : `[img]${key}[/img]`;
           } else {
             toast.error(`Error subiendo ${img.name}`);
           }
@@ -278,8 +280,15 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       });
     }
     return parts.map((part, i) => {
-      if (i % 2 === 1) return <img key={i} src={part} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(part, '_blank')} data-testid="comment-image" />;
-      return part ? <span key={i}>{part}</span> : null;
+      if (i % 2 === 1) {
+        // If part is a full URL, use it (backward compat)
+        // Otherwise, build it using the current API constant
+        const src = (part.startsWith('http') || part.startsWith('/api/uploads/')) 
+          ? part 
+          : `${API}/uploads/${part}`;
+        return <img key={i} src={src} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(src, '_blank')} data-testid="comment-image" />;
+      }
+      return part ? <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span> : null;
     });
   };
 

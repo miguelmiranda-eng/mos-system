@@ -375,7 +375,7 @@ async def upload_image(order_id: str, request: Request):
         image_url = f"{backend_url}/api/uploads/{storage_key}"
         await db.orders.update_one({"order_id": order_id}, {"$push": {"images": {"filename": filename, "url": image_url, "uploaded_at": datetime.now(timezone.utc).isoformat()}}})
         await log_activity(user, "upload_image", {"order_id": order_id, "filename": filename})
-        return {"url": image_url, "filename": filename}
+        return {"url": image_url, "filename": filename, "storage_key": storage_key}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
