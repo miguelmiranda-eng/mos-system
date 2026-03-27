@@ -971,7 +971,8 @@ const babelMetadataPlugin = ({ types: t }) => {
             }
           });
         }
-      });
+      }
+    });
 
       if (result) return result;
     }
