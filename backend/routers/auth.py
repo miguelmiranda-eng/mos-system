@@ -15,8 +15,8 @@ SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 # Direct Google OAuth Config
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://mosdatabase-frontend.k9pirj.easypanel.host').rstrip('/')
-BACKEND_URL = os.environ.get('BACKEND_URL', os.environ.get('REACT_APP_BACKEND_URL', 'https://mosdatabase-backend.k9pirj.easypanel.host')).rstrip('/')
+FRONTEND_URL = "https://mosdatabase-frontend.k9pirj.easypanel.host"
+REDIRECT_URI = "https://mosdatabase-backend.k9pirj.easypanel.host/api/auth/google/callback"
 
 async def _create_session(user_id, response):
     session_token = f"session_{uuid.uuid4().hex}"
@@ -36,7 +36,7 @@ async def google_login():
     
     params = {
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": f"{BACKEND_URL}/api/auth/google/callback",
+        "redirect_uri": REDIRECT_URI,
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
@@ -57,7 +57,7 @@ async def google_callback(code: str, response: Response):
         "code": code,
         "client_id": GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": f"{BACKEND_URL}/api/auth/google/callback",
+        "redirect_uri": REDIRECT_URI,
         "grant_type": "authorization_code"
     }
     
