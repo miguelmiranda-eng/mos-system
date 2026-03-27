@@ -12,7 +12,7 @@ ENV CI=false
 
 # Copiar código fuente y construir
 COPY . .
-ENV REACT_APP_BACKEND_URL=https://mosdatabase-backend.k9pirj.easypanel.host
+RUN echo "REACT_APP_BACKEND_URL=https://mosdatabase-backend.k9pirj.easypanel.host" > .env.production
 RUN npm run build
 
 # Etapa 2: Servidor Nginx para archivos estáticos
