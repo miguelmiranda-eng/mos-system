@@ -107,11 +107,11 @@ async def google_callback(code: str, response: Response):
         }
         await db.users.insert_one(new_user)
         
-    # 4. Create session and set cookie
-    await _create_session(user_id, response)
+    # 4. Create session and set cookie on the RedirectResponse
+    redirect_resp = RedirectResponse(f"{FRONTEND_URL}/dashboard")
+    await _create_session(user_id, redirect_resp)
     
-    # 5. Redirect to frontend dashboard
-    return RedirectResponse(f"{FRONTEND_URL}/dashboard")
+    return redirect_resp
 
 @router.post("/auth/session")
 async def create_session(request: Request, response: Response):

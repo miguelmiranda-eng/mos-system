@@ -33,7 +33,10 @@ if not db_name:
 db = client[db_name]
 
 # Config
-ADMIN_EMAILS = ["miguel.miranda@prosper-mfg.com"]
+ADMIN_EMAILS = [
+    "miguel.miranda@prosper-mfg.com",
+    "200492miguel.miranda@gmail.com"
+]
 UPLOADS_DIR = ROOT_DIR / 'uploads'
 try:
     UPLOADS_DIR.mkdir(exist_ok=True)
