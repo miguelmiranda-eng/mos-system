@@ -2,12 +2,23 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "../App";
 import { useLang } from "../contexts/LanguageContext";
 import {
-  Search, Plus, LogOut, X, RefreshCw, Trash2,
+  Search, Plus, LogOut, X, RefreshCw, Trash2, ListFilter,
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
-  Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft
+  Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft,
+  ChevronDown, ChevronUp, Check, FileDown
 } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuSeparator,
+} from "./ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Toaster, toast } from "sonner";
 import * as XLSX from 'xlsx';
@@ -97,6 +108,8 @@ const Dashboard = () => {
   const [showNewBoard, setShowNewBoard] = useState(false);
   const [newBoardName, setNewBoardName] = useState('');
   const [deleteBoardConfirm, setDeleteBoardConfirm] = useState(null); // null | { step: 1|2, name: string }
+  const [showMachinesVisibility, setShowMachinesVisibility] = useState(false);
+  const [highlightedCommentId, setHighlightedCommentId] = useState(null);
 
   // Core data hook
   const {
@@ -218,6 +231,11 @@ const Dashboard = () => {
     else { document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light-theme'); }
   });
 
+  // Clear selection on board switch
+  useEffect(() => {
+    setSelectedOrders([]);
+  }, [currentBoard]);
+
   // Fetch BLANKS + READY TO SCHEDULE orders for views in SCHEDULING
   useEffect(() => {
     if (currentBoard !== 'SCHEDULING') return;
@@ -332,25 +350,49 @@ const Dashboard = () => {
 
   // Export
   const handleExportExcel = () => {
-    const ordersToExport = orders.filter(o => selectedOrders.includes(o.order_id));
-    if (ordersToExport.length === 0) { toast.error(t('select_export')); return; }
     try {
-      const exportData = ordersToExport.map(o => { const row = {}; columns.forEach(col => { row[col.label] = o[col.key] || ''; }); row[t('board')] = o.board; return row; });
+      const selectedIds = selectedOrders.map(String);
+      const ordersToExport = allOrders.filter(o => selectedIds.includes(String(o.order_id)));
+      
+      if (ordersToExport.length === 0) {
+        toast.error(t('select_export'));
+        return;
+      }
+
+      const exportData = ordersToExport.map(o => {
+        const row = {};
+        visibleColumns.forEach(col => {
+          row[col.label] = o[col.key] || '';
+        });
+        row[t('board')] = o.board;
+        return row;
+      });
+
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, t('orders'));
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `orders_export_${new Date().toISOString().split('T')[0]}.xlsx`;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-      toast.success(`${ordersToExport.length} ${t('orders')} exported`);
-    } catch (e) { toast.error('Error exporting: ' + (e.message || '')); }
+      saveAs(blob, `orders_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success(`${ordersToExport.length} ${t('orders')} exported (solo visibles)`);
+    } catch (e) {
+      console.error('Export error:', e);
+      toast.error('Error exporting: ' + (e.message || ''));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedOrders.length === 0) return;
+    const confirmMsg = `${t('delete')} ${selectedOrders.length} ${t('orders')}?`;
+    if (!window.confirm(confirmMsg)) return;
+    
+    try {
+      await handleBulkMove(selectedOrders, "PAPELERA DE RECICLAJE");
+      setSelectedOrders([]);
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+      toast.error(t('move_err'));
+    }
   };
 
   // Export Complete (with comments & images)
@@ -425,7 +467,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className={`h-screen flex flex-col overflow-hidden ${isDark ? 'bg-background text-foreground' : 'bg-white text-gray-900'}`}>
+    <div className={`h-screen flex flex-col overflow-hidden ${!isDark ? 'light-theme' : ''} bg-background text-foreground transition-colors duration-300`}>
       <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
       <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
@@ -437,137 +479,248 @@ const Dashboard = () => {
       )}
 
       {/* Header */}
-      <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-gray-50 border-gray-200'}`}>
+      <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-secondary/30 border-gray-200 shadow-sm'}`}>
         <div className="flex items-center gap-3 flex-shrink-0">
           <h1 className={`font-barlow font-bold text-base md:text-lg tracking-tight uppercase ${isDark ? '' : 'text-gray-900'}`}>MOS <span className="text-primary">S</span><span className="text-primary hidden md:inline">YSTEM</span></h1>
           {/* Notifications Bell - next to logo */}
           <div>
             <button onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }} className={`p-2 rounded-lg relative flex items-center justify-center transition-all ${unreadCount > 0 ? 'text-primary' : (isDark ? 'text-muted-foreground hover:text-foreground' : 'text-gray-500 hover:text-gray-900')}`} title={t('notifications')} data-testid="notifications-btn">
-              <Bell className="w-5 h-5 md:w-6 md:h-6" />
-              {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1" data-testid="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+              <Bell className={`w-5 h-5 md:w-6 md:h-6 ${unreadCount > 0 ? 'animate-pulse-primary' : ''}`} />
+              {unreadCount > 0 && (
+                <>
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] bg-destructive text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-lg border-2 border-background animate-bounce" data-testid="notification-badge">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] bg-destructive rounded-full animate-ping-soft opacity-75"></span>
+                </>
+              )}
             </button>
             {showNotifications && require('react-dom').createPortal(
-              <div className={`fixed left-2 md:left-4 top-[60px] w-80 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[99999] ${isDark ? 'bg-card border-border' : 'bg-white border-gray-200'}`} data-testid="notifications-dropdown">
-                <div className="p-3 border-b border-border font-barlow font-bold text-sm uppercase tracking-wide">Notificaciones</div>
-                {notifications.length > 0 ? notifications.slice(0, 20).map(n => (
-                  <div key={n.notification_id} className={`p-3 border-b border-border/50 text-sm cursor-pointer hover:bg-secondary/30 ${!n.read ? 'bg-primary/5' : ''}`}
-                    onClick={async () => {
-                      setShowNotifications(false);
-                      if (!n.order_id) return;
-                      let targetOrder = allOrders.find(o => o.order_id === n.order_id);
-                      if (!targetOrder) {
-                        try { const res = await fetch(`${API}/orders/${n.order_id}`, { credentials: 'include' }); if (res.ok) targetOrder = await res.json(); } catch { /* silent */ }
-                      }
-                      if (targetOrder) {
-                        setCurrentBoard(targetOrder.board);
-                        if (n.type === 'comment' || n.type === 'mention') setTimeout(() => setCommentsOrder(targetOrder), 300);
-                      }
-                    }}
-                    data-testid={`notification-${n.notification_id}`}>
-                    <div className="flex items-center gap-2">
-                      {n.type === 'mention' && <AtSign className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                      {n.type === 'move' && <ArrowRightLeft className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />}
-                      <div className="text-foreground flex-1">{n.message}</div>
+              <div className={`fixed left-2 md:left-4 top-[60px] w-80 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[99999] bg-card border-border`} data-testid="notifications-dropdown">
+                <div className="p-3 border-b border-border flex items-center justify-between">
+                  <span className="font-barlow font-black text-sm uppercase tracking-widest text-primary">Notificaciones</span>
+                  {unreadCount > 0 && <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold animate-pulse">NUEVAS</span>}
+                </div>
+                {notifications.length > 0 ? notifications.slice(0, 20).map(n => {
+                  const isMention = n.type === 'mention' || n.type === 'comment';
+                  return (
+                    <div key={n.notification_id} className={`p-4 border-b border-border/40 text-sm cursor-pointer transition-all hover:bg-primary/5 ${!n.read ? (isMention ? 'mention-highlight' : 'bg-primary/5') : 'opacity-80'}`}
+                      onClick={async () => {
+                        setShowNotifications(false);
+                        if (!n.order_id) return;
+                        let targetOrder = allOrders.find(o => o.order_id === n.order_id);
+                        if (!targetOrder) {
+                          try { const res = await fetch(`${API}/orders/${n.order_id}`, { credentials: 'include' }); if (res.ok) targetOrder = await res.json(); } catch { /* silent */ }
+                        }
+                        if (targetOrder) {
+                          setCurrentBoard(targetOrder.board);
+                          if (n.type === 'comment' || n.type === 'mention') {
+                            setHighlightedCommentId(n.comment_id || null);
+                            setTimeout(() => setCommentsOrder(targetOrder), 300);
+                          }
+                        }
+                      }}
+                      data-testid={`notification-${n.notification_id}`}>
+                      <div className="flex items-start gap-3">
+                        <div className={`mt-0.5 p-1.5 rounded-full ${isMention ? 'bg-primary/20 text-primary shadow-inner' : 'bg-secondary text-muted-foreground'}`}>
+                          {n.type === 'mention' ? <AtSign className="w-4 h-4 animate-pulse" /> : 
+                           n.type === 'move' ? <ArrowRightLeft className="w-4 h-4" /> : 
+                           <MessageSquare className="w-4 h-4" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`leading-relaxed ${!n.read ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
+                            {isMention && <span className="text-[10px] text-primary font-black uppercase tracking-tighter mr-1.5 inline-block px-1.5 py-0 bg-primary/10 rounded border border-primary/20">Mencion</span>}
+                            {n.message}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1.5 uppercase font-medium tracking-tighter">
+                            {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            <span className="opacity-30">•</span>
+                            {new Date(n.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                        {!n.read && <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0 shadow-[0_0_8px_hsl(var(--primary))]"></div>}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">{new Date(n.created_at).toLocaleString()}</div>
-                  </div>
-                )) : <div className="p-4 text-center text-muted-foreground text-sm">Sin notificaciones</div>}
+                  );
+                }) : <div className="p-8 text-center"><div className="text-muted-foreground text-sm font-medium">Bandeja de entrada vacía</div><div className="text-[10px] text-muted-foreground/60 uppercase mt-1 tracking-widest">No hay nuevas alertas</div></div>}
               </div>,
               document.body
             )}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-1 justify-center max-w-xs md:max-w-md mx-2 md:mx-4">
-          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); } }} placeholder={t('search_placeholder')} className={`w-full rounded px-2 md:px-3 py-1.5 text-sm ${isDark ? 'bg-secondary border border-border text-foreground' : 'bg-white border border-gray-300 text-gray-900'}`} data-testid="global-search-input" />
-          <button onClick={async () => { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); }} className={`p-1.5 rounded flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} data-testid="global-search-btn"><Search className="w-4 h-4" /></button>
+          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); } }} placeholder={t('search_placeholder')} className={`w-full rounded px-2 md:px-3 py-1.5 text-sm bg-secondary/50 border border-border text-foreground`} data-testid="global-search-input" />
+          <button onClick={async () => { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); }} className={`p-1.5 rounded flex-shrink-0 bg-secondary/80 border border-border hover:bg-secondary`} data-testid="global-search-btn"><Search className="w-4 h-4" /></button>
         </div>
-        <div className="flex items-center gap-1 md:gap-1.5 flex-shrink-0 overflow-x-auto max-w-[40vw] md:max-w-none scrollbar-hide">
-          <button onClick={toggleTheme} className={`p-1.5 rounded flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={isDark ? t('light_mode') : t('dark_mode')} data-testid="theme-toggle-btn">{isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}</button>
-          <button onClick={toggleLang} className={`p-1.5 rounded flex items-center gap-0.5 text-[10px] font-bold flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} data-testid="lang-toggle-btn"><Languages className="w-3.5 h-3.5" />{lang === 'es' ? 'EN' : 'ES'}</button>
-          <button onClick={() => setShowAutomations(true)} className={`p-1.5 rounded flex-shrink-0 hidden md:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('automations')} data-testid="automations-btn"><Zap className="w-3.5 h-3.5" /></button>
-          <button onClick={() => { setShowTrash(true); fetchTrashOrders(); }} className={`p-1.5 rounded flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('trash')} data-testid="trash-btn"><Trash2 className="w-3.5 h-3.5 text-destructive" /></button>
-          <button onClick={() => { setShowAnalytics(true); fetchAllOrders(); }} className={`p-1.5 rounded flex-shrink-0 hidden md:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('analytics')} data-testid="analytics-btn"><BarChart3 className="w-3.5 h-3.5" /></button>
+        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+          {/* Grouped utilities */}
+          <div className={`flex items-center gap-0.5 rounded-xl border border-border p-0.5 ${isDark ? 'bg-secondary/40' : 'bg-secondary/60'}`}>
+            <button onClick={toggleTheme} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={isDark ? t('light_mode') : t('dark_mode')} data-testid="theme-toggle-btn">{isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}</button>
+            <button onClick={toggleLang} className={`p-1.5 rounded-lg flex items-center gap-0.5 text-[10px] font-bold flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} data-testid="lang-toggle-btn"><Languages className="w-3.5 h-3.5" />{lang === 'es' ? 'EN' : 'ES'}</button>
+            <button onClick={() => setShowAutomations(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('automations')} data-testid="automations-btn"><Zap className="w-3.5 h-3.5" /></button>
+            <button onClick={() => { setShowTrash(true); fetchTrashOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all`} title={t('trash')} data-testid="trash-btn"><Trash2 className="w-3.5 h-3.5" /></button>
+            <button onClick={() => { setShowAnalytics(true); fetchAllOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('analytics')} data-testid="analytics-btn"><BarChart3 className="w-3.5 h-3.5" /></button>
+          </div>
           {isAdmin && (<>
-            <div className="w-px h-5 bg-border mx-0.5 hidden md:block"></div>
-            <button onClick={handleQuickUndo} className={`p-1.5 rounded flex-shrink-0 hidden md:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('undo_last')} data-testid="quick-undo-btn"><Undo2 className="w-3.5 h-3.5" /></button>
-            <button onClick={() => setShowInvite(true)} className={`p-1.5 rounded flex-shrink-0 hidden md:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
-            <button onClick={() => setShowActivityLog(true)} className={`p-1.5 rounded flex-shrink-0 hidden md:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
-            <button onClick={() => setShowOptionsManager(true)} className={`p-1.5 rounded flex-shrink-0 ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title={t('manage_options')} data-testid="manage-options-btn"><Settings className="w-3.5 h-3.5" /></button>
-            <button onClick={() => setShowOperators(true)} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
-            <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded flex-shrink-0 hidden lg:flex ${isDark ? 'bg-secondary border border-border hover:bg-secondary/80' : 'bg-gray-100 border border-gray-300 hover:bg-gray-200'}`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
+            <div className={`flex items-center gap-0.5 rounded-xl border border-border p-0.5 ml-1 ${isDark ? 'bg-secondary/40' : 'bg-secondary/60'}`}>
+              <button onClick={handleQuickUndo} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('undo_last')} data-testid="quick-undo-btn"><Undo2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowInvite(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowActivityLog(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowOptionsManager(true)} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('manage_options')} data-testid="manage-options-btn"><Settings className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowOperators(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
+            </div>
           </>)}
         </div>
         <div className="w-px h-5 bg-border mx-0.5 flex-shrink-0"></div>
         <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {user?.picture && <img src={user.picture} alt="" className="w-6 h-6 md:w-7 md:h-7 rounded-full" />}
-          <div className="flex-col leading-tight hidden sm:flex"><span className={`text-xs font-medium ${isDark ? 'text-foreground' : 'text-gray-900'}`}>{user?.name}</span>{isAdmin && <span className="text-[10px] text-primary font-bold">Admin</span>}</div>
+          <div className="flex-col leading-tight hidden sm:flex"><span className={`text-xs font-medium text-foreground`}>{user?.name}</span>{isAdmin && <span className="text-[10px] text-primary font-bold">Admin</span>}</div>
           <button onClick={logout} className="p-1.5 text-muted-foreground hover:text-foreground flex-shrink-0" title={t('logout')}><LogOut className="w-3.5 h-3.5" /></button>
         </div>
       </header>
 
-      {/* Board Indicator + Actions */}
-      <div className="px-2 md:px-4 py-2 md:py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2 shadow-lg" style={{ ...getBoardStyle(currentBoard), color: '#FFFFFF' }}>
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          <Select value={currentBoard} onValueChange={setCurrentBoard}>
-            <SelectTrigger className="w-36 md:w-52 bg-white/15 border-white/25 text-white font-barlow font-bold text-xs md:text-sm backdrop-blur-sm flex-shrink-0" data-testid="board-selector"><SelectValue /></SelectTrigger>
-            <SelectContent className="bg-popover border-border z-[100]">{visibleBoards.map(board => <SelectItem key={board} value={board}>{board}</SelectItem>)}</SelectContent>
-          </Select>
-          <div className="flex flex-col min-w-0 hidden md:flex"><span className="font-barlow font-black text-base md:text-2xl uppercase tracking-wider drop-shadow-lg truncate" data-testid="board-name-display">{currentBoard}</span><span className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-70 font-medium">{currentBoard === 'MASTER' ? 'Vista consolidada' : 'Tablero Activo'}</span></div>
-          <span className="text-xs md:text-sm font-barlow font-bold bg-white/15 backdrop-blur-sm px-2 md:px-3 py-1 rounded-lg flex-shrink-0 whitespace-nowrap" data-testid="order-count">{orders.length} <span className="text-[10px] font-normal opacity-80">ord</span></span>
+      {/* Board Bar */}
+      <div className="px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shadow-lg" style={{ ...getBoardStyle(currentBoard), color: '#FFFFFF' }}>
+
+        {/* LEFT: Board selector + count */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger className="h-9 bg-white/10 border border-white/25 text-white font-barlow font-black text-base md:text-lg backdrop-blur-md rounded-xl flex items-center justify-between px-3 md:px-4 hover:bg-white/20 transition-all outline-none focus:ring-2 focus:ring-white/30 shadow-lg gap-2 min-w-[140px] md:min-w-[220px]" data-testid="board-selector">
+              <span className="truncate font-black tracking-tight">{currentBoard}</span>
+              <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="z-[300] min-w-[200px] border-2 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              {visibleBoards.filter(b => !b.startsWith('MAQUINA')).map(board => (
+                <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-3.5 px-5 text-sm md:text-base font-black tracking-tight ${currentBoard === board ? 'bg-primary text-primary-foreground' : ''}`}>
+                  {board}
+                  {currentBoard === board && <Check className="w-5 h-5" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator className="opacity-50" />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 text-sm md:text-base font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider">
+                  <div className="flex items-center gap-2.5"><Monitor className="w-5 h-5" /><span>MAQUINAS</span></div>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="z-[301] min-w-[240px] shadow-2xl p-2">
+                  {visibleBoards.filter(b => b.startsWith('MAQUINA')).map(board => (
+                    <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-3 px-5 text-sm font-black tracking-tight ${currentBoard === board ? 'bg-primary text-primary-foreground' : ''}`}>
+                      {board}{currentBoard === board && <Check className="w-5 h-5" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <span className="text-[11px] font-barlow font-bold bg-white/15 backdrop-blur-sm px-2.5 py-1 rounded-lg flex-shrink-0 border border-white/10" data-testid="order-count">
+            {orders.length} <span className="text-[10px] font-normal opacity-70">ord</span>
+          </span>
         </div>
-        <div className="flex items-center gap-1.5 md:gap-2 overflow-visible flex-wrap">
-          {currentBoard === 'SCHEDULING' && <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded text-xs font-bold backdrop-blur-sm transition-all flex-shrink-0 whitespace-nowrap" data-testid="new-order-btn"><Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('new_order')}</span><span className="sm:hidden">+</span></button>}
-          <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-green-500/80 hover:bg-green-500 text-white rounded text-xs font-bold transition-all flex-shrink-0 whitespace-nowrap" data-testid="production-btn"><Factory className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('production')}</span></button>
-          <button onClick={() => setShowGantt(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded text-xs font-bold backdrop-blur-sm transition-all flex-shrink-0 whitespace-nowrap" data-testid="gantt-btn"><GanttChart className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('gantt')}</span></button>
-          <button onClick={() => setShowCapacityPlan(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-orange-500/80 hover:bg-orange-500 text-white rounded text-xs font-bold transition-all flex-shrink-0 whitespace-nowrap" data-testid="capacity-plan-btn"><TrendingUp className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('plan')}</span></button>
-          <button onClick={() => setShowProductionScreen(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded text-xs font-bold backdrop-blur-sm transition-all flex-shrink-0 whitespace-nowrap" data-testid="production-screen-btn"><Monitor className="w-3.5 h-3.5" /> <span className="hidden md:inline">{t('prod_screen_title')}</span></button>
-          <button onClick={() => window.location.href = '/wms'} className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded text-xs font-bold backdrop-blur-sm transition-all flex-shrink-0 whitespace-nowrap" data-testid="wms-btn"><Warehouse className="w-3.5 h-3.5" /> WMS</button>
+
+        {/* CENTER / RIGHT: Action buttons */}
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide flex-shrink-0">
+          {/* Primary actions */}
+          {currentBoard === 'SCHEDULING' && (
+            <button onClick={() => setShowNewOrder(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
+              data-testid="new-order-btn">
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('new_order')}</span>
+            </button>
+          )}
+
+          {/* Consistent nav buttons group */}
+          <div className="flex items-center gap-1 bg-white/10 backdrop-blur-sm border border-white/15 rounded-xl p-1">
+            <button onClick={() => { setShowProduction(true); fetchAllOrders(); }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-500/80 hover:bg-emerald-500 transition-all whitespace-nowrap"
+              data-testid="production-btn">
+              <Factory className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('production')}</span>
+            </button>
+            <button onClick={() => setShowGantt(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
+              data-testid="gantt-btn">
+              <GanttChart className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('gantt')}</span>
+            </button>
+            <button onClick={() => setShowCapacityPlan(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-500/80 hover:bg-orange-500 transition-all whitespace-nowrap"
+              data-testid="capacity-plan-btn">
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('plan')}</span>
+            </button>
+            <button onClick={() => setShowProductionScreen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
+              data-testid="production-screen-btn">
+              <Monitor className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">{t('prod_screen_title')}</span>
+            </button>
+            <button onClick={() => window.location.href = '/wms'}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
+              data-testid="wms-btn">
+              <Warehouse className="w-3.5 h-3.5" /> WMS
+            </button>
+          </div>
+
+          {/* Admin tools — icon tray */}
           {isAdmin && (
-            <div className="flex items-center gap-1 ml-1 pl-2 border-l border-white/20">
+            <div className="flex items-center gap-0.5 bg-white/10 backdrop-blur-sm border border-white/15 rounded-xl p-1 ml-0.5">
               {!showNewBoard ? (
-                <button onClick={() => setShowNewBoard(true)} className="p-2 bg-white/15 rounded-lg hover:bg-white/25 backdrop-blur-sm transition-all" title="Crear tablero" data-testid="create-board-btn"><Plus className="w-4 h-4" /></button>
+                <button onClick={() => setShowNewBoard(true)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Crear tablero" data-testid="create-board-btn"><Plus className="w-4 h-4" /></button>
               ) : (
-                <div className="flex items-center gap-1 bg-white/15 backdrop-blur-sm rounded-lg px-2 py-1">
-                  <input type="text" value={newBoardName} onChange={e => setNewBoardName(e.target.value)} onKeyDown={async e => { if (e.key === 'Enter' && newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } if (e.key === 'Escape') setShowNewBoard(false); }} placeholder="Nombre..." className="w-28 h-6 px-2 text-xs bg-white/20 border border-white/30 rounded text-white placeholder-white/50" autoFocus data-testid="new-board-input" />
-                  <button onClick={async () => { if (newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } }} className="p-0.5 hover:bg-white/20 rounded"><Plus className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => { setShowNewBoard(false); setNewBoardName(''); }} className="p-0.5 hover:bg-white/20 rounded"><X className="w-3.5 h-3.5" /></button>
+                <div className="flex items-center gap-1 px-2 py-1">
+                  <input type="text" value={newBoardName} onChange={e => setNewBoardName(e.target.value)}
+                    onKeyDown={async e => { if (e.key === 'Enter' && newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } if (e.key === 'Escape') setShowNewBoard(false); }}
+                    placeholder="Nombre..." className="w-24 h-6 px-2 text-xs bg-white/10 border border-white/30 rounded text-white placeholder-white/50" autoFocus data-testid="new-board-input" />
+                  <button onClick={async () => { if (newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } }} className="p-0.5 hover:bg-white/10 rounded"><Plus className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => { setShowNewBoard(false); setNewBoardName(''); }} className="p-0.5 hover:bg-white/10 rounded"><X className="w-3.5 h-3.5" /></button>
                 </div>
               )}
               {currentBoard !== 'MASTER' && currentBoard !== 'COMPLETOS' && currentBoard !== 'PAPELERA DE RECICLAJE' && (
-                <button onClick={() => setDeleteBoardConfirm({ step: 1, name: currentBoard })} className="p-2 bg-white/15 rounded-lg hover:bg-red-500/50 backdrop-blur-sm transition-all" title={`Eliminar ${currentBoard}`} data-testid="delete-board-btn"><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => setDeleteBoardConfirm({ step: 1, name: currentBoard })} className="p-1.5 rounded-lg hover:bg-red-500/50 transition-all" title={`Eliminar ${currentBoard}`} data-testid="delete-board-btn"><Trash2 className="w-4 h-4" /></button>
               )}
-              {isAdmin && <button onClick={() => setShowAddColumn(true)} className="p-2 bg-white/15 rounded-lg hover:bg-white/25 backdrop-blur-sm transition-all" title={t('add_column')} data-testid="add-column-btn"><PlusCircle className="w-4 h-4" /></button>}
-              {isAdmin && (
-                <div className="relative">
-                  <button onClick={() => setShowBoardVisibility(!showBoardVisibility)} className="p-2 bg-white/15 rounded-lg hover:bg-white/25 backdrop-blur-sm transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn"><Eye className="w-4 h-4" /></button>
-                  {showBoardVisibility && (
-                    <div className="absolute right-0 top-11 w-64 max-h-80 overflow-y-auto rounded-lg shadow-xl border z-[300] bg-card border-border" data-testid="board-visibility-panel">
-                      <div className="p-3 border-b border-border font-barlow font-bold text-xs uppercase tracking-wide text-foreground">Visibilidad de Tableros</div>
-                      {allBoardsIncludingHidden.filter(b => b !== 'MASTER').map(b => {
-                        const isHidden = hiddenBoards.includes(b);
-                        return (
-                          <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
-                            {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                            <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                          </button>
-                        );
-                      })}
-                      <div className="p-2 border-t border-border">
-                        <p className="text-[10px] text-muted-foreground">Los tableros ocultos no aparecen en el selector.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              <button onClick={() => setShowAddColumn(true)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('add_column')} data-testid="add-column-btn"><PlusCircle className="w-4 h-4" /></button>
+              <div className="relative">
+                <button onClick={() => setShowBoardVisibility(!showBoardVisibility)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn"><Eye className="w-4 h-4" /></button>
+                {showBoardVisibility && (
+                  <div className="absolute right-0 top-10 w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl border z-[300] bg-card border-border" data-testid="board-visibility-panel">
+                    <div className="p-3 border-b border-border font-barlow font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
+                    {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
+                      const isHidden = hiddenBoards.includes(b);
+                      return (
+                        <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
+                          {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                          <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                        </button>
+                      );
+                    })}
+                    <button onClick={() => setShowMachinesVisibility(!showMachinesVisibility)} className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black bg-secondary/30 text-primary uppercase tracking-widest mt-1 hover:bg-secondary/50 transition-all">
+                      <div className="flex items-center gap-1.5"><Monitor className="w-3 h-3" /> MAQUINAS</div>
+                      {showMachinesVisibility ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                    {showMachinesVisibility && allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).map(b => {
+                      const isHidden = hiddenBoards.includes(b);
+                      return (
+                        <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
+                          {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                          <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                        </button>
+                      );
+                    })}
+                    <div className="p-2 border-t border-border"><p className="text-[10px] text-muted-foreground">Los tableros ocultos no aparecen en el selector.</p></div>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setShowColumnManager(!showColumnManager)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('show_columns')} data-testid="column-manager-btn"><Settings className="w-4 h-4" /></button>
             </div>
           )}
-          <button onClick={() => setShowColumnManager(!showColumnManager)} className="p-2 bg-white/15 rounded-lg hover:bg-white/25 backdrop-blur-sm transition-all ml-1" title={t('show_columns')} data-testid="column-manager-btn"><Settings className="w-4 h-4" /></button>
         </div>
       </div>
 
       {/* Column Manager Panel */}
       {showColumnManager && (
-        <div className={`border-b px-4 py-3 ${isDark ? 'border-border bg-zinc-900/80' : 'border-gray-200 bg-gray-50'}`} data-testid="column-manager-panel">
+        <div className={`border-b px-4 py-3 bg-secondary/30 border-border`} data-testid="column-manager-panel">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Columnas del tablero: {currentBoard}</span>
             <button onClick={() => setShowColumnManager(false)} className="p-1 hover:bg-secondary rounded"><X className="w-4 h-4" /></button>
@@ -576,7 +729,7 @@ const Dashboard = () => {
             {columns.map(col => {
               const isHidden = (hiddenColumns[currentBoard] || []).includes(col.key);
               return (
-                <div key={col.key} className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-all ${isHidden ? 'opacity-40 border-dashed border-border' : isDark ? 'bg-secondary border-border' : 'bg-white border-gray-300'}`} data-testid={`col-mgr-${col.key}`}>
+                <div key={col.key} className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-all ${isHidden ? 'opacity-40 border-dashed border-border' : 'bg-secondary border-border'}`} data-testid={`col-mgr-${col.key}`}>
                   <button onClick={() => handleToggleColumnVisibility(col.key)} className="hover:text-primary" title={isHidden ? 'Mostrar' : 'Ocultar'}>{isHidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</button>
                   <span className={isHidden ? 'line-through' : ''}>{col.label}</span>
                   {isAdmin && <button onClick={() => handleDeleteColumn(col.key)} className="hover:text-destructive ml-1" title={t('delete')} data-testid={`delete-col-${col.key}`}><X className="w-3 h-3" /></button>}
@@ -589,228 +742,227 @@ const Dashboard = () => {
       )}
 
       {/* Saved Views + Filters */}
-      <div className={`border-b px-2 md:px-4 py-2 relative z-50 ${isDark ? 'border-border bg-secondary/30' : 'border-gray-200 bg-gray-50'}`}>
-        <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-3 pt-1 scrollbar-hide">
-          <button onClick={() => handleApplyView(null)} className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-colors ${activeViewName === null ? 'bg-primary text-primary-foreground' : isDark ? 'bg-secondary border border-border hover:bg-secondary/80 text-muted-foreground' : 'bg-white border border-gray-300 hover:bg-gray-100 text-gray-600'}`} data-testid="view-general">{t('general')}</button>
-          {pinnedViews.map(v => (
-            <div key={v.view_id} className="relative group flex-shrink-0">
-              <button onClick={() => handleApplyView(v)} className={`px-3 py-1 text-xs rounded-full whitespace-nowrap flex items-center gap-1 transition-colors ${activeViewName === v.name ? 'bg-primary text-primary-foreground' : isDark ? 'bg-secondary border border-border hover:bg-secondary/80 text-muted-foreground' : 'bg-white border border-gray-300 hover:bg-gray-100 text-gray-600'}`} data-testid={`view-pinned-${v.name}`}><Pin className="w-3 h-3" /> {v.name}</button>
-              <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
-                <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center shadow-sm" title={t('unpin')}><Pin className="w-3 h-3 text-white" /></button>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-5 h-5 bg-destructive rounded-full flex items-center justify-center shadow-sm" title={t('delete')}><X className="w-3 h-3 text-white" /></button>
-              </div>
-            </div>
-          ))}
-          {unpinnedViews.map(v => (
-            <div key={v.view_id} className="relative group flex-shrink-0">
-              <button onClick={() => handleApplyView(v)} className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-colors ${activeViewName === v.name ? 'bg-primary text-primary-foreground' : isDark ? 'bg-secondary/50 border border-border/50 hover:bg-secondary/80 text-muted-foreground' : 'bg-gray-50 border border-gray-200 hover:bg-gray-100 text-gray-500'}`}>{v.name}</button>
-              <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
-                <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-5 h-5 bg-primary rounded-full flex items-center justify-center shadow-sm"><Pin className="w-3 h-3 text-white" /></button>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-5 h-5 bg-destructive rounded-full flex items-center justify-center shadow-sm"><X className="w-3 h-3 text-white" /></button>
-              </div>
-            </div>
-          ))}
-          {Object.keys(filters).some(k => filters[k]) && (
-            showSaveView ? (
-              <div className="flex items-center gap-1">
-                <input type="text" value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSaveView()} placeholder={t('view_name')} className="bg-secondary border border-border rounded px-2 py-1 text-xs w-32 text-foreground" autoFocus data-testid="save-view-input" />
-                <button onClick={handleSaveView} className="px-2 py-1 bg-primary text-primary-foreground rounded text-xs" data-testid="save-view-confirm"><Save className="w-3 h-3" /></button>
-                <button onClick={() => setShowSaveView(false)} className="px-1 py-1 text-muted-foreground"><X className="w-3 h-3" /></button>
-              </div>
-            ) : <button onClick={() => setShowSaveView(true)} className="px-2 py-1 text-xs text-primary hover:bg-primary/10 rounded-full flex items-center gap-1" data-testid="save-view-btn"><Save className="w-3 h-3" /> {t('save_view')}</button>
-          )}
-          {currentBoard === 'SCHEDULING' && (
-            <div className="ml-auto flex items-center gap-1 border-l border-border pl-3">
-              <button onClick={() => { setCalendarMode(false); setBlanksTrackingMode(false); setReadyCalendarMode(false); }} className={`p-1.5 rounded ${!calendarMode && !blanksTrackingMode && !readyCalendarMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`} title={t('table_view')} data-testid="toggle-table-view"><Table2 className="w-4 h-4" /></button>
-              <button onClick={() => { setCalendarMode(true); setBlanksTrackingMode(false); setReadyCalendarMode(false); }} className={`p-1.5 rounded ${calendarMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`} title={t('calendar_view')} data-testid="toggle-calendar-view"><CalendarDays className="w-4 h-4" /></button>
-              <button onClick={() => { setReadyCalendarMode(true); setCalendarMode(false); setBlanksTrackingMode(false); }} className={`p-1.5 rounded ${readyCalendarMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`} title="Ready To Schedule" data-testid="toggle-ready-calendar"><CalendarCheck className="w-4 h-4" /></button>
-              <button onClick={() => { setBlanksTrackingMode(true); setCalendarMode(false); setReadyCalendarMode(false); }} className={`p-1.5 rounded ${blanksTrackingMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`} title="Seguimiento de Blanks" data-testid="toggle-blanks-tracking"><ClipboardList className="w-4 h-4" /></button>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 md:gap-3 flex-wrap overflow-visible">
-          {/* Board filter for MASTER view - FIRST position with distinctive color */}
-          {currentBoard === 'MASTER' && (() => {
-            const boardFilter = filters['_board'] || [];
-            const allBoards = [...new Set(unfilteredOrders.map(o => o.board).filter(Boolean))].sort();
-            const isOpen = openFilterKey === '_board';
-            return (
-              <div className="flex flex-col gap-0.5 relative" data-testid="filter-board">
-                <label className="text-[9px] uppercase tracking-wider font-bold text-orange-500 dark:text-orange-400">Tablero</label>
-                <button onClick={() => setOpenFilterKey(isOpen ? null : '_board')}
-                  className={`w-44 text-xs h-7 px-2 flex items-center justify-between rounded-md border-2 font-semibold ${boardFilter.length ? 'border-orange-400 bg-orange-100 text-orange-700 dark:border-orange-500 dark:bg-orange-900/40 dark:text-orange-300' : 'border-orange-300 bg-orange-50 text-orange-600 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-400'}`}
-                  data-testid="filter-btn-board">
-                  <span className="truncate">{boardFilter.length ? `${boardFilter.length} tablero${boardFilter.length > 1 ? 's' : ''}` : 'Todos'}</span>
-                  {boardFilter.length > 0 && <X className="w-3 h-3 flex-shrink-0" onClick={(e) => { e.stopPropagation(); setFilters(prev => { const n = { ...prev }; delete n['_board']; return n; }); }} />}
+      <div className={`border-b px-3 md:px-5 relative z-50 ${isDark ? 'bg-[hsl(220,28%,10%)] border-border/50' : 'bg-white/80 border-gray-100'}`}>
+        <div className="flex items-center gap-2 py-2 overflow-x-auto scrollbar-hide">
+
+          {/* View pills */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={() => handleApplyView(null)}
+              className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap transition-all border ${
+                activeViewName === null
+                  ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
+                  : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
+              }`}
+              data-testid="view-general">{t('general')}</button>
+
+            {pinnedViews.map(v => (
+              <div key={v.view_id} className="relative group flex-shrink-0">
+                <button onClick={() => handleApplyView(v)}
+                  className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap flex items-center gap-1 transition-all border ${
+                    activeViewName === v.name
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
+                      : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
+                  }`}
+                  data-testid={`view-pinned-${v.name}`}>
+                  <Pin className="w-2.5 h-2.5 opacity-70" /> {v.name}
                 </button>
-                {isOpen && (
-                  <div className={`absolute top-full left-0 mt-1 z-[200] w-52 rounded-lg border shadow-xl max-h-64 overflow-y-auto ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`} data-testid="filter-board-dropdown">
-                    {allBoards.map(b => {
-                      const checked = boardFilter.includes(b);
-                      return (
-                        <label key={b} className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-orange-50 dark:hover:bg-orange-900/20 cursor-pointer">
-                          <input type="checkbox" checked={checked} onChange={() => {
-                            setFilters(prev => {
-                              const cur = prev['_board'] || [];
-                              const next = checked ? cur.filter(x => x !== b) : [...cur, b];
-                              if (!next.length) { const n = { ...prev }; delete n['_board']; return n; }
-                              return { ...prev, '_board': next };
-                            });
-                          }} className="w-3 h-3 rounded accent-orange-500" />
-                          <span className={`font-medium ${checked ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground'}`}>{b}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
+                  <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
+                </div>
               </div>
-            );
-          })()}
-          {(() => {
-            const dateColsFromColumns = columns.filter(c => c.type === 'date').map(c => ({ key: c.key, label: c.label, isDate: true }));
-            const builtInDateKeys = new Set(dateColsFromColumns.map(c => c.key));
-            if (!builtInDateKeys.has('created_at')) dateColsFromColumns.push({ key: 'created_at', label: lang === 'es' ? 'Creacion' : 'Created', isDate: true });
-            // Status/select filters only (non-date)
-            return FILTER_COLUMNS.map(col => {
-              const filterVals = Array.isArray(filters[col.key]) ? filters[col.key] : (filters[col.key] ? [filters[col.key]] : []);
-              const isOpen = openFilterKey === col.key;
+            ))}
+
+            {unpinnedViews.map(v => (
+              <div key={v.view_id} className="relative group flex-shrink-0">
+                <button onClick={() => handleApplyView(v)}
+                  className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap transition-all border ${
+                    activeViewName === v.name
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
+                      : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
+                  }`}>{v.name}</button>
+                <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
+                  <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-primary rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
+                </div>
+              </div>
+            ))}
+
+            {Object.keys(filters).some(k => filters[k]) && (
+              showSaveView ? (
+                <div className="flex items-center gap-1">
+                  <input type="text" value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSaveView()} placeholder={t('view_name')} className="bg-secondary border border-border rounded-full px-3 py-1 text-[11px] w-28 text-foreground" autoFocus data-testid="save-view-input" />
+                  <button onClick={handleSaveView} className="px-2 py-1 bg-primary text-primary-foreground rounded-full text-[11px]" data-testid="save-view-confirm"><Save className="w-3 h-3" /></button>
+                  <button onClick={() => setShowSaveView(false)} className="p-1 text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
+                </div>
+              ) : (
+                <button onClick={() => setShowSaveView(true)} className="px-2.5 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-full flex items-center gap-1 border border-primary/30 transition-all" data-testid="save-view-btn">
+                  <Save className="w-3 h-3" /> {t('save_view')}
+                </button>
+              )
+            )}
+          </div>
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* RIGHT: View toggles + Group by */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+
+            {/* View mode segmented control */}
+            {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
+              <div className={`flex items-center rounded-lg p-0.5 border ${isDark ? 'bg-secondary/50 border-border/60' : 'bg-gray-100 border-gray-200'}`}>
+                <button onClick={() => { setCalendarMode(false); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
+                  className={`p-1.5 rounded-md transition-all ${ !calendarMode && !blanksTrackingMode && !readyCalendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  title={t('table_view')} data-testid="toggle-table-view"><Table2 className="w-3.5 h-3.5" /></button>
+                <button onClick={() => { setCalendarMode(true); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
+                  className={`p-1.5 rounded-md transition-all ${calendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  title={t('calendar_view')} data-testid="toggle-calendar-view"><CalendarDays className="w-3.5 h-3.5" /></button>
+                {currentBoard === 'SCHEDULING' && (<>
+                  <button onClick={() => { setReadyCalendarMode(true); setCalendarMode(false); setBlanksTrackingMode(false); }}
+                    className={`p-1.5 rounded-md transition-all ${readyCalendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    title="Ready To Schedule" data-testid="toggle-ready-calendar"><CalendarCheck className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => { setBlanksTrackingMode(true); setCalendarMode(false); setReadyCalendarMode(false); }}
+                    className={`p-1.5 rounded-md transition-all ${blanksTrackingMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    title="Seguimiento de Blanks" data-testid="toggle-blanks-tracking"><ClipboardList className="w-3.5 h-3.5" /></button>
+                </>)}
+              </div>
+            )}
+
+            {/* Group by date */}
+            {(() => {
+              const dateCols = columns.filter(c => c.type === 'date');
+              const dateKeys = new Set(dateCols.map(c => c.key));
+              if (!dateKeys.has('created_at')) dateCols.push({ key: 'created_at', label: lang === 'es' ? 'Creacion' : 'Created' });
               return (
-                <div key={col.key} className="flex flex-col gap-0.5 relative" data-testid={`filter-${col.key}`}>
-                  <label className={`text-[9px] uppercase tracking-wider font-bold ${isDark ? 'text-muted-foreground' : 'text-gray-500'}`}>{col.label}</label>
-                  <button onClick={() => setOpenFilterKey(isOpen ? null : col.key)} className={`w-36 text-xs h-7 px-2 flex items-center justify-between rounded border ${filterVals.length > 0 ? 'border-primary bg-primary/10 text-primary' : (isDark ? 'bg-secondary border-border text-muted-foreground' : 'bg-white border-gray-300 text-gray-600')}`} data-testid={`filter-btn-${col.key}`}>
-                    <span className="truncate">{filterVals.length === 0 ? t('all') : filterVals.length === 1 ? filterVals[0] : `${filterVals.length} sel.`}</span>
-                    <X className={`w-3 h-3 flex-shrink-0 ${filterVals.length > 0 ? '' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; }); }} />
-                  </button>
-                  {isOpen && (
-                    <div className={`absolute top-full left-0 mt-1 z-[200] w-48 max-h-56 overflow-y-auto rounded-lg border shadow-xl ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`} data-testid={`filter-dropdown-${col.key}`}>
-                      {getFilterOptions(col).map(opt => {
-                        const checked = filterVals.includes(opt);
-                        return (
-                          <label key={opt} className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-secondary/50 ${checked ? 'font-semibold text-primary' : ''}`}>
-                            <input type="checkbox" checked={checked} onChange={() => {
-                              setFilters(prev => {
-                                const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                              });
-                            }} className="w-3.5 h-3.5 rounded" />
-                            <span className="truncate">{opt}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 hidden sm:block">{lang === 'es' ? 'Agrupar' : 'Group'}:</span>
+                  <Select value={groupByDate || 'none'} onValueChange={(v) => setGroupByDate(v === 'none' ? null : v)}>
+                    <SelectTrigger className={`w-32 md:w-36 h-7 text-[10px] font-bold rounded-lg border transition-all ${
+                      groupByDate
+                        ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20'
+                        : (isDark ? 'bg-secondary/50 border-border/60 text-muted-foreground hover:border-border' : 'bg-gray-50 border-gray-200 text-gray-500')
+                    }`} data-testid="group-by-select"><SelectValue placeholder={t('all')} /></SelectTrigger>
+                    <SelectContent className="z-[100] bg-popover border-border">
+                      <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
+                      {dateCols.map(dc => <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
               );
-            });
-          })()}
-          {/* Date range filters */}
-          {(() => {
-            const checkboxDateKeys = new Set(FILTER_COLUMNS.map(c => c.key));
-            const excludeDateKeys = new Set([...checkboxDateKeys]);
-            const dateColsForFilter = columns.filter(c => c.type === 'date' && !excludeDateKeys.has(c.key)).map(c => ({ key: c.key, label: c.label }));
-            const dateKeys = new Set(dateColsForFilter.map(c => c.key));
-            if (!dateKeys.has('created_at')) dateColsForFilter.push({ key: 'created_at', label: lang === 'es' ? 'Creacion' : 'Created' });
-            return dateColsForFilter.map(dc => {
-              const dateRange = filters[dc.key];
-              const hasRange = dateRange && typeof dateRange === 'object' && !Array.isArray(dateRange) && (dateRange.from || dateRange.to);
-              const isOpen = openFilterKey === dc.key;
-              const fromVal = hasRange ? dateRange.from || '' : '';
-              const toVal = hasRange ? dateRange.to || '' : '';
-              const displayText = hasRange ? `${fromVal || '...'} - ${toVal || '...'}` : (lang === 'es' ? 'Fecha especifica' : 'Specific date');
-              return (
-                <div key={dc.key} className="flex flex-col gap-0.5 relative" data-testid={`filter-date-${dc.key}`}>
-                  <label className={`text-[9px] uppercase tracking-wider font-bold ${isDark ? 'text-muted-foreground' : 'text-gray-500'}`}>{dc.label}</label>
-                  <button onClick={() => setOpenFilterKey(isOpen ? null : dc.key)} className={`w-44 text-xs h-7 px-2 flex items-center justify-between rounded border ${hasRange ? 'border-primary bg-primary/10 text-primary' : (isDark ? 'bg-secondary border-border text-muted-foreground' : 'bg-white border-gray-300 text-gray-600')}`} data-testid={`filter-btn-date-${dc.key}`}>
-                    <span className="truncate">{displayText}</span>
-                    <X className={`w-3 h-3 flex-shrink-0 ${hasRange ? '' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setFilters(prev => { const n = { ...prev }; delete n[dc.key]; return n; }); }} />
-                  </button>
-                  {isOpen && (
-                    <div className={`absolute top-full left-0 mt-1 z-[200] w-56 rounded-lg border shadow-xl p-3 space-y-2 ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`} data-testid={`filter-date-dropdown-${dc.key}`}>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground uppercase font-medium">{lang === 'es' ? 'Desde' : 'From'}</label>
-                        <input type="date" value={fromVal} onChange={(e) => {
-                          setFilters(prev => ({ ...prev, [dc.key]: { from: e.target.value, to: (prev[dc.key] && typeof prev[dc.key] === 'object' && !Array.isArray(prev[dc.key])) ? prev[dc.key].to || '' : '' } }));
-                        }} className={`w-full px-2 py-1.5 rounded border text-xs ${isDark ? 'bg-secondary border-border text-foreground' : 'bg-white border-gray-300 text-gray-800'}`} data-testid={`date-from-${dc.key}`} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground uppercase font-medium">{lang === 'es' ? 'Hasta' : 'To'}</label>
-                        <input type="date" value={toVal} onChange={(e) => {
-                          setFilters(prev => ({ ...prev, [dc.key]: { from: (prev[dc.key] && typeof prev[dc.key] === 'object' && !Array.isArray(prev[dc.key])) ? prev[dc.key].from || '' : '', to: e.target.value } }));
-                        }} className={`w-full px-2 py-1.5 rounded border text-xs ${isDark ? 'bg-secondary border-border text-foreground' : 'bg-white border-gray-300 text-gray-800'}`} data-testid={`date-to-${dc.key}`} />
-                      </div>
-                      <button onClick={() => { setFilters(prev => { const n = { ...prev }; delete n[dc.key]; return n; }); setOpenFilterKey(null); }}
-                        className="text-xs text-destructive hover:underline">{lang === 'es' ? 'Limpiar' : 'Clear'}</button>
-                    </div>
-                  )}
-                </div>
-              );
-            });
-          })()}
-          {/* Group by date - dynamic */}
-          {(() => {
-            const dateCols = columns.filter(c => c.type === 'date');
-            const dateKeys = new Set(dateCols.map(c => c.key));
-            if (!dateKeys.has('created_at')) dateCols.push({ key: 'created_at', label: lang === 'es' ? 'Creacion' : 'Created' });
-            return (
-              <div className="flex flex-col gap-0.5">
-                <label className={`text-[9px] uppercase tracking-wider font-bold ${isDark ? 'text-muted-foreground' : 'text-gray-500'}`}>{lang === 'es' ? 'Agrupar' : 'Group'}</label>
-                <Select value={groupByDate || 'none'} onValueChange={(v) => setGroupByDate(v === 'none' ? null : v)}>
-                  <SelectTrigger className={`w-36 text-xs h-7 ${isDark ? 'bg-secondary border-border' : 'bg-white border-gray-300'}`} data-testid="group-by-select"><SelectValue placeholder={t('all')} /></SelectTrigger>
-                  <SelectContent className={`z-[100] ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`}>
-                    <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
-                    {dateCols.map(dc => (
-                      <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            })()}
+          </div>
+        </div>
+      </div>
+      {/* Row for miscellaneous header items or future summary statistics */}
+      <div className={`border-b px-2 md:px-4 py-2 relative z-40 ${isDark ? 'bg-[hsl(220,28%,10%)] border-border/60' : 'bg-white/60 border-gray-200'}`}>
+        <div className="flex items-center gap-3 overflow-visible">
+          {/* Quick Stats Summary */}
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-black ${isDark ? 'bg-blue-500/15 text-blue-300 border border-blue-500/25' : 'bg-blue-600/10 text-blue-700 border border-blue-400/30'}`}>
+              <span className="opacity-70 text-[10px]">{t('total')}</span>
+              <span className="font-barlow text-base">{orders.length}</span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-black ${isDark ? 'bg-secondary/80 text-foreground border border-border' : 'bg-gray-100 text-gray-700 border border-gray-200'}`}>
+              <span className="opacity-60 text-[10px]">{lang === 'es' ? 'QTY' : 'QTY'}</span>
+              <span className="font-barlow text-base">
+                {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
+              </span>
+            </div>
+            {selectedOrders.length > 0 && (
+              <div className="flex items-center gap-1.5 text-primary animate-pulse bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                <span className="font-bold">{t('selected')}:</span>
+                <span className="font-barlow text-sm font-black">{selectedOrders.length}</span>
               </div>
-            );
-          })()}
-          {(Object.keys(filters).some(k => {
-            const v = filters[k];
-            if (!v) return false;
-            if (Array.isArray(v)) return v.length > 0;
-            if (typeof v === 'object' && (v.from || v.to)) return true;
-            return true;
-          }) || groupByDate) && <button onClick={() => { setFilters({}); setActiveViewName(null); setGroupByDate(null); }} className="text-xs text-primary hover:underline flex items-center gap-1 ml-2"><X className="w-3 h-3" /> {t('clear')}</button>}
+            )}
+            
+            {/* Active Filters Visualization */}
+            {Object.keys(filters).length > 0 && (
+              <div className="flex items-center gap-2 border-l border-border pl-6 ml-2 overflow-x-auto scrollbar-hide max-w-md">
+                <span className="text-muted-foreground font-bold flex-shrink-0">{lang === 'es' ? 'Filtros activos' : 'Active filters'}:</span>
+                {Object.entries(filters).map(([k, v]) => {
+                  if (!v) return null;
+                  const col = columns.find(c => c.key === k) || { label: k };
+                  return (
+                    <div key={k} className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full border flex-shrink-0 text-[10px] font-bold ${isDark ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                      <span className="opacity-70">{col.label}:</span>
+                      <span>{Array.isArray(v) ? `${v.length}` : (typeof v === 'object' ? '...' : String(v))}</span>
+                      <button onClick={() => setFilters(prev => { const n={...prev}; delete n[k]; return n; })} className="hover:text-destructive ml-0.5 opacity-60 hover:opacity-100 transition-all"><X className="w-2.5 h-2.5" /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          
+          <div className="ml-auto flex items-center gap-4">
+            {(Object.keys(filters).some(k => {
+              const v = filters[k];
+              if (!v) return false;
+              if (Array.isArray(v)) return v.length > 0;
+              if (typeof v === 'object' && (v.from || v.to)) return true;
+              return true;
+            }) || groupByDate) && <button onClick={() => { setFilters({}); setActiveViewName(null); setGroupByDate(null); }} className="text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/80 flex items-center gap-1 transition-all hover:scale-105 active:scale-95"><X className="w-3 h-3" /> {t('clear')}</button>}
+          </div>
         </div>
       </div>
 
       {/* Floating Bulk Actions Bar */}
       {selectedOrders.length > 0 && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="bulk-actions-bar">
-          <div className={`flex items-center gap-4 px-6 py-3 rounded-full shadow-2xl border backdrop-blur-md ${isDark ? 'bg-zinc-900/90 border-primary/30' : 'bg-white/90 border-gray-200'}`}>
-            <div className="flex items-center gap-2 border-r border-border pr-4 mr-1">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] md:w-auto animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="bulk-actions-bar">
+          <div className={`flex flex-wrap items-center justify-center gap-3 md:gap-4 px-4 md:px-6 py-2.5 md:py-3 rounded-2xl md:rounded-full shadow-2xl border backdrop-blur-md ${isDark ? 'bg-secondary/90 border-primary/30 text-white' : 'bg-card/90 border-gray-200 text-gray-900 shadow-xl'}`}>
+            <div className="flex items-center gap-2 border-r border-border pr-2 md:pr-4 flex-shrink-0">
               <span className="text-sm font-bold text-primary">{selectedOrders.length}</span>
-              <span className="text-xs uppercase tracking-wider opacity-70 font-bold">{t('selected')}</span>
+              <span className="text-[10px] md:text-xs uppercase tracking-wider opacity-70 font-bold">{t('selected')}</span>
             </div>
 
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] uppercase font-bold opacity-50">{t('move_to')}:</span>
-                <Select onValueChange={(board) => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }}>
-                  <SelectTrigger className={`w-36 h-8 text-[11px] font-bold ${isDark ? 'bg-secondary/50 border-border' : 'bg-gray-100 border-gray-300'}`} data-testid="bulk-move-select"><SelectValue placeholder={`${t('move_to')}...`} /></SelectTrigger>
-                  <SelectContent className={`z-[200] ${isDark ? 'bg-popover border-border' : 'bg-white border-gray-300'}`}>{allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE').map(board => <SelectItem key={board} value={board}>{board}</SelectItem>)}</SelectContent>
-                </Select>
+                <span className="text-[10px] uppercase font-bold opacity-50 hidden sm:inline">{t('move_to')}:</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger className={`min-w-[120px] md:w-48 h-9 md:h-10 flex items-center justify-between px-3 md:px-4 text-xs md:text-sm font-black rounded-lg md:rounded-xl border bg-secondary/50 border-border text-foreground hover:bg-secondary`} data-testid="bulk-move-select">
+                    <span className="truncate mr-1 md:mr-2">{t('move_to')}</span>
+                    <ChevronDown className="w-4 h-4 md:w-5 md:h-5 opacity-70" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
+                    {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => (
+                      <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-black py-3.5 px-5 text-sm md:text-base tracking-tight">
+                        {board}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator className="opacity-50" />
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-black text-primary cursor-pointer text-sm md:text-base">
+                        <div className="flex items-center gap-2.5">
+                          <Monitor className="w-5 h-5" /> 
+                          <span>MAQUINAS</span>
+                        </div>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl">
+                        {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
+                          <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-black py-3.5 px-5 text-sm md:text-base tracking-tight">
+                            {board}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               <div className="h-6 w-px bg-border mx-1"></div>
 
               <div className="flex items-center gap-2">
-                <button onClick={handleExportExcel} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-green-50 text-green-600 hover:bg-green-100'}`} title="Exportar a Excel" data-testid="export-excel-btn">
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Excel</span>
-                </button>
-                <button onClick={() => handleExportComplete(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="Exportar completo (JSON)" data-testid="export-complete-btn">
-                  <FileJson className="w-3.5 h-3.5" />
-                  <span>Completo</span>
+                <button onClick={handleExportExcel} className="p-2 md:px-4 md:py-2 flex items-center gap-2 hover:bg-secondary transition-colors border-r border-border group" title={t('export_excel')}>
+                  <FileDown className="w-5 h-5 text-green-500 group-hover:scale-110 transition-transform" />
+                  <span className="hidden sm:inline text-xs font-bold">{t('export')} (visibles)</span>
+                  <span className="sm:hidden text-[10px] font-bold">Visibles</span>
                 </button>
               </div>
 
               <div className="h-6 w-px bg-border mx-1"></div>
 
-              <button onClick={() => { if (selectedOrders.length === 0) return; if (!window.confirm(`${t('delete')} ${selectedOrders.length} ${t('orders')}?`)) return; handleBulkMove(selectedOrders, "PAPELERA DE RECICLAJE"); setSelectedOrders([]); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
+              <button onClick={handleBulkDelete} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{t('trash')}</span>
               </button>
@@ -828,45 +980,187 @@ const Dashboard = () => {
       {/* Main Content */}
       <main className="flex-1 overflow-auto relative">
         {loading ? <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> :
-          calendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={orders} isDark={isDark} fetchOrders={fetchOrders} /> :
-            readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} isDark={isDark} fetchOrders={fetchOrders} label="Ready To Scheduled" /> :
+          (calendarMode && (currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
+            readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
               blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
                   <table className="text-sm border-collapse" style={{ minWidth: '100%' }}>
-                    <thead className="sticky top-0 z-30">
-                      <tr className={isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}>
-                        <th className={`w-11 py-3.5 px-2 sticky left-0 z-30 ${isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}`}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded" data-testid="select-all-checkbox" /></th>
-                        <th className={`w-10 py-3.5 px-1 sticky left-[44px] z-30 ${isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}`}></th>
-                        {currentBoard === 'MASTER' && <th className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'}`} style={{ minWidth: 160 }}>Board</th>}
-                        {visibleColumns.map(col => {
+                    <thead className={`sticky top-0 z-30 transition-all duration-500 ${currentBoard === 'EJEMPLOS' ? 'ring-1 ring-fuchsia-500/50 shadow-[0_0_25px_-5px_rgba(217,70,239,0.3)]' : ''}`}>
+                      <tr className={`${isDark ? 'bg-[hsl(220,30%,9%)] border-b border-border/40' : 'bg-gray-50/80 border-b border-gray-100'} transition-colors duration-300 ${currentBoard === 'EJEMPLOS' ? (isDark ? 'bg-indigo-900/30 text-fuchsia-300' : 'bg-indigo-50 text-indigo-900') : ''}`}>
+                        <th className={`py-3.5 px-2 sticky left-0 z-30 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded" data-testid="select-all-checkbox" /></th>
+                        <th className={`py-3.5 px-1 sticky left-[48px] z-30 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></th>
+                        
+                        {/* Column 3: Permanent Identifier (Board for Master, Order for others) */}
+                        {(() => {
+                          const isReflection = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
+                          return (
+                            <th className={`py-3 px-3 sticky left-[96px] z-30 text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500 border-b border-border/40' : 'bg-gray-50 text-gray-400 border-b border-gray-100'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[isReflection ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+                                    <ListFilter className="w-3.5 h-3.5" />
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl" onPointerDownOutside={(e) => e.target.closest('input') && e.preventDefault()}>
+                                    {isReflection ? (
+                                      <>
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Board</span>
+                                          {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                        </div>
+                                        {[...new Set(unfilteredOrders.map(o => o.board).filter(Boolean))].sort().map(b => (
+                                          <DropdownMenuItem key={b} onSelect={(e) => e.preventDefault()} className="p-0">
+                                            <label className="flex items-center gap-2 w-full px-3 py-2 text-xs cursor-pointer hover:bg-secondary">
+                                              <input type="checkbox" checked={(filters['_board'] || []).includes(b)} onChange={() => {
+                                                setFilters(prev => {
+                                                  const cur = prev['_board'] || [];
+                                                  const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
+                                                  return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                                });
+                                              }} className="w-3.5 h-3.5 rounded accent-orange-500" />
+                                              <span className={(filters['_board'] || []).includes(b) ? 'font-bold text-orange-500' : ''}>{b}</span>
+                                            </label>
+                                          </DropdownMenuItem>
+                                        ))}
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Orden</span>
+                                          {filters['order_number'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                        </div>
+                                        <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
+                                      </>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </th>
+                          );
+                        })()}
+
+                        {/* Columns 4+: Draggable Scrollable Content (with buffer on first) */}
+                        {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
                           const isOrderNum = col.key === 'order_number';
                           const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
+                          const filterVal = filters[col.key];
+                          const isSelect = col.type === 'select' || col.type === 'status' || (col.optionKey && options[col.optionKey]);
+                          const isDate = col.type === 'date';
+
                           return (
-                            <th key={col.key} className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'} ${draggedCol === col.key ? 'opacity-50' : ''} ${isOrderNum ? `sticky left-[88px] z-30 ${isDark ? 'bg-zinc-900 border-b-2 border-border' : 'bg-gray-200 border-b-2 border-gray-300'}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderNum ? 120 : 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                            <th key={col.key} className={`py-3 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'text-zinc-500' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                               <div className="flex items-center justify-between gap-1">
-                                <span className="cursor-grab active:cursor-grabbing select-none">{currentBoard === 'MASTER' && <svg className="w-3.5 h-3.5 inline-block mr-1 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}{col.label}</span>
+                                <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
+                                  {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
+                                  <span className="truncate">{col.label}</span>
+                                  {/* Filter Trigger Icon */}
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
+                                      <ListFilter className="w-3.5 h-3.5" />
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{col.label}</span>
+                                        {filterVal && <button onClick={() => setFilters(prev => { const n={...prev}; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                      </div>
+                                      
+                                      {isSelect ? (
+                                        <div className="max-h-60 overflow-y-auto space-y-1">
+                                          {getFilterOptions(col).map(opt => {
+                                            const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                            return (
+                                              <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                <input type="checkbox" checked={checked} onChange={() => {
+                                                  setFilters(prev => {
+                                                    const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                    const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                    return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                  });
+                                                }} className="w-4 h-4 rounded border-border" />
+                                                <span className={`text-xs ${checked ? 'font-bold text-primary active:scale-95' : 'text-foreground'}`}>{opt}</span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : isDate ? (
+                                        <div className="space-y-3">
+                                          <div className="space-y-1">
+                                            <label className="text-[10px] uppercase font-bold opacity-60">Desde</label>
+                                            <input type="date" value={filterVal?.from || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), from: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <label className="text-[10px] uppercase font-bold opacity-60">Hasta</label>
+                                            <input type="date" value={filterVal?.to || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), to: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="relative">
+                                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                                          <input
+                                            type="text"
+                                            placeholder="..."
+                                            autoFocus
+                                            value={typeof filterVal === 'string' ? filterVal : ''}
+                                            onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: e.target.value || undefined }))}
+                                            className="w-full h-9 pl-7 pr-3 text-xs bg-secondary/50 border border-border rounded focus:ring-1 focus:ring-primary outline-none"
+                                          />
+                                        </div>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
                                 <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
                               </div>
                             </th>
                           );
                         })}
-                        <th className={`py-3.5 px-3 text-left font-barlow uppercase text-base font-extrabold tracking-wider ${isDark ? 'text-zinc-200' : 'text-gray-800'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
+                        <th className={`py-3 px-3 text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'text-zinc-500' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(() => {
                         const renderOrderRow = (order) => {
-                          const isSearchMatch = searchQuery && order.order_number && order.order_number.toLowerCase().includes(searchQuery.toLowerCase());
+                          const sq = searchQuery.toLowerCase();
+                          const getVal = (v) => {
+                            if (!v) return "";
+                            if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
+                            return String(v).toLowerCase();
+                          };
+                          const isSearchMatch = searchQuery && (
+                            getVal(order.order_number).includes(sq) ||
+                            getVal(order.client).includes(sq) ||
+                            getVal(order.store_po).includes(sq) ||
+                            getVal(order.customer_po).includes(sq) ||
+                            getVal(order.job_title_a).includes(sq) ||
+                            getVal(order.job_title_b).includes(sq) ||
+                            getVal(order.branding).includes(sq) ||
+                            getVal(order.notes).includes(sq)
+                          );
                           return (
-                            <tr key={order.order_id} className={`border-b transition-colors ${isDark ? 'border-border/50 hover:bg-zinc-800/50' : 'border-gray-200 hover:bg-gray-100'} ${selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : ''} ${isSearchMatch ? 'ring-2 ring-primary ring-inset bg-primary/10' : ''}`} data-testid={`order-row-${order.order_id}`}>
-                              <td className={`py-2 px-2 sticky left-0 z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}`}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded" /></td>
-                              <td className={`py-2 px-1 sticky left-[44px] z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}`}><button onClick={() => setCommentsOrder(order)} className="p-1 rounded transition-colors hover:bg-secondary" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" /></button></td>
-                              {currentBoard === 'MASTER' && <td className="py-2 px-3"><span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span></td>}
-                              {visibleColumns.map(col => {
+                            <tr key={order.order_id} className={`border-b group transition-all duration-150 ${isDark ? (orders.indexOf(order) % 2 === 0 ? 'bg-[hsl(220,28%,11%)]' : 'bg-[hsl(220,28%,10%)]') : (orders.indexOf(order) % 2 === 0 ? 'bg-white' : 'bg-gray-50/60')} ${isDark ? 'border-border/20 hover:bg-[hsl(220,28%,15%)]' : 'border-gray-100 hover:bg-blue-50/40'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/15 border-l-[3px] border-l-primary' : '!bg-blue-50 border-l-[3px] border-l-primary') : 'border-l-[3px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
+                              <td className={`py-3 px-2 sticky left-0 z-10 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded" /></td>
+              <td className={`py-3 px-1 sticky left-[48px] z-20 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><button onClick={() => setCommentsOrder(order)} className="p-1 rounded transition-colors hover:bg-secondary" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" /></button></td>
+                              
+                              {/* Fixed Column 3 Data */}
+                              {(() => {
+                                const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
+                                return (
+                                  <td className={`py-3 px-3 sticky left-[96px] z-20 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                                    {isMaster ? (
+                                      <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                                    ) : (
+                                      <span className={`font-mono font-black truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order.order_number}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order.order_number}</mark> : order.order_number}</span>
+                                    )}
+                                  </td>
+                                );
+                              })()}
+
+                              {/* Draggable Column Data */}
+                              {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
                                 const isOrderNum = col.key === 'order_number';
                                 const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
                                 return (
-                                  <td key={col.key} className={`py-2 px-3 ${isOrderNum ? `sticky left-[88px] z-10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/10' : 'bg-blue-50') : (isDark ? 'bg-background' : 'bg-white')}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderNum ? 120 : 'none' }}>
+                                  <td key={col.key} className={`py-3 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'}`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
                                     {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
                                       <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                                     )}
@@ -892,7 +1186,7 @@ const Dashboard = () => {
                           if (!groups[dateKey]) groups[dateKey] = [];
                           groups[dateKey].push(o);
                         });
-                        const colSpan = 3 + visibleColumns.length + (currentBoard === 'MASTER' ? 1 : 0);
+                        const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
                         const noDateLabel = lang === 'es' ? 'Sin fecha' : 'No date';
                         const sortedEntries = Object.entries(groups).sort(([a], [b]) => {
                           if (a === noDateLabel) return 1;
@@ -912,23 +1206,6 @@ const Dashboard = () => {
                         ));
                       })()}
                     </tbody>
-                    <tfoot className={`sticky bottom-0 z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}>
-                      <tr className={isDark ? 'bg-zinc-900/95 border-t-2 border-border' : 'bg-gray-200/95 border-t-2 border-gray-300'}>
-                        <td className={`py-2 px-2 sticky left-0 z-20 font-barlow font-bold text-sm text-primary ${isDark ? 'bg-zinc-900' : 'bg-gray-200'}`} style={{ minWidth: 110 }}>{t('total')}</td>
-                        <td className={`py-2 px-1 sticky left-[48px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}`}></td>
-                        {visibleColumns.map(col => {
-                          const isNumeric = col.type === 'number' || col.key === 'quantity';
-                          const isFormula = col.type === 'formula';
-                          const isOrderCol = col.key === 'order_number';
-                          const width = isOrderCol ? 120 : (columnWidths[col.key] || col.width);
-                          let total = null;
-                          if (isNumeric) total = orders.reduce((sum, o) => sum + (parseFloat(o[col.key]) || 0), 0);
-                          else if (isFormula) total = orders.reduce((sum, o) => { const v = parseFloat(evaluateFormula(col.key, o, columns)); return sum + (isNaN(v) ? 0 : v); }, 0);
-                          return <td key={col.key} className={`py-2 px-3 ${isOrderCol ? `sticky left-[88px] z-20 ${isDark ? 'bg-zinc-900 border-t-2 border-border' : 'bg-gray-200 border-t-2 border-gray-300'}` : ''}`} style={{ width: width, minWidth: width, maxWidth: isOrderCol ? 120 : 'none' }}>{total !== null ? <span className="font-barlow font-bold text-sm text-primary" data-testid={`footer-total-${col.key}`}>{Number.isInteger(total) ? total.toLocaleString() : total.toFixed(2)}</span> : isOrderCol ? <span className="font-barlow font-bold text-sm text-primary">{t('total')}</span> : null}</td>;
-                        })}
-                        {(() => { const totalRemaining = orders.reduce((sum, o) => { const ps = productionSummary[o.order_id]; return sum + Math.max(0, (o.quantity || 0) - (ps ? ps.total_produced : 0)); }, 0); return <td className="py-2 px-3" style={{ minWidth: 180 }}><span className="font-barlow font-bold text-sm text-primary" data-testid="footer-total-restante">{totalRemaining.toLocaleString()}</span></td>; })()}
-                      </tr>
-                    </tfoot>
                   </table>
                   {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
                 </>
@@ -937,7 +1214,7 @@ const Dashboard = () => {
 
       {/* Modals */}
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} columns={columns} />
-      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => setCommentsOrder(null)} currentUser={user} />
+      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <ActivityLogModal isOpen={showActivityLog} onClose={() => setShowActivityLog(false)} onUndoSuccess={fetchOrders} t={t} />}
       {isAdmin && <OptionsManagerModal isOpen={showOptionsManager} onClose={() => setShowOptionsManager(false)} options={options} onOptionsUpdate={fetchOptions} onColorsUpdate={(colors) => { Object.entries(colors).forEach(([k, v]) => { STATUS_COLORS[k] = v; }); fetchOrders(); }} />}
@@ -1000,9 +1277,9 @@ const Dashboard = () => {
               <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
                   <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('order')}</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Store PO</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Customer PO</th>
+                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">PO (Store/Cust)</th>
                   <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('client')}</th>
+                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Trabajo / Ref</th>
                   <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Tablero</th>
                 </tr>
               </thead>
@@ -1012,10 +1289,16 @@ const Dashboard = () => {
                     onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(order.order_number || ''); toast.success(`${order.order_number} → ${order.board}`); }}
                     className="border-b border-border/50 hover:bg-primary/10 cursor-pointer transition-colors"
                     data-testid={`search-result-${order.order_id}`}>
-                    <td className="py-2.5 px-3 font-mono font-medium text-primary">{order.order_number || '-'}</td>
-                    <td className="py-2.5 px-3 text-foreground">{order.store_po || '-'}</td>
-                    <td className="py-2.5 px-3 text-foreground">{order.customer_po || '-'}</td>
-                    <td className="py-2.5 px-3 text-foreground">{order.client || '-'}</td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-primary">{order.order_number || '-'}</td>
+                    <td className="py-2.5 px-3">
+                      <div className="text-xs font-bold text-foreground">{order.store_po || '-'}</div>
+                      <div className="text-[10px] opacity-60 italic">{order.customer_po || '-'}</div>
+                    </td>
+                    <td className="py-2.5 px-3 font-bold text-foreground">{order.client || '-'}</td>
+                    <td className="py-2.5 px-3">
+                      <div className="text-xs font-bold text-primary truncate max-w-[150px]">{typeof order.job_title_a === 'object' && order.job_title_a ? (order.job_title_a.desc || order.job_title_a.url || '-') : (order.job_title_a || '-')}</div>
+                      <div className="text-[10px] opacity-60 truncate max-w-[150px]">{typeof order.job_title_b === 'object' && order.job_title_b ? (order.job_title_b.desc || order.job_title_b.url || '-') : (order.job_title_b || order.branding || '-')}</div>
+                    </td>
                     <td className="py-2.5 px-3"><span className="px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span></td>
                   </tr>
                 ))}

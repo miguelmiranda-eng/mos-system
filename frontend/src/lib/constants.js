@@ -165,7 +165,7 @@ export const BOARD_COLORS = {
   'BLANKS': { bg: '#4a1942', accent: '#e066cc' },
   'SCREENS': { bg: '#1b4332', accent: '#52b788' },
   'NECK': { bg: '#6a040f', accent: '#e85d04' },
-  'EJEMPLOS': { bg: '#240046', accent: '#7b2cbf' },
+  'EJEMPLOS': { bg: '#312e81', accent: '#d946ef' },
   'COMPLETOS': { bg: '#004e64', accent: '#25a18e' },
 };
 

@@ -1,9 +1,15 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { format, startOfWeek, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, parseISO, isAfter } from "date-fns";
 import { es, enUS } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, MoveRight, Settings2, X, Check, AlertTriangle, CalendarClock } from "lucide-react";
+import { ChevronLeft, ChevronRight, MoveRight, Settings2, X, Check, AlertTriangle, CalendarClock, ChevronDown } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./ui/dropdown-menu";
 import { BOARDS, STATUS_COLORS } from "../lib/constants";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -204,6 +210,7 @@ const CalendarView = ({ orders, isDark, fetchOrders, label }) => {
   const [draggedOrder, setDraggedOrder] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [dateField, setDateField] = useState(() => localStorage.getItem('cal_date_field') || 'scheduled_date');
   const [visibleFields, setVisibleFields] = useState(() => {
     try { const s = localStorage.getItem('cal_visible_fields'); return s ? JSON.parse(s) : DEFAULT_VISIBLE; } catch { return DEFAULT_VISIBLE; }
   });
@@ -211,11 +218,12 @@ const CalendarView = ({ orders, isDark, fetchOrders, label }) => {
   const locale = lang === 'es' ? es : enUS;
   const today = useMemo(() => new Date(), []);
 
-  // Position by scheduled_date. No scheduled_date → today.
+  // Position by selected dateField. No date → today.
   const getOrderDay = useCallback((order) => {
-    if (order.scheduled_date) return safeParseDate(order.scheduled_date);
+    const val = order[dateField];
+    if (val) return safeParseDate(val);
     return today; // unscheduled orders appear on today
-  }, [today]);
+  }, [today, dateField]);
 
   const calendarDays = useMemo(() => {
     if (viewMode === 'week') {
@@ -302,9 +310,22 @@ const CalendarView = ({ orders, isDark, fetchOrders, label }) => {
           <button onClick={() => setCurrentDate(new Date())} className="ml-2 px-3 py-1 text-xs bg-primary/20 text-primary rounded hover:bg-primary/30 font-bold" data-testid="cal-today">Hoy</button>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground border border-border rounded px-2 py-1">
-            <CalendarClock className="w-3.5 h-3.5 text-primary" />
-            <span>Fecha de <strong className="text-foreground">Planificacion</strong></span>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex items-center gap-1.5 text-[10px] text-muted-foreground border border-border rounded px-2 py-1 font-bold bg-secondary/50 hover:bg-secondary">
+                <CalendarClock className="w-3.5 h-3.5 text-primary" />
+                <span>Fecha: <strong className="text-foreground">{dateField === 'scheduled_date' ? 'Planificacion' : 'Cancel Date'}</strong></span>
+                <ChevronDown className="w-3 h-3 opacity-50" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="z-[300] bg-popover border-border min-w-[180px]">
+                <DropdownMenuItem onClick={() => { setDateField('scheduled_date'); localStorage.setItem('cal_date_field', 'scheduled_date'); }} className="text-xs font-bold py-2">
+                  Planificacion
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => { setDateField('cancel_date'); localStorage.setItem('cal_date_field', 'cancel_date'); }} className="text-xs font-bold py-2">
+                  Cancel Date
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           {unschedCount > 0 && (
             <span className="text-[10px] bg-yellow-500/15 text-yellow-500 px-2 py-1 rounded-full font-bold" data-testid="cal-unscheduled-count" title="Aparecen en el dia de hoy">

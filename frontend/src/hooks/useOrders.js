@@ -34,7 +34,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (currentBoard !== 'MASTER') params.append('board', currentBoard);
+      if (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS') params.append('board', currentBoard);
       const res = await fetch(`${API}/orders?${params}`, { credentials: 'include' });
       if (res.ok) {
         let data = await res.json();
@@ -44,9 +44,15 @@ export const useOrders = (currentBoard, boardFilters) => {
         const currentFilters = boardFilters[currentBoard] || {};
         Object.entries(currentFilters).forEach(([key, value]) => {
           // Board filter (special key _board → matches order.board)
-          if (key === '_board' && Array.isArray(value) && value.length > 0) {
-            data = data.filter(o => value.includes(o.board));
-            return;
+          if (key === '_board') {
+            if (Array.isArray(value) && value.length > 0) {
+              data = data.filter(o => value.includes(o.board));
+              return;
+            } else if (typeof value === 'string' && value.trim()) {
+              const sv = value.toLowerCase();
+              data = data.filter(o => String(o.board || '').toLowerCase().includes(sv));
+              return;
+            }
           }
           // Date range filter: { from: "2026-01-01", to: "2026-03-31" }
           if (value && typeof value === 'object' && !Array.isArray(value) && (value.from || value.to)) {
@@ -73,9 +79,13 @@ export const useOrders = (currentBoard, boardFilters) => {
               }
               return false;
             });
-          } else if (value && !Array.isArray(value)) {
+          } else if (value && typeof value === 'string') {
             if (value === EMPTY_FILTER) data = data.filter(o => !o[key] || o[key] === '');
-            else data = data.filter(o => o[key] === value);
+            else {
+              const sv = value.toLowerCase();
+              // For column filters that are strings (text inputs), use partial match
+              data = data.filter(o => String(o[key] || '').toLowerCase().includes(sv));
+            }
           }
         });
         setOrders(data);
@@ -253,7 +263,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (selectedOrders.length === 0) return;
     setOperationLoading(true);
     selfUpdateRef.current = true;
-    try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) }); toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`); fetchOrders(); } catch { toast.error(t('move_err')); } finally { setOperationLoading(false); }
+    try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) }); toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`); fetchOrders(); fetchAllOrders(); } catch { toast.error(t('move_err')); } finally { setOperationLoading(false); }
   };
 
   const handleQuickUndo = async () => {
@@ -281,12 +291,17 @@ export const useOrders = (currentBoard, boardFilters) => {
         if (filtered.length === 1) {
           const found = filtered[0];
           setCurrentBoard(found.board);
-          toast.success(`${t('order')} ${found.order_number} → ${found.board}`);
+          const isExactOrderedMatch = found.order_number && String(found.order_number).toLowerCase() === searchQuery.trim().toLowerCase();
+          const msg = isExactOrderedMatch 
+            ? `${t('order')} ${found.order_number} → ${found.board}`
+            : `Referencia encontrada en orden: ${found.order_number} (${found.board})`;
+          toast.success(msg);
           return null;
         } else if (filtered.length > 1) {
+          toast.info(`${filtered.length} coincidencias encontradas`);
           return filtered;
         } else {
-          toast.error(t('order_not_found_search'));
+          toast.error(`Referencia no encontrada globalmente`);
           return null;
         }
       }
