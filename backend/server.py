@@ -66,6 +66,22 @@ async def admin_backup(request: Request):
     stats = await backup_database(db)
     return {"message": "Backup completado", "stats": stats}
 
+@app.delete("/api/admin/clear-data")
+async def admin_clear_data(request: Request):
+    """Wipe all operational data (orders, comments, images, notifications,
+    activity_logs) while preserving users, sessions, and config."""
+    await require_admin(request)
+    from deps import db
+    collections_to_clear = [
+        "orders", "comments", "file_uploads",
+        "notifications", "activity_logs"
+    ]
+    stats = {}
+    for col in collections_to_clear:
+        result = await db[col].delete_many({})
+        stats[col] = result.deleted_count
+    return {"message": "Datos borrados correctamente", "stats": stats}
+
 # WebSocket endpoint
 from ws_manager import ws_manager
 

@@ -47,6 +47,15 @@ async def get_orders(request: Request, board: str = None, search: str = None):
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return orders
 
+@router.get("/orders/board-counts")
+async def get_board_counts(request: Request):
+    await require_auth(request)
+    pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
+    results = await db.orders.aggregate(pipeline).to_list(1000)
+    # Convert to simple key-value: {BOARD_NAME: COUNT}
+    counts = {r["_id"]: r["count"] for r in results if r["_id"]}
+    return counts
+
 @router.get("/orders/check-number")
 async def check_order_number(request: Request, order_number: str = None):
     await require_auth(request)

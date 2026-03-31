@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -11,9 +11,49 @@
 
 body {
     margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-color: hsl(var(--background));
+}
+
+.font-mono { font-family: 'JetBrains Mono', monospace !important; }
+
+/* Industrial Tech Effects */
+.glow-primary {
+    box-shadow: 0 0 15px hsla(var(--primary), 0.3);
+    border: 1px solid hsla(var(--primary), 0.5);
+}
+
+.text-glow-primary {
+    text-shadow: 0 0 8px hsla(var(--primary), 0.6);
+}
+
+.tech-border {
+    border: 1px solid hsla(var(--border), 0.5);
+    position: relative;
+}
+
+.tech-border::after {
+    content: '';
+    position: absolute;
+    top: -1px; left: -1px; width: 10px; height: 10px;
+    border-top: 2px solid hsl(var(--primary));
+    border-left: 2px solid hsl(var(--primary));
+}
+
+.scanline {
+    position: relative;
+}
+
+.scanline::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: linear-gradient(to bottom, transparent 50%, rgba(255, 255, 255, 0.02) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 0;
 }
 
 code {
@@ -23,17 +63,17 @@ code {
 
 @layer base {
     :root {
-        --background: 220 30% 8%;
+        --background: 222 47% 5%;
         --foreground: 210 40% 96%;
-        --card: 220 28% 11%;
+        --card: 222 47% 8%;
         --card-foreground: 210 40% 96%;
-        --popover: 220 28% 11%;
+        --popover: 222 47% 8%;
         --popover-foreground: 210 40% 96%;
-        --primary: 217 91% 60%;
+        --primary: 45 100% 50%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 220 20% 16%;
+        --secondary: 222 30% 12%;
         --secondary-foreground: 210 40% 96%;
-        --muted: 220 20% 16%;
+        --muted: 222 30% 12%;
         --muted-foreground: 215 20% 60%;
         --accent: 220 20% 16%;
         --accent-foreground: 210 40% 96%;
@@ -62,7 +102,7 @@ code {
         --card-foreground: 215 30% 15%;
         --popover: 206 60% 98%;
         --popover-foreground: 215 30% 15%;
-        --primary: 217 91% 50%;
+        --primary: 45 100% 45%;
         --primary-foreground: 0 0% 100%;
         --secondary: 208 50% 92%;
         --secondary-foreground: 215 30% 15%;
@@ -74,7 +114,7 @@ code {
         --destructive-foreground: 0 0% 100%;
         --border: 210 35% 84%;
         --input: 210 35% 84%;
-        --ring: 217 91% 50%;
+        --ring: 45 100% 50%;
     }
 }
 

@@ -5,8 +5,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        barlow: ['Barlow Condensed', 'sans-serif'],
+        sans: ['Roboto', 'sans-serif'],
+        roboto: ['Roboto', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
       borderRadius: {

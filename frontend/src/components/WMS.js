@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ShoppingCart, Link2, ClipboardCheck,
   Factory, CheckCircle, Truck, History, ArrowLeft, Warehouse, Download, Plus,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
-  Sun, Moon
+  Sun, Moon, Home
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
@@ -1740,6 +1740,17 @@ export default function WMS() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light-theme'));
   const ActiveComponent = MODULE_COMPONENTS[activeModule] || ReceivingModule;
+
+  // Handle URL parameters from Home Dashboard
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab) {
+      if (tab === 'tintas') setActiveModule('inventory');
+      if (tab === 'logs') setActiveModule('movements');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   const toggleTheme = () => {
     setIsDark(prev => {

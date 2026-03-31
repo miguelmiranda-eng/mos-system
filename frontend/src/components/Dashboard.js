@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "../App";
+import { useNavigate } from "react-router-dom";
 import { useLang } from "../contexts/LanguageContext";
 import {
   Search, Plus, LogOut, X, RefreshCw, Trash2, ListFilter,
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft,
-  ChevronDown, ChevronUp, Check, FileDown
+  ChevronDown, ChevronUp, Check, FileDown, Home
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -14,11 +15,13 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
   DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
+import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Toaster, toast } from "sonner";
 import * as XLSX from 'xlsx';
@@ -53,12 +56,14 @@ import { useOrders } from "../hooks/useOrders";
 
 const Dashboard = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const { t, lang, toggleLang } = useLang();
 
   // Board & filter state
   const [currentBoard, setCurrentBoard] = useState("SCHEDULING");
   const [boardFilters, setBoardFilters] = useState({});
   const [selectedOrders, setSelectedOrders] = useState([]);
+  const [openFilter, setOpenFilter] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme');
@@ -231,10 +236,29 @@ const Dashboard = () => {
     else { document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light-theme'); }
   });
 
-  // Clear selection on board switch
   useEffect(() => {
     setSelectedOrders([]);
   }, [currentBoard]);
+
+  // Handle URL parameters from Home Dashboard
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const boardParam = params.get('board');
+    if (boardParam && (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).includes(boardParam)) {
+      setCurrentBoard(boardParam);
+    }
+    const actionParam = params.get('action');
+    if (actionParam) {
+      if (actionParam === 'showActivity') setShowActivityLog(true);
+      if (actionParam === 'showAutomations') setShowAutomations(true);
+      if (actionParam === 'showUsers') setShowInvite(true);
+      if (actionParam === 'showOptions') setShowOptionsManager(true);
+      if (actionParam === 'showOperators') setShowOperators(true);
+      if (actionParam === 'showFormFields') setShowFormFields(true);
+      // Clean up URL without reload
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [dynamicBoards]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch BLANKS + READY TO SCHEDULE orders for views in SCHEDULING
   useEffect(() => {
@@ -481,7 +505,7 @@ const Dashboard = () => {
       {/* Header */}
       <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-secondary/30 border-gray-200 shadow-sm'}`}>
         <div className="flex items-center gap-3 flex-shrink-0">
-          <h1 className={`font-barlow font-bold text-base md:text-lg tracking-tight uppercase ${isDark ? '' : 'text-gray-900'}`}>MOS <span className="text-primary">S</span><span className="text-primary hidden md:inline">YSTEM</span></h1>
+          <h1 onClick={() => navigate('/home')} className={`font-roboto font-black text-base md:text-lg tracking-tight uppercase cursor-pointer hover:opacity-80 transition-opacity ${isDark ? 'text-glow-primary' : 'text-gray-900'}`}>MOS <span className="text-primary font-black">S</span><span className="text-primary hidden md:inline font-black">YSTEM</span></h1>
           {/* Notifications Bell - next to logo */}
           <div>
             <button onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }} className={`p-2 rounded-lg relative flex items-center justify-center transition-all ${unreadCount > 0 ? 'text-primary' : (isDark ? 'text-muted-foreground hover:text-foreground' : 'text-gray-500 hover:text-gray-900')}`} title={t('notifications')} data-testid="notifications-btn">
@@ -498,7 +522,7 @@ const Dashboard = () => {
             {showNotifications && require('react-dom').createPortal(
               <div className={`fixed left-2 md:left-4 top-[60px] w-80 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[99999] bg-card border-border`} data-testid="notifications-dropdown">
                 <div className="p-3 border-b border-border flex items-center justify-between">
-                  <span className="font-barlow font-black text-sm uppercase tracking-widest text-primary">Notificaciones</span>
+                  <span className="font-roboto font-black text-sm uppercase tracking-widest text-primary text-glow-primary">Notificaciones</span>
                   {unreadCount > 0 && <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold animate-pulse">NUEVAS</span>}
                 </div>
                 {notifications.length > 0 ? notifications.slice(0, 20).map(n => {
@@ -581,31 +605,31 @@ const Dashboard = () => {
       </header>
 
       {/* Board Bar */}
-      <div className="px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shadow-lg" style={{ ...getBoardStyle(currentBoard), color: '#FFFFFF' }}>
+      <div className="px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shadow-lg bg-cover bg-center scanline" style={{ ...getBoardStyle(currentBoard), color: '#FFFFFF' }}>
 
         {/* LEFT: Board selector + count */}
         <div className="flex items-center gap-2.5 min-w-0">
           <DropdownMenu>
-            <DropdownMenuTrigger className="h-9 bg-white/10 border border-white/25 text-white font-barlow font-black text-base md:text-lg backdrop-blur-md rounded-xl flex items-center justify-between px-3 md:px-4 hover:bg-white/20 transition-all outline-none focus:ring-2 focus:ring-white/30 shadow-lg gap-2 min-w-[140px] md:min-w-[220px]" data-testid="board-selector">
+            <DropdownMenuTrigger className="h-8.5 bg-white/10 border border-white/25 text-white font-roboto font-black text-sm md:text-base backdrop-blur-md rounded-2xl flex items-center justify-between px-3 md:px-5 hover:bg-white/20 transition-all outline-none focus:ring-2 focus:ring-white/30 shadow-lg glow-primary gap-2 min-w-[140px] md:min-w-[200px]" data-testid="board-selector">
               <span className="truncate font-black tracking-tight">{currentBoard}</span>
               <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="z-[300] min-w-[200px] border-2 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <DropdownMenuContent className="z-[300] min-w-[220px] border border-border/50 bg-card/95 backdrop-blur-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 rounded-3xl p-1.5">
               {visibleBoards.filter(b => !b.startsWith('MAQUINA')).map(board => (
-                <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-3.5 px-5 text-sm md:text-base font-black tracking-tight ${currentBoard === board ? 'bg-primary text-primary-foreground' : ''}`}>
+                <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2.5 px-5 text-sm font-black tracking-tight rounded-2xl cursor-pointer transition-colors ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
                   {board}
-                  {currentBoard === board && <Check className="w-5 h-5" />}
+                  {currentBoard === board ? <Check className="w-4 h-4" /> : <div className="w-4" />}
                 </DropdownMenuItem>
               ))}
-              <DropdownMenuSeparator className="opacity-50" />
+              <DropdownMenuSeparator className="opacity-50 my-1.5" />
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 text-sm md:text-base font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider">
-                  <div className="flex items-center gap-2.5"><Monitor className="w-5 h-5" /><span>MAQUINAS</span></div>
+                <DropdownMenuSubTrigger className="flex items-center justify-between py-2.5 px-5 text-sm font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider rounded-2xl">
+                  <div className="flex items-center gap-2.5"><Monitor className="w-4.5 h-4.5" /><span>MAQUINAS</span></div>
                 </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="z-[301] min-w-[240px] shadow-2xl p-2">
+                <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl p-1.5 rounded-2xl bg-card border border-border/50">
                   {visibleBoards.filter(b => b.startsWith('MAQUINA')).map(board => (
-                    <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-3 px-5 text-sm font-black tracking-tight ${currentBoard === board ? 'bg-primary text-primary-foreground' : ''}`}>
-                      {board}{currentBoard === board && <Check className="w-5 h-5" />}
+                    <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2 px-4 text-xs md:text-sm font-black tracking-tight rounded-xl cursor-pointer ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
+                      {board}{currentBoard === board && <Check className="w-4 h-4 ml-2" />}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuSubContent>
@@ -613,8 +637,8 @@ const Dashboard = () => {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <span className="text-[11px] font-barlow font-bold bg-white/15 backdrop-blur-sm px-2.5 py-1 rounded-lg flex-shrink-0 border border-white/10" data-testid="order-count">
-            {orders.length} <span className="text-[10px] font-normal opacity-70">ord</span>
+          <span className="text-[11px] font-mono font-bold bg-white/15 backdrop-blur-sm px-2.5 py-1 rounded-lg flex-shrink-0 border border-white/10 shadow-inner" data-testid="order-count">
+            {orders.length} <span className="text-[9px] font-normal opacity-70">ORD_QTY</span>
           </span>
         </div>
 
@@ -685,7 +709,7 @@ const Dashboard = () => {
                 <button onClick={() => setShowBoardVisibility(!showBoardVisibility)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn"><Eye className="w-4 h-4" /></button>
                 {showBoardVisibility && (
                   <div className="absolute right-0 top-10 w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl border z-[300] bg-card border-border" data-testid="board-visibility-panel">
-                    <div className="p-3 border-b border-border font-barlow font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
+                    <div className="p-3 border-b border-border font-roboto font-black text-xs uppercase tracking-widest text-foreground text-glow-primary">Visibilidad de Tableros</div>
                     {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
                       const isHidden = hiddenBoards.includes(b);
                       return (
@@ -997,31 +1021,39 @@ const Dashboard = () => {
                             <th className={`py-3 px-3 sticky left-[96px] z-30 text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500 border-b border-border/40' : 'bg-gray-50 text-gray-400 border-b border-gray-100'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[isReflection ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+                                <Popover open={openFilter === (isReflection ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? (isReflection ? '_board' : 'order_number') : null)}>
+                                  <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[isReflection ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
                                     <ListFilter className="w-3.5 h-3.5" />
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl" onPointerDownOutside={(e) => e.target.closest('input') && e.preventDefault()}>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
                                     {isReflection ? (
                                       <>
                                         <div className="flex items-center justify-between mb-2">
                                           <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Board</span>
                                           {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                         </div>
-                                        {[...new Set(unfilteredOrders.map(o => o.board).filter(Boolean))].sort().map(b => (
-                                          <DropdownMenuItem key={b} onSelect={(e) => e.preventDefault()} className="p-0">
-                                            <label className="flex items-center gap-2 w-full px-3 py-2 text-xs cursor-pointer hover:bg-secondary">
-                                              <input type="checkbox" checked={(filters['_board'] || []).includes(b)} onChange={() => {
-                                                setFilters(prev => {
-                                                  const cur = prev['_board'] || [];
-                                                  const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
-                                                  return { ...prev, '_board': next.length > 0 ? next : undefined };
-                                                });
-                                              }} className="w-3.5 h-3.5 rounded accent-orange-500" />
-                                              <span className={(filters['_board'] || []).includes(b) ? 'font-bold text-orange-500' : ''}>{b}</span>
-                                            </label>
-                                          </DropdownMenuItem>
-                                        ))}
+                                        <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
+                                          {[...new Set(unfilteredOrders.map(o => o.board).filter(Boolean))].sort().map(b => {
+                                            const checked = (filters['_board'] || []).includes(b);
+                                            return (
+                                              <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={checked}
+                                                  onChange={() => {
+                                                    setFilters(prev => {
+                                                      const cur = prev['_board'] || [];
+                                                      const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
+                                                      return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                                    });
+                                                  }}
+                                                  className="w-4 h-4 rounded border-border accent-primary"
+                                                />
+                                                <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
                                       </>
                                     ) : (
                                       <>
@@ -1032,8 +1064,8 @@ const Dashboard = () => {
                                         <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
                                       </>
                                     )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                  </PopoverContent>
+                                </Popover>
                               </div>
                             </th>
                           );
@@ -1054,30 +1086,36 @@ const Dashboard = () => {
                                   {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
                                   <span className="truncate">{col.label}</span>
                                   {/* Filter Trigger Icon */}
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
+                                  {/* Filter Trigger Icon */}
+                                  <Popover open={openFilter === col.key} onOpenChange={(val) => setOpenFilter(val ? col.key : null)}>
+                                    <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
                                       <ListFilter className="w-3.5 h-3.5" />
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
+                                    </PopoverTrigger>
+                                    <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
                                       <div className="flex items-center justify-between mb-2">
                                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{col.label}</span>
                                         {filterVal && <button onClick={() => setFilters(prev => { const n={...prev}; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                       </div>
                                       
                                       {isSelect ? (
-                                        <div className="max-h-60 overflow-y-auto space-y-1">
+                                        <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
                                           {getFilterOptions(col).map(opt => {
                                             const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
                                             return (
                                               <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                <input type="checkbox" checked={checked} onChange={() => {
-                                                  setFilters(prev => {
-                                                    const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                                    const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                                    return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                                                  });
-                                                }} className="w-4 h-4 rounded border-border" />
-                                                <span className={`text-xs ${checked ? 'font-bold text-primary active:scale-95' : 'text-foreground'}`}>{opt}</span>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={checked}
+                                                  onChange={() => {
+                                                    setFilters(prev => {
+                                                      const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                      const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                      return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                    });
+                                                  }}
+                                                  className="w-4 h-4 rounded border-border accent-primary"
+                                                />
+                                                <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
                                               </label>
                                             );
                                           })}
@@ -1094,20 +1132,20 @@ const Dashboard = () => {
                                           </div>
                                         </div>
                                       ) : (
-                                        <div className="relative">
-                                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                                        <div className="relative mt-1">
+                                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                                           <input
                                             type="text"
-                                            placeholder="..."
-                                            autoFocus
                                             value={typeof filterVal === 'string' ? filterVal : ''}
                                             onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: e.target.value || undefined }))}
-                                            className="w-full h-9 pl-7 pr-3 text-xs bg-secondary/50 border border-border rounded focus:ring-1 focus:ring-primary outline-none"
+                                            placeholder={`Buscar ${col.label.toLowerCase()}...`}
+                                            className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
+                                            autoFocus
                                           />
                                         </div>
                                       )}
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
+                                    </PopoverContent>
+                                  </Popover>
                                 </div>
                                 <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
                               </div>
@@ -1169,7 +1207,7 @@ const Dashboard = () => {
                               })}
                               {(() => {
                                 const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
-                                  <td className="py-2 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold">{remaining}</span><span className={`font-bold ${pct >= 100 ? 'text-green-400' : pct >= 50 ? 'text-yellow-400' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground">—</span>}</td>
+                                  <td className="py-2 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="font-mono font-black">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-400' : pct >= 50 ? 'text-yellow-400' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground">—</span>}</td>
                                 );
                               })()}
                             </tr>
@@ -1197,8 +1235,8 @@ const Dashboard = () => {
                         return sortedEntries.map(([dateKey, groupOrders]) => (
                           <React.Fragment key={dateKey}>
                             <tr data-testid={`date-group-${dateKey}`}>
-                              <td colSpan={colSpan} className={`py-2 px-4 font-barlow font-bold text-sm uppercase tracking-wide ${isDark ? 'bg-primary/10 text-primary border-b border-primary/30' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
-                                <CalendarDays className="w-4 h-4 inline mr-2 -mt-0.5" />{dateLabelsMap[groupByDate] || groupByDate}: {dateKey} <span className="font-normal text-xs text-muted-foreground ml-2">({groupOrders.length})</span>
+                              <td colSpan={colSpan} className={`py-2 px-4 font-roboto font-black text-sm uppercase tracking-wide ${isDark ? 'bg-primary/10 text-primary border-b border-primary/30' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
+                                <CalendarDays className="w-4 h-4 inline mr-2 -mt-0.5" />{dateLabelsMap[groupByDate] || groupByDate}: <span className="font-mono">{dateKey}</span> <span className="font-normal text-xs text-muted-foreground ml-2">({groupOrders.length})</span>
                               </td>
                             </tr>
                             {groupOrders.map(renderOrderRow)}
@@ -1231,18 +1269,18 @@ const Dashboard = () => {
       {/* Trash Modal */}
       <Dialog open={showTrash} onOpenChange={setShowTrash}>
         <DialogContent className="max-w-4xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col" data-testid="trash-modal">
-          <DialogHeader><DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashOrders.length})</span></DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashOrders.length})</span></DialogTitle></DialogHeader>
           <div className="flex-1 overflow-y-auto py-4">
             {trashLoading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> :
               trashOrders.length > 0 ? (
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-card"><tr className="border-b border-border"><th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('order')}</th><th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('client')}</th><th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('priority')}</th><th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('date_time')}</th><th className="text-right py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('actions')}</th></tr></thead>
+                  <thead className="sticky top-0 bg-card"><tr className="border-b border-border"><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('order')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('client')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('priority')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('date_time')}</th><th className="text-right py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('actions')}</th></tr></thead>
                   <tbody>{trashOrders.map(order => (
                     <tr key={order.order_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`trash-order-${order.order_id}`}>
                       <td className="py-2 px-3 font-mono text-foreground">{order.order_number}</td>
                       <td className="py-2 px-3 text-foreground">{order.client || '-'}</td>
                       <td className="py-2 px-3"><ColoredBadge value={order.priority} isDark={isDark} /></td>
-                      <td className="py-2 px-3 text-muted-foreground text-xs">{order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</td>
+                      <td className="py-2 px-3 text-muted-foreground text-xs font-mono">{order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</td>
                       <td className="py-2 px-3 text-right"><div className="flex items-center justify-end gap-1">
                         <Select onValueChange={(board) => handleRestoreFromTrash([order.order_id], board)}>
                           <SelectTrigger className="w-36 h-7 text-xs bg-secondary border-border" data-testid={`restore-select-${order.order_id}`}><SelectValue placeholder={t('restore')} /></SelectTrigger>
@@ -1268,7 +1306,7 @@ const Dashboard = () => {
       <Dialog open={!!searchResults} onOpenChange={() => setSearchResults(null)}>
         <DialogContent className="max-w-2xl max-h-[70vh] bg-card border-border overflow-hidden flex flex-col" data-testid="search-results-modal">
           <DialogHeader>
-            <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3">
+            <DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary">
               <Search className="w-5 h-5" /> Resultados de busqueda <span className="text-sm font-normal text-muted-foreground">({searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
@@ -1276,11 +1314,11 @@ const Dashboard = () => {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('order')}</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">PO (Store/Cust)</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('client')}</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Trabajo / Ref</th>
-                  <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Tablero</th>
+                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">{t('order')}</th>
+                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">PO (Store/Cust)</th>
+                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">{t('client')}</th>
+                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">Trabajo / Ref</th>
+                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">Tablero</th>
                 </tr>
               </thead>
               <tbody>

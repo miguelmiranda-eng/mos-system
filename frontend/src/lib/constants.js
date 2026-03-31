@@ -2,7 +2,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
 export const BOARDS = [
-  "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EJEMPLOS", "COMPLETOS",
+  "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EDI", "EJEMPLOS", "COMPLETOS",
   "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
   "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
   "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL"
@@ -165,6 +165,7 @@ export const BOARD_COLORS = {
   'BLANKS': { bg: '#4a1942', accent: '#e066cc' },
   'SCREENS': { bg: '#1b4332', accent: '#52b788' },
   'NECK': { bg: '#6a040f', accent: '#e85d04' },
+  'EDI': { bg: '#20124d', accent: '#3d85c6' },
   'EJEMPLOS': { bg: '#312e81', accent: '#d946ef' },
   'COMPLETOS': { bg: '#004e64', accent: '#25a18e' },
 };

@@ -21,11 +21,25 @@ async def mark_notifications_read(request: Request):
     return {"message": "All notifications marked as read"}
 
 @router.get("/activity")
-async def get_activity_logs(request: Request, limit: int = 100, offset: int = 0, action_filter: str = None):
+async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0, action_filter: str = None, search: str = None):
     await require_admin(request)
     query = {}
     if action_filter:
         query["action"] = action_filter
+        
+    if search:
+        search_regex = {"$regex": search, "$options": "i"}
+        # Some details might be stored as order_id or just deep within details
+        query["$or"] = [
+            {"details.order_id": search_regex},
+            {"details.order_number": search_regex},
+            {"details.order": search_regex},
+            {"details.customer": search_regex},
+            {"user_email": search_regex},
+            {"user_name": search_regex},
+            {"action": search_regex}
+        ]
+        
     total = await db.activity_logs.count_documents(query)
     logs = await db.activity_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
     return {"total": total, "logs": logs, "limit": limit, "offset": offset}

@@ -378,16 +378,16 @@ const translations = {
     clients_label: "Clientes",
 
     // Landing page
-    landing_hero_1: "Control Total de",
-    landing_hero_2: "Producción",
-    landing_desc: "Sistema CRM industrial para gestión de órdenes de producción. Tableros Kanban, automatizaciones y seguimiento en tiempo real.",
+    landing_hero_1: "SISTEMA OPERATIVO",
+    landing_hero_2: "MOS SYSTEM",
+    landing_desc: "Plataforma de software CRM de alto rendimiento desarrollada a la medida. Arquitectura inteligente que fusiona la eficiencia del código y la resiliencia de la naturaleza.",
     landing_login: "Iniciar con Google",
-    landing_feature_1_title: "Tableros Kanban",
-    landing_feature_1_desc: "Organiza órdenes en 22 tableros incluyendo 14 máquinas",
-    landing_feature_2_title: "Automatizaciones",
-    landing_feature_2_desc: "Reglas que envían emails, mueven órdenes y notifican Slack",
-    landing_feature_3_title: "Búsqueda Global",
-    landing_feature_3_desc: "Encuentra cualquier orden al instante con Cmd+K",
+    landing_feature_1_title: "Escalabilidad",
+    landing_feature_1_desc: "Control dinámico sobre múltiples tableros de producción",
+    landing_feature_2_title: "Automatización",
+    landing_feature_2_desc: "Trazabilidad con reglas y notificaciones orquestadas",
+    landing_feature_3_title: "Productividad",
+    landing_feature_3_desc: "Ecosistema intuitivo basado en analíticas precisas",
     processing_auth: "Procesando autenticación...",
 
     // Excel export
@@ -786,16 +786,16 @@ const translations = {
     clients_label: "Clients",
 
     // Landing page
-    landing_hero_1: "Total Control of",
-    landing_hero_2: "Production",
-    landing_desc: "Industrial CRM system for production order management. Kanban boards, automations and real-time tracking.",
+    landing_hero_1: "OPERATING SYSTEM",
+    landing_hero_2: "MOS SYSTEM",
+    landing_desc: "High-performance custom-built CRM software platform. Intelligent architecture merging code efficiency with the resilience of nature.",
     landing_login: "Sign in with Google",
-    landing_feature_1_title: "Kanban Boards",
-    landing_feature_1_desc: "Organize orders across 22 boards including 14 machines",
-    landing_feature_2_title: "Automations",
-    landing_feature_2_desc: "Rules that send emails, move orders and notify Slack",
-    landing_feature_3_title: "Global Search",
-    landing_feature_3_desc: "Find any order instantly with Cmd+K",
+    landing_feature_1_title: "Scalability",
+    landing_feature_1_desc: "Dynamic control over multiple production boards",
+    landing_feature_2_title: "Automation",
+    landing_feature_2_desc: "Traceability with orchestrated rules and notifications",
+    landing_feature_3_title: "Productivity",
+    landing_feature_3_desc: "Intuitive ecosystem driven by precise analytics",
     processing_auth: "Processing authentication...",
 
     // Excel export
