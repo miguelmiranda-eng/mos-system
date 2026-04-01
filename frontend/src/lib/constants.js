@@ -164,10 +164,11 @@ export const BOARD_COLORS = {
   'SCHEDULING': { bg: '#0f3460', accent: '#16c79a' },
   'BLANKS': { bg: '#4a1942', accent: '#e066cc' },
   'SCREENS': { bg: '#1b4332', accent: '#52b788' },
-  'NECK': { bg: '#6a040f', accent: '#e85d04' },
+  'NECK': { bg: '#420b0b', accent: '#ff4d4d' },
   'EDI': { bg: '#20124d', accent: '#3d85c6' },
-  'EJEMPLOS': { bg: '#312e81', accent: '#d946ef' },
+  'EJEMPLOS': { bg: '#2b2d42', accent: '#8d99ae' },
   'COMPLETOS': { bg: '#004e64', accent: '#25a18e' },
+  'FINAL BILL': { bg: '#2b2d42', accent: '#ef233c' }
 };
 
 export const getBoardStyle = (board) => {
@@ -210,10 +211,10 @@ export const evaluateFormula = (field, order, allCols) => {
 export const ACTION_COLORS = {
   'create_order': 'bg-green-500/20 text-green-400',
   'update_order': 'bg-blue-500/20 text-blue-400',
-  'move_order': 'bg-yellow-500/20 text-yellow-400',
+  'move_order': 'bg-zinc-500/20 text-zinc-400',
   'delete_order': 'bg-red-500/20 text-red-400',
   'permanent_delete_order': 'bg-red-700/20 text-red-500',
-  'bulk_move_orders': 'bg-yellow-500/20 text-yellow-400',
+  'bulk_move_orders': 'bg-zinc-500/20 text-zinc-400',
   'undo_action': 'bg-purple-500/20 text-purple-400',
 };
 

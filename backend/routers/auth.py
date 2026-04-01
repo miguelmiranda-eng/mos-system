@@ -6,7 +6,7 @@ from passlib.hash import bcrypt
 from fastapi.responses import RedirectResponse
 import uuid, httpx, os, resend, logging
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
@@ -269,7 +269,7 @@ async def reset_password(request: Request):
     await db.password_resets.update_one({"token": token}, {"$set": {"used": True}})
     return {"message": "Contrasena actualizada exitosamente"}
 
-@router.get("/auth/me")
+@router.get("/api/auth/me")
 async def get_me(request: Request):
     user = await get_current_user(request)
     if not user:
@@ -277,7 +277,7 @@ async def get_me(request: Request):
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user
 
-@router.post("/auth/logout")
+@router.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
     user = await get_current_user(request)
     session_token = request.cookies.get("session_token")

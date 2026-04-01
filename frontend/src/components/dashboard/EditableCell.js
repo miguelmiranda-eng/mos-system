@@ -106,12 +106,19 @@ export const EditableCell = ({ value, field, orderId, options, onUpdate, type = 
   if (isEditing) {
     if (options && options.length > 0) {
       return (
-        <Select value={editValue || 'none'} onValueChange={(v) => {
-          const newVal = v === 'none' ? '' : v;
-          setEditValue(newVal);
-          onUpdate(orderId, field, newVal);
-          setIsEditing(false);
-        }}>
+        <Select 
+          value={editValue || 'none'} 
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setIsEditing(false);
+          }}
+          onValueChange={(v) => {
+            const newVal = v === 'none' ? '' : v;
+            setEditValue(newVal);
+            onUpdate(orderId, field, newVal);
+            setIsEditing(false);
+          }}
+        >
           <SelectTrigger ref={inputRef} className="h-8 bg-secondary border-primary text-sm min-w-[120px]">
             <SelectValue />
           </SelectTrigger>

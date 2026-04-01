@@ -35,14 +35,11 @@ import { CommentsModal } from "./dashboard/CommentsModal";
 import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
 import { AutomationsModal } from "./dashboard/AutomationsModal";
-import { ActivityLogModal } from "./dashboard/ActivityLogModal";
 import { OptionsManagerModal } from "./dashboard/OptionsManagerModal";
 import { OperatorsManagerModal } from "./dashboard/OperatorsManagerModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
-
 // Existing top-level components
 import AnalyticsView from "./AnalyticsView";
-import InviteUsersModal from "./InviteUsersModal";
 import CalendarView from "./CalendarView";
 import BlanksTrackingView from "./BlanksTrackingView";
 import ProductionModal from "./ProductionModal";
@@ -80,11 +77,9 @@ const Dashboard = () => {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
-  const [showActivityLog, setShowActivityLog] = useState(false);
   const [showOptionsManager, setShowOptionsManager] = useState(false);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
-  const [showInvite, setShowInvite] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSaveView, setShowSaveView] = useState(false);
@@ -249,12 +244,13 @@ const Dashboard = () => {
     }
     const actionParam = params.get('action');
     if (actionParam) {
-      if (actionParam === 'showActivity') setShowActivityLog(true);
       if (actionParam === 'showAutomations') setShowAutomations(true);
-      if (actionParam === 'showUsers') setShowInvite(true);
-      if (actionParam === 'showOptions') setShowOptionsManager(true);
-      if (actionParam === 'showOperators') setShowOperators(true);
-      if (actionParam === 'showFormFields') setShowFormFields(true);
+      if (actionParam === 'showProduction') setShowProduction(true);
+      if (actionParam === 'showAnalytics') setShowAnalytics(true);
+      if (actionParam === 'showTrash') setShowTrash(true);
+      if (actionParam === 'showGantt') setShowGantt(true);
+      if (actionParam === 'showCapacityPlan') setShowCapacityPlan(true);
+      if (actionParam === 'showProductionScreen') setShowProductionScreen(true);
       // Clean up URL without reload
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -588,8 +584,8 @@ const Dashboard = () => {
           {isAdmin && (<>
             <div className={`flex items-center gap-0.5 rounded-xl border border-border p-0.5 ml-1 ${isDark ? 'bg-secondary/40' : 'bg-secondary/60'}`}>
               <button onClick={handleQuickUndo} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('undo_last')} data-testid="quick-undo-btn"><Undo2 className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setShowInvite(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setShowActivityLog(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
+              <button onClick={() => navigate('/users')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
+              <button onClick={() => navigate('/activity-log')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
               <button onClick={() => setShowOptionsManager(true)} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('manage_options')} data-testid="manage-options-btn"><Settings className="w-3.5 h-3.5" /></button>
               <button onClick={() => setShowOperators(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
               <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
@@ -705,37 +701,39 @@ const Dashboard = () => {
                 <button onClick={() => setDeleteBoardConfirm({ step: 1, name: currentBoard })} className="p-1.5 rounded-lg hover:bg-red-500/50 transition-all" title={`Eliminar ${currentBoard}`} data-testid="delete-board-btn"><Trash2 className="w-4 h-4" /></button>
               )}
               <button onClick={() => setShowAddColumn(true)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('add_column')} data-testid="add-column-btn"><PlusCircle className="w-4 h-4" /></button>
-              <div className="relative">
-                <button onClick={() => setShowBoardVisibility(!showBoardVisibility)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn"><Eye className="w-4 h-4" /></button>
-                {showBoardVisibility && (
-                  <div className="absolute right-0 top-10 w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl border z-[300] bg-card border-border" data-testid="board-visibility-panel">
-                    <div className="p-3 border-b border-border font-roboto font-black text-xs uppercase tracking-widest text-foreground text-glow-primary">Visibilidad de Tableros</div>
-                    {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
-                      const isHidden = hiddenBoards.includes(b);
-                      return (
-                        <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
-                          {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                          <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                        </button>
-                      );
-                    })}
-                    <button onClick={() => setShowMachinesVisibility(!showMachinesVisibility)} className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black bg-secondary/30 text-primary uppercase tracking-widest mt-1 hover:bg-secondary/50 transition-all">
-                      <div className="flex items-center gap-1.5"><Monitor className="w-3 h-3" /> MAQUINAS</div>
-                      {showMachinesVisibility ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-                    {showMachinesVisibility && allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).map(b => {
-                      const isHidden = hiddenBoards.includes(b);
-                      return (
-                        <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
-                          {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                          <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                        </button>
-                      );
-                    })}
-                    <div className="p-2 border-t border-border"><p className="text-[10px] text-muted-foreground">Los tableros ocultos no aparecen en el selector.</p></div>
-                  </div>
-                )}
-              </div>
+              <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
+                <PopoverTrigger asChild>
+                  <button className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn">
+                    <Eye className="w-4 h-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl border z-[400] bg-card border-border p-0" align="end">
+                  <div className="p-3 border-b border-border font-roboto font-black text-xs uppercase tracking-widest text-foreground text-glow-primary">Visibilidad de Tableros</div>
+                  {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
+                    const isHidden = hiddenBoards.includes(b);
+                    return (
+                      <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
+                        {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                        <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                      </button>
+                    );
+                  })}
+                  <button onClick={() => setShowMachinesVisibility(!showMachinesVisibility)} className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black bg-secondary/30 text-primary uppercase tracking-widest mt-1 hover:bg-secondary/50 transition-all">
+                    <div className="flex items-center gap-1.5"><Monitor className="w-3 h-3" /> MAQUINAS</div>
+                    {showMachinesVisibility ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                  {showMachinesVisibility && allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).map(b => {
+                    const isHidden = hiddenBoards.includes(b);
+                    return (
+                      <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
+                        {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                        <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                      </button>
+                    );
+                  })}
+                  <div className="p-2 border-t border-border"><p className="text-[10px] text-muted-foreground">Los tableros ocultos no aparecen en el selector.</p></div>
+                </PopoverContent>
+              </Popover>
               <button onClick={() => setShowColumnManager(!showColumnManager)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('show_columns')} data-testid="column-manager-btn"><Settings className="w-4 h-4" /></button>
             </div>
           )}
@@ -1009,16 +1007,16 @@ const Dashboard = () => {
               blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
                   <table className="text-sm border-collapse" style={{ minWidth: '100%' }}>
-                    <thead className={`sticky top-0 z-30 transition-all duration-500 ${currentBoard === 'EJEMPLOS' ? 'ring-1 ring-fuchsia-500/50 shadow-[0_0_25px_-5px_rgba(217,70,239,0.3)]' : ''}`}>
-                      <tr className={`${isDark ? 'bg-[hsl(220,30%,9%)] border-b border-border/40' : 'bg-gray-50/80 border-b border-gray-100'} transition-colors duration-300 ${currentBoard === 'EJEMPLOS' ? (isDark ? 'bg-indigo-900/30 text-fuchsia-300' : 'bg-indigo-50 text-indigo-900') : ''}`}>
-                        <th className={`py-3.5 px-2 sticky left-0 z-30 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded" data-testid="select-all-checkbox" /></th>
-                        <th className={`py-3.5 px-1 sticky left-[48px] z-30 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></th>
+                    <thead className={`sticky top-0 z-30 transition-all duration-500 shadow-sm ${currentBoard === 'EJEMPLOS' ? 'ring-1 ring-zinc-500/50 shadow-[0_0_25px_-5px_rgba(161,161,170,0.3)]' : ''}`}>
+                      <tr className={`${isDark ? 'bg-[hsl(220,30%,9%)]/95 border-b border-border/60' : 'bg-gray-50/95 border-b border-gray-200'} backdrop-blur-xl transition-colors duration-300 ${currentBoard === 'EJEMPLOS' ? (isDark ? 'bg-zinc-900/30 text-zinc-300' : 'bg-zinc-50 text-zinc-900') : ''}`}>
+                        <th className={`py-4 px-2 sticky left-0 z-30 border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></th>
+                        <th className={`py-4 px-1 sticky left-[48px] z-30 border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></th>
                         
                         {/* Column 3: Permanent Identifier (Board for Master, Order for others) */}
                         {(() => {
                           const isReflection = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
                           return (
-                            <th className={`py-3 px-3 sticky left-[96px] z-30 text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500 border-b border-border/40' : 'bg-gray-50 text-gray-400 border-b border-gray-100'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                            <th className={`py-4 px-3 sticky left-[96px] z-30 text-left text-[10px] font-black tracking-[0.2em] uppercase border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80 border-b border-border/60' : 'bg-gray-50 text-gray-400 border-b border-gray-200'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
                                 <Popover open={openFilter === (isReflection ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? (isReflection ? '_board' : 'order_number') : null)}>
@@ -1080,7 +1078,7 @@ const Dashboard = () => {
                           const isDate = col.type === 'date';
 
                           return (
-                            <th key={col.key} className={`py-3 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'text-zinc-500' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                            <th key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-black tracking-[0.2em] uppercase border-r border-border/5 shadow-sm ${isDark ? 'text-zinc-500/80' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                                   {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
@@ -1152,7 +1150,7 @@ const Dashboard = () => {
                             </th>
                           );
                         })}
-                        <th className={`py-3 px-3 text-left text-[10px] font-bold tracking-[0.15em] uppercase ${isDark ? 'text-zinc-500' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
+                        <th className={`py-4 px-3 text-left text-[10px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-zinc-500/80' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1175,15 +1173,15 @@ const Dashboard = () => {
                             getVal(order.notes).includes(sq)
                           );
                           return (
-                            <tr key={order.order_id} className={`border-b group transition-all duration-150 ${isDark ? (orders.indexOf(order) % 2 === 0 ? 'bg-[hsl(220,28%,11%)]' : 'bg-[hsl(220,28%,10%)]') : (orders.indexOf(order) % 2 === 0 ? 'bg-white' : 'bg-gray-50/60')} ${isDark ? 'border-border/20 hover:bg-[hsl(220,28%,15%)]' : 'border-gray-100 hover:bg-blue-50/40'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/15 border-l-[3px] border-l-primary' : '!bg-blue-50 border-l-[3px] border-l-primary') : 'border-l-[3px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
-                              <td className={`py-3 px-2 sticky left-0 z-10 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded" /></td>
-              <td className={`py-3 px-1 sticky left-[48px] z-20 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><button onClick={() => setCommentsOrder(order)} className="p-1 rounded transition-colors hover:bg-secondary" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" /></button></td>
+                            <tr key={order.order_id} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
+                              <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" /></td>
+              <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><button onClick={() => setCommentsOrder(order)} className="p-1.5 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" /></button></td>
                               
                               {/* Fixed Column 3 Data */}
                               {(() => {
                                 const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
                                 return (
-                                  <td className={`py-3 px-3 sticky left-[96px] z-20 transition-colors ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? 'bg-primary/15' : (isDark ? 'bg-background group-hover:bg-secondary/50' : 'bg-background group-hover:bg-secondary/40')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                                  <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                                     {isMaster ? (
                                       <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                                     ) : (
@@ -1198,7 +1196,7 @@ const Dashboard = () => {
                                 const isOrderNum = col.key === 'order_number';
                                 const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
                                 return (
-                                  <td key={col.key} className={`py-3 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'}`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
+                                  <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
                                     {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
                                       <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                                     )}
@@ -1207,7 +1205,7 @@ const Dashboard = () => {
                               })}
                               {(() => {
                                 const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
-                                  <td className="py-2 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="font-mono font-black">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-400' : pct >= 50 ? 'text-yellow-400' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground">—</span>}</td>
+                                  <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-black text-foreground/80">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
                                 );
                               })()}
                             </tr>
@@ -1254,11 +1252,9 @@ const Dashboard = () => {
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
-      {isAdmin && <ActivityLogModal isOpen={showActivityLog} onClose={() => setShowActivityLog(false)} onUndoSuccess={fetchOrders} t={t} />}
       {isAdmin && <OptionsManagerModal isOpen={showOptionsManager} onClose={() => setShowOptionsManager(false)} options={options} onOptionsUpdate={fetchOptions} onColorsUpdate={(colors) => { Object.entries(colors).forEach(([k, v]) => { STATUS_COLORS[k] = v; }); fetchOrders(); }} />}
       {isAdmin && <OperatorsManagerModal isOpen={showOperators} onClose={() => setShowOperators(false)} />}
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
-      {isAdmin && <InviteUsersModal isOpen={showInvite} onClose={() => setShowInvite(false)} boards={allBoardsIncludingHidden} />}
       <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} />
       <AnalyticsView isOpen={showAnalytics} onClose={() => setShowAnalytics(false)} allOrders={allOrders} options={options} />
       <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />

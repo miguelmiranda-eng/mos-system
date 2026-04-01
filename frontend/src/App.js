@@ -174,6 +174,43 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+// Admin Route
+const AdminRoute = ({ children }) => {
+  const { t } = useLang();
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const [grace, setGrace] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setGrace(false), 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !grace) {
+      if (!user) {
+        navigate('/', { replace: true });
+      } else if (user.role !== 'admin') {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [user, loading, grace, navigate]);
+
+  if (loading || (grace && !user)) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-foreground font-barlow text-xl">{t('loading')}</div>
+      </div>
+    );
+  }
+
+  if (!user || user.role !== 'admin') {
+    return null;
+  }
+
+  return children;
+};
+
 // Landing Page
 const LandingPage = () => {
   const { t } = useLang();
@@ -255,7 +292,7 @@ const LandingPage = () => {
           <div className="flex items-center gap-4 md:gap-6">
             <div className="w-16 h-16 md:w-20 md:h-20 flex items-center justify-center transform hover:scale-105 transition-transform group cursor-default drop-shadow-[0_5px_15px_rgba(0,0,0,0.6)]">
               <svg viewBox="0 0 100 100" className="w-full h-full transform group-hover:rotate-45 transition-transform duration-1000 ease-in-out">
-                {/* Tech Petals (Yellow/Gold) */}
+                {/* Tech Petals (Crimson/Silver) */}
                 <g fill="var(--primary)" className="drop-shadow-[0_0_5px_rgba(255,193,7,0.7)]">
                   {[...Array(12)].map((_, i) => (
                     <polygon 
@@ -320,9 +357,9 @@ const LandingPage = () => {
               ].map((feature, i) => (
                 <div key={feature.title} className="bg-card/40 backdrop-blur-md border border-white/5 rounded-xl p-6 hover:bg-card/60 hover:border-primary/30 transition-all group">
                   <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    {i === 0 ? <div className="w-4 h-4 bg-primary rounded-sm shadow-[0_0_15px_rgba(255,193,7,0.8)]" /> :
-                     i === 1 ? <div className="w-4 h-4 border-2 border-primary rounded-full shadow-[0_0_15px_rgba(255,193,7,0.8)]" /> :
-                     <div className="w-4 h-1 bg-primary rounded shadow-[0_0_15px_rgba(255,193,7,0.8)]" />}
+                    {i === 0 ? <div className="w-4 h-4 bg-primary rounded-sm shadow-[0_0_15px_rgba(220,38,38,0.8)]" /> :
+                     i === 1 ? <div className="w-4 h-4 border-2 border-primary rounded-full shadow-[0_0_15px_rgba(220,38,38,0.8)]" /> :
+                     <div className="w-4 h-1 bg-primary rounded shadow-[0_0_15px_rgba(220,38,38,0.8)]" />}
                   </div>
                   <h3 className="font-barlow font-bold text-lg text-foreground mb-2 uppercase tracking-wider">{feature.title}</h3>
                   <p className="text-muted-foreground text-sm leading-relaxed">{feature.desc}</p>
@@ -355,11 +392,11 @@ const LandingPage = () => {
                         <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                         <input type="email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)}
                           placeholder="tu@email.com" required
-                          className="w-full pl-10 pr-4 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400/80 focus:border-yellow-400/50 transition-all placeholder:text-white/40 font-medium selection:bg-yellow-400/30"
+                          className="w-full pl-10 pr-4 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/80 focus:border-red-500/50 transition-all placeholder:text-white/40 font-medium selection:bg-red-500/30"
                           data-testid="forgot-email-input" />
                       </div>
                       <button type="submit" disabled={forgotLoading}
-                        className="w-full py-4 bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-black rounded-xl font-black tracking-widest text-sm transition-all hover:-translate-y-0.5 shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] border border-yellow-300/50 flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
+                        className="w-full py-4 bg-gradient-to-r from-red-600 to-zinc-700 hover:from-red-500 hover:to-zinc-600 text-white rounded-xl font-black tracking-widest text-sm transition-all hover:-translate-y-0.5 shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_30px_rgba(220,38,38,0.6)] border border-red-500/50 flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
                         data-testid="forgot-submit-btn">
                         {forgotLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                         Enviar enlace de recuperación
@@ -374,14 +411,14 @@ const LandingPage = () => {
                       <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
                         placeholder="Correo electrónico" required autoComplete="email"
-                        className="w-full pl-10 pr-4 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400/80 focus:border-yellow-400/50 transition-all placeholder:text-white/40 font-medium selection:bg-yellow-400/30"
+                        className="w-full pl-10 pr-4 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/80 focus:border-red-500/50 transition-all placeholder:text-white/40 font-medium selection:bg-red-500/30"
                         data-testid="login-email-input" />
                     </div>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input type={showPass ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
                         placeholder="Contraseña" required autoComplete="current-password"
-                        className="w-full pl-10 pr-10 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400/80 focus:border-yellow-400/50 transition-all placeholder:text-white/40 font-medium selection:bg-yellow-400/30"
+                        className="w-full pl-10 pr-10 py-3.5 bg-black/50 backdrop-blur-lg border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/80 focus:border-red-500/50 transition-all placeholder:text-white/40 font-medium selection:bg-red-500/30"
                         data-testid="login-password-input" />
                       <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                         {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -395,7 +432,7 @@ const LandingPage = () => {
                     </div>
 
                     <button type="submit" disabled={loginLoading}
-                      className="w-full py-4 bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-black rounded-xl font-black tracking-widest text-sm transition-all hover:-translate-y-0.5 shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] border border-yellow-300/50 flex items-center justify-center gap-2 disabled:opacity-50 mt-4 relative overflow-hidden"
+                      className="w-full py-4 bg-gradient-to-r from-red-600 to-zinc-700 hover:from-red-500 hover:to-zinc-600 text-white rounded-xl font-black tracking-widest text-sm transition-all hover:-translate-y-0.5 shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_30px_rgba(220,38,38,0.6)] border border-red-500/50 flex items-center justify-center gap-2 disabled:opacity-50 mt-4 relative overflow-hidden"
                       data-testid="login-email-submit-btn">
                       <div className="absolute inset-0 bg-white/20 translate-y-full hover:translate-y-0 transition-transform duration-300"></div>
                       <span className="relative flex items-center gap-2">
@@ -428,7 +465,7 @@ const LandingPage = () => {
               ) : (
                 <div className="space-y-4 relative z-10 w-full flex flex-col items-center">
                   <button data-testid="login-google-btn" onClick={login}
-                    className="w-full bg-gradient-to-r from-white to-gray-100 hover:from-yellow-400 hover:to-yellow-500 text-black px-8 py-4 rounded-xl font-black tracking-widest text-lg transition-all hover:-translate-y-1 flex items-center justify-center gap-3 border border-white/40 shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_40px_rgba(255,193,7,0.6)] group">
+                    className="w-full bg-gradient-to-r from-white to-gray-100 hover:from-red-600 hover:to-zinc-700 hover:text-white text-black px-8 py-4 rounded-xl font-black tracking-widest text-lg transition-all hover:-translate-y-1 flex items-center justify-center gap-3 border border-white/40 shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_40px_rgba(220,38,38,0.4)] group">
                     <svg className="w-7 h-7 bg-white rounded-full p-1" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -457,6 +494,9 @@ import Dashboard from "./components/Dashboard";
 import WMS from "./components/WMS";
 import OperatorView from "./components/OperatorView";
 import HomeDashboard from "./components/HomeDashboard";
+import AutomationCenter from "./components/AutomationCenter";
+import ActivityLogCenter from "./components/ActivityLogCenter";
+import UserManagementCenter from "./components/UserManagementCenter";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -564,6 +604,21 @@ function AppRouter() {
         <ProtectedRoute>
           <OperatorView />
         </ProtectedRoute>
+      } />
+      <Route path="/automation-center" element={
+        <AdminRoute>
+          <AutomationCenter />
+        </AdminRoute>
+      } />
+      <Route path="/activity-log" element={
+        <AdminRoute>
+          <ActivityLogCenter />
+        </AdminRoute>
+      } />
+      <Route path="/users" element={
+        <AdminRoute>
+          <UserManagementCenter />
+        </AdminRoute>
       } />
     </Routes>
   );

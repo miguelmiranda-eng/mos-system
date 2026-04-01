@@ -5,20 +5,20 @@ from datetime import datetime, timezone
 import uuid, os, asyncio
 import resend
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
 # ==================== OPERATORS CRUD ====================
 
-@router.get("/operators")
+@router.get("/api/operators")
 async def list_operators(request: Request):
     await require_auth(request)
     operators = await db.operators.find({}, {"_id": 0}).sort("name", 1).to_list(500)
     return operators
 
-@router.post("/operators")
+@router.post("/api/operators")
 async def create_operator(request: Request):
     user = await require_admin(request)
     body = await request.json()

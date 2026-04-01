@@ -14,17 +14,17 @@ export const ColoredBadge = ({ value, isDark }) => {
   if (!value) return <span className="text-muted-foreground/40">—</span>;
 
   if (color) {
-    const bg = hexToRgba(color.bg, isDark ? 0.18 : 0.12);
-    const border = hexToRgba(color.bg, isDark ? 0.45 : 0.35);
-    const text = color.bg; // use the original color as text for glass effect
+    const bg = hexToRgba(color.bg, isDark ? 0.12 : 0.08);
+    const border = hexToRgba(color.bg, isDark ? 0.35 : 0.25);
 
     return (
       <span
-        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap tracking-wide border"
+        className="inline-flex items-center px-3 py-0.5 rounded-md text-[10px] font-black uppercase whitespace-nowrap tracking-wider border shadow-sm transition-all duration-300"
         style={{
           backgroundColor: bg,
           borderColor: border,
-          color: isDark ? lightenHex(color.bg, 0.75) : darkenHex(color.bg, 0.15),
+          color: isDark ? lightenHex(color.bg, 0.7) : darkenHex(color.bg, 0.2),
+          textShadow: isDark ? `0 0 10px ${hexToRgba(color.bg, 0.4)}` : 'none'
         }}
       >
         {value}
@@ -33,7 +33,7 @@ export const ColoredBadge = ({ value, isDark }) => {
   }
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap border tracking-wide ${isDark ? 'bg-zinc-800/60 border-zinc-700/60 text-zinc-300' : 'bg-gray-100/80 border-gray-300/60 text-gray-600'}`}>
+    <span className={`inline-flex items-center px-3 py-0.5 rounded-md text-[10px] font-black uppercase whitespace-nowrap border tracking-wider shadow-sm ${isDark ? 'bg-zinc-800/40 border-zinc-700/50 text-zinc-400' : 'bg-gray-100/60 border-gray-300/50 text-gray-500'}`}>
       {value}
     </span>
   );

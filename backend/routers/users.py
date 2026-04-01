@@ -3,15 +3,15 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_admin, require_auth, log_activity, ADMIN_EMAILS
 from datetime import datetime, timezone
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
-@router.get("/users/list")
+@router.get("/api/users/list")
 async def list_users_for_mention(request: Request):
     await require_auth(request)
     users = await db.users.find({}, {"_id": 0, "email": 1, "name": 1, "picture": 1, "user_id": 1}).to_list(200)
     return users
 
-@router.get("/users")
+@router.get("/api/users")
 async def get_users(request: Request):
     await require_admin(request)
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(200)
@@ -19,7 +19,7 @@ async def get_users(request: Request):
         u["user_id"] = u.get("email", "")
     return users
 
-@router.post("/users/invite")
+@router.post("/api/users/invite")
 async def invite_user(request: Request):
     user = await require_admin(request)
     body = await request.json()
