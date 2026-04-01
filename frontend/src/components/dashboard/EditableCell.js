@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { getStatusColor, evaluateFormula } from "../../lib/constants";
 import { ColoredBadge } from "./ColoredBadge";
 
-export const EditableCell = ({ value, field, orderId, options, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false }) => {
+export const EditableCell = ({ value, field, orderId, options, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false, className = "" }) => {
   const { t } = useLang();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value || "");
@@ -205,7 +205,7 @@ export const EditableCell = ({ value, field, orderId, options, onUpdate, type = 
 
   return (
     <div onClick={() => setIsEditing(true)}
-      className="cursor-pointer min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group" title={t('click_to_edit')}>
+      className={`cursor-pointer min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
       {isSelectField ? <ColoredBadge value={value} isDark={isDark} /> :
        type === 'link' ? <span className="text-muted-foreground text-sm">+ {t('link')}</span> :
        (value || <span className="text-muted-foreground">-</span>)}

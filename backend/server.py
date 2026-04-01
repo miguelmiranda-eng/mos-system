@@ -103,4 +103,5 @@ async def shutdown_db_client():
 if __name__ == "__main__":
     import uvicorn
     # Use standard asyncio loop and websockets implementation for Windows robustness
-    uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio", ws="websockets")
+    # Enabled reload=True to ensure changes in routers are applied automatically
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True, loop="asyncio", ws="websockets")

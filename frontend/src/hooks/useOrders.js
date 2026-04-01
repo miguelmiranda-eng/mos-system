@@ -218,10 +218,17 @@ export const useOrders = (currentBoard, boardFilters) => {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'order_change') {
-            if (selfUpdateRef.current) { selfUpdateRef.current = false; return; }
-            fetchOrdersRef.current(true);
+          // Always refresh production summary on any relevant event
+          if (msg.type === 'order_change' || msg.type === 'production_update') {
             fetchProdRef.current();
+          }
+          
+          // Refresh orders if changed
+          if (msg.type === 'order_change') {
+            // We fetch silently. Even if it was our own change, 
+            // fetching ensures we have the final server state and 
+            // doesn't miss concurrent changes from others.
+            fetchOrdersRef.current(true);
           }
         } catch { /* ignore */ }
       };

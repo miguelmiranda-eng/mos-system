@@ -7,7 +7,7 @@ import {
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft,
-  ChevronDown, ChevronUp, Check, FileDown, Home
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -1185,7 +1185,15 @@ const Dashboard = () => {
                                     {isMaster ? (
                                       <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                                     ) : (
-                                      <span className={`font-mono font-black truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order.order_number}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order.order_number}</mark> : order.order_number}</span>
+                                      <EditableCell 
+                                        value={order.order_number} 
+                                        field="order_number" 
+                                        orderId={order.order_id} 
+                                        onUpdate={handleCellUpdate} 
+                                        type="text" 
+                                        isDark={isDark} 
+                                        className={`font-mono font-black ${isSearchMatch ? 'text-primary' : ''}`}
+                                      />
                                     )}
                                   </td>
                                 );
@@ -1300,44 +1308,79 @@ const Dashboard = () => {
 
       {/* Search Results Modal */}
       <Dialog open={!!searchResults} onOpenChange={() => setSearchResults(null)}>
-        <DialogContent className="max-w-2xl max-h-[70vh] bg-card border-border overflow-hidden flex flex-col" data-testid="search-results-modal">
-          <DialogHeader>
-            <DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary">
-              <Search className="w-5 h-5" /> Resultados de busqueda <span className="text-sm font-normal text-muted-foreground">({searchResults?.length || 0})</span>
+        <DialogContent className="max-w-6xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle className="font-roboto text-2xl font-black uppercase tracking-tight flex items-center gap-3 text-glow-primary">
+              <Search className="w-6 h-6 text-primary" /> Resultados de busqueda <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto py-2">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card z-10">
-                <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">{t('order')}</th>
-                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">PO (Store/Cust)</th>
-                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">{t('client')}</th>
-                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">Trabajo / Ref</th>
-                  <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground">Tablero</th>
-                </tr>
-              </thead>
-              <tbody>
-                {searchResults?.map(order => (
-                  <tr key={order.order_id}
-                    onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(order.order_number || ''); toast.success(`${order.order_number} → ${order.board}`); }}
-                    className="border-b border-border/50 hover:bg-primary/10 cursor-pointer transition-colors"
-                    data-testid={`search-result-${order.order_id}`}>
-                    <td className="py-2.5 px-3 font-mono font-bold text-primary">{order.order_number || '-'}</td>
-                    <td className="py-2.5 px-3">
-                      <div className="text-xs font-bold text-foreground">{order.store_po || '-'}</div>
-                      <div className="text-[10px] opacity-60 italic">{order.customer_po || '-'}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-bold text-foreground">{order.client || '-'}</td>
-                    <td className="py-2.5 px-3">
-                      <div className="text-xs font-bold text-primary truncate max-w-[150px]">{typeof order.job_title_a === 'object' && order.job_title_a ? (order.job_title_a.desc || order.job_title_a.url || '-') : (order.job_title_a || '-')}</div>
-                      <div className="text-[10px] opacity-60 truncate max-w-[150px]">{typeof order.job_title_b === 'object' && order.job_title_b ? (order.job_title_b.desc || order.job_title_b.url || '-') : (order.job_title_b || order.branding || '-')}</div>
-                    </td>
-                    <td className="py-2.5 px-3"><span className="px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span></td>
+          <div className="flex-1 overflow-auto px-6 pb-6">
+            <div className="rounded-xl border border-border/50 overflow-x-auto bg-background/50 shadow-inner">
+              <table className="w-full text-sm border-collapse">
+                <thead className="sticky top-0 bg-secondary/95 backdrop-blur-md z-20">
+                  <tr className="border-b border-border/50">
+                    <th className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary/95 z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)]">{t('order')}</th>
+                    <th className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</th>
+                    {columns.filter(c => c.key !== 'order_number').map(col => (
+                      <th key={col.key} className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</th>
+                    ))}
+                    <th className="text-center py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary/95 z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)]">Accion</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {searchResults?.map(order => (
+                    <tr key={order.order_id}
+                      className="border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group"
+                      data-testid={`search-result-${order.order_id}`}>
+                      <td className="py-3 px-4 sticky left-0 bg-background/95 z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors">
+                        <EditableCell 
+                          value={order.order_number} 
+                          field="order_number" 
+                          orderId={order.order_id} 
+                          onUpdate={(id, f, v) => { 
+                            handleCellUpdate(id, f, v); 
+                            setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o)); 
+                          }} 
+                          type="text" 
+                          isDark={isDark}
+                          className="font-mono font-black text-primary text-base"
+                        />
+                      </td>
+                      <td className="py-3 px-4 border-l border-border/5">
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                      </td>
+                      {columns.filter(c => c.key !== 'order_number').map(col => (
+                        <td key={col.key} className="py-3 px-4 border-l border-border/5">
+                          <EditableCell 
+                            value={order[col.key]} 
+                            field={col.key} 
+                            orderId={order.order_id} 
+                            options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} 
+                            onUpdate={(id, f, v) => { 
+                              handleCellUpdate(id, f, v); 
+                              setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o)); 
+                            }} 
+                            type={col.type} 
+                            isDark={isDark} 
+                            allOrders={searchResults} 
+                            columns={columns}
+                          />
+                        </td>
+                      ))}
+                      <td className="py-3 px-4 text-center sticky right-0 bg-background/95 z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors">
+                        <button 
+                          onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(order.order_number || ''); toast.success(`${order.order_number} → ${order.board}`); }}
+                          className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
+                          title="Ir al tablero"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

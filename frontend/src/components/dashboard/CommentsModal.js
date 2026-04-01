@@ -23,6 +23,10 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [reactionLoading, setReactionLoading] = useState(null);
+  const [activeReactionId, setActiveReactionId] = useState(null);
+  const reactionTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const dropZoneRef = useRef(null);
@@ -30,6 +34,19 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   useEffect(() => {
     if (order && isOpen) { fetchComments(); fetchLinks(); fetchUsers(); }
   }, [order, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleClose = () => {
+    if (newComment.trim() || imagePreviews.length > 0) {
+      const confirmMsg = lang === 'es' 
+        ? "Tienes un comentario o archivos sin enviar. ¿Estás seguro de que quieres salir?" 
+        : "You have an unsaved comment or files. Are you sure you want to leave?";
+      if (!window.confirm(confirmMsg)) return;
+    }
+    setNewComment("");
+    setImagePreviews([]);
+    setReplyingTo(null);
+    onClose();
+  };
 
   const fetchComments = async () => {
     if (!order?.order_id) return;
@@ -103,9 +120,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       if (finalContent) {
         const res = await fetch(`${API}/orders/${order.order_id}/comments`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-          body: JSON.stringify({ content: finalContent })
+          body: JSON.stringify({ content: finalContent, parent_id: replyingTo?.comment_id || null })
         });
-        if (res.ok) { setNewComment(""); setImagePreviews([]); setMentionQuery(null); fetchComments(); toast.success(t('comment_sent')); }
+        if (res.ok) { setNewComment(""); setImagePreviews([]); setMentionQuery(null); setReplyingTo(null); fetchComments(); toast.success(t('comment_sent')); }
       }
     } catch { toast.error(t('comment_err')); } finally { setLoading(false); }
   };
@@ -131,6 +148,50 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       if (res.ok) { fetchComments(); toast.success("Comentario eliminado"); }
       else { const err = await res.json(); toast.error(err.detail || "Error al eliminar"); }
     } catch { toast.error("Error al eliminar comentario"); }
+  };
+
+  const handleReact = async (commentId, emoji) => {
+    if (!currentUser) return toast.error("Inicia sesión para reaccionar");
+    
+    // Optimistic update
+    const userId = String(currentUser.user_id);
+    setComments(prev => prev.map(c => {
+      if (c.comment_id !== commentId) return c;
+      const reactions = { ...(c.reactions || {}) };
+      const users = (reactions[emoji] || []).map(id => String(id));
+      if (users.includes(userId)) {
+        reactions[emoji] = users.filter(id => id !== userId);
+        if (reactions[emoji].length === 0) delete reactions[emoji];
+      } else {
+        reactions[emoji] = [...users, userId];
+      }
+      return { ...c, reactions };
+    }));
+
+    try {
+      const res = await fetch(`${API}/orders/${order.order_id}/comments/${commentId}/react`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ emoji })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Error en el servidor");
+      }
+      
+      // Silently sync with server-confirmed data
+      const data = await res.json();
+      setComments(prev => prev.map(c => c.comment_id === commentId ? { ...c, reactions: data.reactions } : c));
+      
+      if (data.action === "added") {
+        toast.success(`Reaccionaste con ${emoji}`, { icon: emoji, duration: 1500 });
+      } else {
+        toast.info(`Quitaste tu reacción ${emoji}`, { duration: 1500 });
+      }
+    } catch (err) {
+      toast.error(err.message || "Error al reaccionar");
+      fetchComments(); // Revert to server state
+    }
   };
 
   // Key to force input recreation on iOS (prevents cached file bug)
@@ -347,7 +408,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   if (!order) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="max-w-[95vw] md:max-w-4xl max-h-[90vh] bg-card border-border overflow-hidden flex flex-col" data-testid="comments-modal">
         <DialogHeader>
           <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3">
@@ -410,52 +471,119 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
         </div>
 
         {/* Comments Section */}
-        <div className="flex-1 overflow-y-auto py-3 space-y-2" data-testid="comments-list">
-          {comments.length > 0 ? comments.map(comment => (
-            <div key={comment.comment_id} className="group bg-secondary/50 border border-border rounded p-3" data-testid={`comment-${comment.comment_id}`}>
-              <div className="flex items-center gap-2 mb-2">
-                {comment.user_picture && <img src={comment.user_picture} alt="" className="w-6 h-6 rounded-full" />}
-                <span className="text-sm font-medium text-foreground">{comment.user_name}</span>
-                <span className="text-xs text-muted-foreground">{new Date(comment.created_at).toLocaleString()}</span>
-                {comment.edited_at && <span className="text-[10px] text-muted-foreground italic">(editado)</span>}
-                {comment.mentions && comment.mentions.length > 0 && (
-                  <span className="text-[10px] text-primary flex items-center gap-0.5"><AtSign className="w-3 h-3" />{comment.mentions.length}</span>
-                )}
-                {canModify(comment) && editingId !== comment.comment_id && (
-                  <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => { setEditingId(comment.comment_id); setEditContent(comment.content); }}
-                      className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                      title="Editar" data-testid={`edit-comment-${comment.comment_id}`}>
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => { if (window.confirm('¿Estás seguro de que quieres eliminar este comentario?')) handleDeleteComment(comment.comment_id); }}
-                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                      title="Eliminar" data-testid={`delete-comment-${comment.comment_id}`}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+        <div className="flex-1 overflow-y-auto py-3 space-y-4" data-testid="comments-list">
+          {(() => {
+            const rootComments = comments.filter(c => !c.parent_id);
+            const repliesMap = comments.reduce((acc, c) => {
+              if (c.parent_id) { (acc[c.parent_id] = acc[c.parent_id] || []).push(c); }
+              return acc;
+            }, {});
+
+            const renderComment = (comment, isReply = false) => {
+              const reactions = comment.reactions || {};
+              const emojiList = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+              
+              return (
+                <div key={comment.comment_id} className={`group flex flex-col gap-1 ${isReply ? 'ml-10 border-l-2 border-border/30 pl-4 py-1' : 'bg-secondary/20 border border-border/30 rounded-xl p-4'}`} data-testid={`comment-${comment.comment_id}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    {comment.user_picture ? (
+                      <img src={comment.user_picture} alt="" className="w-6 h-6 rounded-full border border-border/50" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">{comment.user_name?.charAt(0)}</div>
+                    )}
+                    <span className="text-xs font-black text-foreground/80">{comment.user_name}</span>
+                    <span className="text-[10px] text-muted-foreground">{new Date(comment.created_at).toLocaleString()}</span>
+                    {comment.edited_at && <span className="text-[10px] text-muted-foreground italic">(editado)</span>}
+                    
+                    {canModify(comment) && editingId !== comment.comment_id && (
+                      <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingId(comment.comment_id); setEditContent(comment.content); }}
+                          className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
+                          title="Editar"><Pencil className="w-3 h-3" /></button>
+                        <button onClick={() => { if (window.confirm('¿Eliminar?')) handleDeleteComment(comment.comment_id); }}
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Eliminar"><Trash2 className="w-3 h-3" /></button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {editingId === comment.comment_id ? (
-                <div className="space-y-2">
-                  <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)}
-                    className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none h-20"
-                    data-testid={`edit-textarea-${comment.comment_id}`} />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => { setEditingId(null); setEditContent(""); }}
-                      className="px-3 py-1 text-xs text-muted-foreground hover:text-foreground" data-testid="cancel-edit-btn">Cancelar</button>
-                    <button onClick={() => handleEditComment(comment.comment_id)} disabled={editLoading || !editContent.trim()}
-                      className="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
-                      data-testid={`save-edit-${comment.comment_id}`}>
-                      {editLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Guardar
-                    </button>
-                  </div>
+                  
+                  {editingId === comment.comment_id ? (
+                    <div className="space-y-2">
+                      <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)}
+                        className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none" />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setEditingId(null)} className="px-2 py-1 text-[10px]">Cancelar</button>
+                        <button onClick={() => handleEditComment(comment.comment_id)} className="px-3 py-1 text-[10px] bg-primary text-primary-foreground rounded">Guardar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-foreground leading-relaxed">{renderContent(comment.content)}</div>
+                  )}
+
+                  {/* Actions Bar */}
+                  {!editingId && (
+                    <div className="flex items-center gap-4 mt-2 border-t border-border/10 pt-2 relative">
+                      <div className="flex items-center gap-1 h-8 relative"
+                        onMouseEnter={() => {
+                          if (reactionTimeoutRef.current) clearTimeout(reactionTimeoutRef.current);
+                          setActiveReactionId(comment.comment_id);
+                        }}
+                        onMouseLeave={() => {
+                          reactionTimeoutRef.current = setTimeout(() => setActiveReactionId(null), 200);
+                        }}
+                      >
+                        <button className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                          Reaccionar
+                        </button>
+                        
+                        {activeReactionId === comment.comment_id && (
+                          <div className="absolute bottom-full left-0 pb-3 flex animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
+                            <div className="bg-popover border border-border rounded-full p-1.5 shadow-2xl flex gap-2 px-3">
+                              {emojiList.map(emoji => (
+                                <button key={emoji} onClick={() => { handleReact(comment.comment_id, emoji); setActiveReactionId(null); }}
+                                  className="text-3xl hover:scale-125 transition-transform duration-200 p-1 grayscale-0 hover:grayscale-0 active:scale-95">
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {!isReply && (
+                        <button onClick={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
+                          className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                          Responder
+                        </button>
+                      )}
+
+                      {/* Display Reactions - Professional sized, next to Responder */}
+                      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                        {Object.entries(comment.reactions || {}).map(([emoji, users]) => {
+                          const hasReacted = users.map(id => String(id)).includes(String(currentUser?.user_id));
+                          return (
+                            <button key={emoji} onClick={() => handleReact(comment.comment_id, emoji)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[11px] font-bold transition-all shadow-sm active:scale-95 ${hasReacted ? 'bg-primary/20 border-primary/40 text-primary' : 'bg-secondary/40 border-border/50 hover:border-border text-muted-foreground'}`}
+                              title={users.length > 1 ? `${users.length} personas` : '1 persona'}>
+                              <span className="text-sm">{emoji}</span>
+                              {users.length > 0 && <span className="font-mono">{users.length}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Render Replies */}
+                  {repliesMap[comment.comment_id]?.map(reply => renderComment(reply, true))}
                 </div>
-              ) : (
-                <div className="text-sm text-foreground">{renderContent(comment.content)}</div>
-              )}
-            </div>
-          )) : <p className="text-center text-muted-foreground py-6">{t('no_data')}</p>}
+              );
+            };
+
+            return rootComments.length > 0 
+              ? rootComments.map(c => renderComment(c)) 
+              : <p className="text-center text-muted-foreground py-6">{t('no_data')}</p>;
+          })()}
         </div>
 
         {/* Comment Input */}
@@ -465,6 +593,15 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <div className="mb-3 border-2 border-dashed border-primary rounded-lg p-4 bg-primary/5 text-center" data-testid="drop-overlay">
               <Camera className="w-6 h-6 mx-auto mb-1 text-primary" />
               <p className="text-sm text-primary font-medium">Suelta las imagenes aqui</p>
+            </div>
+          )}
+          {replyingTo && (
+            <div className="mb-2 px-3 py-1.5 bg-primary/10 border-l-4 border-primary rounded flex items-center justify-between animate-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2">
+                <AtSign className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-black uppercase text-primary">Respondiendo a {replyingTo.user_name}</span>
+              </div>
+              <button onClick={() => setReplyingTo(null)} className="p-1 hover:bg-primary/20 rounded text-primary"><X className="w-3 h-3" /></button>
             </div>
           )}
           {imagePreviews.length > 0 && !isDragging && (

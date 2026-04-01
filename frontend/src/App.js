@@ -15,8 +15,13 @@ const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
 const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem("mos_user");
+      return stored ? JSON.parse(stored) : null;
+    } catch { return null; }
+  });
+  const [loading, setLoading] = useState(!user);
 
   const checkAuth = useCallback(async () => {
     // CRITICAL: If returning from OAuth callback, skip the /me check.
@@ -43,6 +48,28 @@ const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
+  // Persistent user sync
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem("mos_user", JSON.stringify(user));
+    } else {
+      localStorage.removeItem("mos_user");
+    }
+  }, [user]);
+
+  // Global tab-close guard
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (user) {
+        e.preventDefault();
+        e.returnValue = ""; // Standard browser requirement
+        return "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [user]);
+
   const login = () => {
     window.location.href = `${BACKEND_URL}/api/auth/google`;
   };
@@ -54,6 +81,7 @@ const AuthProvider = ({ children }) => {
       console.error("Logout error:", error);
     }
     setUser(null);
+    localStorage.removeItem("mos_user");
     window.location.href = '/';
   };
 

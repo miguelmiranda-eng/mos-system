@@ -221,6 +221,7 @@ async def add_order_link(order_id: str, request: Request):
         raise HTTPException(status_code=400, detail="URL required")
     link = {"url": url, "description": description, "created_at": datetime.now(timezone.utc).isoformat(), "added_by": user["name"]}
     await db.orders.update_one({"order_id": order_id}, {"$push": {"links": link}})
+    await ws_manager.broadcast("order_change", {"action": "add_link", "order_id": order_id})
     return link
 
 @router.delete("/api/orders/{order_id}/links/{link_index}")
@@ -234,6 +235,7 @@ async def delete_order_link(order_id: str, link_index: int, request: Request):
         raise HTTPException(status_code=400, detail="Invalid link index")
     links.pop(link_index)
     await db.orders.update_one({"order_id": order_id}, {"$set": {"links": links}})
+    await ws_manager.broadcast("order_change", {"action": "delete_link", "order_id": order_id})
     return {"message": "Link deleted"}
 
 # ==================== COMMENTS ====================
@@ -303,7 +305,9 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
                 })
     if notif_docs:
         await db.notifications.insert_many(notif_docs)
-    return {k: v for k, v in comment_doc.items() if k != "_id"}
+    
+    await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": order_id})
+    return {**{k: v for k, v in comment_doc.items() if k not in ["_id", "reactions"]}, "reactions": {}}
 
 @router.put("/api/orders/{order_id}/comments/{comment_id}")
 async def update_comment(order_id: str, comment_id: str, request: Request):
@@ -321,6 +325,7 @@ async def update_comment(order_id: str, comment_id: str, request: Request):
         {"comment_id": comment_id},
         {"$set": {"content": content, "edited_at": datetime.now(timezone.utc).isoformat()}}
     )
+    await ws_manager.broadcast("order_change", {"action": "update_comment", "order_id": order_id})
     updated = await db.comments.find_one({"comment_id": comment_id}, {"_id": 0})
     return updated
 
@@ -333,7 +338,53 @@ async def delete_comment(order_id: str, comment_id: str, request: Request):
     if comment.get("user_id") != user["user_id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not allowed to delete this comment")
     await db.comments.delete_one({"comment_id": comment_id})
+    await ws_manager.broadcast("order_change", {"action": "delete_comment", "order_id": order_id})
     return {"message": "Comment deleted"}
+
+@router.post("/api/orders/{order_id}/comments/{comment_id}/react")
+async def react_to_comment(order_id: str, comment_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    emoji = body.get("emoji")
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji required")
+    
+    user_id = user["user_id"]
+    logger.info(f"Reaction toggle: user {user_id}, comment {comment_id}, emoji {emoji}")
+    
+    comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
+    if not comment:
+        logger.warning(f"Comment {comment_id} not found for order {order_id}")
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Ensure reactions exists
+    reactions = comment.get("reactions")
+    if not isinstance(reactions, dict):
+        reactions = {}
+    
+    user_id_str = str(user_id)
+    
+    # Toggle reaction
+    current_emoji_users = reactions.get(emoji, [])
+    if not isinstance(current_emoji_users, list):
+        current_emoji_users = []
+        
+    if user_id_str in current_emoji_users:
+        current_emoji_users.remove(user_id_str)
+        action = "removed"
+    else:
+        current_emoji_users.append(user_id_str)
+        action = "added"
+    
+    if not current_emoji_users:
+        reactions.pop(emoji, None)
+    else:
+        reactions[emoji] = current_emoji_users
+    
+    await db.comments.update_one({"comment_id": comment_id}, {"$set": {"reactions": reactions}})
+    await ws_manager.broadcast("order_change", {"action": "comment_reaction", "order_id": order_id})
+    logger.info(f"Reaction {action} for {comment_id}. Current reactions: {list(reactions.keys())}")
+    return {"reactions": reactions, "action": action}
 
 # ==================== FILE UPLOAD (stored in MongoDB) ====================
 
