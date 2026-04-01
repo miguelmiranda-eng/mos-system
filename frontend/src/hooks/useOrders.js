@@ -120,16 +120,25 @@ export const useOrders = (currentBoard, boardFilters) => {
       ]);
       if (boardsRes.ok) { const data = await boardsRes.json(); setDynamicBoards(data.boards || []); }
       if (hiddenRes.ok) { const data = await hiddenRes.json(); setHiddenBoards(data || []); }
-    } catch { /* silent */ }
+    } catch (error) { console.error("Error fetching boards:", error); }
   }, []);
 
-  const toggleBoardVisibility = async (boardName) => {
-    const newHidden = hiddenBoards.includes(boardName) ? hiddenBoards.filter(b => b !== boardName) : [...hiddenBoards, boardName];
-    setHiddenBoards(newHidden);
-    try {
-      await fetch(`${API}/config/hidden-boards`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ boards: newHidden }) });
-    } catch { /* silent */ }
-  };
+  const toggleBoardVisibility = useCallback(async (boardName) => {
+    setHiddenBoards(prev => {
+      const isHidden = prev.includes(boardName);
+      const next = isHidden ? prev.filter(b => b !== boardName) : [...prev, boardName];
+      
+      // Persist to backend without blocking local state
+      fetch(`${API}/config/hidden-boards`, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' }, 
+        credentials: 'include', 
+        body: JSON.stringify({ boards: next }) 
+      }).catch(err => console.error("Error saving board visibility:", err));
+      
+      return next;
+    });
+  }, []);
 
   const createBoard = async (name) => {
     try {

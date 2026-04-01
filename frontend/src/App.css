@@ -58,7 +58,8 @@ table {
 table th {
     position: sticky;
     top: 0;
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
 }
 
 /* Dark theme table headers (default) */
@@ -71,12 +72,23 @@ table th {
     background: hsl(208 50% 94% / 0.95);
 }
 
+table tr {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 table tr:hover td {
-    background-color: hsl(220 20% 16% / 0.3);
+    background-color: hsl(var(--primary) / 0.05) !important;
 }
 
 .light-theme table tr:hover td {
-    background-color: hsl(208 40% 90% / 0.5);
+    background-color: hsl(var(--primary) / 0.08) !important;
+}
+
+/* Row Elevation Effect */
+table tr:hover {
+    z-index: 10;
+    position: relative;
+    box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.2);
 }
 
 /* Editable Cell Hover */
@@ -126,18 +138,18 @@ table tr:hover td {
 
 /* Focus States */
 *:focus-visible {
-    outline: 2px solid hsl(217 91% 60%);
+    outline: 2px solid hsl(var(--primary));
     outline-offset: 2px;
 }
 
 /* Selection highlight */
 tr.selected {
-    background-color: hsl(217 91% 60% / 0.1) !important;
+    background-color: hsl(var(--primary) / 0.1) !important;
 }
 
 /* Search result highlight */
 tr.search-result {
-    background-color: hsl(45 93% 47% / 0.2) !important;
+    background-color: hsl(var(--primary) / 0.25) !important;
     animation: pulse 2s ease-in-out infinite;
 }
 
@@ -190,19 +202,19 @@ tr.search-result {
 input:focus,
 select:focus,
 textarea:focus {
-    border-color: hsl(217 91% 60%);
-    box-shadow: 0 0 0 1px hsl(217 91% 60% / 0.3);
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
 }
 
 .light-theme input:focus,
 .light-theme select:focus,
 .light-theme textarea:focus {
-    border-color: hsl(217 91% 50%);
-    box-shadow: 0 0 0 1px hsl(217 91% 50% / 0.3);
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
 }
 
 /* Checkbox styles */
 input[type="checkbox"] {
     cursor: pointer;
-    accent-color: hsl(217 91% 60%);
+    accent-color: hsl(var(--primary));
 }

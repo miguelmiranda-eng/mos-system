@@ -3,9 +3,9 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, log_activity, logger
 from datetime import datetime, timezone
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
-@router.get("/notifications")
+@router.get("/api/notifications")
 async def get_notifications(request: Request, limit: int = 50):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -13,14 +13,14 @@ async def get_notifications(request: Request, limit: int = 50):
     unread_count = await db.notifications.count_documents({"user_id": user_id, "read": False})
     return {"notifications": notifs, "unread_count": unread_count}
 
-@router.put("/notifications/read")
+@router.put("/api/notifications/read")
 async def mark_notifications_read(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
     await db.notifications.update_many({"user_id": user_id, "read": False}, {"$set": {"read": True}})
     return {"message": "All notifications marked as read"}
 
-@router.get("/activity")
+@router.get("/api/activity")
 async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0, action_filter: str = None, search: str = None):
     await require_admin(request)
     query = {}

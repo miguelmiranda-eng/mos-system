@@ -53,9 +53,9 @@ const HomeDashboard = () => {
       icon: <Zap className="w-6 h-6 text-primary" />,
       color: 'from-purple-500/20 to-pink-500/20',
       items: [
-        { name: 'Activity Log', action: 'showActivity', desc: 'Historial detallado de cambios y acciones.', icon: <History /> },
-        { name: 'Automatizaciones', action: 'showAutomations', desc: 'Configuración de reglas inteligentes.', icon: <Zap /> },
-        { name: 'Usuarios', action: 'showUsers', desc: 'Gestión de permisos y accesos del equipo.', icon: <Users /> }
+        { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de cambios y acciones.', icon: <History /> },
+        { name: 'Automatizaciones', path: '/automation-center', desc: 'Configuración de reglas inteligentes.', icon: <Zap /> },
+        { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos del equipo.', icon: <Users /> }
       ]
     }
   ];

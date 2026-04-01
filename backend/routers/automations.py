@@ -5,18 +5,18 @@ from datetime import datetime, timezone
 import uuid, os, httpx, asyncio
 import resend
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
-@router.get("/automations")
+@router.get("/api/automations")
 async def get_automations(request: Request):
     await require_auth(request)
     automations = await db.automations.find({}, {"_id": 0}).to_list(100)
     return automations
 
-@router.post("/automations")
+@router.post("/api/automations")
 async def create_automation(automation: AutomationCreate, request: Request):
     user = await require_auth(request)
     automation_id = f"auto_{uuid.uuid4().hex[:12]}"

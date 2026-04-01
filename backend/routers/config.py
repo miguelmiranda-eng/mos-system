@@ -4,7 +4,7 @@ from deps import db, require_auth, require_admin, log_activity, OptionUpdate, DE
 from datetime import datetime, timezone
 import uuid
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
 @router.get("/config/options")
 async def get_options(request: Request):
@@ -17,19 +17,19 @@ async def get_options(request: Request):
         return options
     return DEFAULT_OPTIONS
 
-@router.put("/config/options")
+@router.put("/api/config/options")
 async def update_options(option_update: OptionUpdate, request: Request):
     user = await require_admin(request)
     await db.config_options.update_one({"config_id": "main"}, {"$set": {option_update.option_key: option_update.values}}, upsert=True)
     await log_activity(user, "update_options", {"option_key": option_update.option_key, "values_count": len(option_update.values)})
     return {"message": "Options updated", "key": option_update.option_key}
 
-@router.get("/config/boards")
+@router.get("/api/config/boards")
 async def get_boards(request: Request):
     boards = await get_dynamic_boards()
     return {"boards": boards}
 
-@router.post("/config/boards")
+@router.post("/api/config/boards")
 async def create_board(request: Request):
     await require_admin(request)
     body = await request.json()
