@@ -148,6 +148,7 @@ class OrderCreate(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     screens: Optional[bool] = None
+    board: Optional[str] = "SCHEDULING"
     links: Optional[List[Dict[str, str]]] = []
     custom_fields: Optional[Dict[str, Any]] = {}
     model_config = {"extra": "allow"}

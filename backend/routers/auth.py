@@ -36,7 +36,7 @@ async def _create_session(user_id, response):
     response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
     return session_token
 
-@router.get("/auth/google")
+@router.get("/api/auth/google")
 async def google_login():
     """Initiate Google OAuth 2.0 flow."""
     if not GOOGLE_CLIENT_ID:
@@ -53,7 +53,7 @@ async def google_login():
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{httpx.QueryParams(params)}"
     return RedirectResponse(url)
 
-@router.get("/auth/google/callback")
+@router.get("/api/auth/google/callback")
 async def google_callback(code: str, response: Response):
     """Handle Google OAuth 2.0 callback."""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -113,7 +113,7 @@ async def google_callback(code: str, response: Response):
     
     return redirect_resp
 
-@router.post("/auth/session")
+@router.post("/api/auth/session")
 async def create_session(request: Request, response: Response):
     """Legacy proxy session endpoint (kept for backward compatibility)."""
     body = await request.json()
@@ -154,7 +154,7 @@ async def create_session(request: Request, response: Response):
 
 # ==================== EMAIL/PASSWORD AUTH ====================
 
-@router.post("/auth/create-user")
+@router.post("/api/auth/create-user")
 async def admin_create_user(request: Request, response: Response):
     """Admin creates a user with email/password."""
     admin = await require_admin(request)
@@ -182,7 +182,7 @@ async def admin_create_user(request: Request, response: Response):
     await log_activity(admin, "create_user", {"email": email, "role": role, "auth_type": "email"})
     return {"message": f"Usuario {email} creado exitosamente", "user_id": user_id}
 
-@router.post("/auth/login")
+@router.post("/api/auth/login")
 async def email_login(request: Request, response: Response):
     """Login with email and password."""
     body = await request.json()
@@ -202,7 +202,7 @@ async def email_login(request: Request, response: Response):
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user
 
-@router.post("/auth/forgot-password")
+@router.post("/api/auth/forgot-password")
 async def forgot_password(request: Request):
     """Send password reset email."""
     body = await request.json()
@@ -246,7 +246,7 @@ async def forgot_password(request: Request):
         return {"message": "Si el email existe, se envio un enlace de recuperacion", "reset_link": reset_link}
     return {"message": "Si el email existe, se envio un enlace de recuperacion"}
 
-@router.post("/auth/reset-password")
+@router.post("/api/auth/reset-password")
 async def reset_password(request: Request):
     """Reset password with token."""
     body = await request.json()

@@ -44,7 +44,7 @@ async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0,
     logs = await db.activity_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
     return {"total": total, "logs": logs, "limit": limit, "offset": offset}
 
-@router.post("/undo/{activity_id}")
+@router.post("/api/undo/{activity_id}")
 async def undo_action(activity_id: str, request: Request):
     user = await require_admin(request)
     log_entry = await db.activity_logs.find_one({"activity_id": activity_id}, {"_id": 0})

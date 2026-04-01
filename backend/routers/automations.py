@@ -31,7 +31,7 @@ async def create_automation(automation: AutomationCreate, request: Request):
     await log_activity(user, "create_automation", {"automation_id": automation_id, "name": automation.name})
     return {k: v for k, v in automation_doc.items() if k != "_id"}
 
-@router.put("/automations/{automation_id}")
+@router.put("/api/automations/{automation_id}")
 async def update_automation(automation_id: str, automation: AutomationCreate, request: Request):
     user = await require_auth(request)
     update_data = automation.model_dump()
@@ -43,7 +43,7 @@ async def update_automation(automation_id: str, automation: AutomationCreate, re
     updated = await db.automations.find_one({"automation_id": automation_id}, {"_id": 0})
     return updated
 
-@router.delete("/automations/{automation_id}")
+@router.delete("/api/automations/{automation_id}")
 async def delete_automation(automation_id: str, request: Request):
     user = await require_auth(request)
     result = await db.automations.delete_one({"automation_id": automation_id})
@@ -58,6 +58,10 @@ async def run_automations(trigger_type, order, user, context=None):
     context = context or {}
     executed = []
     automations = await db.automations.find({"trigger_type": trigger_type, "is_active": True}, {"_id": 0}).to_list(100)
+    if not order:
+        logger.warning(f"run_automations called with None order for trigger {trigger_type}")
+        return executed
+
     order_board = order.get("board", "")
     for automation in automations:
         try:

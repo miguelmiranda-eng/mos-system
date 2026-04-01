@@ -35,7 +35,7 @@ async def invite_user(request: Request):
     await log_activity(user, "invite_user", {"email": email, "role": role})
     return {"message": f"Usuario {email} invitado como {role}"}
 
-@router.put("/users/{user_id}/role")
+@router.put("/api/users/{user_id}/role")
 async def update_user_role(user_id: str, request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -46,7 +46,7 @@ async def update_user_role(user_id: str, request: Request):
     await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role})
     return {"message": f"Rol de {user_id} actualizado a {new_role}"}
 
-@router.delete("/users/{user_id}")
+@router.delete("/api/users/{user_id}")
 async def delete_user(user_id: str, request: Request):
     user = await require_admin(request)
     if user_id in ADMIN_EMAILS:
@@ -57,7 +57,7 @@ async def delete_user(user_id: str, request: Request):
     await log_activity(user, "delete_user", {"email": user_id})
     return {"message": f"Usuario {user_id} eliminado"}
 
-@router.put("/users/{user_email}/profile")
+@router.put("/api/users/{user_email}/profile")
 async def update_user_profile(user_email: str, request: Request):
     """Admin updates name/email of an email-type user."""
     admin = await require_admin(request)
@@ -80,7 +80,7 @@ async def update_user_profile(user_email: str, request: Request):
     await log_activity(admin, "update_user_profile", {"email": user_email, "changes": update})
     return {"message": "Usuario actualizado"}
 
-@router.put("/users/{user_email}/password")
+@router.put("/api/users/{user_email}/password")
 async def admin_reset_user_password(user_email: str, request: Request):
     """Admin resets password of an email-type user."""
     from passlib.hash import bcrypt
@@ -101,13 +101,13 @@ async def admin_reset_user_password(user_email: str, request: Request):
 
 # ==================== BOARD PERMISSIONS ====================
 
-@router.get("/users/{user_email}/board-permissions")
+@router.get("/api/users/{user_email}/board-permissions")
 async def get_user_board_permissions(user_email: str, request: Request):
     await require_admin(request)
     doc = await db.board_permissions.find_one({"email": user_email}, {"_id": 0})
     return doc.get("permissions", {}) if doc else {}
 
-@router.put("/users/{user_email}/board-permissions")
+@router.put("/api/users/{user_email}/board-permissions")
 async def update_user_board_permissions(user_email: str, request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -120,7 +120,7 @@ async def update_user_board_permissions(user_email: str, request: Request):
     await log_activity(user, "update_board_permissions", {"email": user_email, "permissions": body})
     return {"message": "Permisos actualizados"}
 
-@router.get("/board-permissions/me")
+@router.get("/api/board-permissions/me")
 async def get_my_board_permissions(request: Request):
     user = await require_auth(request)
     email = user if isinstance(user, str) else user.get("email", user)

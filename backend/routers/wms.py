@@ -474,7 +474,7 @@ async def get_wms_order(order_id: str, request: Request):
 # ==================== ALLOCATION ====================
 
 
-@router.post("/api/wms/locations")
+@router.post("/api/wms/allocations")
 async def create_allocation(request: Request):
     user = await require_auth(request)
     body = await request.json()
