@@ -298,6 +298,10 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   const handleGlobalSearch = async (searchQuery, setCurrentBoard) => {
     if (!searchQuery.trim()) return;
+    // Easter egg: secret code opens the system guide
+    if (searchQuery.trim() === '201492') {
+      return '__GUIDE__';
+    }
     setOperationLoading(true);
     try {
       const res = await fetch(`${API}/orders?search=${encodeURIComponent(searchQuery)}`, { credentials: 'include' });

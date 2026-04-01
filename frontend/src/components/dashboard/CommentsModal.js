@@ -37,9 +37,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
 
   const handleClose = () => {
     if (newComment.trim() || imagePreviews.length > 0) {
-      const confirmMsg = lang === 'es' 
-        ? "Tienes un comentario o archivos sin enviar. ¿Estás seguro de que quieres salir?" 
-        : "You have an unsaved comment or files. Are you sure you want to leave?";
+      const confirmMsg = "Tienes un comentario o archivos sin enviar. ¿Estás seguro de que quieres salir?";
       if (!window.confirm(confirmMsg)) return;
     }
     setNewComment("");

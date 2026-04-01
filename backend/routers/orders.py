@@ -33,7 +33,11 @@ async def _run_automations(trigger_type, order, user, context=None):
 async def get_orders(request: Request, board: str = None, search: str = None):
     await require_auth(request)
     query = {}
-    if board and board != "MASTER":
+    if board == "MASTER":
+        # Exclude trash AND ghost orders (null/missing board) from MASTER view
+        query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None]}
+        query["$expr"] = {"$ne": [{"$type": "$board"}, "missing"]}
+    elif board:
         query["board"] = board
     if search:
         query["$or"] = [
@@ -78,7 +82,12 @@ async def get_order(order_id: str, request: Request):
 async def create_order(order: OrderCreate, request: Request):
     user = await require_auth(request)
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
-    order_doc = {**order.model_dump(), "order_id": order_id, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    order_data = order.model_dump()
+    # Safety: ensure board is NEVER null — default to SCHEDULING
+    if not order_data.get("board"):
+        logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
+        order_data["board"] = "SCHEDULING"
+    order_doc = {**order_data, "order_id": order_id, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.orders.insert_one(order_doc)
     await log_activity(user, "create_order", {"order_id": order_id, "order_number": order.order_number})
     
@@ -100,6 +109,10 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
     update_data = {k: v for k, v in order.model_dump(exclude_unset=True).items() if v is not None}
+    # Safety: if board is explicitly set to empty/null, reject it
+    if "board" in update_data and not update_data["board"]:
+        logger.warning(f"Attempt to set board=null on order {order_id}, ignoring board field")
+        del update_data["board"]
     extra = order.model_extra or {}
     update_data.update(extra)
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()

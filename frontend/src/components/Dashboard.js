@@ -38,6 +38,7 @@ import { AutomationsModal } from "./dashboard/AutomationsModal";
 import { OptionsManagerModal } from "./dashboard/OptionsManagerModal";
 import { OperatorsManagerModal } from "./dashboard/OperatorsManagerModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
+import { SystemGuideModal } from "./dashboard/SystemGuideModal";
 // Existing top-level components
 import AnalyticsView from "./AnalyticsView";
 import CalendarView from "./CalendarView";
@@ -110,6 +111,7 @@ const Dashboard = () => {
   const [deleteBoardConfirm, setDeleteBoardConfirm] = useState(null); // null | { step: 1|2, name: string }
   const [showMachinesVisibility, setShowMachinesVisibility] = useState(false);
   const [highlightedCommentId, setHighlightedCommentId] = useState(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   // Core data hook
   const {
@@ -569,8 +571,8 @@ const Dashboard = () => {
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-1 justify-center max-w-xs md:max-w-md mx-2 md:mx-4">
-          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); } }} placeholder={t('search_placeholder')} className={`w-full rounded px-2 md:px-3 py-1.5 text-sm bg-secondary/50 border border-border text-foreground`} data-testid="global-search-input" />
-          <button onClick={async () => { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results) setSearchResults(results); }} className={`p-1.5 rounded flex-shrink-0 bg-secondary/80 border border-border hover:bg-secondary`} data-testid="global-search-btn"><Search className="w-4 h-4" /></button>
+          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } else if (results) setSearchResults(results); } }} placeholder={t('search_placeholder')} className={`w-full rounded px-2 md:px-3 py-1.5 text-sm bg-secondary/50 border border-border text-foreground`} data-testid="global-search-input" />
+          <button onClick={async () => { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } else if (results) setSearchResults(results); }} className={`p-1.5 rounded flex-shrink-0 bg-secondary/80 border border-border hover:bg-secondary`} data-testid="global-search-btn"><Search className="w-4 h-4" /></button>
         </div>
         <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {/* Grouped utilities */}
@@ -1429,6 +1431,8 @@ const Dashboard = () => {
           )}
         </DialogContent>
       </Dialog>
+      {/* System Guide Modal — triggered by secret code 201492 */}
+      <SystemGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
     </div>
   );
 };
