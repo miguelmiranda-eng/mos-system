@@ -467,4 +467,3 @@ async def import_orders_complete(request: Request):
                     stats["images"] += 1
 
     return stats
-
