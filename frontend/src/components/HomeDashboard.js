@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Factory, Warehouse, Settings, Zap, History, Users, 
   LayoutDashboard, ClipboardList, Database, 
-  TrendingUp, Monitor, Package, Gauge, ListCheck, Boxes
+  TrendingUp, Monitor, Package, Gauge, ListCheck, Boxes,
+  Layers, Tags
 } from 'lucide-react';
 import { API } from '../lib/constants';
 
@@ -56,6 +57,14 @@ const HomeDashboard = () => {
         { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de cambios y acciones.', icon: <History /> },
         { name: 'Automatizaciones', path: '/automation-center', desc: 'Configuración de reglas inteligentes.', icon: <Zap /> },
         { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos del equipo.', icon: <Users /> }
+      ]
+    },
+    {
+      title: 'Catálogos del Sistema',
+      icon: <Layers className="w-6 h-6 text-primary" />,
+      color: 'from-orange-500/20 to-amber-500/20',
+      items: [
+        { name: 'Opciones y Estados', action: 'showOptionsManager', desc: 'Administra clientes, brandings, colores y estados (dropdowns).', icon: <Tags /> }
       ]
     }
   ];

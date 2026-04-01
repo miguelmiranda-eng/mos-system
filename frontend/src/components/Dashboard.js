@@ -253,6 +253,7 @@ const Dashboard = () => {
       if (actionParam === 'showGantt') setShowGantt(true);
       if (actionParam === 'showCapacityPlan') setShowCapacityPlan(true);
       if (actionParam === 'showProductionScreen') setShowProductionScreen(true);
+      if (actionParam === 'showOptionsManager') setShowOptionsManager(true);
       // Clean up URL without reload
       window.history.replaceState({}, document.title, window.location.pathname);
     }
