@@ -338,20 +338,21 @@ async def delete_comment(order_id: str, comment_id: str, request: Request):
 # ==================== FILE UPLOAD (stored in MongoDB) ====================
 
 @router.post("/api/orders/{order_id}/images")
-async def upload_image(order_id: str, request: Request):
+async def upload_attachment(order_id: str, request: Request):
+    """Upload an attachment (image, pdf, excel, etc.) for an order."""
     user = await require_auth(request)
     body = await request.json()
-    image_data = body.get("image_data")
-    filename = body.get("filename", f"image_{uuid.uuid4().hex[:8]}.png")
-    if not image_data:
-        raise HTTPException(status_code=400, detail="image_data required")
+    file_data = body.get("image_data") or body.get("file_data")
+    filename = body.get("filename", f"file_{uuid.uuid4().hex[:8]}")
+    if not file_data:
+        raise HTTPException(status_code=400, detail="file_data required")
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     try:
-        # Extract pure base64 (remove data:image/...;base64, prefix)
-        raw_b64 = image_data
-        content_type = "image/png"
+        # Extract pure base64 (remove data:...;base64, prefix)
+        raw_b64 = file_data
+        content_type = "application/octet-stream"
         if "," in raw_b64:
             header = raw_b64.split(",")[0]
             if ":" in header and ";" in header:
@@ -360,17 +361,18 @@ async def upload_image(order_id: str, request: Request):
         # Validate it decodes
         base64.b64decode(raw_b64)
         # Store in MongoDB collection 'file_uploads'
-        # Use UUID to ensure unique key (iOS camera always sends same filename)
         unique_suffix = uuid.uuid4().hex[:8]
         storage_key = f"{order_id}_{unique_suffix}_{filename}"
-        await db.file_uploads.insert_one(
-            {"storage_key": storage_key, "data": raw_b64, "content_type": content_type, "order_id": order_id, "filename": filename, "uploaded_at": datetime.now(timezone.utc).isoformat()}
-        )
+        await db.file_uploads.insert_one({
+            "storage_key": storage_key, "data": raw_b64, "content_type": content_type,
+            "order_id": order_id, "filename": filename, "uploaded_at": datetime.now(timezone.utc).isoformat()
+        })
         backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
-        image_url = f"{backend_url}/api/uploads/{storage_key}"
-        await db.orders.update_one({"order_id": order_id}, {"$push": {"images": {"filename": filename, "url": image_url, "uploaded_at": datetime.now(timezone.utc).isoformat()}}})
-        await log_activity(user, "upload_image", {"order_id": order_id, "filename": filename})
-        return {"url": image_url, "filename": filename, "storage_key": storage_key}
+        file_url = f"{backend_url}/api/uploads/{storage_key}"
+        # Update order's generic attachments/images list
+        await db.orders.update_one({"order_id": order_id}, {"$push": {"images": {"filename": filename, "url": file_url, "uploaded_at": datetime.now(timezone.utc).isoformat()}}})
+        await log_activity(user, "upload_attachment", {"order_id": order_id, "filename": filename, "type": content_type})
+        return {"url": file_url, "filename": filename, "storage_key": storage_key, "content_type": content_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 

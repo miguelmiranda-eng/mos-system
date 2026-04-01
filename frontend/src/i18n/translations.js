@@ -113,6 +113,7 @@ const translations = {
     comment_added: "Comentario agregado - Notificación enviada",
     comment_error: "Error al agregar comentario",
     upload_image: "Subir imagen",
+    upload_file: "Subir archivo",
     
     // Automations
     automations: "Automatizaciones",
@@ -166,6 +167,7 @@ const translations = {
     action_delete_automation: "Eliminar automatización",
     action_automation_triggered: "Automatización ejecutada",
     action_upload_image: "Subir imagen",
+    action_upload_attachment: "Subir archivo",
     action_export: "Exportar",
     action_update_options: "Config. opciones",
     action_send_email: "Enviar email",
@@ -521,6 +523,7 @@ const translations = {
     comment_added: "Comment added - Notification sent",
     comment_error: "Error adding comment",
     upload_image: "Upload image",
+    upload_file: "Upload file",
     
     // Automations
     automations: "Automations",
@@ -574,6 +577,7 @@ const translations = {
     action_delete_automation: "Delete automation",
     action_automation_triggered: "Automation triggered",
     action_upload_image: "Upload image",
+    action_upload_attachment: "Upload file",
     action_export: "Export",
     action_update_options: "Config. options",
     action_send_email: "Send email",

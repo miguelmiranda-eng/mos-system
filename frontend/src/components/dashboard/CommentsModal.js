@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useLang } from "../../contexts/LanguageContext";
-import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign } from "lucide-react";
+import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign, FileText, File as FileIcon, FileSpreadsheet, Download } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
@@ -80,15 +80,19 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       let finalContent = newComment.trim();
       for (const img of imagePreviews) {
         try {
+          const body = img.isImage ? { image_data: img.data, filename: img.name } : { file_data: img.data, filename: img.name };
           const imgRes = await fetch(`${API}/orders/${order.order_id}/images`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-            body: JSON.stringify({ image_data: img.data, filename: img.name })
+            body: JSON.stringify(body)
           });
           if (imgRes.ok) {
             const imgData = await imgRes.json();
-            // Store ONLY the storage_key in the tag for environment-agnostic links
             const key = imgData.storage_key || imgData.url;
-            finalContent = finalContent ? `${finalContent}\n[img]${key}[/img]` : `[img]${key}[/img]`;
+            if (img.isImage) {
+              finalContent = finalContent ? `${finalContent}\n[img]${key}[/img]` : `[img]${key}[/img]`;
+            } else {
+              finalContent = finalContent ? `${finalContent}\n[file]${img.name}|${key}[/file]` : `[file]${img.name}|${key}[/file]`;
+            }
           } else {
             toast.error(`Error subiendo ${img.name}`);
           }
@@ -139,17 +143,23 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       const ext = (f.name || '').toLowerCase().split('.').pop();
       return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'].includes(ext);
     });
-    if (imageFiles.length === 0) {
+    const docFiles = fileList.filter(f => {
+      if (f.type && (f.type === 'application/pdf' || f.type.includes('spreadsheet') || f.type.includes('excel') || f.type.includes('word') || f.type.includes('officedocument'))) return true;
+      const ext = (f.name || '').toLowerCase().split('.').pop();
+      return ['pdf', 'xlsx', 'xls', 'doc', 'docx', 'csv', 'txt'].includes(ext);
+    });
+
+    if (imageFiles.length === 0 && docFiles.length === 0) {
       if (fileList.length > 0 && !fileList[0].type) {
         imageFiles.push(...fileList);
       } else { return; }
     }
+
+    // Process Images
     imageFiles.forEach(file => {
-      // Read file content immediately into memory to avoid iOS reference issues
       const reader = new FileReader();
       reader.onload = (event) => {
         const rawDataUrl = event.target.result;
-        // Compress if >500KB
         if (file.size > 512 * 1024) {
           const img = new Image();
           img.onload = () => {
@@ -167,17 +177,37 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             ctx.drawImage(img, 0, 0, width, height);
             const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
             const name = file.name ? file.name.replace(/\.[^.]+$/, '.jpg') : `camera_${Date.now()}.jpg`;
-            setImagePreviews(prev => [...prev, { data: dataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }]);
+            setImagePreviews(prev => [...prev, { data: dataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, isImage: true }]);
           };
           img.onerror = () => {
             const name = file.name || `camera_${Date.now()}.jpg`;
-            setImagePreviews(prev => [...prev, { data: rawDataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }]);
+            setImagePreviews(prev => [...prev, { data: rawDataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, isImage: true }]);
           };
           img.src = rawDataUrl;
         } else {
           const name = file.name || `camera_${Date.now()}.jpg`;
-          setImagePreviews(prev => [...prev, { data: rawDataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }]);
+          setImagePreviews(prev => [...prev, { data: rawDataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, isImage: true }]);
         }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Process Documents
+    docFiles.forEach(file => {
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`${file.name} es demasiado grande (máx 10MB)`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target.result;
+        setImagePreviews(prev => [...prev, { 
+          data: dataUrl, 
+          name: file.name, 
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          isImage: false,
+          type: file.type
+        }]);
       };
       reader.readAsDataURL(file);
     });
@@ -252,43 +282,65 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
 
   const renderContent = (content) => {
     if (!content) return null;
-    const parts = content.split(/\[img\](.*?)\[\/img\]/g);
-    if (parts.length === 1) {
-      // Check for @mentions in text and highlight
-      const mentionRegex = /@(\S+)/g;
-      const urlRegex = /(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)|\/api\/uploads\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))/gi;
-      const textParts = content.split(urlRegex);
-      if (textParts.length === 1) {
-        if (/\.(png|jpg|jpeg|gif|webp)$/i.test(content) && (content.startsWith('http') || content.startsWith('/api/uploads/'))) {
-          return <img src={content} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(content, '_blank')} data-testid="comment-image" />;
-        }
-        // Render @mentions highlighted
-        const segments = content.split(mentionRegex);
-        if (segments.length > 1) {
-          return segments.map((seg, i) => i % 2 === 1
-            ? <span key={i} className="text-primary font-semibold bg-primary/10 rounded px-0.5">@{seg}</span>
-            : <span key={i}>{seg}</span>
-          );
-        }
-        return <span>{content}</span>;
-      }
-      return textParts.map((part, i) => {
-        if (/\.(png|jpg|jpeg|gif|webp)$/i.test(part) && (part.startsWith('http') || part.startsWith('/api/uploads/'))) {
-          return <img key={i} src={part} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(part, '_blank')} data-testid="comment-image" />;
-        }
-        return <span key={i}>{part}</span>;
-      });
-    }
+    
+    // Split by [img] or [file] tags
+    // [img]key[/img]
+    // [file]name|key[/file]
+    const parts = content.split(/(\[img\].*?\[\/img\]|\[file\].*?\[\/file\])/g);
+    
     return parts.map((part, i) => {
-      if (i % 2 === 1) {
-        // If part is a full URL, use it (backward compat)
-        // Otherwise, build it using the current API constant
-        const src = (part.startsWith('http') || part.startsWith('/api/uploads/')) 
-          ? part 
-          : `${API}/uploads/${part}`;
+      // Handle [img] tags
+      if (part.startsWith('[img]')) {
+        const key = part.replace('[img]', '').replace('[/img]', '');
+        const src = (key.startsWith('http') || key.startsWith('/api/uploads/')) 
+          ? key 
+          : `${API}/uploads/${key}`;
         return <img key={i} src={src} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(src, '_blank')} data-testid="comment-image" />;
       }
-      return part ? <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span> : null;
+      
+      // Handle [file] tags
+      if (part.startsWith('[file]')) {
+        const fileInfo = part.replace('[file]', '').replace('[/file]', '');
+        const [filename, key] = fileInfo.split('|');
+        const src = (key.startsWith('http') || key.startsWith('/api/uploads/')) 
+          ? key 
+          : `${API}/uploads/${key}`;
+        
+        const isPdf = filename.toLowerCase().endsWith('.pdf');
+        const isExcel = filename.toLowerCase().endsWith('.xlsx') || filename.toLowerCase().endsWith('.xls');
+        
+        return (
+          <div key={i} className="mt-2 mb-1 p-2 bg-secondary/50 border border-border rounded-lg flex items-center gap-3 group max-w-sm">
+            <div className="bg-background p-2 rounded border border-border">
+              {isPdf ? <FileText className="w-5 h-5 text-primary" /> : 
+               isExcel ? <FileSpreadsheet className="w-5 h-5 text-primary" /> : 
+               <FileIcon className="w-5 h-5 text-primary" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate text-foreground">{filename}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Documento</p>
+            </div>
+            <a href={src} target="_blank" rel="noopener noreferrer" 
+              className="p-1 px-2 flex items-center gap-1 text-[10px] bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+              title="Descargar">
+              <Download className="w-3 h-3" /> Descargar
+            </a>
+          </div>
+        );
+      }
+
+      // Handle normal text and mentions
+      if (!part) return null;
+      
+      const mentionRegex = /@(\S+)/g;
+      const segments = part.split(mentionRegex);
+      if (segments.length > 1) {
+        return segments.map((seg, idx) => idx % 2 === 1
+          ? <span key={`${i}-${idx}`} className="text-primary font-semibold bg-primary/10 rounded px-0.5">@{seg}</span>
+          : <span key={`${i}-${idx}`} style={{ whiteSpace: 'pre-wrap' }}>{seg}</span>
+        );
+      }
+      return <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>;
     });
   };
 
@@ -419,7 +471,15 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <div className="mb-3 flex flex-wrap gap-2" data-testid="image-previews">
               {imagePreviews.map(img => (
                 <div key={img.id} className="relative group">
-                  <img src={img.data} alt={img.name} className="h-20 w-20 object-cover rounded border border-border" />
+                  {img.isImage ? (
+                    <img src={img.data} alt={img.name} className="h-20 w-20 object-cover rounded border border-border" />
+                  ) : (
+                    <div className="h-20 w-20 rounded border border-border bg-secondary flex flex-col items-center justify-center p-2 text-center">
+                      {img.type?.includes('pdf') ? <FileText className="w-8 h-8 text-primary" /> : 
+                       img.name.toLowerCase().endsWith('.xlsx') || img.name.toLowerCase().endsWith('.xls') ? <FileSpreadsheet className="w-8 h-8 text-primary" /> :
+                       <FileIcon className="w-8 h-8 text-primary" />}
+                    </div>
+                  )}
                   <button onClick={() => removeImage(img.id)}
                     className="absolute -top-2 -right-2 bg-destructive text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-80 group-hover:opacity-100"
                     data-testid={`remove-preview-${img.id}`}><X className="w-3 h-3" /></button>
@@ -429,8 +489,8 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             </div>
           )}
           <div className="flex gap-2 relative">
-            <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-secondary border border-border rounded hover:bg-secondary/80 transition-colors self-end" title={t('upload_image')} data-testid="upload-image-btn"><Camera className="w-4 h-4" /></button>
-            <input key={fileInputKey} ref={fileInputRef} type="file" accept="image/*,.heic,.heif" multiple onChange={handleFileUpload} className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-secondary border border-border rounded hover:bg-secondary/80 transition-colors self-end" title={t('upload_file')} data-testid="upload-image-btn"><Link2 className="w-4 h-4" /></button>
+            <input key={fileInputKey} ref={fileInputRef} type="file" accept="image/*,.heic,.heif,.pdf,.xlsx,.xls,.doc,.docx,.csv,.txt" multiple onChange={handleFileUpload} className="hidden" />
             <div className="flex-1 relative">
               <textarea ref={textareaRef} value={newComment} onChange={handleCommentChange} onKeyDown={handleCommentKeyDown}
                 placeholder={`${t('write_comment')} (usa @ para mencionar)`}
