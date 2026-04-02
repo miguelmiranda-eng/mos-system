@@ -24,6 +24,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   const [columns, setColumns] = useState(DEFAULT_COLUMNS);
   const [dynamicBoards, setDynamicBoards] = useState([]);
   const [hiddenBoards, setHiddenBoards] = useState([]);
+  const [groupConfig, setGroupConfig] = useState({ label_to_group: {}, group_colors: {} });
   const [columnWidths, setColumnWidths] = useState(() => {
     const widths = {};
     DEFAULT_COLUMNS.forEach(col => widths[col.key] = col.width);
@@ -140,6 +141,13 @@ export const useOrders = (currentBoard, boardFilters) => {
     });
   }, []);
 
+  const fetchGroups = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/config/groups`, { credentials: 'include' });
+      if (res.ok) setGroupConfig(await res.json());
+    } catch { /* silent */ }
+  }, []);
+
   const createBoard = async (name) => {
     try {
       const res = await fetch(`${API}/config/boards`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name }) });
@@ -199,6 +207,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   useEffect(() => { fetchProductionSummary(); }, [fetchProductionSummary]);
   useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
   useEffect(() => { const interval = setInterval(fetchNotifications, 30000); return () => clearInterval(interval); }, [fetchNotifications]);
 
   // ==================== REAL-TIME WEBSOCKET ====================
@@ -364,5 +373,6 @@ export const useOrders = (currentBoard, boardFilters) => {
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
     handleAddColumn, handleDeleteColumn, saveCustomColumns, saveColumnsConfig, removedDefaults,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
+    groupConfig, fetchGroups
   };
 };

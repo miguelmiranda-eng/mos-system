@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { Loader2, AlertTriangle, X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "../ui/select";
 import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
 
@@ -12,7 +12,7 @@ const HARDCODED_DEFAULTS = [
   'job_title_a', 'sample', 'artwork_status', 'notes'
 ];
 
-export const NewOrderModal = ({ isOpen, onClose, onCreate, options, columns = [] }) => {
+export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig, columns = [] }) => {
   const { t } = useLang();
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
@@ -97,8 +97,41 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, columns = []
           <Select value={value || 'none'} onValueChange={(v) => set(key, v === 'none' ? '' : v)}>
             <SelectTrigger className="bg-secondary border-border" data-testid={`field-${key}`}><SelectValue placeholder="Seleccionar" /></SelectTrigger>
             <SelectContent className="bg-popover border-border z-[300] max-h-[250px]">
-              <SelectItem value="none">- Seleccionar -</SelectItem>
-              {opts.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
+              <SelectItem value="none" className="text-muted-foreground italic tracking-tight">- Seleccionar -</SelectItem>
+              <SelectSeparator className="opacity-50" />
+              {(() => {
+                if (!groupConfig || !groupConfig.label_to_group) {
+                  return opts.map(opt => <SelectItem key={opt} value={opt} className="font-bold tracking-tight">{opt}</SelectItem>);
+                }
+
+                const grouped = {};
+                opts.forEach(opt => {
+                  const g = groupConfig.label_to_group[opt] || "SIN GRUPO";
+                  if (!grouped[g]) grouped[g] = [];
+                  grouped[g].push(opt);
+                });
+
+                const groupNames = Object.keys(grouped).sort((a, b) => {
+                  if (a === "SIN GRUPO") return 1;
+                  if (b === "SIN GRUPO") return -1;
+                  return a.localeCompare(b);
+                });
+
+                return groupNames.map(gn => (
+                  <SelectGroup key={gn}>
+                    <div className="flex items-center gap-2 px-2 py-1.5 pointer-events-none">
+                      <div className="w-1 h-3 rounded-full" style={{ backgroundColor: groupConfig.group_colors[gn] || "#666" }} />
+                      <SelectLabel className="text-[10px] font-black uppercase tracking-[0.15em] text-muted-foreground/80">{gn}</SelectLabel>
+                    </div>
+                    {grouped[gn].map(opt => (
+                      <SelectItem key={opt} value={opt} className="font-bold tracking-tight ml-2">
+                        {opt}
+                      </SelectItem>
+                    ))}
+                    <SelectSeparator className="opacity-30 my-1" />
+                  </SelectGroup>
+                ));
+              })()}
             </SelectContent>
           </Select>
         </div>

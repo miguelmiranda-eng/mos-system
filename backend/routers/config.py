@@ -100,6 +100,19 @@ async def update_descriptions(request: Request):
     await db.config_descriptions.update_one({"config_id": "descriptions"}, {"$set": {**body, "config_id": "descriptions"}}, upsert=True)
     return {"message": "Descriptions updated"}
 
+@router.get("/api/config/groups")
+async def get_groups(request: Request):
+    await require_auth(request)
+    stored = await db.config_groups.find_one({"config_id": "groups"}, {"_id": 0, "config_id": 0})
+    return stored or {}
+
+@router.put("/api/config/groups")
+async def update_groups(request: Request):
+    user = await require_admin(request)
+    body = await request.json()
+    await db.config_groups.update_one({"config_id": "groups"}, {"$set": {**body, "config_id": "groups"}}, upsert=True)
+    return {"message": "Groups updated"}
+
 # ==================== SAVED VIEWS ====================
 
 @router.get("/api/user-view-config/{board}")

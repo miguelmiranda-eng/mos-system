@@ -118,6 +118,7 @@ const Dashboard = () => {
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
     handleAddColumn, handleDeleteColumn, saveCustomColumns,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
+    groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
 
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
@@ -1204,7 +1205,7 @@ const Dashboard = () => {
                                 return (
                                   <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
                                     {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
-                                      <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
+                                      <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                                     )}
                                   </td>
                                 );
@@ -1255,7 +1256,7 @@ const Dashboard = () => {
       </main>
 
       {/* Modals */}
-      <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} columns={columns} />
+      <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} groupConfig={groupConfig} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
