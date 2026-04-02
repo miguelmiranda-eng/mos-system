@@ -331,7 +331,8 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(filteredUsers[mentionIndex]); return; }
       if (e.key === 'Escape') { setMentionQuery(null); return; }
     }
-    if (e.key === 'Enter' && !e.shiftKey && mentionQuery === null) { e.preventDefault(); handleAddComment(); }
+    // Removed auto-send on Enter to allow multi-line comments on both PC and Tablet.
+    // Use the Send button to submit.
   };
 
   const canModify = (comment) => {
