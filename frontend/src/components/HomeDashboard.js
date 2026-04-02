@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Settings, Zap, History, Users, 
   LayoutDashboard, ClipboardList, Database, 
   TrendingUp, Monitor, Package, Gauge, ListCheck, Boxes,
-  Layers, Tags
+  Layers, Tags, UserSquare, ArrowLeft
 } from 'lucide-react';
 import { API } from '../lib/constants';
 
@@ -22,23 +22,7 @@ const HomeDashboard = () => {
       })
       .catch(() => setLoading(false));
   }, []);
-
   const sections = [
-    {
-      title: 'Procesos de Producción',
-      icon: <Factory className="w-6 h-6 text-primary" />,
-      color: 'from-blue-500/20 to-cyan-500/20',
-      items: [
-        { name: 'MASTER', board: 'MASTER', desc: 'Vista global de todas las órdenes en el sistema.', icon: <LayoutDashboard /> },
-        { name: 'SCHEDULING', board: 'SCHEDULING', desc: 'Planificación y asignación inicial de órdenes.', icon: <ClipboardList /> },
-        { name: 'BLANKS', board: 'BLANKS', desc: 'Seguimiento de inventario de prendas base.', icon: <Package /> },
-        { name: 'SCREENS', board: 'SCREENS', desc: 'Gestión de marcos y revelado para impresión.', icon: <Monitor /> },
-        { name: 'NECK', board: 'NECK', desc: 'Control de etiquetas de cuello y acabados.', icon: <Gauge /> },
-        { name: 'MAQUINAS', board: 'MAQUINA1', desc: 'Monitoreo de producción en prensas activas.', icon: <Settings /> },
-        { name: 'EJEMPLOS', board: 'EJEMPLOS', desc: 'Gestión de muestras y aprobaciones de arte.', icon: <ListCheck /> },
-        { name: 'FINAL BILL', board: 'FINAL BILL', desc: 'Órdenes listas para facturación y cierre.', icon: <TrendingUp /> }
-      ]
-    },
     {
       title: 'Gestión de Inventario',
       icon: <Warehouse className="w-6 h-6 text-primary" />,
@@ -64,7 +48,8 @@ const HomeDashboard = () => {
       icon: <Layers className="w-6 h-6 text-primary" />,
       color: 'from-orange-500/20 to-amber-500/20',
       items: [
-        { name: 'Opciones y Estados', action: 'showOptionsManager', desc: 'Administra clientes, brandings, colores y estados (dropdowns).', icon: <Tags /> }
+        { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Administra clientes, brandings, colores y estados (dropdowns).', icon: <Tags /> },
+        { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para progreso de producción.', icon: <UserSquare /> }
       ]
     }
   ];
@@ -86,29 +71,38 @@ const HomeDashboard = () => {
       <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-primary/5 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
       <div className="absolute bottom-0 left-0 w-1/3 h-1/3 bg-blue-500/5 blur-[100px] rounded-full translate-y-1/2 -translate-x-1/3 pointer-events-none"></div>
 
-      <header className="mb-12 relative z-10">
-        <div className="flex items-center gap-4 mb-2">
-          <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center border border-primary/30">
-            <Factory className="w-6 h-6 text-primary" />
+      <header className="mb-12 relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center border border-primary/30">
+              <Factory className="w-6 h-6 text-primary" />
+            </div>
+            <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter text-foreground">
+              MOS <span className="text-primary tracking-normal font-medium">HOME</span>
+            </h1>
           </div>
-          <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter text-foreground">
-            MOS <span className="text-primary tracking-normal font-medium">HOME</span>
-          </h1>
+          <p className="text-muted-foreground font-medium max-w-xl">
+            Panel de control centralizado. Seleccione un módulo para comenzar la gestión industrial de órdenes e inventario.
+          </p>
         </div>
-        <p className="text-muted-foreground font-medium max-w-xl">
-          Panel de control centralizado. Seleccione un módulo para comenzar la gestión industrial de órdenes e inventario.
-        </p>
+        
+        <button 
+          onClick={() => navigate('/dashboard')}
+          className="flex items-center gap-2 px-5 py-2.5 bg-secondary hover:bg-white/10 text-foreground font-bold text-sm tracking-wider uppercase rounded-xl border border-border shadow-sm transition-all hover:-translate-y-0.5"
+        >
+          <ArrowLeft className="w-4 h-4" /> Volver al CRM
+        </button>
       </header>
 
-      <div className="space-y-16 relative z-10">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 relative z-10">
         {sections.map((section, idx) => (
-          <section key={idx} className="space-y-6">
-            <div className="flex items-center gap-3 border-b border-border pb-4">
+          <section key={idx} className="flex flex-col gap-6">
+            <div className="flex items-center gap-3 border-b border-border pb-4 w-full">
               {section.icon}
               <h2 className="text-xl font-bold uppercase tracking-widest text-foreground/80">{section.title}</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="flex flex-col gap-5">
               {section.items.map((item, i) => (
                 <div
                   key={i}
@@ -141,7 +135,7 @@ const HomeDashboard = () => {
                     </p>
                     
                     <div className="mt-6 flex items-center text-[10px] font-black text-primary uppercase tracking-[0.2em] opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-                      Entrar al proceso <Factory className="w-3 h-3 ml-2" />
+                      Entrar al módulo <Factory className="w-3 h-3 ml-2" />
                     </div>
                   </div>
 

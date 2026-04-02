@@ -525,6 +525,8 @@ import HomeDashboard from "./components/HomeDashboard";
 import AutomationCenter from "./components/AutomationCenter";
 import ActivityLogCenter from "./components/ActivityLogCenter";
 import UserManagementCenter from "./components/UserManagementCenter";
+import CatalogCenter from "./components/CatalogCenter";
+import OperatorsCenter from "./components/OperatorsCenter";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -641,6 +643,16 @@ function AppRouter() {
       <Route path="/activity-log" element={
         <AdminRoute>
           <ActivityLogCenter />
+        </AdminRoute>
+      } />
+      <Route path="/catalog-center" element={
+        <AdminRoute>
+          <CatalogCenter />
+        </AdminRoute>
+      } />
+      <Route path="/operators-center" element={
+        <AdminRoute>
+          <OperatorsCenter />
         </AdminRoute>
       } />
       <Route path="/users" element={

@@ -35,8 +35,6 @@ import { CommentsModal } from "./dashboard/CommentsModal";
 import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
 import { AutomationsModal } from "./dashboard/AutomationsModal";
-import { OptionsManagerModal } from "./dashboard/OptionsManagerModal";
-import { OperatorsManagerModal } from "./dashboard/OperatorsManagerModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
 import { SystemGuideModal } from "./dashboard/SystemGuideModal";
 // Existing top-level components
@@ -78,7 +76,6 @@ const Dashboard = () => {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
-  const [showOptionsManager, setShowOptionsManager] = useState(false);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -94,7 +91,6 @@ const Dashboard = () => {
   const [showGantt, setShowGantt] = useState(false);
   const [showCapacityPlan, setShowCapacityPlan] = useState(false);
   const [showProductionScreen, setShowProductionScreen] = useState(false);
-  const [showOperators, setShowOperators] = useState(false);
   const [showFormFields, setShowFormFields] = useState(false);
   const [showBoardVisibility, setShowBoardVisibility] = useState(false);
   const [savedViews, setSavedViews] = useState({});
@@ -253,7 +249,6 @@ const Dashboard = () => {
       if (actionParam === 'showGantt') setShowGantt(true);
       if (actionParam === 'showCapacityPlan') setShowCapacityPlan(true);
       if (actionParam === 'showProductionScreen') setShowProductionScreen(true);
-      if (actionParam === 'showOptionsManager') setShowOptionsManager(true);
       // Clean up URL without reload
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -589,8 +584,8 @@ const Dashboard = () => {
               <button onClick={handleQuickUndo} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('undo_last')} data-testid="quick-undo-btn"><Undo2 className="w-3.5 h-3.5" /></button>
               <button onClick={() => navigate('/users')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
               <button onClick={() => navigate('/activity-log')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setShowOptionsManager(true)} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('manage_options')} data-testid="manage-options-btn"><Settings className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setShowOperators(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
+              <button onClick={() => navigate('/catalog-center')} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestión de Catálogos" data-testid="manage-catalogs-btn"><Settings className="w-3.5 h-3.5" /></button>
+              <button onClick={() => navigate('/operators-center')} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
               <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
             </div>
           </>)}
@@ -1263,8 +1258,6 @@ const Dashboard = () => {
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
-      {isAdmin && <OptionsManagerModal isOpen={showOptionsManager} onClose={() => setShowOptionsManager(false)} options={options} onOptionsUpdate={fetchOptions} onColorsUpdate={(colors) => { Object.entries(colors).forEach(([k, v]) => { STATUS_COLORS[k] = v; }); fetchOrders(); }} />}
-      {isAdmin && <OperatorsManagerModal isOpen={showOperators} onClose={() => setShowOperators(false)} />}
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
       <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} />
       <AnalyticsView isOpen={showAnalytics} onClose={() => setShowAnalytics(false)} allOrders={allOrders} options={options} />
