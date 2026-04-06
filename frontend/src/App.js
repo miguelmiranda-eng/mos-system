@@ -23,9 +23,8 @@ const AuthProvider = ({ children }) => {
   });
   const [loading, setLoading] = useState(!user);
 
-  const checkAuth = useCallback(async () => {
+  const checkAuth = useCallback(async (isPeriodicCheck = false) => {
     // CRITICAL: If returning from OAuth callback, skip the /me check.
-    // AuthCallback will exchange the session_id and establish the session first.
     if (window.location.hash?.includes('session_id=')) {
       setLoading(false);
       return;
@@ -36,16 +35,30 @@ const AuthProvider = ({ children }) => {
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
+      } else if (response.status === 401 && isPeriodicCheck) {
+        // Session expired — auto logout silently
+        console.warn("Session expired, logging out...");
+        setUser(null);
+        localStorage.removeItem("mos_user");
+        window.location.href = '/';
       }
     } catch (error) {
       console.error("Auth check failed:", error);
     } finally {
-      setLoading(false);
+      if (!isPeriodicCheck) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     checkAuth();
+  }, [checkAuth]);
+
+  // Periodic session heartbeat: verify session every 10 minutes
+  useEffect(() => {
+    const heartbeat = setInterval(() => {
+      checkAuth(true);
+    }, 10 * 60 * 1000); // 10 minutes
+    return () => clearInterval(heartbeat);
   }, [checkAuth]);
 
   // Persistent user sync

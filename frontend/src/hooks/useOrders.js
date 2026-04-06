@@ -8,6 +8,18 @@ const WS_URL = (() => {
   return base.replace(/^http/, 'ws') + '/api/ws';
 })();
 
+// Global 401 interceptor — redirects to login when session expires
+const apiFetch = async (url, options = {}) => {
+  const res = await fetch(url, { credentials: 'include', ...options });
+  if (res.status === 401) {
+    console.warn('[apiFetch] 401 detected — session expired, redirecting to login');
+    localStorage.removeItem('mos_user');
+    window.location.href = '/';
+    throw new Error('SESSION_EXPIRED');
+  }
+  return res;
+};
+
 export const useOrders = (currentBoard, boardFilters) => {
   const { t } = useLang();
   const [orders, setOrders] = useState([]);
@@ -36,7 +48,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     try {
       const params = new URLSearchParams();
       if (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS') params.append('board', currentBoard);
-      const res = await fetch(`${API}/orders?${params}`, { credentials: 'include' });
+      const res = await apiFetch(`${API}/orders?${params}`);
       if (res.ok) {
         let data = await res.json();
         data = data.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
@@ -44,7 +56,6 @@ export const useOrders = (currentBoard, boardFilters) => {
         const EMPTY_FILTER = '\u2014Ninguno\u2014';
         const currentFilters = boardFilters[currentBoard] || {};
         Object.entries(currentFilters).forEach(([key, value]) => {
-          // Board filter (special key _board → matches order.board)
           if (key === '_board') {
             if (Array.isArray(value) && value.length > 0) {
               data = data.filter(o => value.includes(o.board));
@@ -55,12 +66,11 @@ export const useOrders = (currentBoard, boardFilters) => {
               return;
             }
           }
-          // Date range filter: { from: "2026-01-01", to: "2026-03-31" }
           if (value && typeof value === 'object' && !Array.isArray(value) && (value.from || value.to)) {
             data = data.filter(o => {
               const v = o[key];
               if (!v) return false;
-              const d = v.substring(0, 10); // extract YYYY-MM-DD from ISO or date string
+              const d = v.substring(0, 10);
               if (value.from && d < value.from) return false;
               if (value.to && d > value.to) return false;
               return true;
@@ -75,7 +85,6 @@ export const useOrders = (currentBoard, boardFilters) => {
               if (realVals.length > 0) {
                 const sv = String(v);
                 if (realVals.includes(v) || realVals.includes(sv)) return true;
-                // Date filter: compare formatted date
                 if (v) { try { const fd = new Date(v).toLocaleDateString(); if (realVals.includes(fd)) return true; } catch {} }
               }
               return false;
@@ -84,31 +93,34 @@ export const useOrders = (currentBoard, boardFilters) => {
             if (value === EMPTY_FILTER) data = data.filter(o => !o[key] || o[key] === '');
             else {
               const sv = value.toLowerCase();
-              // For column filters that are strings (text inputs), use partial match
               data = data.filter(o => String(o[key] || '').toLowerCase().includes(sv));
             }
           }
         });
         setOrders(data);
       }
-    } catch { if (!silent) toast.error(t('load_orders_err')); } finally { if (!silent) setLoading(false); }
+    } catch (e) {
+      if (e.message !== 'SESSION_EXPIRED' && !silent) toast.error(t('load_orders_err'));
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [currentBoard, boardFilters, t]);
 
   const fetchAllOrders = useCallback(async () => {
-    try { const res = await fetch(`${API}/orders`, { credentials: 'include' }); if (res.ok) { const data = await res.json(); setAllOrders(data.filter(o => o.board !== 'PAPELERA DE RECICLAJE')); } } catch { /* silent */ }
+    try { const res = await apiFetch(`${API}/orders`); if (res.ok) { const data = await res.json(); setAllOrders(data.filter(o => o.board !== 'PAPELERA DE RECICLAJE')); } } catch { /* silent */ }
   }, []);
 
   const fetchOptions = useCallback(async () => {
-    try { const res = await fetch(`${API}/config/options`, { credentials: 'include' }); if (res.ok) setOptions(await res.json()); } catch { /* silent */ }
+    try { const res = await apiFetch(`${API}/config/options`); if (res.ok) setOptions(await res.json()); } catch { /* silent */ }
   }, []);
 
   const fetchProductionSummary = useCallback(async () => {
-    try { const res = await fetch(`${API}/production-summary`, { credentials: 'include' }); if (res.ok) setProductionSummary(await res.json()); } catch { /* silent */ }
+    try { const res = await apiFetch(`${API}/production-summary`); if (res.ok) setProductionSummary(await res.json()); } catch { /* silent */ }
   }, []);
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/notifications`, { credentials: 'include' });
+      const res = await apiFetch(`${API}/notifications`);
       if (res.ok) { const data = await res.json(); setNotifications(data.notifications || []); setUnreadCount(data.unread_count || 0); }
     } catch { /* silent */ }
   }, []);
@@ -220,30 +232,34 @@ export const useOrders = (currentBoard, boardFilters) => {
   useEffect(() => { fetchOrdersRef.current = fetchOrders; }, [fetchOrders]);
   useEffect(() => { fetchProdRef.current = fetchProductionSummary; }, [fetchProductionSummary]);
 
+  const sessionExpiredRef = useRef(false);
+
   const connectWs = useCallback(() => {
+    if (sessionExpiredRef.current) return; // Don't reconnect if session expired
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
     try {
       const ws = new WebSocket(WS_URL);
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          // Always refresh production summary on any relevant event
           if (msg.type === 'order_change' || msg.type === 'production_update') {
             fetchProdRef.current();
           }
-          
-          // Refresh orders if changed
           if (msg.type === 'order_change') {
-            // We fetch silently. Even if it was our own change, 
-            // fetching ensures we have the final server state and 
-            // doesn't miss concurrent changes from others.
             fetchOrdersRef.current(true);
+          }
+          // Detect session expired message from server
+          if (msg.type === 'error' && msg.code === 401) {
+            sessionExpiredRef.current = true;
+            ws.close();
           }
         } catch { /* ignore */ }
       };
       ws.onclose = () => {
         wsRef.current = null;
-        reconnectTimer.current = setTimeout(connectWs, 3000);
+        if (!sessionExpiredRef.current) {
+          reconnectTimer.current = setTimeout(connectWs, 3000);
+        }
       };
       ws.onerror = () => { ws.close(); };
       wsRef.current = ws;
