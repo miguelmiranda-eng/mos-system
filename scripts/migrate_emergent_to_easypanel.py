@@ -157,18 +157,19 @@ def import_to_easypanel(base_url: str, token: str, data: dict):
     r = requests.post(
         f"{base_url}/api/orders/import-complete",
         headers=get_headers(token),
-        json={"orders": orders},
+        json={"orders": orders, "update_existing": True},
         timeout=300
     )
     if r.status_code != 200:
         error(f"Import fallido: {r.status_code} {r.text[:300]}")
 
     stats = r.json()
-    log("Importación completada:", "✅")
-    print(f"        • Órdenes importadas:  {stats.get('orders', 0)}")
-    print(f"        • Órdenes omitidas:    {stats.get('skipped_orders', 0)}  (ya existían)")
-    print(f"        • Comentarios:         {stats.get('comments', 0)}")
-    print(f"        • Imágenes:            {stats.get('images', 0)}")
+    log("Importación/Sincronización completada:", "✅")
+    print(f"        • Órdenes creadas:     {stats.get('orders', 0)}")
+    print(f"        • Órdenes actualizadas:  {stats.get('updated_orders', 0)}")
+    print(f"        • Órdenes omitidas:      {stats.get('skipped_orders', 0)}")
+    print(f"        • Comentarios:           {stats.get('comments', 0)}")
+    print(f"        • Imágenes:              {stats.get('images', 0)}")
     return stats
 
 # ============================================================
@@ -214,9 +215,10 @@ def main():
         log("Operación cancelada por el usuario.", "🚫")
         sys.exit(0)
 
-    # ── 6. Limpiar EasyPanel
+    # ── 6. Limpiar EasyPanel (DESACTIVADO PARA SINCRONIZACIÓN)
     print()
-    clear_easypanel(EASYPANEL_BASE_URL, easypanel_token)
+    log("Omitiendo limpieza de base de datos para preservar datos locales...", "🛡️")
+    # clear_easypanel(EASYPANEL_BASE_URL, easypanel_token)
 
     # ── 7. Importar
     print()

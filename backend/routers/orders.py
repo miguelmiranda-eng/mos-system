@@ -495,7 +495,8 @@ async def import_orders_complete(request: Request):
         raise HTTPException(status_code=403, detail="Admin only")
     body = await request.json()
     orders_data = body.get("orders", [])
-    stats = {"orders": 0, "comments": 0, "images": 0, "skipped_orders": 0}
+    update_existing = body.get("update_existing", False)
+    stats = {"orders": 0, "comments": 0, "images": 0, "skipped_orders": 0, "updated_orders": 0}
 
     for entry in orders_data:
         oid = entry.get("order_id")
@@ -504,12 +505,25 @@ async def import_orders_complete(request: Request):
         comments = entry.pop("_comments", [])
         image_files = entry.pop("_image_files", [])
 
-        # Upsert order
+        # Cleanup entry before sync/insert
+        clean_entry = {k: v for k, v in entry.items() if k != "_id"}
+
+        # Upsert order logic
         existing = await db.orders.find_one({"order_id": oid})
         if existing:
-            stats["skipped_orders"] += 1
+            if update_existing:
+                # Fields to sync: board, priority, statuses, custom_fields
+                sync_fields = ["board", "priority", "blank_status", "trim_status", "artwork_status", 
+                               "production_status", "sample", "betty_column", "custom_fields", "color", "design_#"]
+                update_doc = {f: clean_entry[f] for f in sync_fields if f in clean_entry}
+                update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+                
+                await db.orders.update_one({"order_id": oid}, {"$set": update_doc})
+                stats["updated_orders"] += 1
+            else:
+                stats["skipped_orders"] += 1
         else:
-            await db.orders.insert_one({k: v for k, v in entry.items() if k != "_id"})
+            await db.orders.insert_one(clean_entry)
             stats["orders"] += 1
 
         # Import comments
