@@ -6,7 +6,7 @@ from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, io, json, logging
 
-router = APIRouter()
+router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
 
 def now_iso():
@@ -27,7 +27,7 @@ async def log_movement(user, movement_type, details):
 
 # ==================== LOCATIONS ====================
 
-@router.post("/api/wms/locations")
+@router.post("/locations")
 async def create_location(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -47,13 +47,13 @@ async def create_location(request: Request):
     loc.pop("_id", None)
     return loc
 
-@router.get("/api/wms/locations")
+@router.get("/locations")
 async def list_locations(request: Request):
     await require_auth(request)
     locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(500)
     return locs
 
-@router.delete("/api/wms/locations/{location_id}")
+@router.delete("/locations/{location_id}")
 async def delete_location(location_id: str, request: Request):
     user = await require_auth(request)
     result = await db.wms_locations.delete_one({"location_id": location_id})
@@ -63,7 +63,7 @@ async def delete_location(location_id: str, request: Request):
 
 # ==================== RECEIVING ====================
 
-@router.post("/api/wms/receiving")
+@router.post("/receive-purchase")
 async def create_receiving(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -193,13 +193,13 @@ async def create_receiving(request: Request):
     receiving_doc["total_units"] = total_units
     return receiving_doc
 
-@router.get("/api/wms/receiving")
+@router.get("/receiving")
 async def list_receiving(request: Request):
     await require_auth(request)
     docs = await db.wms_receiving.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
-@router.get("/api/wms/receiving/{receiving_id}")
+@router.get("/receiving/{receiving_id}")
 async def get_receiving(receiving_id: str, request: Request):
     await require_auth(request)
     doc = await db.wms_receiving.find_one({"receiving_id": receiving_id}, {"_id": 0})
@@ -211,7 +211,7 @@ async def get_receiving(receiving_id: str, request: Request):
 
 # ==================== BOXES ====================
 
-@router.get("/api/wms/boxes")
+@router.get("/stocktakes")
 async def list_boxes(request: Request, sku: str = "", color: str = "", size: str = "",
                      location: str = "", status: str = "", state: str = "", po: str = ""):
     await require_auth(request)
@@ -226,7 +226,7 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
     boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return boxes
 
-@router.get("/api/wms/boxes/{box_id}")
+@router.get("/stocktakes/{box_id}")
 async def get_box(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
@@ -236,7 +236,7 @@ async def get_box(box_id: str, request: Request):
 
 # ==================== PUTAWAY ====================
 
-@router.post("/api/wms/putaway")
+@router.post("/putaway")
 async def putaway_box(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -255,7 +255,7 @@ async def putaway_box(request: Request):
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
     return {"message": f"Caja {box_id} ubicada en {location}", "box_id": box_id, "location": location}
 
-@router.post("/api/wms/putaway/bulk")
+@router.post("/putaway/bulk")
 async def putaway_bulk(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -296,7 +296,7 @@ async def _update_inventory(sku, color, size, qty, operation="add"):
         elif operation == "deduct_raw":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": -qty, "available": -qty}, "$set": {"updated_at": now_iso()}})
 
-@router.get("/api/wms/inventory")
+@router.get("/inventory")
 async def get_inventory(request: Request, sku: str = "", color: str = "", size: str = "", location: str = "", customer: str = "", category: str = "", style: str = ""):
     await require_auth(request)
     query = {}
@@ -310,7 +310,7 @@ async def get_inventory(request: Request, sku: str = "", color: str = "", size: 
     inventory = await db.wms_inventory.find(query, {"_id": 0}).sort("sku", 1).to_list(5000)
     return inventory
 
-@router.get("/api/wms/inventory/filters")
+@router.put("/inventory/{inventory_id}")
 async def inventory_filters(request: Request):
     """Return unique filter values for inventory dropdowns."""
     await require_auth(request)
@@ -325,7 +325,7 @@ async def inventory_filters(request: Request):
         "styles": sorted([s for s in styles if s])
     }
 
-@router.get("/api/wms/inventory/locations-lookup")
+@router.get("/inventory/locations-lookup")
 async def locations_lookup(request: Request, style: str = "", color: str = ""):
     """Lookup inventory locations for a style+color, grouped by size."""
     await require_auth(request)
@@ -353,7 +353,7 @@ async def locations_lookup(request: Request, style: str = "", color: str = ""):
         by_size[sz]["locations"].sort(key=lambda x: -x["available"])
     return {"style": style, "color": color, "sizes": by_size}
 
-@router.get("/api/wms/inventory/options")
+@router.get("/inventory/options")
 async def inventory_options(request: Request, customer: str = "", manufacturer: str = "", style: str = ""):
     """Return unique dropdown values from inventory, case-insensitive dedup, filtered by customer and cascading."""
     await require_auth(request)
@@ -414,7 +414,7 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
         "colors": [c["val"] for c in colors]
     }
 
-@router.get("/api/wms/inventory/summary")
+@router.get("/movements/summary")
 async def inventory_summary(request: Request):
     await require_auth(request)
     pipeline = [
@@ -446,7 +446,7 @@ async def inventory_summary(request: Request):
 
 # ==================== ORDERS (from CRM) ====================
 
-@router.get("/api/wms/orders")
+@router.get("/orders")
 async def list_wms_orders(request: Request, status: str = ""):
     await require_auth(request)
     # Only show orders from BLANKS board OR with partial blank_status
@@ -459,7 +459,7 @@ async def list_wms_orders(request: Request, status: str = ""):
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return orders
 
-@router.get("/api/wms/orders/{order_id}")
+@router.get("/orders/{order_id}")
 async def get_wms_order(order_id: str, request: Request):
     await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -474,7 +474,7 @@ async def get_wms_order(order_id: str, request: Request):
 # ==================== ALLOCATION ====================
 
 
-@router.post("/api/wms/allocations")
+@router.post("/stocktakes")
 async def create_allocation(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -513,7 +513,7 @@ async def create_allocation(request: Request):
     await log_movement(user, "allocation", {"allocation_id": allocation_id, "order_number": order.get("order_number"), "items": alloc_items})
     return alloc_doc
 
-@router.get("/api/wms/allocations")
+@router.get("/allocations")
 async def list_allocations(request: Request, order_id: str = ""):
     await require_auth(request)
     query = {}
@@ -521,7 +521,7 @@ async def list_allocations(request: Request, order_id: str = ""):
     allocs = await db.wms_allocations.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return allocs
 
-@router.delete("/api/wms/allocations/{allocation_id}")
+@router.delete("/allocations/{allocation_id}")
 async def delete_allocation(allocation_id: str, request: Request):
     user = await require_auth(request)
     alloc = await db.wms_allocations.find_one({"allocation_id": allocation_id})
@@ -535,7 +535,7 @@ async def delete_allocation(allocation_id: str, request: Request):
 
 # ==================== PICK TICKETS ====================
 
-@router.post("/api/wms/pick-tickets")
+@router.post("/move-stock")
 async def create_pick_ticket(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -648,7 +648,7 @@ async def create_pick_ticket(request: Request):
         })
     return ticket_doc
 
-@router.get("/api/wms/inventory/field-options")
+@router.get("/inventory/field-options")
 async def get_inventory_field_options(request: Request):
     """Get unique values for description, country_of_origin, fabric_content from inventory."""
     await require_auth(request)
@@ -676,7 +676,7 @@ async def get_inventory_field_options(request: Request):
         "fabrics": [f["val"] for f in fabrics]
     }
 
-@router.get("/api/wms/pick-tickets")
+@router.get("/pick-tickets")
 async def list_pick_tickets(request: Request, status: str = ""):
     await require_auth(request)
     query = {}
@@ -686,14 +686,14 @@ async def list_pick_tickets(request: Request, status: str = ""):
 
 # ==================== OPERATOR MODULE ====================
 
-@router.get("/api/wms/operators")
+@router.get("/operators")
 async def list_operators(request: Request):
     """List all users with role 'operator' or 'picker'."""
     await require_auth(request)
     operators = await db.users.find({"role": {"$in": ["operator", "picker"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
     return operators
 
-@router.put("/api/wms/pick-tickets/{ticket_id}/assign")
+@router.put("/pick-tickets/{ticket_id}/assign")
 async def assign_pick_ticket(ticket_id: str, request: Request):
     """Admin assigns a pick ticket to an operator."""
     user = await require_admin(request)
@@ -723,7 +723,7 @@ async def assign_pick_ticket(ticket_id: str, request: Request):
     })
     return {"message": f"Ticket {ticket_id} asignado a {operator_name}", "ticket_id": ticket_id}
 
-@router.get("/api/wms/operator/my-tickets")
+@router.get("/operator/my-tickets")
 async def get_operator_tickets(request: Request):
     """Get pick tickets assigned to the current operator."""
     user = await require_auth(request)
@@ -737,7 +737,7 @@ async def get_operator_tickets(request: Request):
     tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("assigned_at", -1).to_list(200)
     return tickets
 
-@router.get("/api/wms/operator/completed-tickets")
+@router.get("/operator/completed-tickets")
 async def get_operator_completed_tickets(request: Request):
     """Get completed pick tickets for the current operator."""
     user = await require_auth(request)
@@ -750,7 +750,7 @@ async def get_operator_completed_tickets(request: Request):
     tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("completed_at", -1).to_list(200)
     return tickets
 
-@router.put("/api/wms/pick-tickets/{ticket_id}/pick-progress")
+@router.put("/pick-tickets/{ticket_id}/pick-progress")
 async def save_pick_progress(ticket_id: str, request: Request):
     """Operator saves picking progress (partial or complete)."""
     user = await require_auth(request)
@@ -782,7 +782,7 @@ async def save_pick_progress(ticket_id: str, request: Request):
     })
     return {"message": f"Progreso guardado ({picking_status})", "ticket_id": ticket_id, "picking_status": picking_status}
 
-@router.put("/api/wms/pick-tickets/{ticket_id}/confirm")
+@router.post("/stocktakes/{stocktake_id}/finalize")
 async def confirm_pick(ticket_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -806,7 +806,7 @@ async def confirm_pick(ticket_id: str, request: Request):
     await log_movement(user, "pick_confirmed", {"ticket_id": ticket_id, "lines": len(confirmed_lines)})
     return {"message": "Pick confirmado", "ticket_id": ticket_id}
 
-@router.put("/api/wms/pick-tickets/{ticket_id}/edit")
+@router.put("/pick-tickets/{ticket_id}/edit")
 async def edit_pick_ticket(ticket_id: str, request: Request):
     """Edit an existing pick ticket (only if not confirmed/completed)."""
     user = await require_auth(request)
@@ -857,7 +857,7 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
     updated = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
     return updated
 
-@router.get("/api/wms/orders-with-tickets")
+@router.get("/orders-with-tickets")
 async def get_orders_with_tickets(request: Request):
     """Get orders with their pick ticket assignments and progress."""
     await require_auth(request)
@@ -879,7 +879,7 @@ async def get_orders_with_tickets(request: Request):
         })
     return ticket_map
 
-@router.get("/api/wms/pick-tickets/stats")
+@router.get("/pick-tickets/stats")
 async def pick_ticket_stats(request: Request):
     """Dashboard stats for picker productivity."""
     await require_auth(request)
@@ -915,7 +915,7 @@ async def pick_ticket_stats(request: Request):
 
 # ==================== PRODUCTION ====================
 
-@router.post("/api/wms/production/move")
+@router.post("/production/move")
 async def production_move(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -945,7 +945,7 @@ async def production_move(request: Request):
     await log_movement(user, "production_move", {"target_state": target_state, "count": len(moved)})
     return move_doc
 
-@router.get("/api/wms/production")
+@router.get("/production")
 async def list_production(request: Request, state: str = ""):
     await require_auth(request)
     query = {}
@@ -956,7 +956,7 @@ async def list_production(request: Request, state: str = ""):
 
 # ==================== FINISHED GOODS ====================
 
-@router.get("/api/wms/finished-goods")
+@router.get("/finished-goods")
 async def list_finished_goods(request: Request):
     await require_auth(request)
     boxes = await db.wms_boxes.find({"state": "finished"}, {"_id": 0}).sort("created_at", -1).to_list(1000)
@@ -964,7 +964,7 @@ async def list_finished_goods(request: Request):
 
 # ==================== SHIPPING ====================
 
-@router.post("/api/wms/shipments")
+@router.post("/movements")
 async def create_shipment(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -999,7 +999,7 @@ async def create_shipment(request: Request):
     await log_movement(user, "shipment", {"shipment_id": shipment_id, "total_boxes": len(shipped_boxes), "total_units": total_units})
     return shipment_doc
 
-@router.get("/api/wms/shipments")
+@router.get("/shipments")
 async def list_shipments(request: Request):
     await require_auth(request)
     ships = await db.wms_shipments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -1007,7 +1007,7 @@ async def list_shipments(request: Request):
 
 # ==================== MOVEMENTS (AUDIT) ====================
 
-@router.get("/api/wms/movements")
+@router.get("/movements")
 async def list_movements(request: Request, movement_type: str = "", limit: int = 200):
     await require_auth(request)
     query = {}
@@ -1017,7 +1017,7 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
 
 # ==================== LABELS (PDF) ====================
 
-@router.get("/api/wms/labels/box/{box_id}")
+@router.get("/labels/box/{box_id}")
 async def generate_box_label(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
@@ -1053,7 +1053,7 @@ async def generate_box_label(box_id: str, request: Request):
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f"inline; filename=label_{box_id}.pdf"})
 
-@router.get("/api/wms/labels/boxes")
+@router.get("/labels/boxes")
 async def generate_multi_box_labels(request: Request, box_ids: str = ""):
     await require_auth(request)
     ids = [b.strip() for b in box_ids.split(",") if b.strip()]
@@ -1094,7 +1094,7 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
 
 # ==================== EXPORT ====================
 
-@router.get("/api/wms/export/inventory")
+@router.get("/export/inventory")
 async def export_inventory(request: Request):
     await require_auth(request)
     inventory = await db.wms_inventory.find({}, {"_id": 0}).sort("sku", 1).to_list(20000)
@@ -1130,7 +1130,7 @@ async def export_inventory(request: Request):
 
 # ==================== IMPORT INVENTORY ====================
 
-@router.post("/api/wms/import/inventory")
+@router.post("/import/inventory")
 async def import_inventory(request: Request, file: UploadFile = File(...)):
     user = await require_auth(request)
     if not file.filename.endswith(('.xlsx', '.xls')):
@@ -1240,7 +1240,7 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
 
 # ==================== SKU GENERATION ====================
 
-@router.get("/api/wms/generate-sku")
+@router.get("/generate-sku")
 async def generate_sku(request: Request, style: str = "", color: str = "", size: str = ""):
     """Preview auto-generated SKU for a style+color+size combination."""
     await require_auth(request)
@@ -1255,7 +1255,7 @@ async def generate_sku(request: Request, style: str = "", color: str = "", size:
 
 # ==================== CYCLE COUNT ====================
 
-@router.post("/api/wms/cycle-counts")
+@router.post("/cycle-counts")
 async def create_cycle_count(request: Request):
     """Create a new cycle count task."""
     user = await require_admin(request)
@@ -1331,14 +1331,14 @@ async def create_cycle_count(request: Request):
 
     return count_doc
 
-@router.get("/api/wms/cycle-counts")
+@router.get("/cycle-counts")
 async def list_cycle_counts(request: Request):
     """List all cycle counts."""
     await require_auth(request)
     counts = await db.wms_cycle_counts.find({}, {"_id": 0, "lines": 0}).sort("created_at", -1).to_list(200)
     return counts
 
-@router.get("/api/wms/cycle-counts/{count_id}")
+@router.get("/cycle-counts/{count_id}")
 async def get_cycle_count(count_id: str, request: Request):
     """Get a cycle count with all lines."""
     await require_auth(request)
@@ -1347,7 +1347,7 @@ async def get_cycle_count(count_id: str, request: Request):
         raise HTTPException(404, "Conteo no encontrado")
     return count
 
-@router.put("/api/wms/cycle-counts/{count_id}/count")
+@router.put("/cycle-counts/{count_id}/count")
 async def save_count_progress(count_id: str, request: Request):
     """Save counting progress - operator submits counted quantities."""
     user = await require_auth(request)
@@ -1385,7 +1385,7 @@ async def save_count_progress(count_id: str, request: Request):
     await log_movement(user, "cycle_count_progress", {"count_id": count_id, "counted": counted_count, "total": len(lines)})
     return {"message": f"Progreso guardado ({counted_count}/{len(lines)})", "status": status}
 
-@router.put("/api/wms/cycle-counts/{count_id}/approve")
+@router.put("/cycle-counts/{count_id}/approve")
 async def approve_cycle_count(count_id: str, request: Request):
     """Admin approves cycle count and adjusts inventory."""
     user = await require_admin(request)

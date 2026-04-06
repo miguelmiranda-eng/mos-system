@@ -4,9 +4,9 @@ from deps import db, require_auth, require_admin, log_activity, OptionUpdate, DE
 from datetime import datetime, timezone
 import uuid
 
-router = APIRouter()
+router = APIRouter(prefix="/api/config")
 
-@router.get("/api/config/options")
+@router.get("/options")
 async def get_options(request: Request):
     stored_options = await db.config_options.find_one({"config_id": "main"}, {"_id": 0})
     if stored_options:
@@ -17,19 +17,19 @@ async def get_options(request: Request):
         return options
     return DEFAULT_OPTIONS
 
-@router.put("/api/config/options")
+@router.put("/options")
 async def update_options(option_update: OptionUpdate, request: Request):
     user = await require_admin(request)
     await db.config_options.update_one({"config_id": "main"}, {"$set": {option_update.option_key: option_update.values}}, upsert=True)
     await log_activity(user, "update_options", {"option_key": option_update.option_key, "values_count": len(option_update.values)})
     return {"message": "Options updated", "key": option_update.option_key}
 
-@router.get("/api/config/boards")
+@router.get("/boards")
 async def get_boards(request: Request):
     boards = await get_dynamic_boards()
     return {"boards": boards}
 
-@router.post("/api/config/boards")
+@router.post("/boards")
 async def create_board(request: Request):
     await require_admin(request)
     body = await request.json()
@@ -43,7 +43,7 @@ async def create_board(request: Request):
     await save_boards(boards)
     return {"boards": boards, "created": name}
 
-@router.delete("/api/config/boards/{board_name}")
+@router.delete("/boards/{board_name}")
 async def delete_board(request: Request, board_name: str):
     await require_admin(request)
     if board_name in ("MASTER", "COMPLETOS", "PAPELERA DE RECICLAJE"):
@@ -57,13 +57,13 @@ async def delete_board(request: Request, board_name: str):
     await save_boards(boards)
     return {"boards": boards, "deleted": board_name}
 
-@router.get("/api/config/columns")
+@router.get("/columns")
 async def get_column_config(request: Request):
     await require_auth(request)
     stored = await db.column_config.find_one({"config_id": "columns"}, {"_id": 0, "config_id": 0})
     return stored or {"custom_columns": []}
 
-@router.put("/api/config/columns")
+@router.put("/columns")
 async def update_column_config(request: Request):
     await require_admin(request)
     body = await request.json()
@@ -73,13 +73,13 @@ async def update_column_config(request: Request):
     await db.column_config.update_one({"config_id": "columns"}, {"$set": update_data}, upsert=True)
     return {"message": "Columns updated"}
 
-@router.get("/api/config/colors")
+@router.get("/colors")
 async def get_colors(request: Request):
     await require_auth(request)
     stored = await db.config_colors.find_one({"config_id": "colors"}, {"_id": 0, "config_id": 0})
     return stored or {}
 
-@router.put("/api/config/colors")
+@router.put("/colors")
 async def update_colors(request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -87,26 +87,26 @@ async def update_colors(request: Request):
     await log_activity(user, "update_colors", {"count": len(body)})
     return {"message": "Colors updated"}
 
-@router.get("/api/config/descriptions")
+@router.get("/descriptions")
 async def get_descriptions(request: Request):
     await require_auth(request)
     stored = await db.config_descriptions.find_one({"config_id": "descriptions"}, {"_id": 0, "config_id": 0})
     return stored or {}
 
-@router.put("/api/config/descriptions")
+@router.put("/descriptions")
 async def update_descriptions(request: Request):
     user = await require_admin(request)
     body = await request.json()
     await db.config_descriptions.update_one({"config_id": "descriptions"}, {"$set": {**body, "config_id": "descriptions"}}, upsert=True)
     return {"message": "Descriptions updated"}
 
-@router.get("/api/config/groups")
+@router.get("/groups")
 async def get_groups(request: Request):
     await require_auth(request)
     stored = await db.config_groups.find_one({"config_id": "groups"}, {"_id": 0, "config_id": 0})
     return stored or {}
 
-@router.put("/api/config/groups")
+@router.put("/groups")
 async def update_groups(request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -115,14 +115,14 @@ async def update_groups(request: Request):
 
 # ==================== SAVED VIEWS ====================
 
-@router.get("/api/user-view-config/{board}")
+@router.get("/user-view-config/{board}")
 async def get_user_view_config(board: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
     config = await db.user_view_config.find_one({"user_id": user_id, "board": board}, {"_id": 0})
     return config or {}
 
-@router.put("/api/user-view-config/{board}")
+@router.put("/user-view-config/{board}")
 async def save_user_view_config(board: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -141,13 +141,13 @@ async def save_user_view_config(board: str, request: Request):
     )
     return {"message": "View config saved"}
 
-@router.get("/api/config/hidden-boards")
+@router.get("/hidden-boards")
 async def get_hidden_boards(request: Request):
     await require_auth(request)
     config = await db.board_config.find_one({"config_id": "hidden_boards"}, {"_id": 0})
     return config.get("boards", []) if config else []
 
-@router.put("/api/config/hidden-boards")
+@router.put("/hidden-boards")
 async def save_hidden_boards(request: Request):
     await require_admin(request)
     body = await request.json()
@@ -158,13 +158,13 @@ async def save_hidden_boards(request: Request):
     )
     return {"message": "Hidden boards saved"}
 
-@router.get("/api/config/form-fields")
+@router.get("/form-fields")
 async def get_form_fields(request: Request):
     await require_auth(request)
     config = await db.form_fields_config.find_one({"config_id": "main"}, {"_id": 0})
     return config or {}
 
-@router.put("/api/config/form-fields")
+@router.put("/form-fields")
 async def save_form_fields(request: Request):
     await require_admin(request)
     body = await request.json()
@@ -175,7 +175,7 @@ async def save_form_fields(request: Request):
     )
     return {"message": "Form fields saved"}
 
-@router.get("/api/config/board-layout/{board_name}")
+@router.get("/board-layout/{board_name}")
 async def get_board_layout(board_name: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -185,7 +185,7 @@ async def get_board_layout(board_name: str, request: Request):
         layout = await db.board_layouts.find_one({"board": board_name}, {"_id": 0})
     return layout or {}
 
-@router.put("/api/config/board-layout/{board_name}")
+@router.put("/board-layout/{board_name}")
 async def save_board_layout(board_name: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -203,14 +203,14 @@ async def save_board_layout(board_name: str, request: Request):
     )
     return {"message": "Board layout saved"}
 
-@router.get("/api/saved-views")
+@router.get("/saved-views")
 async def get_saved_views(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
     views = await db.saved_views.find({"user_id": user_id}, {"_id": 0}).to_list(100)
     return views
 
-@router.post("/api/saved-views")
+@router.post("/saved-views")
 async def create_saved_view(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -224,7 +224,7 @@ async def create_saved_view(request: Request):
     await db.saved_views.insert_one(view_doc)
     return {k: v for k, v in view_doc.items() if k != "_id"}
 
-@router.put("/api/saved-views/{view_id}")
+@router.put("/saved-views/{view_id}")
 async def update_saved_view(view_id: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -239,7 +239,7 @@ async def update_saved_view(view_id: str, request: Request):
     await db.saved_views.update_one({"view_id": view_id, "user_id": user_id}, {"$set": update_data})
     return {"message": "View updated"}
 
-@router.delete("/api/saved-views/{view_id}")
+@router.delete("/saved-views/{view_id}")
 async def delete_saved_view(view_id: str, request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -249,7 +249,7 @@ async def delete_saved_view(view_id: str, request: Request):
 
 # ==================== IMAGE EXPORT/IMPORT ====================
 
-@router.get("/api/admin/images-stats")
+@router.get("/admin/images-stats")
 async def images_stats(request: Request):
     user = await require_auth(request)
     if user.get("role") != "admin":
@@ -259,7 +259,7 @@ async def images_stats(request: Request):
     total_batches = (total + batch_size - 1) // batch_size if total > 0 else 0
     return {"total_images": total, "batch_size": batch_size, "total_batches": total_batches}
 
-@router.get("/api/admin/export-images/{batch_num}")
+@router.get("/admin/export-images/{batch_num}")
 async def export_images_batch(batch_num: int, request: Request):
     user = await require_auth(request)
     if user.get("role") != "admin":
@@ -269,7 +269,7 @@ async def export_images_batch(batch_num: int, request: Request):
     docs = await db.file_uploads.find({}, {"_id": 0}).skip(skip).limit(batch_size).to_list(batch_size)
     return {"batch": batch_num, "count": len(docs), "images": docs}
 
-@router.post("/api/admin/import-images")
+@router.post("/admin/import-images")
 async def import_images(request: Request):
     user = await require_auth(request)
     if user.get("role") != "admin":

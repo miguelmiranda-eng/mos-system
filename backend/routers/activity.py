@@ -3,9 +3,12 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, log_activity, logger
 from datetime import datetime, timezone
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
+from fastapi.responses import Response, FileResponse
+from deps import db, require_auth, require_admin, log_activity, logger, UPLOADS_DIR
+import base64
 
-@router.get("/api/notifications")
+@router.get("/notifications")
 async def get_notifications(request: Request, limit: int = 50):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
@@ -13,14 +16,14 @@ async def get_notifications(request: Request, limit: int = 50):
     unread_count = await db.notifications.count_documents({"user_id": user_id, "read": False})
     return {"notifications": notifs, "unread_count": unread_count}
 
-@router.put("/api/notifications/read")
+@router.put("/notifications/read")
 async def mark_notifications_read(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
     await db.notifications.update_many({"user_id": user_id, "read": False}, {"$set": {"read": True}})
     return {"message": "All notifications marked as read"}
 
-@router.get("/api/activity")
+@router.get("/activity")
 async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0, action_filter: str = None, search: str = None):
     await require_admin(request)
     query = {}
@@ -44,7 +47,7 @@ async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0,
     logs = await db.activity_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
     return {"total": total, "logs": logs, "limit": limit, "offset": offset}
 
-@router.post("/api/undo/{activity_id}")
+@router.post("/undo/{activity_id}")
 async def undo_action(activity_id: str, request: Request):
     user = await require_admin(request)
     log_entry = await db.activity_logs.find_one({"activity_id": activity_id}, {"_id": 0})
@@ -92,3 +95,19 @@ async def undo_action(activity_id: str, request: Request):
     except Exception as e:
         logger.error(f"Undo error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to undo: {str(e)}")
+
+@router.get("/uploads/{filename}")
+async def get_uploaded_file(filename: str):
+    """Retrieve an uploaded file from MongoDB or disk by filename."""
+    # Try MongoDB first (storage_key is the unique identifier)
+    doc = await db.file_uploads.find_one({"storage_key": filename}, {"_id": 0})
+    if doc:
+        image_bytes = base64.b64decode(doc["data"])
+        return Response(content=image_bytes, media_type=doc.get("content_type", "image/png"))
+    
+    # Fallback to disk for old files or those not yet in MongoDB
+    file_path = UPLOADS_DIR / filename
+    if file_path.exists():
+        return FileResponse(file_path)
+    
+    raise HTTPException(status_code=404, detail="File not found")

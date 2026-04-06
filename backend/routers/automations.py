@@ -5,18 +5,18 @@ from datetime import datetime, timezone
 import uuid, os, httpx, asyncio
 import resend
 
-router = APIRouter()
+router = APIRouter(prefix="/api/automations")
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
-@router.get("/api/automations")
+@router.get("")
 async def get_automations(request: Request):
     await require_auth(request)
     automations = await db.automations.find({}, {"_id": 0}).to_list(100)
     return automations
 
-@router.post("/api/automations")
+@router.post("")
 async def create_automation(automation: AutomationCreate, request: Request):
     user = await require_auth(request)
     automation_id = f"auto_{uuid.uuid4().hex[:12]}"
@@ -31,7 +31,7 @@ async def create_automation(automation: AutomationCreate, request: Request):
     await log_activity(user, "create_automation", {"automation_id": automation_id, "name": automation.name})
     return {k: v for k, v in automation_doc.items() if k != "_id"}
 
-@router.put("/api/automations/{automation_id}")
+@router.put("/{automation_id}")
 async def update_automation(automation_id: str, automation: AutomationCreate, request: Request):
     user = await require_auth(request)
     update_data = automation.model_dump()
@@ -43,7 +43,7 @@ async def update_automation(automation_id: str, automation: AutomationCreate, re
     updated = await db.automations.find_one({"automation_id": automation_id}, {"_id": 0})
     return updated
 
-@router.delete("/api/automations/{automation_id}")
+@router.delete("/{automation_id}")
 async def delete_automation(automation_id: str, request: Request):
     user = await require_auth(request)
     result = await db.automations.delete_one({"automation_id": automation_id})

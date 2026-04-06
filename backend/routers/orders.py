@@ -5,7 +5,7 @@ from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os
 
-router = APIRouter()
+router = APIRouter(prefix="/api/orders")
 
 # Helper to create notifications for all users except the actor
 async def _notify_all(actor, notif_type, message, order_id=None, order_number=None):
@@ -29,7 +29,7 @@ async def _run_automations(trigger_type, order, user, context=None):
     from routers.automations import run_automations
     return await run_automations(trigger_type, order, user, context)
 
-@router.get("/api/orders")
+@router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None):
     await require_auth(request)
     query = {}
@@ -51,7 +51,7 @@ async def get_orders(request: Request, board: str = None, search: str = None):
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return orders
 
-@router.get("/api/orders/board-counts")
+@router.get("/board-counts")
 async def get_board_counts(request: Request):
     await require_auth(request)
     pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
@@ -60,7 +60,7 @@ async def get_board_counts(request: Request):
     counts = {r["_id"]: r["count"] for r in results if r["_id"]}
     return counts
 
-@router.get("/api/orders/check-number")
+@router.get("/check-number")
 async def check_order_number(request: Request, order_number: str = None):
     await require_auth(request)
     if not order_number or not order_number.strip():
@@ -68,7 +68,7 @@ async def check_order_number(request: Request, order_number: str = None):
     exists = await db.orders.find_one({"order_number": order_number.strip()})
     return {"exists": bool(exists)}
 
-@router.get("/api/orders/{order_id}")
+@router.get("/{order_id}")
 async def get_order(order_id: str, request: Request):
     await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -78,7 +78,7 @@ async def get_order(order_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
-@router.post("/api/orders")
+@router.post("")
 async def create_order(order: OrderCreate, request: Request):
     user = await require_auth(request)
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
@@ -102,7 +102,7 @@ async def create_order(order: OrderCreate, request: Request):
     await ws_manager.broadcast("order_change", {"action": "create", "boards": [order.board]})
     return created
 
-@router.put("/api/orders/{order_id}")
+@router.put("/{order_id}")
 async def update_order(order_id: str, order: OrderUpdate, request: Request):
     user = await require_auth(request)
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -142,7 +142,7 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     await ws_manager.broadcast("order_change", {"action": "update", "order_id": order_id, "boards": boards_affected})
     return {**(final_order or updated), "_automations_executed": executed_automations}
 
-@router.post("/api/orders/{order_id}/move")
+@router.post("/{order_id}/move")
 async def move_order(order_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -162,7 +162,7 @@ async def move_order(order_id: str, request: Request):
     await ws_manager.broadcast("order_change", {"action": "move", "boards": [old_board, target_board]})
     return updated
 
-@router.delete("/api/orders/{order_id}")
+@router.delete("/{order_id}")
 async def delete_order(order_id: str, request: Request):
     user = await require_auth(request)
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -173,7 +173,7 @@ async def delete_order(order_id: str, request: Request):
     await ws_manager.broadcast("order_change", {"action": "delete", "boards": [existing.get("board")]})
     return {"message": "Order moved to trash"}
 
-@router.delete("/api/orders/{order_id}/permanent")
+@router.delete("/{order_id}/permanent")
 async def permanent_delete_order(order_id: str, request: Request):
     user = await require_auth(request)
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -183,7 +183,7 @@ async def permanent_delete_order(order_id: str, request: Request):
     await log_activity(user, "permanent_delete_order", {"order_id": order_id, "order_number": existing.get("order_number")})
     return {"message": "Order permanently deleted"}
 
-@router.post("/api/orders/bulk-move")
+@router.post("/bulk-move")
 async def bulk_move_orders(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -203,7 +203,7 @@ async def bulk_move_orders(request: Request):
     await ws_manager.broadcast("order_change", {"action": "bulk_move", "boards": affected_boards})
     return {"modified_count": result.modified_count}
 
-@router.post("/api/orders/export")
+@router.post("/export")
 async def export_orders(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -216,7 +216,7 @@ async def export_orders(request: Request):
 
 # ==================== LINKS ====================
 
-@router.get("/api/orders/{order_id}/links")
+@router.get("/{order_id}/links")
 async def get_order_links(order_id: str, request: Request):
     await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -224,7 +224,7 @@ async def get_order_links(order_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Order not found")
     return order.get("links", [])
 
-@router.post("/api/orders/{order_id}/links")
+@router.post("/{order_id}/links")
 async def add_order_link(order_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -237,7 +237,7 @@ async def add_order_link(order_id: str, request: Request):
     await ws_manager.broadcast("order_change", {"action": "add_link", "order_id": order_id})
     return link
 
-@router.delete("/api/orders/{order_id}/links/{link_index}")
+@router.delete("/{order_id}/links/{link_index}")
 async def delete_order_link(order_id: str, link_index: int, request: Request):
     await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -253,13 +253,80 @@ async def delete_order_link(order_id: str, link_index: int, request: Request):
 
 # ==================== COMMENTS ====================
 
-@router.get("/api/orders/{order_id}/comments")
+@router.post("/{order_id}/comments/{comment_id}/pin")
+async def pin_comment(order_id: str, comment_id: str, request: Request):
+    """Toggle the pinned state of a comment. Only admins can pin."""
+    user = await require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo los administradores pueden anclar comentarios")
+    comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    currently_pinned = comment.get("pinned", False)
+    new_pinned = not currently_pinned
+    update = {"pinned": new_pinned}
+    if new_pinned:
+        update["pinned_at"] = datetime.now(timezone.utc).isoformat()
+        update["pinned_by"] = user["name"]
+    else:
+        update["pinned_at"] = None
+        update["pinned_by"] = None
+    await db.comments.update_one({"comment_id": comment_id}, {"$set": update})
+    await ws_manager.broadcast("order_change", {"action": "pin_comment", "order_id": order_id})
+    return {"pinned": new_pinned, "action": "pinned" if new_pinned else "unpinned"}
+
+@router.post("/{order_id}/comments/{comment_id}/react")
+async def react_to_comment(order_id: str, comment_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    emoji = body.get("emoji")
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji required")
+    
+    user_id = user["user_id"]
+    logger.info(f"Reaction toggle: user {user_id}, comment {comment_id}, emoji {emoji}")
+    
+    comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
+    if not comment:
+        logger.warning(f"Comment {comment_id} not found for order {order_id}")
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Ensure reactions exists
+    reactions = comment.get("reactions")
+    if not isinstance(reactions, dict):
+        reactions = {}
+    
+    user_id_str = str(user_id)
+    
+    # Toggle reaction
+    current_emoji_users = reactions.get(emoji, [])
+    if not isinstance(current_emoji_users, list):
+        current_emoji_users = []
+        
+    if user_id_str in current_emoji_users:
+        current_emoji_users.remove(user_id_str)
+        action = "removed"
+    else:
+        current_emoji_users.append(user_id_str)
+        action = "added"
+    
+    if not current_emoji_users:
+        reactions.pop(emoji, None)
+    else:
+        reactions[emoji] = current_emoji_users
+    
+    await db.comments.update_one({"comment_id": comment_id}, {"$set": {"reactions": reactions}})
+    await ws_manager.broadcast("order_change", {"action": "comment_reaction", "order_id": order_id})
+    logger.info(f"Reaction {action} for {comment_id}. Current reactions: {list(reactions.keys())}")
+    return {"reactions": reactions, "action": action}
+
+@router.get("/{order_id}/comments")
 async def get_comments(order_id: str, request: Request):
     await require_auth(request)
     comments = await db.comments.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
     return comments
 
-@router.post("/api/orders/{order_id}/comments")
+@router.post("/{order_id}/comments")
 async def create_comment(order_id: str, comment: CommentCreate, request: Request):
     user = await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -322,7 +389,7 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
     await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": order_id})
     return {**{k: v for k, v in comment_doc.items() if k not in ["_id", "reactions"]}, "reactions": {}}
 
-@router.put("/api/orders/{order_id}/comments/{comment_id}")
+@router.put("/{order_id}/comments/{comment_id}")
 async def update_comment(order_id: str, comment_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -342,7 +409,7 @@ async def update_comment(order_id: str, comment_id: str, request: Request):
     updated = await db.comments.find_one({"comment_id": comment_id}, {"_id": 0})
     return updated
 
-@router.delete("/api/orders/{order_id}/comments/{comment_id}")
+@router.delete("/{order_id}/comments/{comment_id}")
 async def delete_comment(order_id: str, comment_id: str, request: Request):
     user = await require_auth(request)
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id}, {"_id": 0})
@@ -354,54 +421,10 @@ async def delete_comment(order_id: str, comment_id: str, request: Request):
     await ws_manager.broadcast("order_change", {"action": "delete_comment", "order_id": order_id})
     return {"message": "Comment deleted"}
 
-@router.post("/api/orders/{order_id}/comments/{comment_id}/react")
-async def react_to_comment(order_id: str, comment_id: str, request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    emoji = body.get("emoji")
-    if not emoji:
-        raise HTTPException(status_code=400, detail="Emoji required")
-    
-    user_id = user["user_id"]
-    logger.info(f"Reaction toggle: user {user_id}, comment {comment_id}, emoji {emoji}")
-    
-    comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
-    if not comment:
-        logger.warning(f"Comment {comment_id} not found for order {order_id}")
-        raise HTTPException(status_code=404, detail="Comment not found")
-    
-    # Ensure reactions exists
-    reactions = comment.get("reactions")
-    if not isinstance(reactions, dict):
-        reactions = {}
-    
-    user_id_str = str(user_id)
-    
-    # Toggle reaction
-    current_emoji_users = reactions.get(emoji, [])
-    if not isinstance(current_emoji_users, list):
-        current_emoji_users = []
-        
-    if user_id_str in current_emoji_users:
-        current_emoji_users.remove(user_id_str)
-        action = "removed"
-    else:
-        current_emoji_users.append(user_id_str)
-        action = "added"
-    
-    if not current_emoji_users:
-        reactions.pop(emoji, None)
-    else:
-        reactions[emoji] = current_emoji_users
-    
-    await db.comments.update_one({"comment_id": comment_id}, {"$set": {"reactions": reactions}})
-    await ws_manager.broadcast("order_change", {"action": "comment_reaction", "order_id": order_id})
-    logger.info(f"Reaction {action} for {comment_id}. Current reactions: {list(reactions.keys())}")
-    return {"reactions": reactions, "action": action}
 
 # ==================== FILE UPLOAD (stored in MongoDB) ====================
 
-@router.post("/api/orders/{order_id}/images")
+@router.post("/{order_id}/images")
 async def upload_attachment(order_id: str, request: Request):
     """Upload an attachment (image, pdf, excel, etc.) for an order."""
     user = await require_auth(request)
@@ -440,24 +463,9 @@ async def upload_attachment(order_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-@router.get("/api/uploads/{filename}")
-async def get_uploaded_file(filename: str):
-    from fastapi.responses import Response
-    # Try MongoDB first
-    doc = await db.file_uploads.find_one({"storage_key": filename}, {"_id": 0})
-    if doc:
-        image_bytes = base64.b64decode(doc["data"])
-        return Response(content=image_bytes, media_type=doc.get("content_type", "image/png"))
-    # Fallback to disk for old files
-    file_path = UPLOADS_DIR / filename
-    if file_path.exists():
-        from fastapi.responses import FileResponse
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="File not found")
-
 # ==================== EXPORT ORDERS WITH COMMENTS & IMAGES ====================
 
-@router.post("/api/orders/export-complete")
+@router.post("/export-complete")
 async def export_orders_complete(request: Request):
     """Export selected orders with their comments and images (base64)."""
     user = await require_auth(request)
@@ -487,7 +495,7 @@ async def export_orders_complete(request: Request):
 
     return {"total": len(result), "orders": result}
 
-@router.post("/api/orders/import-complete")
+@router.post("/import-complete")
 async def import_orders_complete(request: Request):
     """Import orders with their comments and images."""
     user = await require_auth(request)

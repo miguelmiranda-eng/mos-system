@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useLang } from "../../contexts/LanguageContext";
-import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign, FileText, File as FileIcon, FileSpreadsheet, Download } from "lucide-react";
+import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign, FileText, File as FileIcon, FileSpreadsheet, Download, Pin, PinOff } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
@@ -146,6 +146,25 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       if (res.ok) { fetchComments(); toast.success("Comentario eliminado"); }
       else { const err = await res.json(); toast.error(err.detail || "Error al eliminar"); }
     } catch { toast.error("Error al eliminar comentario"); }
+  };
+
+  const handlePinComment = async (commentId, currentlyPinned) => {
+    try {
+      // Optimistic update
+      setComments(prev => prev.map(c => c.comment_id === commentId ? { ...c, pinned: !currentlyPinned } : c));
+      const res = await fetch(`${API}/orders/${order.order_id}/comments/${commentId}/pin`, {
+        method: 'POST', credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        fetchComments();
+        toast.success(data.action === 'pinned' ? '📌 Comentario anclado' : 'Comentario desanclado', { duration: 2000 });
+      } else {
+        const err = await res.json();
+        toast.error(err.detail || 'Error al anclar');
+        fetchComments(); // revert
+      }
+    } catch { toast.error('Error al anclar comentario'); fetchComments(); }
   };
 
   const handleReact = async (commentId, emoji) => {
@@ -470,20 +489,34 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
         </div>
 
         {/* Comments Section */}
-        <div className="flex-1 overflow-y-auto py-3 space-y-4" data-testid="comments-list">
+        <div className="flex-1 overflow-y-auto py-3 space-y-3" data-testid="comments-list">
           {(() => {
             const rootComments = comments.filter(c => !c.parent_id);
+            const pinnedComments = rootComments.filter(c => c.pinned);
+            const unpinnedComments = rootComments.filter(c => !c.pinned);
             const repliesMap = comments.reduce((acc, c) => {
               if (c.parent_id) { (acc[c.parent_id] = acc[c.parent_id] || []).push(c); }
               return acc;
             }, {});
+            const isAdmin = currentUser?.role === 'admin';
 
             const renderComment = (comment, isReply = false) => {
               const reactions = comment.reactions || {};
               const emojiList = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+              const isPinned = comment.pinned === true;
               
               return (
-                <div key={comment.comment_id} className={`group flex flex-col gap-1 ${isReply ? 'ml-10 border-l-2 border-border/30 pl-4 py-1' : 'bg-secondary/20 border border-border/30 rounded-xl p-4'}`} data-testid={`comment-${comment.comment_id}`}>
+                <div key={comment.comment_id}
+                  className={`group flex flex-col gap-1 transition-all ${
+                    isReply
+                      ? 'ml-10 border-l-2 border-border/30 pl-4 py-1'
+                      : isPinned
+                        ? 'bg-amber-500/10 border border-amber-400/40 rounded-xl p-4 shadow-sm'
+                        : 'bg-secondary/20 border border-border/30 rounded-xl p-4'
+                  }`}
+                  data-testid={`comment-${comment.comment_id}`}>
+
+                  {/* Header row */}
                   <div className="flex items-center gap-2 mb-1">
                     {comment.user_picture ? (
                       <img src={comment.user_picture} alt="" className="w-6 h-6 rounded-full border border-border/50" />
@@ -493,19 +526,42 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                     <span className="text-xs font-black text-foreground/80">{comment.user_name}</span>
                     <span className="text-[10px] text-muted-foreground">{new Date(comment.created_at).toLocaleString()}</span>
                     {comment.edited_at && <span className="text-[10px] text-muted-foreground italic">(editado)</span>}
-                    
-                    {canModify(comment) && editingId !== comment.comment_id && (
-                      <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => { setEditingId(comment.comment_id); setEditContent(comment.content); }}
-                          className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-                          title="Editar"><Pencil className="w-3 h-3" /></button>
-                        <button onClick={() => { if (window.confirm('¿Eliminar?')) handleDeleteComment(comment.comment_id); }}
-                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                          title="Eliminar"><Trash2 className="w-3 h-3" /></button>
-                      </div>
+                    {isPinned && (
+                      <span className="flex items-center gap-1 text-[10px] text-amber-500 font-bold ml-1">
+                        <Pin className="w-3 h-3" /> Anclado
+                        {comment.pinned_by && <span className="text-muted-foreground font-normal">por {comment.pinned_by}</span>}
+                      </span>
                     )}
+
+                    <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Pin button — admins only, root comments only */}
+                      {isAdmin && !isReply && (
+                        <button
+                          onClick={() => handlePinComment(comment.comment_id, isPinned)}
+                          className={`p-1 rounded transition-all ${
+                            isPinned
+                              ? 'text-amber-500 hover:text-muted-foreground hover:bg-secondary'
+                              : 'text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10'
+                          }`}
+                          title={isPinned ? 'Desanclar comentario' : 'Anclar comentario'}
+                          data-testid={`pin-comment-${comment.comment_id}`}>
+                          {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      {canModify(comment) && editingId !== comment.comment_id && (
+                        <>
+                          <button onClick={() => { setEditingId(comment.comment_id); setEditContent(comment.content); }}
+                            className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
+                            title="Editar"><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => { if (window.confirm('¿Eliminar?')) handleDeleteComment(comment.comment_id); }}
+                            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                            title="Eliminar"><Trash2 className="w-3 h-3" /></button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  
+
+                  {/* Edit or display content */}
                   {editingId === comment.comment_id ? (
                     <div className="space-y-2">
                       <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)}
@@ -531,16 +587,13 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                           reactionTimeoutRef.current = setTimeout(() => setActiveReactionId(null), 200);
                         }}
                       >
-                        <button className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
-                          Reaccionar
-                        </button>
-                        
+                        <button className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors">Reaccionar</button>
                         {activeReactionId === comment.comment_id && (
                           <div className="absolute bottom-full left-0 pb-3 flex animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
                             <div className="bg-popover border border-border rounded-full p-1.5 shadow-2xl flex gap-2 px-3">
                               {emojiList.map(emoji => (
                                 <button key={emoji} onClick={() => { handleReact(comment.comment_id, emoji); setActiveReactionId(null); }}
-                                  className="text-3xl hover:scale-125 transition-transform duration-200 p-1 grayscale-0 hover:grayscale-0 active:scale-95">
+                                  className="text-3xl hover:scale-125 transition-transform duration-200 p-1 active:scale-95">
                                   {emoji}
                                 </button>
                               ))}
@@ -548,21 +601,22 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                           </div>
                         )}
                       </div>
-                      
+
                       {!isReply && (
                         <button onClick={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
-                          className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                          className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors">
                           Responder
                         </button>
                       )}
 
-                      {/* Display Reactions - Professional sized, next to Responder */}
                       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                        {Object.entries(comment.reactions || {}).map(([emoji, users]) => {
+                        {Object.entries(reactions).map(([emoji, users]) => {
                           const hasReacted = users.map(id => String(id)).includes(String(currentUser?.user_id));
                           return (
                             <button key={emoji} onClick={() => handleReact(comment.comment_id, emoji)}
-                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[11px] font-bold transition-all shadow-sm active:scale-95 ${hasReacted ? 'bg-primary/20 border-primary/40 text-primary' : 'bg-secondary/40 border-border/50 hover:border-border text-muted-foreground'}`}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[11px] font-bold transition-all shadow-sm active:scale-95 ${
+                                hasReacted ? 'bg-primary/20 border-primary/40 text-primary' : 'bg-secondary/40 border-border/50 hover:border-border text-muted-foreground'
+                              }`}
                               title={users.length > 1 ? `${users.length} personas` : '1 persona'}>
                               <span className="text-sm">{emoji}</span>
                               {users.length > 0 && <span className="font-mono">{users.length}</span>}
@@ -573,15 +627,47 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                     </div>
                   )}
 
-                  {/* Render Replies */}
+                  {/* Replies */}
                   {repliesMap[comment.comment_id]?.map(reply => renderComment(reply, true))}
                 </div>
               );
             };
 
-            return rootComments.length > 0 
-              ? rootComments.map(c => renderComment(c)) 
-              : <p className="text-center text-muted-foreground py-6">{t('no_data')}</p>;
+            if (comments.length === 0) return <p className="text-center text-muted-foreground py-6">{t('no_data')}</p>;
+
+            return (
+              <>
+                {/* Pinned Comments — shown at top */}
+                {pinnedComments.length > 0 && (
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2 mb-2 px-1">
+                      <Pin className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">
+                        Anclados ({pinnedComments.length})
+                      </span>
+                      <div className="flex-1 h-px bg-amber-500/20" />
+                    </div>
+                    <div className="space-y-3">
+                      {pinnedComments.map(c => renderComment(c))}
+                    </div>
+                    {unpinnedComments.length > 0 && (
+                      <div className="flex items-center gap-2 mt-4 mb-2 px-1">
+                        <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                          Todos los comentarios
+                        </span>
+                        <div className="flex-1 h-px bg-border/50" />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Regular Comments */}
+                <div className="space-y-3">
+                  {unpinnedComments.map(c => renderComment(c))}
+                </div>
+              </>
+            );
           })()}
         </div>
 

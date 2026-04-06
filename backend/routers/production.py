@@ -6,20 +6,20 @@ from datetime import datetime, timezone
 import uuid, os, asyncio
 import resend
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
 # ==================== OPERATORS CRUD ====================
 
-@router.get("/api/operators")
+@router.get("/operators")
 async def list_operators(request: Request):
     await require_auth(request)
     operators = await db.operators.find({}, {"_id": 0}).sort("name", 1).to_list(500)
     return operators
 
-@router.post("/api/operators")
+@router.post("/operators")
 async def create_operator(request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -39,7 +39,7 @@ async def create_operator(request: Request):
     await log_activity(user, "create_operator", {"name": name})
     return {k: v for k, v in doc.items() if k != "_id"}
 
-@router.put("/api/operators/{operator_id}")
+@router.put("/operators/{operator_id}")
 async def update_operator(operator_id: str, request: Request):
     user = await require_admin(request)
     body = await request.json()
@@ -63,7 +63,7 @@ async def update_operator(operator_id: str, request: Request):
     updated = await db.operators.find_one({"operator_id": operator_id}, {"_id": 0})
     return updated
 
-@router.delete("/api/operators/{operator_id}")
+@router.delete("/operators/{operator_id}")
 async def delete_operator(operator_id: str, request: Request):
     user = await require_admin(request)
     existing = await db.operators.find_one({"operator_id": operator_id}, {"_id": 0})
@@ -73,7 +73,7 @@ async def delete_operator(operator_id: str, request: Request):
     await log_activity(user, "delete_operator", {"operator_id": operator_id, "name": existing.get("name")})
     return {"message": "Operator deleted"}
 
-@router.post("/api/production-logs")
+@router.post("/production-logs")
 async def create_production_log(log: ProductionLogCreate, request: Request):
     user = await require_auth(request)
     order = await db.orders.find_one({"order_id": log.order_id}, {"_id": 0})
@@ -109,14 +109,14 @@ async def create_production_log(log: ProductionLogCreate, request: Request):
     await ws_manager.broadcast("production_update", {"order_id": log.order_id})
     return {k: v for k, v in log_doc.items() if k != "_id"}
 
-@router.get("/api/production-logs/{order_id}")
+@router.get("/production-logs/{order_id}")
 async def get_production_logs(order_id: str, request: Request):
     await require_auth(request)
     logs = await db.production_logs.find({"order_id": order_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
     total_produced = sum(entry.get("quantity_produced", 0) for entry in logs)
     return {"logs": logs, "total_produced": total_produced}
 
-@router.get("/api/production-summary")
+@router.get("/production-summary")
 async def get_production_summary(request: Request):
     await require_auth(request)
     pipeline = [{"$group": {"_id": "$order_id", "total_produced": {"$sum": "$quantity_produced"}, "log_count": {"$sum": 1}}}]
@@ -124,7 +124,7 @@ async def get_production_summary(request: Request):
     summary = {r["_id"]: {"total_produced": r["total_produced"], "log_count": r["log_count"]} for r in results}
     return summary
 
-@router.delete("/api/production-logs/{log_id}")
+@router.delete("/production-logs/{log_id}")
 async def delete_production_log(log_id: str, request: Request):
     user = await require_admin(request)
     existing = await db.production_logs.find_one({"log_id": log_id}, {"_id": 0})
@@ -136,7 +136,7 @@ async def delete_production_log(log_id: str, request: Request):
 
 # ==================== GANTT & CAPACITY PLAN ====================
 
-@router.get("/api/gantt-data")
+@router.get("/gantt-data")
 async def get_gantt_data(request: Request, start_date: str = None, end_date: str = None):
     await require_auth(request)
     query = {}
@@ -178,7 +178,7 @@ async def get_gantt_data(request: Request, start_date: str = None, end_date: str
     total_pieces_system = sum(o.get("quantity", 0) for o in all_orders)
     return {"bars": completed_bars, "pending": pending_orders, "total_pieces_system": total_pieces_system}
 
-@router.get("/api/capacity-plan")
+@router.get("/capacity-plan")
 async def get_capacity_plan(request: Request):
     await require_auth(request)
     # Get all active orders with their boards
@@ -257,7 +257,7 @@ async def get_capacity_plan(request: Request):
 
 # ==================== PRODUCTION ANALYTICS ====================
 
-@router.get("/api/production-analytics")
+@router.get("/production-analytics")
 async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
     await require_auth(request)
     from datetime import timedelta
@@ -382,7 +382,7 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         "logs": logs[:200]
     }
 
-@router.post("/api/production-report")
+@router.post("/production-report")
 async def generate_production_report(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -485,7 +485,7 @@ async def _generate_pdf_report(logs, filters):
 
 # ==================== EMAIL ROUTE ====================
 
-@router.post("/api/send-email")
+@router.post("/send-email")
 async def send_email(email_request: EmailRequest, request: Request):
     user = await require_auth(request)
     if not resend.api_key:

@@ -148,9 +148,15 @@ class OrderCreate(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     color: Optional[str] = None
+    design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     screens: Optional[bool] = None
     board: Optional[str] = "SCHEDULING"
+    
+    model_config = {
+        "extra": "allow",
+        "populate_by_name": True
+    }
     
     @field_validator("board", mode="before")
     @classmethod
@@ -161,7 +167,6 @@ class OrderCreate(BaseModel):
 
     links: Optional[List[Dict[str, str]]] = []
     custom_fields: Optional[Dict[str, Any]] = {}
-    model_config = {"extra": "allow"}
 
 class OrderUpdate(BaseModel):
     client: Optional[str] = None
@@ -180,10 +185,14 @@ class OrderUpdate(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     color: Optional[str] = None
+    design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     board: Optional[str] = None
     custom_fields: Optional[Dict[str, Any]] = None
-    model_config = {"extra": "allow"}
+    model_config = {
+        "extra": "allow",
+        "populate_by_name": True
+    }
 
 class CommentCreate(BaseModel):
     content: str

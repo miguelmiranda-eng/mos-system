@@ -6,7 +6,7 @@ from passlib.hash import bcrypt
 from fastapi.responses import RedirectResponse
 import uuid, httpx, os, resend, logging
 
-router = APIRouter()
+router = APIRouter(prefix="/api/auth")
 logger = logging.getLogger(__name__)
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
@@ -36,7 +36,7 @@ async def _create_session(user_id, response):
     response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
     return session_token
 
-@router.get("/api/auth/google")
+@router.get("/google")
 async def google_login():
     """Initiate Google OAuth 2.0 flow."""
     if not GOOGLE_CLIENT_ID:
@@ -53,7 +53,7 @@ async def google_login():
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{httpx.QueryParams(params)}"
     return RedirectResponse(url)
 
-@router.get("/api/auth/google/callback")
+@router.get("/google/callback")
 async def google_callback(code: str, response: Response):
     """Handle Google OAuth 2.0 callback."""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -113,7 +113,7 @@ async def google_callback(code: str, response: Response):
     
     return redirect_resp
 
-@router.post("/api/auth/session")
+@router.post("/session")
 async def create_session(request: Request, response: Response):
     """Legacy proxy session endpoint (kept for backward compatibility)."""
     body = await request.json()
@@ -154,7 +154,7 @@ async def create_session(request: Request, response: Response):
 
 # ==================== EMAIL/PASSWORD AUTH ====================
 
-@router.post("/api/auth/create-user")
+@router.post("/create-user")
 async def admin_create_user(request: Request, response: Response):
     """Admin creates a user with email/password."""
     admin = await require_admin(request)
@@ -182,7 +182,7 @@ async def admin_create_user(request: Request, response: Response):
     await log_activity(admin, "create_user", {"email": email, "role": role, "auth_type": "email"})
     return {"message": f"Usuario {email} creado exitosamente", "user_id": user_id}
 
-@router.post("/api/auth/login")
+@router.post("/login")
 async def email_login(request: Request, response: Response):
     """Login with email and password."""
     body = await request.json()
@@ -202,7 +202,7 @@ async def email_login(request: Request, response: Response):
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user
 
-@router.post("/api/auth/forgot-password")
+@router.post("/forgot-password")
 async def forgot_password(request: Request):
     """Send password reset email."""
     body = await request.json()
@@ -246,7 +246,7 @@ async def forgot_password(request: Request):
         return {"message": "Si el email existe, se envio un enlace de recuperacion", "reset_link": reset_link}
     return {"message": "Si el email existe, se envio un enlace de recuperacion"}
 
-@router.post("/api/auth/reset-password")
+@router.post("/reset-password")
 async def reset_password(request: Request):
     """Reset password with token."""
     body = await request.json()
@@ -269,7 +269,7 @@ async def reset_password(request: Request):
     await db.password_resets.update_one({"token": token}, {"$set": {"used": True}})
     return {"message": "Contrasena actualizada exitosamente"}
 
-@router.get("/api/auth/me")
+@router.get("/me")
 async def get_me(request: Request):
     user = await get_current_user(request)
     if not user:
@@ -277,7 +277,7 @@ async def get_me(request: Request):
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user
 
-@router.post("/api/auth/logout")
+@router.post("/logout")
 async def logout(request: Request, response: Response):
     user = await get_current_user(request)
     session_token = request.cookies.get("session_token")
