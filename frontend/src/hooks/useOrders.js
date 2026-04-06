@@ -193,7 +193,10 @@ export const useOrders = (currentBoard, boardFilters) => {
           setRemovedDefaults(removed);
           const activeDefaults = DEFAULT_COLUMNS.filter(c => !removed.includes(c.key));
           const custom = data.custom_columns || [];
-          const allCols = [...activeDefaults, ...custom];
+          // Filter out custom columns that duplicate a default column key to prevent double columns
+          const defaultKeys = new Set(DEFAULT_COLUMNS.map(c => c.key));
+          const uniqueCustom = custom.filter(c => !defaultKeys.has(c.key));
+          const allCols = [...activeDefaults, ...uniqueCustom];
           setColumns(allCols);
           const newWidths = {};
           activeDefaults.forEach(col => newWidths[col.key] = col.width);
