@@ -1,6 +1,7 @@
 import requests, json, sys, time
 
-token = 'session_1f68abab29ec4e9aa8e95562aff30bee'
+token = 'session_62e5d047966f4bb6a111059c12ba3bbe'
+
 base_url = 'https://kanban-mfg-system.emergent.host'
 headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 OUTPUT_FILE = 'backup_kanban_emergent.json'

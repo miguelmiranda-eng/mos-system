@@ -512,10 +512,16 @@ async def import_orders_complete(request: Request):
         existing = await db.orders.find_one({"order_id": oid})
         if existing:
             if update_existing:
-                # Fields to sync: board, priority, statuses, custom_fields
-                sync_fields = ["board", "priority", "blank_status", "trim_status", "artwork_status", 
-                               "production_status", "sample", "betty_column", "custom_fields", "color", "design_#"]
+                # Fields to sync: board, priority, statuses, custom_fields, po, etc.
+                sync_fields = [
+                    "board", "priority", "blank_status", "trim_status", "artwork_status", 
+                    "production_status", "sample", "betty_column", "custom_fields", 
+                    "color", "design_#", "final_bill", "customer_po", "store_po", 
+                    "cancel_date", "client", "branding", "quantity", "due_date", "notes",
+                    "blank_source", "trim_box", "job_title_a", "job_title_b", "shipping"
+                ]
                 update_doc = {f: clean_entry[f] for f in sync_fields if f in clean_entry}
+
                 update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
                 
                 await db.orders.update_one({"order_id": oid}, {"$set": update_doc})

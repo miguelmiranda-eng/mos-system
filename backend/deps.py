@@ -224,6 +224,13 @@ async def get_current_user(request: Request) -> Optional[Dict]:
             session_token = auth_header.split(" ")[1]
     if not session_token:
         return None
+    
+    # Support for internal sync token
+    internal_token = os.environ.get("INTERNAL_SYNC_TOKEN")
+    if internal_token and session_token == internal_token:
+        # Return a mock admin user for sync
+        return {"user_id": "system_sync", "email": "miguel.miranda@prosper-mfg.com", "name": "System Sync", "role": "admin"}
+        
     session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session:
         return None
