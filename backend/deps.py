@@ -147,6 +147,9 @@ class OrderCreate(BaseModel):
     quantity: Optional[int] = 0
     due_date: Optional[str] = None
     notes: Optional[str] = None
+    design_#: Optional[str] = None
+    color: Optional[str] = None
+    final_bill: Optional[str] = None
     screens: Optional[bool] = None
     board: Optional[str] = "SCHEDULING"
     
@@ -177,6 +180,9 @@ class OrderUpdate(BaseModel):
     quantity: Optional[int] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
+    design_#: Optional[str] = None
+    color: Optional[str] = None
+    final_bill: Optional[str] = None
     board: Optional[str] = None
     custom_fields: Optional[Dict[str, Any]] = None
     model_config = {"extra": "allow"}

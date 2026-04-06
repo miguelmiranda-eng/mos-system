@@ -61,7 +61,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         'order_number','po_number','customer_po','store_po','cancel_date','client','branding',
         'priority','blank_source','blank_status','production_status','trim_status','trim_box',
         'sample','artwork_status','betty_column','job_title_a','job_title_b','shipping',
-        'quantity','due_date','notes','links','screens'
+        'quantity','due_date','notes','links','screens','color','design_#','final_bill'
       ]);
       const payload = {};
       const customFields = {};
