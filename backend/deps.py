@@ -87,7 +87,7 @@ DEFAULT_OPTIONS = {
     "shippings": ["CUSTOMER", "CUSTOMER WILL PROVIDE LABELS", "SHIPPING"],
     "boards": [
         "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EJEMPLOS", "COMPLETOS", "EDI",
-        "PAPELERA DE RECICLAJE", "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
+        "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
         "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
         "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL"
     ],
@@ -100,11 +100,16 @@ BOARDS = DEFAULT_OPTIONS["boards"]
 MACHINES = [f"MAQUINA{i}" for i in range(1, 15)]
 
 async def get_dynamic_boards():
-    """Get boards from DB, falling back to defaults."""
+    """Get boards from DB, falling back to defaults. Filter out Trash UI board."""
     config = await db.board_config.find_one({"config_id": "boards"}, {"_id": 0})
+    boards = []
     if config and config.get("boards"):
-        return config["boards"]
-    return BOARDS
+        boards = config["boards"]
+    else:
+        boards = BOARDS.copy()
+    
+    # Always filter out 'PAPELERA DE RECICLAJE' from the board dropdown list
+    return [b for b in boards if b != "PAPELERA DE RECICLAJE"]
 
 async def save_boards(boards_list):
     """Persist boards to DB."""

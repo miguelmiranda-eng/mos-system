@@ -65,15 +65,36 @@ async def check_order_number(request: Request, order_number: str = None):
     await require_auth(request)
     if not order_number or not order_number.strip():
         return {"exists": False}
-    exists = await db.orders.find_one({"order_number": order_number.strip()})
-    return {"exists": bool(exists)}
+    
+    order_num = order_number.strip()
+    # Try to find an ACTIVE duplicate first
+    exists = await db.orders.find_one({"order_number": order_num, "board": {"$ne": "PAPELERA DE RECICLAJE"}})
+    
+    # If no active duplicate, check if one exists in the trash
+    if not exists:
+        exists = await db.orders.find_one({"order_number": order_num, "board": "PAPELERA DE RECICLAJE"})
+        
+    if not exists:
+        return {"exists": False, "order": None, "in_trash": False}
+        
+    order_data = {k: v for k, v in exists.items() if k != "_id"}
+    in_trash = order_data.get("board") == "PAPELERA DE RECICLAJE"
+    return {
+        "exists": True,
+        "order": order_data,
+        "in_trash": in_trash
+    }
 
 @router.get("/{order_id}")
 async def get_order(order_id: str, request: Request):
     await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
-        order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
+        # Prioritize active orders if searching by order number
+        order = await db.orders.find_one({"order_number": order_id, "board": {"$ne": "PAPELERA DE RECICLAJE"}}, {"_id": 0})
+        if not order:
+            # Fallback to trash if no active order found
+            order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
@@ -81,6 +102,22 @@ async def get_order(order_id: str, request: Request):
 @router.post("")
 async def create_order(order: OrderCreate, request: Request):
     user = await require_auth(request)
+    
+    # Security: block duplicates only if existing order is NOT in the trash
+    if order.order_number and order.order_number.strip():
+        active_existing = await db.orders.find_one({
+            "order_number": order.order_number.strip(),
+            "board": {"$ne": "PAPELERA DE RECICLAJE"}
+        })
+        if active_existing:
+            existing_board = active_existing.get("board", "")
+            raise HTTPException(
+                status_code=400,
+                detail=f"La orden {order.order_number} ya existe en el tablero '{existing_board}'."
+            )
+        # If it makes it here and there's a match, it means it's ONLY in the trash.
+        # Allow creation (they may want to re-create it)
+
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
     order_data = order.model_dump()
     # Safety: ensure board is NEVER null — default to SCHEDULING
@@ -148,7 +185,7 @@ async def move_order(order_id: str, request: Request):
     body = await request.json()
     target_board = body.get("board")
     boards = await get_dynamic_boards()
-    if target_board not in boards:
+    if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail=f"Invalid board")
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
@@ -192,7 +229,7 @@ async def bulk_move_orders(request: Request):
     if not order_ids or not target_board:
         raise HTTPException(status_code=400, detail="order_ids and board required")
     boards = await get_dynamic_boards()
-    if target_board not in boards:
+    if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail="Invalid board")
     original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}

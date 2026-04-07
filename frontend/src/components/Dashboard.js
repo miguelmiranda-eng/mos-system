@@ -108,6 +108,7 @@ const Dashboard = () => {
   const [showMachinesVisibility, setShowMachinesVisibility] = useState(false);
   const [highlightedCommentId, setHighlightedCommentId] = useState(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [trashCount, setTrashCount] = useState(0);
 
   // Core data hook
   const {
@@ -355,8 +356,29 @@ const Dashboard = () => {
   // Trash
   const fetchTrashOrders = async () => {
     setTrashLoading(true);
-    try { const res = await fetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' }); if (res.ok) setTrashOrders(await res.json()); } catch { toast.error(t('trash_load_err')); } finally { setTrashLoading(false); }
+    try { 
+      const res = await fetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' }); 
+      if (res.ok) {
+        const data = await res.json();
+        setTrashOrders(data);
+        setTrashCount(data.length);
+      }
+    } catch { toast.error(t('trash_load_err')); } finally { setTrashLoading(false); }
   };
+
+  const fetchTrashCount = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/orders/board-counts`, { credentials: 'include' });
+      if (res.ok) {
+        const counts = await res.json();
+        setTrashCount(counts["PAPELERA DE RECICLAJE"] || 0);
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    fetchTrashCount();
+  }, [fetchTrashCount, orders]); // Refresh trash count when orders change (e.g. after deletion)
   const handleRestoreFromTrash = async (orderIds, targetBoard = 'SCHEDULING') => {
     setOperationLoading(true);
     try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) }); toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`); fetchTrashOrders(); fetchOrders(); } catch { toast.error(t('restore_err')); } finally { setOperationLoading(false); }
@@ -577,7 +599,14 @@ const Dashboard = () => {
             <button onClick={toggleTheme} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={isDark ? t('light_mode') : t('dark_mode')} data-testid="theme-toggle-btn">{isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}</button>
             <button onClick={toggleLang} className={`p-1.5 rounded-lg flex items-center gap-0.5 text-[10px] font-bold flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} data-testid="lang-toggle-btn"><Languages className="w-3.5 h-3.5" />{lang === 'es' ? 'EN' : 'ES'}</button>
             <button onClick={() => setShowAutomations(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('automations')} data-testid="automations-btn"><Zap className="w-3.5 h-3.5" /></button>
-            <button onClick={() => { setShowTrash(true); fetchTrashOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all`} title={t('trash')} data-testid="trash-btn"><Trash2 className="w-3.5 h-3.5" /></button>
+            <button onClick={() => { setShowTrash(true); fetchTrashOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 relative transition-all ${trashCount > 0 ? 'text-destructive/80 hover:text-destructive hover:bg-destructive/10' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/80'}`} title={t('trash')} data-testid="trash-btn">
+              <Trash2 className="w-3.5 h-3.5" />
+              {trashCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-destructive text-white text-[8px] font-black rounded-full flex items-center justify-center px-0.5 shadow-sm border border-background">
+                  {trashCount > 99 ? '99+' : trashCount}
+                </span>
+              )}
+            </button>
             <button onClick={() => { setShowAnalytics(true); fetchAllOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('analytics')} data-testid="analytics-btn"><BarChart3 className="w-3.5 h-3.5" /></button>
           </div>
           {isAdmin && (<>

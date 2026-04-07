@@ -48,12 +48,31 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
       const res = await fetch(`${API}/orders/check-number?order_number=${encodeURIComponent(orderNumber.trim())}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setDuplicateWarning(data.exists ? data.order : null);
+        setDuplicateWarning(data.exists ? { ...data.order, in_trash: data.in_trash } : null);
       }
     } catch { /* silent */ } finally { setCheckingDuplicate(false); }
   }, []);
 
+  // Debounce for duplicate checking
+  useEffect(() => {
+    const orderNumber = formData['order_number'];
+    if (!isOpen || !orderNumber || !orderNumber.trim()) {
+      setDuplicateWarning(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      checkDuplicate(orderNumber);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [formData.order_number, isOpen, checkDuplicate]);
+
   const handleSubmit = async () => {
+    if (duplicateWarning && !duplicateWarning.in_trash) {
+      toast.error(`No se puede crear: La orden ya existe en ${duplicateWarning.board}`);
+      return;
+    }
     setLoading(true);
     try {
       // Separate known model fields from custom fields
@@ -189,16 +208,28 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">{col.label}</label>
         <div className="relative">
           <input type="text" value={value} onChange={(e) => { set(key, e.target.value); if (key === 'order_number') setDuplicateWarning(null); }}
-            onBlur={() => { if (key === 'order_number') checkDuplicate(value); }}
             placeholder={col.type === 'link' ? 'https://...' : ''}
-            className={`w-full bg-secondary border rounded px-3 py-2 text-sm text-foreground ${key === 'order_number' && duplicateWarning ? 'border-yellow-500' : 'border-border'}`}
+            className={`w-full bg-secondary border rounded px-3 py-2 text-sm text-foreground ${
+              key === 'order_number' && duplicateWarning 
+                ? (duplicateWarning.in_trash ? 'border-yellow-500 ring-1 ring-yellow-500/30' : 'border-destructive ring-1 ring-destructive/30') 
+                : 'border-border'
+            }`}
             data-testid={`field-${key}`} />
           {key === 'order_number' && checkingDuplicate && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-2.5 text-muted-foreground" />}
         </div>
         {key === 'order_number' && duplicateWarning && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded text-xs text-yellow-600 dark:text-yellow-400" data-testid="duplicate-warning">
+          <div className={`flex items-center gap-2 px-3 py-2 border rounded text-xs animate-in fade-in slide-in-from-top-1 ${
+            duplicateWarning.in_trash 
+              ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-600 dark:text-yellow-500' 
+              : 'bg-destructive/10 border-destructive/30 text-destructive'
+          }`} data-testid="duplicate-warning">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            <span>Esta orden ya existe en <strong>{duplicateWarning.board}</strong> ({duplicateWarning.order_number})</span>
+            <span>
+              {duplicateWarning.in_trash 
+                ? <><strong>ADVERTENCIA:</strong> Esta orden existe en <strong>PAPELERA DE RECICLAJE</strong>. Puedes crearla nuevamente si lo deseas.</>
+                : <><strong>ERROR:</strong> Esta orden ya existe en <strong>{duplicateWarning.board}</strong>. No se permiten duplicados.</>
+              }
+            </span>
           </div>
         )}
       </div>
@@ -229,8 +260,18 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <button onClick={onClose} className="px-4 py-2 text-muted-foreground hover:text-foreground" data-testid="cancel-new-order">{t('cancel')}</button>
-          <button onClick={handleSubmit} disabled={loading} className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2" data-testid="submit-new-order">
-            {loading && <Loader2 className="w-4 h-4 animate-spin" />} {t('create_order')}
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading || (duplicateWarning && !duplicateWarning.in_trash) || checkingDuplicate} 
+            className={`px-6 py-2 rounded flex items-center gap-2 transition-all ${
+              (duplicateWarning && !duplicateWarning.in_trash)
+                ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-50 grayscale' 
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
+            }`} 
+            data-testid="submit-new-order"
+          >
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />} 
+            {(duplicateWarning && !duplicateWarning.in_trash) ? 'Orden Duplicada' : t('create_order')}
           </button>
         </div>
       </DialogContent>

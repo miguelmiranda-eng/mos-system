@@ -8,7 +8,7 @@ import os
 import uuid
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-SESSION_TOKEN = "test_session_1772136570038"  # From previous iteration
+SESSION_TOKEN = os.environ.get('SESSION_TOKEN', "test_session_1772136570038")
 
 class TestTrashFunctionality:
     """Test trash board and permanent delete functionality"""

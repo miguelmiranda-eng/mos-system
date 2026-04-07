@@ -307,7 +307,22 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (selectedOrders.length === 0) return;
     setOperationLoading(true);
     selfUpdateRef.current = true;
-    try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) }); toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`); fetchOrders(); fetchAllOrders(); } catch { toast.error(t('move_err')); } finally { setOperationLoading(false); }
+    try { 
+      const res = await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) }); 
+      if (res.ok) {
+        toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`); 
+        fetchOrders(); 
+        fetchAllOrders(); 
+      } else {
+        const err = await res.json();
+        toast.error(err.detail || t('move_err'));
+        fetchOrders();
+      }
+    } catch { 
+      toast.error(t('move_err')); 
+    } finally { 
+      setOperationLoading(false); 
+    }
   };
 
   const handleQuickUndo = async () => {
