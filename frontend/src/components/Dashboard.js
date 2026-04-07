@@ -151,6 +151,18 @@ const Dashboard = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [openFilterKey]);
 
+  // Close notifications on outside click
+  useEffect(() => {
+    if (!showNotifications) return;
+    const handler = (e) => { 
+      if (!e.target.closest('[data-testid="notifications-dropdown"]') && !e.target.closest('[data-testid="notifications-btn"]')) {
+        setShowNotifications(false); 
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showNotifications]);
+
   // Auto-load MASTER view config per user
   const masterConfigLoaded = useRef(false);
   useEffect(() => {
@@ -292,21 +304,38 @@ const Dashboard = () => {
 
   // Saved views
   const fetchSavedViews = useCallback(async () => {
-    try { const res = await fetch(`${API}/saved-views`, { credentials: 'include' }); if (res.ok) { const data = await res.json(); const grouped = {}; data.forEach(v => { if (!grouped[v.board]) grouped[v.board] = []; grouped[v.board].push(v); }); setSavedViews(grouped); } } catch { /* silent */ }
+    try { const res = await fetch(`${API}/config/saved-views`, { credentials: 'include' }); if (res.ok) { const data = await res.json(); const grouped = {}; data.forEach(v => { if (!grouped[v.board]) grouped[v.board] = []; grouped[v.board].push(v); }); setSavedViews(grouped); } } catch { /* silent */ }
   }, []);
   useState(() => { fetchSavedViews(); });
 
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
-    try { await fetch(`${API}/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false }) }); toast.success(`${t('save_view')}: "${newViewName}"`); setNewViewName(''); setShowSaveView(false); fetchSavedViews(); } catch { toast.error(t('save_view_err')); }
+    try {
+      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false }) });
+      if (res.ok) {
+        const newView = await res.json();
+        toast.success(`${t('save_view')}: "${newViewName}"`);
+        setNewViewName('');
+        setShowSaveView(false);
+        fetchSavedViews();
+        handleApplyView(newView);
+      } else {
+        toast.error(`${t('save_view_err')} (Error ${res.status})`);
+        setNewViewName('');
+        setShowSaveView(false);
+      }
+    } catch { 
+      toast.error(t('save_view_err')); 
+      setShowSaveView(false);
+    }
   };
   const handleApplyView = (view) => {
     viewApplyingRef.current = true;
     if (view === null) { setFilters({}); setActiveViewName(null); activeViewIdRef.current = null; }
     else { setFilters(view.filters || {}); setActiveViewName(view.name); activeViewIdRef.current = view.view_id; }
   };
-  const handleTogglePinView = async (viewId, pinned) => { try { await fetch(`${API}/saved-views/${viewId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pinned: !pinned }) }); fetchSavedViews(); } catch { /* silent */ } };
-  const handleDeleteView = async (viewId) => { try { await fetch(`${API}/saved-views/${viewId}`, { method: 'DELETE', credentials: 'include' }); fetchSavedViews(); toast.success(t('view_deleted')); } catch { /* silent */ } };
+  const handleTogglePinView = async (viewId, pinned) => { try { await fetch(`${API}/config/saved-views/${viewId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pinned: !pinned }) }); fetchSavedViews(); } catch { /* silent */ } };
+  const handleDeleteView = async (viewId) => { try { await fetch(`${API}/config/saved-views/${viewId}`, { method: 'DELETE', credentials: 'include' }); fetchSavedViews(); toast.success(t('view_deleted')); } catch { /* silent */ } };
 
   // Auto-update saved view when user manually modifies filters while a view is active
   const viewAutoSaveRef = useRef(null);
@@ -316,13 +345,20 @@ const Dashboard = () => {
     if (!viewId || !activeViewName) return;
     if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current);
     viewAutoSaveRef.current = setTimeout(() => {
-      fetch(`${API}/saved-views/${viewId}`, {
+      fetch(`${API}/config/saved-views/${viewId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ filters })
       }).then(() => fetchSavedViews()).catch(() => { });
     }, 1200);
     return () => { if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current); };
   }, [filters, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset active view when board changes to prevent overwriting
+  useEffect(() => {
+    viewApplyingRef.current = true;
+    setActiveViewName(null);
+    activeViewIdRef.current = null;
+  }, [currentBoard]);
 
   const currentBoardViews = savedViews[currentBoard] || [];
   const pinnedViews = currentBoardViews.filter(v => v.pinned);
