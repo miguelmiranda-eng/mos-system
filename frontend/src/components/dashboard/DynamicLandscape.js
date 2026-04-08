@@ -28,7 +28,7 @@ const DynamicLandscape = ({ timeOfDay }) => {
       />
 
       {/* Celestial Body (Sun/Moon) */}
-      <div className={`absolute transition-all duration-[3000ms] ease-in-out ${
+      <div style={{ transitionDuration: '3000ms' }} className={`absolute transition-all ease-in-out ${
         isMorning ? 'left-[15%] bottom-[8%] scale-100 opacity-100 animate-pulse-slow' :
         isAfternoon ? 'right-[20%] bottom-[4%] scale-110 opacity-100' :
         'right-[15%] top-[15%] scale-90 opacity-100'
