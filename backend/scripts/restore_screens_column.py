@@ -1,6 +1,9 @@
 import asyncio
-from deps import db, logger
+import os, sys
+# Ensure the backend package is on the import path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from deps import db, logger
 SCREENS_COLUMN = {
     "key": "screens",
     "label": "SCREENS",

@@ -106,7 +106,7 @@ export const ImportExcelModal = ({ isOpen, onClose, onImportSuccess }) => {
         'qty': 'quantity', 'quantity': 'quantity', 'cantidad': 'quantity', 'cant': 'quantity',
         'due date': 'due_date', 'fecha entrega': 'due_date', 'entrega': 'due_date',
         'cancel date': 'cancel_date', 'fecha cancelado': 'cancel_date', 'cancelado': 'cancel_date',
-        'design #': 'design_num', 'design_#': 'design_num', 'diseño #': 'design_num', 'estilo': 'design_num',
+        'design #': 'design_#', 'design_#': 'design_#', 'diseño #': 'design_#', 'estilo': 'design_#',
         'client': 'client', 'cliente': 'client',
         'branding': 'branding', 'brand': 'branding',
         'priority': 'priority', 'prioridad': 'priority',

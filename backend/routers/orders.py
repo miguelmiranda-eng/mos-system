@@ -761,7 +761,7 @@ async def import_orders_excel(
         KNOWN_FIELDS = {
             "order_number", "customer_po", "store_po", "client", "branding", 
             "priority", "quantity", "due_date", "cancel_date", "notes", "color",
-            "design_num", "design_#", "board", "blank_status", "production_status",
+            "design_#", "board", "blank_status", "production_status",
             "trim_status", "trim_box", "sample", "artwork_status", "betty_column",
             "job_title_a", "job_title_b", "shipping", "final_bill"
         }
