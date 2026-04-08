@@ -127,7 +127,7 @@ async def create_order(order: OrderCreate, request: Request):
         # Allow creation (they may want to re-create it)
 
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
-    order_data = order.model_dump()
+    order_data = order.model_dump(by_alias=True)
     # Safety: ensure board is NEVER null — default to SCHEDULING
     if not order_data.get("board"):
         logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
@@ -153,7 +153,7 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
-    update_data = {k: v for k, v in order.model_dump(exclude_unset=True).items() if v is not None}
+    update_data = {k: v for k, v in order.model_dump(exclude_unset=True, by_alias=True).items() if v is not None}
     # Safety: if board is explicitly set to empty/null, reject it
     if "board" in update_data and not update_data["board"]:
         logger.warning(f"Attempt to set board=null on order {order_id}, ignoring board field")
@@ -794,8 +794,8 @@ async def import_orders_excel(
             "color": "color",
             "due date": "due_date",
             "cancel date": "cancel_date",
-            "design #": "design_num",
-            "design_#": "design_num",
+            "design #": "design_#",
+            "design_#": "design_#",
             "board": "board"
         }
 

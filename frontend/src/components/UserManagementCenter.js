@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   UserPlus, Loader2, Shield, User, Trash2, ChevronDown, ChevronUp, 
-  Eye, Pencil, Ban, Mail, Lock, KeyRound, Check, X, ClipboardCheck,
+  Eye, EyeOff, Pencil, Ban, Mail, Lock, KeyRound, Check, X, ClipboardCheck,
   ArrowLeft, Users, Search, RefreshCw, Smartphone
 } from 'lucide-react';
 import { useLang } from '../contexts/LanguageContext';
@@ -42,6 +42,8 @@ const UserManagementCenter = () => {
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showCreatePw, setShowCreatePw] = useState(false);
+  const [showResetPw, setShowResetPw] = useState(false);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -271,11 +273,14 @@ const UserManagementCenter = () => {
                 </div>
                 <div className="space-y-2">
                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Contraseña Temporal</label>
-                   <div className="relative">
-                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                     <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres" className="w-full pl-11 pr-4 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
-                   </div>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <input type={showCreatePw ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Mínimo 6 caracteres" className="w-full pl-11 pr-12 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
+                      <button onClick={() => setShowCreatePw(!showCreatePw)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1" type="button">
+                        {showCreatePw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol</label>
@@ -422,8 +427,11 @@ const UserManagementCenter = () => {
                          <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">Nueva Contraseña (mín. 6)</span>
                          <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
-                            <input type="text" value={newPw} onChange={(e) => setNewPw(e.target.value)}
-                              className="w-full bg-secondary border border-border rounded-lg pl-9 pr-4 py-2 text-sm text-foreground" placeholder="Escribe la nueva contraseña..." />
+                            <input type={showResetPw ? "text" : "password"} value={newPw} onChange={(e) => setNewPw(e.target.value)}
+                              className="w-full bg-secondary border border-border rounded-lg pl-9 pr-12 py-2 text-sm text-foreground" placeholder="Escribe la nueva contraseña..." />
+                            <button onClick={() => setShowResetPw(!showResetPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1" type="button">
+                              {showResetPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
                          </div>
                        </div>
                        <div className="flex gap-2 w-full md:w-auto">
