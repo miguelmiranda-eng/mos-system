@@ -20,7 +20,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
   DropdownMenuSeparator,
+  DropdownMenuPortal,
 } from "./ui/dropdown-menu";
+import { ScrollArea } from "./ui/scroll-area";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Toaster, toast } from "sonner";
@@ -37,6 +39,7 @@ import { AddColumnModal } from "./dashboard/AddColumnModal";
 import { AutomationsModal } from "./dashboard/AutomationsModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
 import { SystemGuideModal } from "./dashboard/SystemGuideModal";
+import { ImportExcelModal } from "./dashboard/ImportExcelModal";
 // Existing top-level components
 import AnalyticsView from "./AnalyticsView";
 import CalendarView from "./CalendarView";
@@ -92,6 +95,7 @@ const Dashboard = () => {
   const [showCapacityPlan, setShowCapacityPlan] = useState(false);
   const [showProductionScreen, setShowProductionScreen] = useState(false);
   const [showFormFields, setShowFormFields] = useState(false);
+  const [showImportExcel, setShowImportExcel] = useState(false);
   const [showBoardVisibility, setShowBoardVisibility] = useState(false);
   const [savedViews, setSavedViews] = useState({});
   const [activeViewName, setActiveViewName] = useState(null);
@@ -674,26 +678,30 @@ const Dashboard = () => {
               <span className="truncate font-black tracking-tight">{currentBoard}</span>
               <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="z-[300] min-w-[220px] border border-border/50 bg-card/95 backdrop-blur-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 rounded-3xl p-1.5">
-              {visibleBoards.filter(b => !b.startsWith('MAQUINA')).map(board => (
-                <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2.5 px-5 text-sm font-black tracking-tight rounded-2xl cursor-pointer transition-colors ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
-                  {board}
-                  {currentBoard === board ? <Check className="w-4 h-4" /> : <div className="w-4" />}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator className="opacity-50 my-1.5" />
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className="flex items-center justify-between py-2.5 px-5 text-sm font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider rounded-2xl">
-                  <div className="flex items-center gap-2.5"><Monitor className="w-4.5 h-4.5" /><span>MAQUINAS</span></div>
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl p-1.5 rounded-2xl bg-card border border-border/50">
-                  {visibleBoards.filter(b => b.startsWith('MAQUINA')).map(board => (
-                    <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2 px-4 text-xs md:text-sm font-black tracking-tight rounded-xl cursor-pointer ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
-                      {board}{currentBoard === board && <Check className="w-4 h-4 ml-2" />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+            <DropdownMenuContent className="z-[500] min-w-[240px] max-h-[70vh] flex flex-col border border-border/50 bg-card/95 backdrop-blur-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 rounded-3xl p-1.5" side="bottom" align="start">
+              <ScrollArea className="flex-1 w-full overflow-y-auto pr-1">
+                {visibleBoards.filter(b => !b.startsWith('MAQUINA')).map(board => (
+                  <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2.5 px-5 text-sm font-black tracking-tight rounded-2xl cursor-pointer transition-colors ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
+                    {board}
+                    {currentBoard === board ? <Check className="w-4 h-4" /> : <div className="w-4" />}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator className="opacity-50 my-1.5" />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="flex items-center justify-between py-2.5 px-5 text-sm font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider rounded-2xl">
+                    <div className="flex items-center gap-2.5"><Monitor className="w-4.5 h-4.5" /><span>MAQUINAS</span></div>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent className="z-[501] min-w-[200px] max-h-[50vh] overflow-y-auto shadow-2xl p-1.5 rounded-2xl bg-card border border-border/50">
+                      {visibleBoards.filter(b => b.startsWith('MAQUINA')).map(board => (
+                        <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2 px-4 text-xs md:text-sm font-black tracking-tight rounded-xl cursor-pointer ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
+                          {board}{currentBoard === board && <Check className="w-4 h-4 ml-2" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+              </ScrollArea>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -706,12 +714,22 @@ const Dashboard = () => {
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide flex-shrink-0">
           {/* Primary actions */}
           {currentBoard === 'SCHEDULING' && (
-            <button onClick={() => setShowNewOrder(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
-              data-testid="new-order-btn">
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('new_order')}</span>
-            </button>
+            <>
+              <button onClick={() => setShowNewOrder(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
+                data-testid="new-order-btn">
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{t('new_order')}</span>
+              </button>
+              {isAdmin && (
+                <button onClick={() => setShowImportExcel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
+                  data-testid="import-excel-btn">
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Import Excel</span>
+                </button>
+              )}
+            </>
           )}
 
           {/* Consistent nav buttons group */}
@@ -929,7 +947,7 @@ const Dashboard = () => {
                         ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20'
                         : (isDark ? 'bg-secondary/50 border-border/60 text-muted-foreground hover:border-border' : 'bg-gray-50 border-gray-200 text-gray-500')
                     }`} data-testid="group-by-select"><SelectValue placeholder={t('all')} /></SelectTrigger>
-                    <SelectContent className="z-[100] bg-popover border-border">
+                    <SelectContent className="z-[600] bg-popover border-border max-h-[300px] overflow-y-auto">
                       <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
                       {dateCols.map(dc => <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>)}
                     </SelectContent>
@@ -1148,12 +1166,11 @@ const Dashboard = () => {
                                   {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
                                   <span className="truncate">{col.label}</span>
                                   {/* Filter Trigger Icon */}
-                                  {/* Filter Trigger Icon */}
                                   <Popover open={openFilter === col.key} onOpenChange={(val) => setOpenFilter(val ? col.key : null)}>
                                     <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
                                       <ListFilter className="w-3.5 h-3.5" />
                                     </PopoverTrigger>
-                                    <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
+                                    <PopoverContent className="z-[600] min-w-[240px] bg-card border-border p-4 shadow-2xl overflow-y-auto max-h-[400px]">
                                       <div className="flex items-center justify-between mb-2">
                                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{col.label}</span>
                                         {filterVal && <button onClick={() => setFilters(prev => { const n={...prev}; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
@@ -1493,6 +1510,9 @@ const Dashboard = () => {
       </Dialog>
       {/* System Guide Modal — triggered by secret code 201492 */}
       <SystemGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
+
+      {/* Import Excel Modal */}
+      <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
     </div>
   );
 };

@@ -10,33 +10,43 @@
 
 /* Scrollbar Styles */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 14px;
+    height: 14px;
 }
 
 ::-webkit-scrollbar-track {
-    background: hsl(220 28% 11%);
+    background: hsl(0 20% 10%);
 }
 
 ::-webkit-scrollbar-thumb {
-    background: hsl(220 18% 28%);
-    border-radius: 4px;
+    background: hsl(0 75% 45%);
+    border-radius: 7px;
+    border: 2px solid hsl(0 20% 10%);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: hsl(220 18% 38%);
+    background: hsl(0 80% 55%);
+}
+
+::-webkit-scrollbar-corner {
+    background: hsl(0 20% 10%);
 }
 
 .light-theme ::-webkit-scrollbar-track {
-    background: hsl(208 50% 94%);
+    background: hsl(0 20% 92%);
 }
 
 .light-theme ::-webkit-scrollbar-thumb {
-    background: hsl(210 30% 78%);
+    background: hsl(0 70% 50%);
+    border: 2px solid hsl(0 20% 92%);
 }
 
 .light-theme ::-webkit-scrollbar-thumb:hover {
-    background: hsl(210 30% 65%);
+    background: hsl(0 80% 58%);
+}
+
+.light-theme ::-webkit-scrollbar-corner {
+    background: hsl(0 20% 92%);
 }
 
 /* Sticky Header Glass Effect */

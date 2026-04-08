@@ -1,9 +1,17 @@
 """Orders routes: CRUD, comments, images, bulk-move, export."""
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
+from typing import Optional
+import json
 from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, UPLOADS_DIR, logger
 from ws_manager import ws_manager
 from datetime import datetime, timezone
-import uuid, base64, os
+import uuid, base64, os, io
+import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
 router = APIRouter(prefix="/api/orders")
 
@@ -502,6 +510,142 @@ async def upload_attachment(order_id: str, request: Request):
 
 # ==================== EXPORT ORDERS WITH COMMENTS & IMAGES ====================
 
+    return {"total": len(result), "orders": result}
+
+@router.post("/export-pdf")
+async def export_orders_pdf(request: Request):
+    """Export selected orders with their comments and images to a professional PDF."""
+    user = await require_auth(request)
+    body = await request.json()
+    order_ids = body.get("order_ids", [])
+    if not order_ids:
+        raise HTTPException(status_code=400, detail="No order_ids provided")
+
+    output = io.BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=letter, leftMargin=50, rightMargin=50, topMargin=50, bottomMargin=50)
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = styles['Title']
+    h1_style = styles['Heading1']
+    h2_style = styles['Heading2']
+    normal_style = styles['Normal']
+    
+    comment_style = ParagraphStyle(
+        'Comment',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=11,
+        leftIndent=20,
+        spaceBefore=5,
+        spaceAfter=5,
+        textColor=colors.HexColor('#444444')
+    )
+
+    elements = []
+    
+    # Add Logo/Header if exists? For now just text
+    elements.append(Paragraph("MOS SYSTEM - REPORTE DE ÓRDENES", title_style))
+    elements.append(Paragraph(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
+    elements.append(Paragraph(f"Por: {user.get('name')}", normal_style))
+    elements.append(Spacer(1, 0.5 * inch))
+
+    for idx, oid in enumerate(order_ids):
+        order = await db.orders.find_one({"order_id": oid}, {"_id": 0})
+        if not order:
+            continue
+            
+        if idx > 0:
+            elements.append(PageBreak())
+
+        elements.append(Paragraph(f"Orden: {order.get('order_number', 'N/A')}", h1_style))
+        
+        # Summary Table
+        order_data = [
+            ["ID Interno", order.get("order_id", "")],
+            ["PO Cliente", order.get("customer_po", "")],
+            ["Store PO", order.get("store_po", "")],
+            ["Cliente", order.get("client", "")],
+            ["Branding", order.get("branding", "")],
+            ["Prioridad", order.get("priority", "")],
+            ["Cantidad", str(order.get("quantity", 0))],
+            ["Fecha Entrega", order.get("due_date", "")],
+            ["Estado Prod.", order.get("production_status", "")],
+            ["Tablero Actual", order.get("board", "")]
+        ]
+        
+        # Add custom fields if any
+        custom_fields = order.get("custom_fields", {})
+        for k, v in custom_fields.items():
+            order_data.append([f"Custom: {k}", str(v)])
+
+        t = Table(order_data, colWidths=[1.5 * inch, 4 * inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Comments
+        comments = await db.comments.find({"order_id": oid}, {"_id": 0}).sort("created_at", 1).to_list(100)
+        if comments:
+            elements.append(Paragraph("Comentarios", h2_style))
+            for c in comments:
+                ts = c.get("created_at", "")[:16].replace("T", " ")
+                author = c.get("user_name", "Usuario")
+                text = c.get("content", "")
+                elements.append(Paragraph(f"<b>{author}</b> ({ts}):", comment_style))
+                elements.append(Paragraph(text, ParagraphStyle('Content', parent=comment_style, leftIndent=30)))
+            elements.append(Spacer(1, 0.3 * inch))
+
+        # Images
+        image_docs = await db.file_uploads.find({"order_id": oid}, {"_id": 0}).to_list(100)
+        if image_docs:
+            elements.append(Paragraph("Imágenes Adjuntas", h2_style))
+            for img_doc in image_docs:
+                try:
+                    img_data = img_doc.get("data")
+                    if img_data:
+                        # Decode base64 to image
+                        img_bytes = base64.b64decode(img_data)
+                        img_io = io.BytesIO(img_bytes)
+                        # Create Image object
+                        img = Image(img_io)
+                        # Resize maintaining aspect ratio
+                        max_w, max_h = 5 * inch, 4 * inch
+                        iW, iH = img.imageWidth, img.imageHeight
+                        aspect = iH / float(iW)
+                        if iW > max_w:
+                            iW = max_w
+                            iH = iW * aspect
+                        if iH > max_h:
+                            iH = max_h
+                            iW = iH / aspect
+                        img.drawWidth = iW
+                        img.drawHeight = iH
+                        elements.append(img)
+                        elements.append(Paragraph(img_doc.get("filename", "imagen"), styles['Caption']))
+                        elements.append(Spacer(1, 0.2 * inch))
+                except Exception as e:
+                    logger.error(f"Error rendering image in PDF: {e}")
+                    elements.append(Paragraph(f"[Error cargando imagen: {img_doc.get('filename')}]", normal_style))
+
+    doc.build(elements)
+    output.seek(0)
+    data_b64 = base64.b64encode(output.read()).decode()
+    
+    await log_activity(user, "export_orders_pdf", {"order_count": len(order_ids)})
+    
+    return {
+        "filename": f"reporte_ordenes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+        "data": data_b64,
+        "content_type": "application/pdf"
+    }
+
 @router.post("/export-complete")
 async def export_orders_complete(request: Request):
     """Export selected orders with their comments and images (base64)."""
@@ -596,3 +740,177 @@ async def import_orders_complete(request: Request):
                     stats["images"] += 1
 
     return stats
+
+@router.post("/import-excel")
+async def import_orders_excel(
+    request: Request,
+    file: UploadFile = File(...),
+    update_existing: bool = False,
+    column_mapping: Optional[str] = Form(None)
+):
+    """Import orders from an Excel file (.xlsx, .xls) with optional column mapping."""
+    user = await require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo los administradores pueden importar Excel")
+
+    try:
+        content = await file.read()
+        df = pd.read_excel(io.BytesIO(content))
+        
+        # Definir campos conocidos (base) para separar de los personalizados
+        KNOWN_FIELDS = {
+            "order_number", "customer_po", "store_po", "client", "branding", 
+            "priority", "quantity", "due_date", "cancel_date", "notes", "color",
+            "design_num", "design_#", "board", "blank_status", "production_status",
+            "trim_status", "trim_box", "sample", "artwork_status", "betty_column",
+            "job_title_a", "job_title_b", "shipping", "final_bill"
+        }
+
+        # User defined mapping (if provided)
+        user_mapping = {}
+        if column_mapping:
+            try:
+                user_mapping = json.loads(column_mapping)
+                # No pasamos a minúsculas las llaves (internal_col) para preservar la integridad de campos personalizados
+            except Exception as e:
+                logger.error(f"Error parsing column_mapping: {e}")
+
+        # Default mapping from common names to internal field names
+        default_mapping = {
+            "order #": "order_number",
+            "order_number": "order_number",
+            "order number": "order_number",
+            "po #": "customer_po",
+            "po": "customer_po",
+            "customer po": "customer_po",
+            "store po": "store_po",
+            "store #": "store_po",
+            "client": "client",
+            "branding": "branding",
+            "priority": "priority",
+            "qty": "quantity",
+            "quantity": "quantity",
+            "notes": "notes",
+            "color": "color",
+            "due date": "due_date",
+            "cancel date": "cancel_date",
+            "design #": "design_num",
+            "design_#": "design_num",
+            "board": "board"
+        }
+
+        # Normalize Excel columns for matching (lowercase)
+        excel_cols_lower = {str(c).strip().lower(): str(c) for c in df.columns}
+        
+        # Build actual mapping: Excel Column Name (original) -> Internal Field Key
+        actual_mapping = {}
+        
+        # 1. Process user defined mapping
+        for internal_key, excel_col_name in user_mapping.items():
+            if not excel_col_name:
+                continue
+            # Buscamos el nombre original de la columna en el Excel (ignorando mayúsculas en el match)
+            match_name = excel_cols_lower.get(str(excel_col_name).strip().lower())
+            if match_name:
+                actual_mapping[match_name] = internal_key
+
+        # 2. Fill missing with defaults if they exist in Excel
+        for lower_name, internal_key in default_mapping.items():
+            if internal_key not in actual_mapping.values():
+                match_name = excel_cols_lower.get(lower_name)
+                if match_name:
+                    actual_mapping[match_name] = internal_key
+
+        # Final check: at least order_number must be mapped
+        if not any(v == "order_number" for v in actual_mapping.values()):
+            raise HTTPException(status_code=400, detail="El archivo Excel debe contener una columna para el número de orden (ej: 'Order #') o debe haber sido mapeada.")
+
+        stats = {"total_rows": len(df), "created": 0, "updated": 0, "skipped": 0, "errors": 0}
+        
+        for _, row in df.iterrows():
+            try:
+                # Build order data from row
+                order_data = {}
+                custom_fields = {}
+                
+                for excel_col, internal_key in actual_mapping.items():
+                    val = row[excel_col]
+                    
+                    # Handle nulls
+                    if pd.isna(val) or str(val).strip().lower() == "nan":
+                        val = None
+                    
+                    # Handle date conversion to YYYY-MM-DD
+                    if internal_key in ["due_date", "cancel_date", "final_bill"] and val:
+                        if hasattr(val, "strftime"):
+                            val = val.strftime("%Y-%m-%d")
+                        elif isinstance(val, str):
+                            # Try to clean up string dates
+                            val = val.split(' ')[0]
+
+                    # Map to correct structure
+                    if internal_key in KNOWN_FIELDS:
+                        if internal_key == "quantity":
+                            try:
+                                order_data["quantity"] = int(float(val)) if val is not None else 0
+                            except:
+                                order_data["quantity"] = 0
+                        else:
+                            order_data[internal_key] = str(val).strip() if val is not None else None
+                    else:
+                        # It's a custom field
+                        custom_fields[internal_key] = str(val).strip() if val is not None else None
+
+                if custom_fields:
+                    order_data["custom_fields"] = custom_fields
+
+                order_num = order_data.get("order_number")
+                if not order_num:
+                    stats["skipped"] += 1
+                    continue
+
+                # Check if it exists
+                existing = await db.orders.find_one({"order_number": order_num})
+                
+                if existing:
+                    if update_existing:
+                        # Update order
+                        oid = existing["order_id"]
+                        order_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        # Si es un update, usamos $set para no borrar otros campos
+                        await db.orders.update_one({"order_id": oid}, {"$set": order_data})
+                        stats["updated"] += 1
+                    else:
+                        stats["skipped"] += 1
+                else:
+                    # Create new order
+                    order_id = f"ord_{uuid.uuid4().hex[:12]}"
+                    if not order_data.get("board"):
+                        order_data["board"] = "SCHEDULING"
+                    
+                    full_doc = {
+                        **order_data,
+                        "order_id": order_id,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    await db.orders.insert_one(full_doc)
+                    stats["created"] += 1
+                    await log_activity(user, "create_order_excel", {"order_id": order_id, "order_number": order_num})
+
+            except Exception as e:
+                logger.error(f"Error importing row in excel: {e}")
+                stats["errors"] += 1
+
+        # Broadcast sync
+        if stats["created"] > 0 or stats["updated"] > 0:
+            await ws_manager.broadcast("order_change", {"action": "excel_import"})
+            await _notify_all(user, "import", f"{user['name']} importó {stats['created']} órdenes nuevas y actualizó {stats['updated']}")
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Excel import error: {e}")
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo Excel: {str(e)}")

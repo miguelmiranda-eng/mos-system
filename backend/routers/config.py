@@ -245,9 +245,37 @@ async def delete_saved_view(view_id: str, request: Request):
     user_id = user.get("user_id", user.get("email"))
     await db.saved_views.delete_one({"view_id": view_id, "user_id": user_id})
     return {"message": "View deleted"}
+    
+# ==================== IMPORT MAPPING PERSISTENCE ====================
 
+@router.get("/import-mapping")
+async def get_import_mapping(request: Request):
+    """Retrieve the last used import mapping for the current user."""
+    user = await require_auth(request)
+    user_id = user.get("user_id", user.get("email"))
+    mapping = await db.user_import_mappings.find_one({"user_id": user_id}, {"_id": 0})
+    return mapping.get("mapping", {}) if mapping else {}
+
+@router.put("/import-mapping")
+async def save_import_mapping(request: Request):
+    """Save the current import mapping for the user."""
+    user = await require_auth(request)
+    user_id = user.get("user_id", user.get("email"))
+    body = await request.json()
+    mapping = body.get("mapping", {})
+    await db.user_import_mappings.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "user_id": user_id,
+            "mapping": mapping,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }},
+        upsert=True
+    )
+    return {"message": "Import mapping saved"}
 
 # ==================== IMAGE EXPORT/IMPORT ====================
+
 
 @router.get("/admin/images-stats")
 async def images_stats(request: Request):

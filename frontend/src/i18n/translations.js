@@ -407,6 +407,19 @@ const translations = {
     excel_pieces_dash: "Piezas -",
     excel_production: "Producción",
     excel_priority_label: "Prioridad",
+
+    // Excel Import Mapping
+    import_excel_title: "Importar desde Excel",
+    map_columns_title: "Emparejar Columnas",
+    system_field: "Campo del Sistema",
+    excel_column: "Columna del Excel",
+    no_import: "-- No importar --",
+    confirm_import: "Confirmar e Importar",
+    change_file: "Cambiar Archivo",
+    mapping_config: "Configuración de Mapeo",
+    mapping_desc: "Une tus columnas con el sistema",
+    order_number_required: "Debes asignar una columna para el 'Número de Orden'",
+    import_success: "Importación completa",
   },
   
   en: {
@@ -817,6 +830,19 @@ const translations = {
     excel_pieces_dash: "Pieces -",
     excel_production: "Production",
     excel_priority_label: "Priority",
+
+    // Excel Import Mapping
+    import_excel_title: "Import from Excel",
+    map_columns_title: "Match Columns",
+    system_field: "System Field",
+    excel_column: "Excel Column",
+    no_import: "-- Don't import --",
+    confirm_import: "Confirm & Import",
+    change_file: "Change File",
+    mapping_config: "Mapping Configuration",
+    mapping_desc: "Match your columns with the system",
+    order_number_required: "You must assign a column for 'Order Number'",
+    import_success: "Import complete",
   }
 };
 
