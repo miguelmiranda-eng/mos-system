@@ -158,3 +158,67 @@ code {
         border-bottom-color: inherit;
     }
 }
+
+/* Time of Day Dynamic Backgrounds */
+.bg-time-morning {
+    background: linear-gradient(135deg, #FF9A8B 0%, #FF6A88 55%, #FF99AC 100%);
+    background-size: 200% 200%;
+    animation: gradientShift 15s ease infinite;
+}
+
+.bg-time-afternoon {
+    background: linear-gradient(135deg, #fdc830 0%, #f37335 100%);
+    background-size: 200% 200%;
+    animation: gradientShift 15s ease infinite;
+}
+
+.bg-time-night {
+    background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+    background-size: 200% 200%;
+    animation: gradientShift 15s ease infinite;
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+
+.clock-text {
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.05em;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
+
+@keyframes pulse-slow {
+    0%, 100% { opacity: 0.8; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.05); }
+}
+.animate-pulse-slow {
+    animation: pulse-slow 4s ease-in-out infinite;
+}
+
+@keyframes float-slow {
+    0%, 100% { transform: translateX(0) translateY(0); }
+    50% { transform: translateX(50px) translateY(-20px); }
+}
+.animate-float-slow {
+    animation: float-slow 20s ease-in-out infinite;
+}
+
+@keyframes float-slower {
+    0%, 100% { transform: translateX(0) translateY(0); }
+    50% { transform: translateX(-70px) translateY(10px); }
+}
+.animate-float-slower {
+    animation: float-slower 35s ease-in-out infinite;
+}

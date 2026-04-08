@@ -48,6 +48,7 @@ import ProductionModal from "./ProductionModal";
 import GanttView from "./GanttView";
 import CapacityPlanModal from "./CapacityPlanModal";
 import ProductionScreen from "./ProductionScreen";
+import DynamicLandscape from "./dashboard/DynamicLandscape";
 
 // Shared constants and hooks
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API } from "../lib/constants";
@@ -113,6 +114,20 @@ const Dashboard = () => {
   const [highlightedCommentId, setHighlightedCommentId] = useState(null);
   const [showGuide, setShowGuide] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Update clock every second
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeOfDay = (() => {
+    const hour = currentTime.getHours();
+    if (hour >= 6 && hour < 12) return 'morning';
+    if (hour >= 12 && hour < 19) return 'afternoon';
+    return 'night';
+  })();
 
   // Core data hook
   const {
@@ -845,168 +860,170 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Saved Views + Filters */}
-      <div className={`border-b px-3 md:px-5 relative z-50 ${isDark ? 'bg-[hsl(220,28%,10%)] border-border/50' : 'bg-white/80 border-gray-100'}`}>
-        <div className="flex items-center gap-2 py-2 overflow-x-auto scrollbar-hide">
+      {/* Dynamic Control Center Container */}
+      <div className="border-b border-white/10 relative overflow-hidden min-h-[160px] flex flex-col justify-end">
+        {/* Dynamic Landscape Background Layer */}
+        <DynamicLandscape timeOfDay={timeOfDay} />
+        
+        {/* Animated accent lines (reduced opacity) */}
+        <div className="absolute inset-0 opacity-10 pointer-events-none z-[1]">
+          <div className="absolute top-0 left-0 w-full h-px bg-white/20 animate-pulse"></div>
+          <div className="absolute bottom-0 left-0 w-full h-px bg-black/20"></div>
+        </div>
 
-          {/* View pills */}
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button onClick={() => handleApplyView(null)}
-              className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap transition-all border ${
-                activeViewName === null
-                  ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
-                  : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
-              }`}
-              data-testid="view-general">{t('general')}</button>
+        {/* Saved Views + Filters Row (Pure Glass) */}
+        <div className="px-3 md:px-5 relative z-10 border-t border-white/5">
+          <div className="flex items-center gap-2 py-2 overflow-x-auto scrollbar-hide">
+            {/* View pills */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => handleApplyView(null)}
+                className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap transition-all border ${
+                  activeViewName === null
+                    ? 'bg-white text-primary border-white shadow-lg scale-105'
+                    : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                }`}
+                data-testid="view-general">{t('general')}</button>
 
-            {pinnedViews.map(v => (
-              <div key={v.view_id} className="relative group flex-shrink-0">
-                <button onClick={() => handleApplyView(v)}
-                  className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap flex items-center gap-1 transition-all border ${
-                    activeViewName === v.name
-                      ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
-                      : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
-                  }`}
-                  data-testid={`view-pinned-${v.name}`}>
-                  <Pin className="w-2.5 h-2.5 opacity-70" /> {v.name}
-                </button>
-                <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
-                  <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
-                  <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
+              {pinnedViews.map(v => (
+                <div key={v.view_id} className="relative group flex-shrink-0">
+                  <button onClick={() => handleApplyView(v)}
+                    className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap flex items-center gap-1 transition-all border ${
+                      activeViewName === v.name
+                        ? 'bg-white text-primary border-white shadow-lg scale-105'
+                        : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                    }`}
+                    data-testid={`view-pinned-${v.name}`}>
+                    <Pin className="w-2.5 h-2.5 opacity-70" /> {v.name}
+                  </button>
+                  <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-50">
+                    <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
+                  </div>
                 </div>
+              ))}
+
+              {unpinnedViews.map(v => (
+                <div key={v.view_id} className="relative group flex-shrink-0">
+                  <button onClick={() => handleApplyView(v)}
+                    className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap transition-all border ${
+                      activeViewName === v.name
+                        ? 'bg-white text-primary border-white shadow-lg scale-105'
+                        : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                    }`}>{v.name}</button>
+                  <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-50">
+                    <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-primary rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
+                  </div>
+                </div>
+              ))}
+
+              {Object.keys(filters).some(k => filters[k]) && (
+                showSaveView ? (
+                  <div className="flex items-center gap-1 bg-black/20 backdrop-blur-md rounded-full px-2 py-0.5 border border-white/20 animate-in fade-in zoom-in-95">
+                    <input type="text" value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSaveView()} placeholder={t('view_name')} className="bg-transparent border-none outline-none px-2 py-0.5 text-[11px] w-28 text-white placeholder:text-white/40" autoFocus data-testid="save-view-input" />
+                    <button onClick={handleSaveView} className="p-1.5 bg-white text-primary rounded-full transition-transform hover:scale-110 active:scale-95" data-testid="save-view-confirm"><Check className="w-3 h-3 font-black" /></button>
+                    <button onClick={() => setShowSaveView(false)} className="p-1.5 text-white/60 hover:text-white"><X className="w-3 h-3" /></button>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowSaveView(true)} className="px-3 py-1.5 text-[10px] font-black text-white bg-white/10 hover:bg-white/20 rounded-full flex items-center gap-1.5 border border-white/20 transition-all shadow-xl backdrop-blur-md" data-testid="save-view-btn">
+                    <Save className="w-3.5 h-3.5" /> {t('save_view')}
+                  </button>
+                )
+              )}
+            </div>
+
+            <div className="flex-1" />
+
+            {/* RIGHT: View toggles + Group by */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
+                <div className={`flex items-center rounded-xl p-0.5 border bg-black/20 border-white/10 backdrop-blur-sm`}>
+                  <button onClick={() => { setCalendarMode(false); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
+                    className={`p-1.5 rounded-lg transition-all ${ !calendarMode && !blanksTrackingMode && !readyCalendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
+                    title={t('table_view')} data-testid="toggle-table-view"><Table2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setCalendarMode(true); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
+                    className={`p-1.5 rounded-lg transition-all ${calendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
+                    title={t('calendar_view')} data-testid="toggle-calendar-view"><CalendarDays className="w-4 h-4" /></button>
+                  {currentBoard === 'SCHEDULING' && (<>
+                    <button onClick={() => { setReadyCalendarMode(true); setCalendarMode(false); setBlanksTrackingMode(false); }}
+                      className={`p-1.5 rounded-lg transition-all ${readyCalendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
+                      title="Ready To Schedule" data-testid="toggle-ready-calendar"><CalendarCheck className="w-4 h-4" /></button>
+                    <button onClick={() => { setBlanksTrackingMode(true); setCalendarMode(false); setReadyCalendarMode(false); }}
+                      className={`p-1.5 rounded-lg transition-all ${blanksTrackingMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
+                      title="Seguimiento de Blanks" data-testid="toggle-blanks-tracking"><ClipboardList className="w-4 h-4" /></button>
+                  </>)}
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <Select value={groupByDate || 'none'} onValueChange={(v) => setGroupByDate(v === 'none' ? null : v)}>
+                  <SelectTrigger className={`w-32 md:w-36 h-8 text-[10px] font-black rounded-xl border transition-all bg-black/20 border-white/10 text-white hover:bg-black/30 backdrop-blur-sm`}>
+                    <SelectValue placeholder={t('all')} />
+                  </SelectTrigger>
+                  <SelectContent className="z-[600] bg-card/95 backdrop-blur-xl border-border">
+                    <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
+                    {columns.filter(c => c.type === 'date').map(dc => <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-            ))}
-
-            {unpinnedViews.map(v => (
-              <div key={v.view_id} className="relative group flex-shrink-0">
-                <button onClick={() => handleApplyView(v)}
-                  className={`px-3 py-1.5 text-[11px] font-bold rounded-full whitespace-nowrap transition-all border ${
-                    activeViewName === v.name
-                      ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30'
-                      : (isDark ? 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60' : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50')
-                  }`}>{v.name}</button>
-                <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-10">
-                  <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-primary rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
-                  <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
-                </div>
-              </div>
-            ))}
-
-            {Object.keys(filters).some(k => filters[k]) && (
-              showSaveView ? (
-                <div className="flex items-center gap-1">
-                  <input type="text" value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSaveView()} placeholder={t('view_name')} className="bg-secondary border border-border rounded-full px-3 py-1 text-[11px] w-28 text-foreground" autoFocus data-testid="save-view-input" />
-                  <button onClick={handleSaveView} className="px-2 py-1 bg-primary text-primary-foreground rounded-full text-[11px]" data-testid="save-view-confirm"><Save className="w-3 h-3" /></button>
-                  <button onClick={() => setShowSaveView(false)} className="p-1 text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
-                </div>
-              ) : (
-                <button onClick={() => setShowSaveView(true)} className="px-2.5 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-full flex items-center gap-1 border border-primary/30 transition-all" data-testid="save-view-btn">
-                  <Save className="w-3 h-3" /> {t('save_view')}
-                </button>
-              )
-            )}
-          </div>
-
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* RIGHT: View toggles + Group by */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-
-            {/* View mode segmented control */}
-            {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
-              <div className={`flex items-center rounded-lg p-0.5 border ${isDark ? 'bg-secondary/50 border-border/60' : 'bg-gray-100 border-gray-200'}`}>
-                <button onClick={() => { setCalendarMode(false); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
-                  className={`p-1.5 rounded-md transition-all ${ !calendarMode && !blanksTrackingMode && !readyCalendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  title={t('table_view')} data-testid="toggle-table-view"><Table2 className="w-3.5 h-3.5" /></button>
-                <button onClick={() => { setCalendarMode(true); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
-                  className={`p-1.5 rounded-md transition-all ${calendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  title={t('calendar_view')} data-testid="toggle-calendar-view"><CalendarDays className="w-3.5 h-3.5" /></button>
-                {currentBoard === 'SCHEDULING' && (<>
-                  <button onClick={() => { setReadyCalendarMode(true); setCalendarMode(false); setBlanksTrackingMode(false); }}
-                    className={`p-1.5 rounded-md transition-all ${readyCalendarMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                    title="Ready To Schedule" data-testid="toggle-ready-calendar"><CalendarCheck className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => { setBlanksTrackingMode(true); setCalendarMode(false); setReadyCalendarMode(false); }}
-                    className={`p-1.5 rounded-md transition-all ${blanksTrackingMode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                    title="Seguimiento de Blanks" data-testid="toggle-blanks-tracking"><ClipboardList className="w-3.5 h-3.5" /></button>
-                </>)}
-              </div>
-            )}
-
-            {/* Group by date */}
-            {(() => {
-              const dateCols = columns.filter(c => c.type === 'date');
-              const dateKeys = new Set(dateCols.map(c => c.key));
-              if (!dateKeys.has('created_at')) dateCols.push({ key: 'created_at', label: lang === 'es' ? 'Creacion' : 'Created' });
-              return (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 hidden sm:block">{lang === 'es' ? 'Agrupar' : 'Group'}:</span>
-                  <Select value={groupByDate || 'none'} onValueChange={(v) => setGroupByDate(v === 'none' ? null : v)}>
-                    <SelectTrigger className={`w-32 md:w-36 h-7 text-[10px] font-bold rounded-lg border transition-all ${
-                      groupByDate
-                        ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20'
-                        : (isDark ? 'bg-secondary/50 border-border/60 text-muted-foreground hover:border-border' : 'bg-gray-50 border-gray-200 text-gray-500')
-                    }`} data-testid="group-by-select"><SelectValue placeholder={t('all')} /></SelectTrigger>
-                    <SelectContent className="z-[600] bg-popover border-border max-h-[300px] overflow-y-auto">
-                      <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
-                      {dateCols.map(dc => <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              );
-            })()}
+            </div>
           </div>
         </div>
-      </div>
-      {/* Row for miscellaneous header items or future summary statistics */}
-      <div className={`border-b px-2 md:px-4 py-2 relative z-40 ${isDark ? 'bg-[hsl(220,28%,10%)] border-border/60' : 'bg-white/60 border-gray-200'}`}>
-        <div className="flex items-center gap-3 overflow-visible">
-          {/* Quick Stats Summary */}
-          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-black ${isDark ? 'bg-blue-500/15 text-blue-300 border border-blue-500/25' : 'bg-blue-600/10 text-blue-700 border border-blue-400/30'}`}>
-              <span className="opacity-70 text-[10px]">{t('total')}</span>
-              <span className="font-barlow text-base">{orders.length}</span>
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-black ${isDark ? 'bg-secondary/80 text-foreground border border-border' : 'bg-gray-100 text-gray-700 border border-gray-200'}`}>
-              <span className="opacity-60 text-[10px]">{lang === 'es' ? 'QTY' : 'QTY'}</span>
-              <span className="font-barlow text-base">
-                {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
-              </span>
-            </div>
-            {selectedOrders.length > 0 && (
-              <div className="flex items-center gap-1.5 text-primary animate-pulse bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
-                <span className="font-bold">{t('selected')}:</span>
-                <span className="font-barlow text-sm font-black">{selectedOrders.length}</span>
+
+        {/* Stats + Clock Row (Pure Glass) */}
+        <div className="px-2 md:px-4 py-3 relative z-10">
+          <div className="flex items-center gap-3 overflow-visible">
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest shrink-0">
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl font-black bg-white/20 text-white border border-white/30 shadow-lg backdrop-blur-md`}>
+                <span className="opacity-70 text-[10px] uppercase font-black tracking-tighter">{t('total')}</span>
+                <span className="font-barlow text-xl">{orders.length}</span>
               </div>
-            )}
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl font-black bg-white/10 text-white border border-white/10 shadow-lg backdrop-blur-md transition-all ${selectedOrders.length > 0 ? 'border-primary/50' : ''}`}>
+                <span className="opacity-60 text-[10px] uppercase font-black tracking-tighter">QTY</span>
+                <span className="font-barlow text-xl">
+                  {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Active Filters Row (Restored) */}
+            <div className="flex-1 flex items-center gap-2 overflow-x-auto scrollbar-hide px-2">
+              {Object.entries(filters).map(([k, v]) => {
+                if (!v) return null;
+                const col = columns.find(c => c.key === k) || { label: k };
+                return (
+                  <div key={k} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/30 border border-white/10 text-white text-[10px] font-black uppercase tracking-wider shrink-0 animate-in fade-in slide-in-from-left-2 backdrop-blur-md">
+                    <span className="opacity-50">{col.label}:</span>
+                    <span className="text-white font-black">{Array.isArray(v) ? `${v.length}` : (typeof v === 'object' ? '...' : String(v))}</span>
+                    <button onClick={() => setFilters(prev => { const n={...prev}; delete n[k]; return n; })} className="ml-1 p-0.5 hover:bg-white/20 rounded-full transition-colors"><X className="w-3 h-3" /></button>
+                  </div>
+                );
+              })}
+            </div>
             
-            {/* Active Filters Visualization */}
-            {Object.keys(filters).length > 0 && (
-              <div className="flex items-center gap-2 border-l border-border pl-6 ml-2 overflow-x-auto scrollbar-hide max-w-md">
-                <span className="text-muted-foreground font-bold flex-shrink-0">{lang === 'es' ? 'Filtros activos' : 'Active filters'}:</span>
-                {Object.entries(filters).map(([k, v]) => {
-                  if (!v) return null;
-                  const col = columns.find(c => c.key === k) || { label: k };
-                  return (
-                    <div key={k} className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full border flex-shrink-0 text-[10px] font-bold ${isDark ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
-                      <span className="opacity-70">{col.label}:</span>
-                      <span>{Array.isArray(v) ? `${v.length}` : (typeof v === 'object' ? '...' : String(v))}</span>
-                      <button onClick={() => setFilters(prev => { const n={...prev}; delete n[k]; return n; })} className="hover:text-destructive ml-0.5 opacity-60 hover:opacity-100 transition-all"><X className="w-2.5 h-2.5" /></button>
-                    </div>
-                  );
-                })}
+            <div className="ml-auto flex items-center gap-6">
+              {/* Digital Clock */}
+              <div className="hidden md:flex flex-col items-end justify-center px-4 py-1.5 rounded-2xl bg-black/30 border border-white/10 backdrop-blur-xl shadow-2xl">
+                <div className="flex items-center gap-2">
+                  <span className="clock-text text-xl font-black text-white leading-none">
+                    {currentTime.toLocaleTimeString([], { hour12: false })}
+                  </span>
+                  <div className={`w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_white] ${
+                    timeOfDay === 'morning' ? 'bg-orange-300' :
+                    timeOfDay === 'afternoon' ? 'bg-emerald-400' : 'bg-blue-400'
+                  }`}></div>
+                </div>
+                <div className="text-[9px] font-black uppercase tracking-[0.2em] text-white/60 leading-none mt-1">
+                  {currentTime.toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+                </div>
               </div>
-            )}
-          </div>
-          
-          <div className="ml-auto flex items-center gap-4">
-            {(Object.keys(filters).some(k => {
-              const v = filters[k];
-              if (!v) return false;
-              if (Array.isArray(v)) return v.length > 0;
-              if (typeof v === 'object' && (v.from || v.to)) return true;
-              return true;
-            }) || groupByDate) && <button onClick={() => { setFilters({}); setActiveViewName(null); setGroupByDate(null); }} className="text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/80 flex items-center gap-1 transition-all hover:scale-105 active:scale-95"><X className="w-3 h-3" /> {t('clear')}</button>}
+
+              {(Object.keys(filters).some(k => filters[k]) || groupByDate) && (
+                <button onClick={() => { setFilters({}); setActiveViewName(null); setGroupByDate(null); }} className="px-4 py-2 bg-white text-primary rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5">
+                  <X className="w-3.5 h-3.5" /> {t('clear')}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1113,7 +1130,7 @@ const Dashboard = () => {
                                           {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                         </div>
                                         <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
-                                          {[...new Set(unfilteredOrders.map(o => o.board).filter(Boolean))].sort().map(b => {
+                                          {BOARDS.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
                                             const checked = (filters['_board'] || []).includes(b);
                                             return (
                                               <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
