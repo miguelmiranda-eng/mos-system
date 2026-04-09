@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { API, BOARDS } from '../lib/constants';
 
+
 const TRIGGER_LABELS = {
   create: 'Nueva Orden',
   move: 'Movimiento de Tablero',

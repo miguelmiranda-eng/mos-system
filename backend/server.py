@@ -36,6 +36,7 @@ from routers.activity import router as activity_router
 from routers.production import router as production_router
 from routers.wms import router as wms_router
 
+
 app.include_router(auth_router)
 app.include_router(orders_router)
 app.include_router(config_router)
@@ -45,10 +46,22 @@ app.include_router(activity_router)
 app.include_router(production_router)
 app.include_router(wms_router)
 
+
 # Auto-restore database on startup
 @app.on_event("startup")
 async def startup_restore():
     from deps import db
+    import asyncio
+    
+    # Pre-flight DB check with timeout to avoid hanging
+    try:
+        logging.info("Checking database connection...")
+        await asyncio.wait_for(db.command("ping"), timeout=5.0)
+        logging.info("Database connection verified.")
+    except Exception as e:
+        logging.error(f"Could not connect to database: {e}. The server may be unstable.")
+        # We continue as the app might still work for some routes, but this is a critical warning
+
     from db_backup import restore_database
     stats = await restore_database(db)
     if stats:
@@ -103,5 +116,18 @@ async def shutdown_db_client():
 if __name__ == "__main__":
     import uvicorn
     # Use standard asyncio loop and websockets implementation for Windows robustness
-    # Enabled reload=True to ensure changes in routers are applied automatically
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True, loop="asyncio", ws="websockets")
+    # Watch only root and routers to avoid unnecessary reloads from uploads or scripts
+    backend_dir = str(ROOT_DIR)
+    routers_dir = str(ROOT_DIR / "routers")
+    
+    uvicorn.run(
+        "server:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=True, 
+        reload_dirs=[backend_dir],
+        reload_includes=["*.py", "*.json"],
+        reload_excludes=["uploads/*", "scripts/*", "venv/*", "**/__pycache__/*"],
+        loop="asyncio", 
+        ws="websockets"
+    )

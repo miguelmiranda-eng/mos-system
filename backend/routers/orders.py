@@ -107,10 +107,8 @@ async def get_order(order_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
-@router.post("")
-async def create_order(order: OrderCreate, request: Request):
-    user = await require_auth(request)
-    
+async def internal_create_order(order: OrderCreate, user: dict) -> dict:
+    """Core logic for order creation, reusable by API and internal processes."""
     # Security: block duplicates only if existing order is NOT in the trash
     if order.order_number and order.order_number.strip():
         active_existing = await db.orders.find_one({
@@ -123,8 +121,6 @@ async def create_order(order: OrderCreate, request: Request):
                 status_code=400,
                 detail=f"La orden {order.order_number} ya existe en el tablero '{existing_board}'."
             )
-        # If it makes it here and there's a match, it means it's ONLY in the trash.
-        # Allow creation (they may want to re-create it)
 
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
     order_data = order.model_dump(by_alias=True)
@@ -143,9 +139,14 @@ async def create_order(order: OrderCreate, request: Request):
     except Exception as e:
         logger.error(f"Error running automations after order creation: {e}")
         
-    await _notify_all(user, "create", f"{user['name']} creo orden {order.order_number}", order_id, order.order_number)
+    await _notify_all(user, "create", f"{user.get('name', 'Sistema')} creo orden {order.order_number}", order_id, order.order_number)
     await ws_manager.broadcast("order_change", {"action": "create", "boards": [order.board]})
     return created
+
+@router.post("")
+async def create_order(order: OrderCreate, request: Request):
+    user = await require_auth(request)
+    return await internal_create_order(order, user)
 
 @router.put("/{order_id}")
 async def update_order(order_id: str, order: OrderUpdate, request: Request):
