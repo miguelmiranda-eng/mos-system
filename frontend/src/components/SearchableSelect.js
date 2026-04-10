@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, X, Plus } from "lucide-react";
+import { useLang } from "../contexts/LanguageContext";
 
-export default function SearchableSelect({ options = [], value, onChange, placeholder = "Seleccionar...", allowCreate = true, testId = "" }) {
+export default function SearchableSelect({ options = [], value, onChange, placeholder, allowCreate = true, testId = "" }) {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef(null);
@@ -27,7 +29,7 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
     <div ref={ref} className="relative" data-testid={testId}>
       <button type="button" onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-3 py-2 bg-background border border-border rounded text-sm text-foreground text-left hover:border-primary/50 transition-colors">
-        <span className={value ? "text-foreground truncate" : "text-muted-foreground truncate"}>{value || placeholder}</span>
+        <span className={value ? "text-foreground truncate" : "text-muted-foreground truncate"}>{value || placeholder || t('select_placeholder')}</span>
         <div className="flex items-center gap-1 flex-shrink-0">
           {value && <X className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" onClick={clear} />}
           <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
@@ -37,18 +39,18 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
         <div className="absolute z-50 w-full mt-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden">
           <div className="p-1.5 border-b border-border">
             <input ref={inputRef} type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar..." className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+              placeholder={`${t('search')}...`} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
               data-testid={`${testId}-search`} />
           </div>
           <div className="max-h-48 overflow-y-auto">
             {filtered.length === 0 && !showCreate && (
-              <div className="px-3 py-2 text-xs text-muted-foreground">Sin resultados</div>
+              <div className="px-3 py-2 text-xs text-muted-foreground">{t('no_results')}</div>
             )}
             {showCreate && (
               <button type="button" onClick={() => select(search.trim())}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-primary hover:bg-primary/10 text-left"
                 data-testid={`${testId}-create`}>
-                <Plus className="w-3.5 h-3.5" /> Agregar "{search.trim()}"
+                <Plus className="w-3.5 h-3.5" /> {t('add')} "{search.trim()}"
               </button>
             )}
             {filtered.map(opt => (

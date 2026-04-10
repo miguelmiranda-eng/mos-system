@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
-  Package, MapPin, ClipboardList, BarChart3, ShoppingCart, Link2, ClipboardCheck,
-  Factory, CheckCircle, Truck, History, ArrowLeft, Warehouse, Download, Plus,
+  Package, MapPin, ClipboardList, BarChart3, Link2, ClipboardCheck,
+  Factory, CheckCircle, History, ArrowLeft, Warehouse, Download, Plus,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
   Sun, Moon, Home
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
+import { useLang } from "../contexts/LanguageContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
@@ -16,23 +17,13 @@ const poster = (url, body) => fetch(`${API}${url}`, { method: 'POST', headers: {
 const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
 const deleter = (url) => fetch(`${API}${url}`, { method: 'DELETE', credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
 
-const MODULES = [
-  { id: 'receiving', label: 'Receiving', icon: Package },
-  { id: 'putaway', label: 'Putaway', icon: MapPin },
-  { id: 'inventory', label: 'Inventory', icon: BarChart3 },
-  { id: 'orders', label: 'Orders', icon: ShoppingCart },
-  { id: 'picking', label: 'Picking', icon: ClipboardCheck },
-  { id: 'production', label: 'Production', icon: Factory },
-  { id: 'finished', label: 'Finished Goods', icon: CheckCircle },
-  { id: 'shipping', label: 'Shipping', icon: Truck },
-  { id: 'movements', label: 'Movements', icon: History },
-  { id: 'cycle_count', label: 'Conteo Ciclico', icon: ClipboardList },
-];
+
 
 // ==================== RECEIVING MODULE ====================
 const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
 
 const ReceivingModule = () => {
+  const { t } = useLang();
   const [records, setRecords] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -97,7 +88,7 @@ const ReceivingModule = () => {
   const totalUnits = parseInt(form.units) || ((parseInt(form.dozens) || 0) * 12 + (parseInt(form.pieces) || 0));
 
   const handleSubmit = async () => {
-    if (!form.style) { toast.error('Style requerido'); return; }
+    if (!form.style) { toast.error(t('wms_style_req')); return; }
     setLoading(true);
     try {
       const payload = {
@@ -109,22 +100,22 @@ const ReceivingModule = () => {
       const res = await poster('/receiving', payload);
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Receiving creado: ${data.total_units || totalUnits} unidades`);
+        toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
         setShowForm(false);
         setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
+    } catch { toast.error(t('error_connection')); }
     finally { setLoading(false); }
   };
 
   const handlePrintLabel = (r) => {
     const pw = window.open('', '_blank');
-    if (!pw) { toast.error('Permite popups para imprimir'); return; }
+    if (!pw) { toast.error(t('wms_popup_err')); return; }
     const dozens = r.dozens || 0;
     const pieces = r.pieces || 0;
     const units = r.total_units || r.units || (dozens * 12 + pieces);
-    pw.document.write(`<html><head><title>Receiving Label - ${r.receiving_id}</title>
+    pw.document.write(`<html><head><title>${t('wms_mod_receiving')} - ${r.receiving_id}</title>
       <style>
         @page { size: 4in 6in; margin: 5mm; }
         body { font-family: Arial, sans-serif; margin: 0; padding: 10px; width: 3.6in; font-size: 11px; }
@@ -141,35 +132,35 @@ const ReceivingModule = () => {
       </div>
       <table class="table">
         <tr class="row">
-          <td class="cell" style="width:60%"><span class="label">Customer</span><span class="value">${r.customer || ''}</span></td>
-          <td class="cell" style="width:40%"><span class="label">Purchase Order</span><span class="value">${r.po || ''}</span></td>
+          <td class="cell" style="width:60%"><span class="label">${t('wms_label_customer')}</span><span class="value">${r.customer || ''}</span></td>
+          <td class="cell" style="width:40%"><span class="label">${t('wms_label_po')}</span><span class="value">${r.po || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" style="width:60%"><span class="label">Lot Number</span><span class="value">${r.lot_number || ''}</span></td>
-          <td class="cell" style="width:40%"><span class="label">Location</span><span class="value">${r.inv_location || ''}</span></td>
+          <td class="cell" style="width:60%"><span class="label">${t('wms_label_lot')}</span><span class="value">${r.lot_number || ''}</span></td>
+          <td class="cell" style="width:40%"><span class="label">${t('wms_label_location')}</span><span class="value">${r.inv_location || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" colspan="2"><span class="label">Manufacturer</span><span class="value">${r.manufacturer || ''}</span></td>
+          <td class="cell" colspan="2"><span class="label">${t('wms_label_manufacturer')}</span><span class="value">${r.manufacturer || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">Style</span><span class="value" style="font-size:16px">${r.style || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">SKU #</span><span class="value" style="font-family:monospace">${r.sku || r.style || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_style')}</span><span class="value" style="font-size:16px">${r.style || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_sku')}</span><span class="value" style="font-family:monospace">${r.sku || r.style || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">Color</span><span class="value">${r.color || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">Size</span><span class="value" style="font-size:16px">${r.size || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_color')}</span><span class="value">${r.color || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_size')}</span><span class="value" style="font-size:16px">${r.size || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" colspan="2"><span class="label">Description</span><span class="value">${r.description || ''}</span></td>
+          <td class="cell" colspan="2"><span class="label">${t('wms_label_desc')}</span><span class="value">${r.description || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">Country of Origin</span><span class="value">${r.country_of_origin || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">Fabric Content</span><span class="value">${r.fabric_content || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_coo')}</span><span class="value">${r.country_of_origin || ''}</span></td>
+          <td class="cell" style="width:50%"><span class="label">${t('wms_label_fabric')}</span><span class="value">${r.fabric_content || ''}</span></td>
         </tr>
         <tr class="row">
-          <td class="cell" style="width:33%"><span class="label">Dozens</span><span class="value" style="font-size:16px">${dozens}</span></td>
-          <td class="cell" style="width:33%"><span class="label">Pieces</span><span class="value" style="font-size:16px">${pieces}</span></td>
-          <td class="cell" style="width:34%"><span class="label">Units</span><span class="value" style="font-size:18px;color:#000">${units}</span></td>
+          <td class="cell" style="width:33%"><span class="label">${t('wms_label_dozens')}</span><span class="value" style="font-size:16px">${dozens}</span></td>
+          <td class="cell" style="width:33%"><span class="label">${t('wms_label_pieces')}</span><span class="value" style="font-size:16px">${pieces}</span></td>
+          <td class="cell" style="width:34%"><span class="label">${t('wms_label_units')}</span><span class="value" style="font-size:18px;color:#000">${units}</span></td>
         </tr>
       </table>
       <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
@@ -184,114 +175,166 @@ const ReceivingModule = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Receiving</h2>
-        <button onClick={() => setShowForm(!showForm)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-receiving-btn">
-          <Plus className="w-4 h-4" /> Nuevo Receiving
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40">
+          {t('wms_recent_entries')}: {records.length}
+        </div>
+        <button 
+          onClick={() => setShowForm(!showForm)} 
+          className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
+          data-testid="new-receiving-btn"
+        >
+          <Plus className="w-4 h-4" /> {t('wms_new_record')}
         </button>
       </div>
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="receiving-form">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder="Buscar customer..." testId="rcv-customer" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('customer')}</label>
+              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Manufacturer</label>
-              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder="Buscar manufacturer..." testId="rcv-manufacturer" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('manufacturer')}</label>
+              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Lot Number</label>
-              <input placeholder="Lot Number" value={form.lot_number} onChange={e => setForm(p => ({ ...p, lot_number: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-lot" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
+              <input placeholder={t('wms_lot')} value={form.lot_number} onChange={e => setForm(p => ({ ...p, lot_number: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-lot" />
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder="Buscar style..." testId="rcv-style" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('style')}</label>
+              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder="Buscar color..." testId="rcv-color" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('color')}</label>
+              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Size</label>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('size')}</label>
               <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-size">
-                <option value="">Size...</option>
+                <option value="">{t('select_placeholder')}</option>
                 {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Description</label>
-              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder="Buscar descripcion..." testId="rcv-description" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('description')}</label>
+              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Country of Origin</label>
-              <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder="Buscar pais..." testId="rcv-country" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('country_of_origin')}</label>
+              <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Fabric Content</label>
-              <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder="Buscar tela..." testId="rcv-fabric" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('fabric_content')}</label>
+              <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" />
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Dozens</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('dozens')}</label>
               <input type="number" placeholder="0" value={form.dozens} onChange={e => setForm(p => ({ ...p, dozens: e.target.value, units: '' }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-dozens" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Pieces</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('pieces_label')}</label>
               <input type="number" placeholder="0" value={form.pieces} onChange={e => setForm(p => ({ ...p, pieces: e.target.value, units: '' }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-pieces" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Units (auto)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_qty_auto')}</label>
               <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-bold" data-testid="rcv-units" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">SKU # (auto)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('sku')} (auto)</label>
               <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" data-testid="rcv-sku" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <input placeholder="Location (ej: RP10-A26)" value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
+            <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-foreground">Total: {totalUnits} units</span>
+            <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
           </div>
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} Recibir
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {t('wms_receive_btn')}
             </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">Cancelar</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
         </div>
       )}
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-3 overflow-y-auto max-h-[600px] pr-2 custom-scrollbar">
         {records.map(r => (
-          <div key={r.receiving_id} className="border border-border rounded-lg p-3 bg-card" data-testid={`rcv-${r.receiving_id}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="font-mono font-bold text-primary text-sm">{r.style || r.receiving_id}</span>
-                <span className="text-xs text-muted-foreground">{r.customer}</span>
-                <span className="text-xs">{r.manufacturer} / {r.color} / {r.size || ''}</span>
+          <div key={r.receiving_id} className="group border border-border/40 rounded-2xl p-4 bg-card/60 backdrop-blur-sm hover:border-primary/40 hover:bg-card transition-all relative overflow-hidden shadow-lg hover:shadow-primary/5 shadow-black/20" data-testid={`rcv-${r.receiving_id}`}>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                  <Package className="w-6 h-6 text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="font-mono font-black text-primary text-sm uppercase tracking-tighter">
+                      {r.style || t('wms_no_style')}
+                    </span>
+                    <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest">
+                      {r.receiving_id}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="text-xs font-bold text-foreground truncate max-w-[150px]">{r.customer || t('wms_no_client')}</span>
+                    <span className="text-xs text-muted-foreground font-medium">{r.color} / {r.size || 'N/A'}</span>
+                    {r.inv_location && (
+                      <span className="text-[10px] font-black uppercase text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                        <MapPin className="w-2.5 h-2.5" /> {r.inv_location}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">
-                  {r.total_units || r.units || 0} units
-                  <span className="ml-2">{new Date(r.created_at).toLocaleDateString()}</span>
-                </span>
-                <button onClick={() => handlePrintLabel(r)} className="p-1.5 text-muted-foreground hover:text-primary rounded hover:bg-secondary" title="Imprimir etiqueta" data-testid={`rcv-print-${r.receiving_id}`}>
-                  <Printer className="w-4 h-4" />
-                </button>
+
+              <div className="flex items-center gap-4 flex-shrink-0">
+                <div className="text-right">
+                  <div className="text-lg font-black tabular-nums leading-none">
+                    {(r.total_units || r.units || 0).toLocaleString()}
+                    <span className="text-[10px] uppercase text-muted-foreground ml-1 font-bold">Units</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-1">
+                    {new Date(r.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 h-10 border-l border-border/40 pl-4">
+                  <button 
+                    onClick={() => handlePrintLabel(r)} 
+                    className="p-2.5 text-muted-foreground hover:text-primary rounded-xl hover:bg-primary/10 transition-all shadow-none hover:shadow-lg shadow-primary/20" 
+                    title="Imprimir etiqueta"
+                    data-testid={`rcv-print-${r.receiving_id}`}
+                  >
+                    <Printer className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
+            </div>
+            
+            {/* Detalles expandibles sutiles */}
+            <div className="mt-3 pt-3 border-t border-border/20 flex gap-4 text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
+              <span className="flex items-center gap-1"><Factory className="w-3 h-3" /> {r.manufacturer || '-'}</span>
+              <span className="flex items-center gap-1">LOT: {r.lot_number || '-'}</span>
+              <span className="ml-auto opacity-40">By: {r.received_by_name || 'System'}</span>
             </div>
           </div>
         ))}
-        {records.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay recepciones registradas</div>}
+        {records.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50 bg-secondary/10 rounded-3xl border border-dashed border-border/40">
+            <Package className="w-16 h-16 mb-4 stroke-[1px]" />
+            <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_rcv')}</p>
+            <p className="text-xs mt-1">{t('wms_new_rcv_hint')}</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -299,6 +342,7 @@ const ReceivingModule = () => {
 
 // ==================== LABELING MODULE ====================
 const LabelingModule = () => {
+  const { t } = useLang();
   const [boxes, setBoxes] = useState([]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(new Set());
@@ -311,21 +355,21 @@ const LabelingModule = () => {
 
   const printLabels = () => {
     const ids = [...selected].join(',');
-    if (!ids) { toast.error('Selecciona al menos una caja'); return; }
+    if (!ids) { toast.error(t('wms_select_box_err')); return; }
     window.open(`${API}/labels/boxes?box_ids=${ids}`, '_blank');
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Labeling</h2>
+        <h2 className="text-lg font-bold text-foreground">{t('wms_labeling')}</h2>
         <button onClick={printLabels} disabled={selected.size === 0} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="print-labels-btn">
-          <Printer className="w-4 h-4" /> Imprimir Labels ({selected.size})
+          <Printer className="w-4 h-4" /> {t('wms_print_labels')} ({selected.size})
         </button>
       </div>
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input placeholder="Buscar por PO..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="label-search" />
+        <input placeholder={t('wms_search_po')} value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="label-search" />
       </div>
       <div className="overflow-auto max-h-[500px]">
         <table className="w-full text-sm">
@@ -333,12 +377,12 @@ const LabelingModule = () => {
             <tr>
               <th className="p-2 text-left"><input type="checkbox" checked={boxes.length > 0 && selected.size === boxes.length} onChange={selectAll} className="rounded" /></th>
               <th className="p-2 text-left text-xs uppercase text-muted-foreground">Box ID</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">SKU</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Color</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Size</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Units</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">PO</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Status</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_sku')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_color')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_size')}</th>
+               <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_units')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_po')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('status')}</th>
             </tr>
           </thead>
           <tbody>
@@ -356,7 +400,7 @@ const LabelingModule = () => {
             ))}
           </tbody>
         </table>
-        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay cajas</div>}
+        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('wms_no_boxes')}</div>}
       </div>
     </div>
   );
@@ -364,6 +408,7 @@ const LabelingModule = () => {
 
 // ==================== PUTAWAY MODULE ====================
 const PutawayModule = () => {
+  const { t } = useLang();
   const [boxId, setBoxId] = useState('');
   const [location, setLocation] = useState('');
   const [locations, setLocations] = useState([]);
@@ -376,65 +421,86 @@ const PutawayModule = () => {
   useEffect(() => { loadLocations(); loadPending(); }, [loadLocations, loadPending]);
 
   const handlePutaway = async () => {
-    if (!boxId || !location) { toast.error('Box ID y ubicacion requeridos'); return; }
+    if (!boxId || !location) { toast.error(t('wms_box_loc_req')); return; }
     const res = await poster('/putaway', { box_id: boxId, location });
-    if (res.ok) { toast.success(`Caja ${boxId} ubicada en ${location}`); setBoxId(''); loadPending(); }
+    if (res.ok) { toast.success(t('wms_box_located', { boxId, location })); setBoxId(''); loadPending(); }
     else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
   };
 
   const handleCreateLoc = async () => {
-    if (!newLoc.name) { toast.error('Nombre requerido'); return; }
+    if (!newLoc.name) { toast.error(t('wms_name_req')); return; }
     const res = await poster('/locations', newLoc);
-    if (res.ok) { toast.success('Ubicacion creada'); setNewLoc({ name: '', zone: '', type: 'rack' }); setShowNewLoc(false); loadLocations(); }
+    if (res.ok) { toast.success(t('wms_loc_created')); setNewLoc({ name: '', zone: '', type: 'rack' }); setShowNewLoc(false); loadLocations(); }
     else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
   };
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-foreground">Putaway</h2>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+          {t('wms_mod_putaway')}
+        </div>
+        <button 
+          onClick={() => setShowNewLoc(!showNewLoc)} 
+          className="px-4 py-2 bg-secondary text-foreground border border-border/40 rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:bg-secondary/80 shadow-lg"
+        >
+          <MapPin className="w-4 h-4 text-primary" /> {showNewLoc ? t('close') : `+ ${t('wms_new_loc_btn') || t('add')}`}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
-          <div className="text-sm font-bold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-primary" /> Escanear / Ingresar</div>
-          <input placeholder="Box ID (ej: BOX-000001)" value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
+          <div className="text-sm font-bold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-primary" /> {t('wms_scan_input')}</div>
+          <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
           <select value={location} onChange={e => setLocation(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="putaway-loc-select">
-            <option value="">Seleccionar ubicacion...</option>
+            <option value="">{t('wms_select_location')}</option>
             {locations.map(l => <option key={l.location_id} value={l.name}>{l.name} {l.zone ? `(${l.zone})` : ''}</option>)}
           </select>
-          <button onClick={handlePutaway} className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium" data-testid="putaway-submit">Ubicar Caja</button>
+          <button onClick={handlePutaway} className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium" data-testid="putaway-submit">{t('wms_locate_btn')}</button>
         </div>
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-bold text-foreground flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> Ubicaciones ({locations.length})</div>
-            <button onClick={() => setShowNewLoc(!showNewLoc)} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> Nueva</button>
+            <div className="text-sm font-bold text-foreground flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> {t('wms_locations')} ({locations.length})</div>
+            <button onClick={() => setShowNewLoc(!showNewLoc)} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('add')}</button>
           </div>
           {showNewLoc && (
             <div className="flex gap-2">
-              <input placeholder="Nombre (ej: A-01-01)" value={newLoc.name} onChange={e => setNewLoc(p => ({ ...p, name: e.target.value }))} className="flex-1 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
-              <input placeholder="Zona" value={newLoc.zone} onChange={e => setNewLoc(p => ({ ...p, zone: e.target.value }))} className="w-20 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
-              <button onClick={handleCreateLoc} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm">Crear</button>
+              <input placeholder={t('wms_loc_name_placeholder')} value={newLoc.name} onChange={e => setNewLoc(p => ({ ...p, name: e.target.value }))} className="flex-1 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
+              <input placeholder={t('wms_zone')} value={newLoc.zone} onChange={e => setNewLoc(p => ({ ...p, zone: e.target.value }))} className="w-20 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
+              <button onClick={handleCreateLoc} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm">{t('wms_create_btn')}</button>
             </div>
           )}
           <div className="max-h-40 overflow-auto space-y-1">
             {locations.map(l => (
               <div key={l.location_id} className="flex items-center justify-between px-2 py-1 text-xs bg-secondary/50 rounded">
                 <span className="font-mono font-medium">{l.name}</span>
+<span className="font-mono font-medium">{l.name}</span>
                 <span className="text-muted-foreground">{l.zone}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
-      <div>
-        <div className="text-sm font-bold text-foreground mb-2">Cajas Pendientes de Ubicar ({pendingBoxes.length})</div>
-        <div className="space-y-1 max-h-[300px] overflow-auto">
+      <div className="border border-border/20 rounded-3xl p-6 bg-card/40 backdrop-blur-sm shadow-xl space-y-4">
+        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60 flex items-center gap-2">
+          <Package className="w-4 h-4" /> {t('wms_unlocated_mat')}
+        </div>
+        <div className="space-y-2 max-h-[400px] overflow-auto custom-scrollbar pr-2 font-mono">
           {pendingBoxes.map(b => (
-            <div key={b.box_id} className="flex items-center justify-between p-2 border border-border rounded bg-card text-sm cursor-pointer hover:bg-secondary/50" onClick={() => setBoxId(b.box_id)}>
-              <span className="font-mono font-bold text-primary">{b.box_id}</span>
-              <span>{b.sku} / {b.color} / {b.size}</span>
-              <span className="text-muted-foreground">{b.units} units</span>
-            </div>
+            <button 
+              key={b.box_id} 
+              onClick={() => setBoxId(b.box_id)}
+              className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all 
+                ${boxId === b.box_id ? 'bg-primary/20 border-primary text-primary shadow-lg shadow-primary/10' : 'bg-secondary/40 border-border/10 text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+            >
+              <div className="flex flex-col items-start">
+                <span className="text-xs font-black">{b.box_id}</span>
+                <span className="text-[10px] opacity-60">{b.sku} / {b.units} UN</span>
+              </div>
+              <ChevronRight className="w-4 h-4 opacity-40" />
+            </button>
           ))}
-          {pendingBoxes.length === 0 && <div className="text-center text-muted-foreground text-xs py-4">Todas las cajas estan ubicadas</div>}
+          {pendingBoxes.length === 0 && <div className="text-center text-muted-foreground text-xs py-4">{t('wms_all_located')}</div>}
         </div>
       </div>
     </div>
@@ -443,6 +509,7 @@ const PutawayModule = () => {
 
 // ==================== INVENTORY MODULE ====================
 const InventoryModule = () => {
+  const { t } = useLang();
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [] });
@@ -475,198 +542,175 @@ const InventoryModule = () => {
       const res = await fetch(`${API}/import/inventory`, { method: 'POST', credentials: 'include', body: formData });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Importados ${data.imported.toLocaleString()} registros. ${data.locations_created} ubicaciones nuevas.`);
+        toast.success(`${t('excel_summary')}: ${data.imported.toLocaleString()} ${t('activity_records')}. ${data.locations_created} ${t('wms_locations')}.`);
         load(); loadFilters();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error al importar'); }
-    } catch { toast.error('Error de conexion'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('error_connection')); }
     finally { setImporting(false); e.target.value = ''; }
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-lg font-bold text-foreground">Inventory</h2>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          {t('wms_stock_monitor')}
+        </div>
         <div className="flex items-center gap-2">
-          <label className={`px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 cursor-pointer ${importing ? 'opacity-50' : ''}`} data-testid="import-inv-btn">
+          <label className={`px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 cursor-pointer transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] ${importing ? 'opacity-50' : ''}`} data-testid="import-inv-btn">
             {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-            {importing ? 'Importando...' : 'Importar Excel'}
+            {importing ? t('wms_importing') : t('wms_import_excel')}
             <input type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" disabled={importing} />
           </label>
-          <button onClick={exportExcel} className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded text-sm flex items-center gap-1.5" data-testid="export-inv-btn">
-            <Download className="w-4 h-4" /> Exportar
+          <button onClick={exportExcel} className="p-2 bg-secondary/80 text-foreground border border-border/40 rounded-xl hover:bg-secondary flex items-center gap-1.5 transition-all" data-testid="export-inv-btn">
+            <Download className="w-4 h-4 text-primary" />
           </button>
         </div>
       </div>
+
+      {/* Low Stock Alert */}
+      {summary.low_stock_items > 0 && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-center gap-4 animate-in fade-in slide-in-from-top-2 duration-500 shadow-lg shadow-red-500/5">
+          <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+            <Tag className="w-5 h-5 text-red-400" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-black uppercase tracking-wider text-red-300 leading-tight">{t('wms_critical_alert')}</div>
+            <div className="text-xs text-red-400/80 font-medium">{t('wms_critical_msg', { count: summary.low_stock_items })}</div>
+          </div>
+          <button onClick={() => { setSearch(''); setShowFilters(true); setCategoryFilter('LOW_STOCK'); }} className="px-3 py-1 bg-red-500 text-white text-[10px] font-black uppercase rounded-lg hover:bg-red-600 transition-colors">
+            {t('wms_view_now')}
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
-          { label: 'Registros', value: summary.total_skus || 0, color: 'text-purple-400' },
-          { label: 'On Hand', value: summary.total_on_hand || 0, color: 'text-blue-400' },
-          { label: 'Allocated', value: summary.total_allocated || 0, color: 'text-orange-400' },
-          { label: 'Available', value: summary.total_available || 0, color: 'text-green-400' },
-          { label: 'Ubicaciones', value: summary.total_locations || 0, color: 'text-cyan-400' },
-        ].map(s => (
-          <div key={s.label} className="border border-border rounded-lg p-3 bg-card text-center">
-            <div className={`text-2xl font-bold ${s.color}`}>{(s.value || 0).toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground uppercase">{s.label}</div>
-          </div>
-        ))}
+          { key: 'wms_total_skus', value: summary.total_skus || 0, color: 'text-purple-400', bg: 'bg-purple-500/10', icon: Tag },
+          { key: 'wms_on_hand', value: summary.total_on_hand || 0, color: 'text-blue-400', bg: 'bg-blue-500/10', icon: Package },
+          { key: 'wms_allocated', value: summary.total_allocated || 0, color: 'text-orange-400', bg: 'bg-orange-500/10', icon: Link2 },
+          { key: 'wms_available', value: summary.total_available || 0, color: 'text-emerald-400', bg: 'bg-emerald-500/10', icon: CheckCircle },
+          { key: 'wms_locations', value: summary.total_locations || 0, color: 'text-cyan-400', bg: 'bg-cyan-500/10', icon: MapPin },
+        ].map(s => {
+          const Icon = s.icon;
+          return (
+            <div key={s.key} className="border border-border/40 rounded-3xl p-4 bg-card/60 backdrop-blur-sm shadow-xl flex flex-col items-center group hover:scale-[1.02] transition-all">
+              <div className={`w-10 h-10 rounded-2xl ${s.bg} flex items-center justify-center mb-3 group-hover:rotate-12 transition-transform`}>
+                <Icon className={`w-5 h-5 ${s.color}`} />
+              </div>
+              <div className={`text-2xl font-black tabular-nums tracking-tighter ${s.color}`}>{(s.value || 0).toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mt-1 opacity-60">{t(s.key)}</div>
+            </div>
+          );
+        })}
       </div>
-      <div className="flex gap-2 flex-wrap items-center">
+
+      <div className="flex gap-2 flex-wrap items-center bg-card/40 p-2 rounded-2xl border border-border/20 backdrop-blur-md">
         <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input placeholder="Buscar por Style..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-search" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground opacity-50" />
+          <input 
+            placeholder={t('wms_search_inv')} 
+            value={search} 
+            onChange={e => setSearch(e.target.value)} 
+            className="w-full pl-11 pr-4 py-2.5 bg-background/50 border border-border/40 rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/20 transition-all font-medium" 
+            data-testid="inv-search" 
+          />
         </div>
-        <button onClick={() => setShowFilters(!showFilters)} className={`px-3 py-2 border border-border rounded text-sm flex items-center gap-1 ${showFilters || customerFilter || categoryFilter ? 'bg-primary text-primary-foreground' : 'bg-secondary text-foreground'}`} data-testid="inv-toggle-filters">
-          <ScanLine className="w-4 h-4" /> Filtros {(customerFilter || categoryFilter) && <span className="bg-white/20 px-1.5 rounded-full text-xs">{[customerFilter, categoryFilter].filter(Boolean).length}</span>}
+        <button 
+          onClick={() => setShowFilters(!showFilters)} 
+          className={`px-4 py-2.5 border border-border/40 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center gap-2 transition-all ${showFilters || customerFilter || categoryFilter ? 'bg-primary text-black shadow-[0_0_10px_rgba(255,193,7,0.4)]' : 'bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground'}`} 
+          data-testid="inv-toggle-filters"
+        >
+          <ScanLine className="w-4 h-4" /> 
+          {t('filters')}          {(customerFilter || categoryFilter) && (
+            <span className="bg-black/10 px-2 py-0.5 rounded-lg text-[10px]">
+              {[customerFilter, categoryFilter].filter(Boolean).length}
+            </span>
+          )}
         </button>
       </div>
       {showFilters && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 border border-border rounded-lg bg-secondary/30" data-testid="inv-filters-panel">
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('client')}</label>
             <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-filter-customer">
-              <option value="">Todos</option>
+              <option value="">{t('all')}</option>
               {filters.customers.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Category</label>
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('category')}</label>
             <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-filter-category">
-              <option value="">Todas</option>
+              <option value="">{t('all')}</option>
               {filters.categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="flex items-end">
-            <button onClick={() => { setCustomerFilter(''); setCategoryFilter(''); setSearch(''); }} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded">Limpiar filtros</button>
+            <button onClick={() => { setCustomerFilter(''); setCategoryFilter(''); setSearch(''); }} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded">{t('wms_clear_filters')}</button>
           </div>
         </div>
       )}
-      <div className="text-xs text-muted-foreground">{inventory.length.toLocaleString()} registros</div>
-      <div className="overflow-auto max-h-[400px]">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary sticky top-0 z-10">
-            <tr>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Customer</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Style</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Color</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Size</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Description</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Category</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Location</th>
-              <th className="p-2 text-right text-xs uppercase text-muted-foreground">Boxes</th>
-              <th className="p-2 text-right text-xs uppercase text-muted-foreground">On Hand</th>
-              <th className="p-2 text-right text-xs uppercase text-muted-foreground">Allocated</th>
-              <th className="p-2 text-right text-xs uppercase text-muted-foreground">Available</th>
-            </tr>
-          </thead>
-          <tbody>
-            {inventory.map((inv, i) => (
-              <tr key={inv.inventory_id || i} className="border-b border-border hover:bg-secondary/50">
-                <td className="p-2 text-xs">{inv.customer}</td>
-                <td className="p-2 font-mono font-bold">{inv.style || inv.sku}</td>
-                <td className="p-2">{inv.color}</td>
-                <td className="p-2">{inv.size}</td>
-                <td className="p-2 text-xs truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
-                <td className="p-2 text-xs">{inv.category}</td>
-                <td className="p-2 font-mono text-xs text-muted-foreground">{inv.inv_location}</td>
-                <td className="p-2 text-right font-mono">{(inv.total_boxes || 0).toLocaleString()}</td>
-                <td className="p-2 text-right font-mono text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
-                <td className="p-2 text-right font-mono text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
-                <td className="p-2 text-right font-mono text-green-400">{(inv.available || 0).toLocaleString()}</td>
+      <div className="border border-border/20 rounded-2xl bg-card/40 backdrop-blur-sm overflow-hidden shadow-2xl">
+        <div className="overflow-auto max-h-[600px] custom-scrollbar">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/80 backdrop-blur-md sticky top-0 z-10 border-b border-border/40">
+              <tr>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('customer')}</th>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_style_sku')}</th>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_col_sz')}</th>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('description')}</th>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
+                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
+                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
+                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
+                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_available')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {inventory.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay inventario. Importa un archivo Excel para comenzar.</div>}
-      </div>
-    </div>
-  );
-};
-
-// ==================== ORDERS MODULE ====================
-const OrdersModule = () => {
-  const [orders, setOrders] = useState([]);
-  const [ticketMap, setTicketMap] = useState({});
-  const load = useCallback(() => {
-    fetcher('/orders').then(setOrders).catch(() => {});
-    fetcher('/orders-with-tickets').then(setTicketMap).catch(() => {});
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const getProgress = (orderNum) => {
-    const tix = ticketMap[orderNum] || [];
-    if (tix.length === 0) return null;
-    let totalReq = 0, totalPicked = 0;
-    tix.forEach(t => {
-      totalReq += t.total_pick_qty || Object.values(t.sizes || {}).reduce((s, v) => s + (parseInt(v) || 0), 0);
-      totalPicked += Object.values(t.picked_sizes || {}).reduce((s, v) => s + (parseInt(v) || 0), 0);
-    });
-    const pct = totalReq > 0 ? Math.round((totalPicked / totalReq) * 100) : 0;
-    const completed = tix.filter(t => t.picking_status === 'completed').length;
-    return { tickets: tix, totalReq, totalPicked, pct, completed, total: tix.length };
-  };
-
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-foreground">Orders (CRM)</h2>
-      <div className="text-xs text-muted-foreground">Ordenes del tablero BLANKS y ordenes con status PARTIAL/PARCIAL</div>
-      <div className="overflow-auto max-h-[600px]">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary sticky top-0">
-            <tr>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Order #</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Client</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Qty</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Board</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Blank Status</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">WMS Status</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Operador / Picking</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map(o => {
-              const prog = getProgress(o.order_number);
-              return (
-                <tr key={o.order_id} className="border-b border-border hover:bg-secondary/50">
-                  <td className="p-2 font-mono font-bold text-primary">{o.order_number}</td>
-                  <td className="p-2">{o.client}</td>
-                  <td className="p-2">{o.quantity}</td>
-                  <td className="p-2 text-muted-foreground">{o.board}</td>
-                  <td className="p-2"><span className={`text-xs px-2 py-0.5 rounded-full ${(o.blank_status || '').toLowerCase().includes('partial') || (o.blank_status || '').toLowerCase().includes('parcial') ? 'bg-yellow-500/15 text-yellow-400' : 'bg-gray-500/15 text-gray-400'}`}>{o.blank_status || '-'}</span></td>
-                  <td className="p-2"><span className={`text-xs px-2 py-0.5 rounded-full ${o.wms_status === 'shipped' ? 'bg-green-500/15 text-green-400' : o.wms_status === 'picked' ? 'bg-blue-500/15 text-blue-400' : o.wms_status === 'allocated' ? 'bg-orange-500/15 text-orange-400' : 'bg-gray-500/15 text-gray-400'}`}>{o.wms_status || 'pending'}</span></td>
-                  <td className="p-2">
-                    {prog ? (
-                      <div className="space-y-1">
-                        {prog.tickets.map(t => (
-                          <div key={t.ticket_id} className="flex items-center gap-1.5">
-                            <span className="text-xs bg-purple-500/15 text-purple-400 px-1.5 py-0.5 rounded-full truncate max-w-[80px]" title={t.assigned_to_name}>{t.assigned_to_name || 'Sin asignar'}</span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${t.picking_status === 'completed' ? 'bg-green-500/15 text-green-400' : t.picking_status === 'in_progress' ? 'bg-yellow-500/15 text-yellow-400' : 'bg-blue-500/15 text-blue-400'}`}>{t.picking_status}</span>
-                          </div>
-                        ))}
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${prog.pct === 100 ? 'bg-green-500' : prog.pct > 0 ? 'bg-yellow-500' : 'bg-gray-500'}`} style={{ width: `${prog.pct}%` }} />
-                          </div>
-                          <span className="text-xs text-muted-foreground">{prog.pct}%</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    )}
+            </thead>
+            <tbody className="divide-y divide-border/10">
+              {inventory.map((inv, i) => (
+                <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
+                  <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
+                  <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
+                  <td className="p-4 text-[11px] font-bold">
+                    <span className="text-foreground">{inv.color}</span>
+                    <span className="mx-1 opacity-20">|</span>
+                    <span className="text-primary">{inv.size}</span>
+                  </td>
+                  <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
+                  <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
+                    {inv.inv_location || '-'}
+                  </td>
+                  <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
+                  <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
+                  <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
+                  <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
+                    {(inv.available || 0).toLocaleString()}
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {orders.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay ordenes en BLANKS o con status PARTIAL</div>}
+              ))}
+            </tbody>
+          </table>
+          {inventory.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
+              <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_inv')}</p>
+              <p className="text-xs mt-1">{t('wms_import_hint')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40 text-right mt-2">
+        {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
       </div>
     </div>
   );
 };
+
 
 // ==================== ALLOCATION MODULE ====================
 const AllocationModule = () => {
+  const { t } = useLang();
   const [allocations, setAllocations] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [orders, setOrders] = useState([]);
@@ -693,9 +737,9 @@ const AllocationModule = () => {
   };
 
   const handleSubmit = async () => {
-    if (!selectedOrder) { toast.error('Selecciona una orden'); return; }
+    if (!selectedOrder) { toast.error(t('wms_select_order_err')); return; }
     const validItems = items.filter(it => it.sku && parseInt(it.qty) > 0);
-    if (validItems.length === 0) { toast.error('Agrega al menos un item con cantidad'); return; }
+    if (validItems.length === 0) { toast.error(t('wms_min_item_err')); return; }
     setLoading(true);
     try {
       const res = await poster('/allocations', {
@@ -703,69 +747,77 @@ const AllocationModule = () => {
         items: validItems.map(it => ({ sku: it.sku, color: it.color, size: it.size, qty: parseInt(it.qty) }))
       });
       if (res.ok) {
-        toast.success('Allocation creada exitosamente');
+        toast.success(t('wms_alloc_success'));
         setShowForm(false); setSelectedOrder(''); setItems([{ sku: '', color: '', size: '', qty: '', maxQty: 0 }]);
         loadAllocations(); loadInventory();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error al crear allocation'); }
-    } catch { toast.error('Error de conexion'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('wms_alloc_create_err')); }
+    } catch { toast.error(t('error_connection')); }
     finally { setLoading(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Eliminar esta allocation? El inventario se liberara.')) return;
-    try { await deleter(`/allocations/${id}`); toast.success('Allocation eliminada'); loadAllocations(); loadInventory(); }
-    catch { toast.error('Error al eliminar'); }
+    if (!window.confirm(t('wms_alloc_del_conf'))) return;
+    try { 
+      const res = await deleter(`/allocations/${id}`); 
+      if (res.ok) {
+        toast.success(t('wms_alloc_deleted') || 'Allocation eliminada'); 
+        loadAllocations(); loadInventory(); 
+      } else {
+        toast.error(t('wms_alloc_del_err'));
+      }
+    }
+    catch { toast.error(t('error_connection')); }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Allocation</h2>
+        <h2 className="text-lg font-bold text-foreground">{t('allocation')}</h2>
         <button onClick={() => setShowForm(!showForm)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-allocation-btn">
-          <Plus className="w-4 h-4" /> Nueva Allocation
+          <Plus className="w-4 h-4" /> {t('wms_new_loc')}
         </button>
       </div>
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="allocation-form">
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Orden</label>
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('order')}</label>
             <select value={selectedOrder} onChange={e => setSelectedOrder(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="alloc-order-select">
-              <option value="">Seleccionar orden...</option>
+              <option value="">{t('select_order_placeholder')}</option>
               {orders.map(o => (
                 <option key={o.order_id} value={o.order_id}>
-                  {o.order_number} - {o.client || o.customer || 'Sin cliente'} ({o.wms_status || 'pending'})
+                  {o.order_number} - {o.client || o.customer || t('no_client')} ({o.wms_status || 'pending'})
                 </option>
               ))}
             </select>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Items a Asignar</div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('items_to_allocate')}</div>
           {items.map((item, i) => (
             <div key={i} className="grid grid-cols-6 gap-2 items-end">
               <div className="col-span-3">
                 <select value={item.sku ? `${item.sku}||${item.color}||${item.size}` : ''} onChange={e => selectInventoryItem(i, e.target.value)}
                   className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid={`alloc-inv-${i}`}>
-                  <option value="">Seleccionar inventario...</option>
+                  <option value="">{t('select_inventory')}</option>
                   {availableInv.map(inv => (
                     <option key={`${inv.style || inv.sku}-${inv.color}-${inv.size}-${inv.inv_location || ''}`} value={`${inv.style || inv.sku}||${inv.color || ''}||${inv.size || ''}`}>
-                      {inv.customer ? `[${inv.customer}] ` : ''}{inv.style || inv.sku} {inv.color} {inv.size} (Disp: {inv.available})
+                      {inv.customer ? `[${inv.customer}] ` : ''}{inv.style || inv.sku} {inv.color} {inv.size} ({t('avail')}: {inv.available})
                     </option>
                   ))}
                 </select>
               </div>
               <div className="text-xs text-muted-foreground truncate">
-                {item.maxQty > 0 && <span>Max: {item.maxQty}</span>}
+                {item.maxQty > 0 && <span>{t('max')}: {item.maxQty}</span>}
               </div>
-              <input type="number" placeholder="Qty" value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} min="1" max={item.maxQty || 99999}
+              <input type="number" placeholder={t('qty')} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} min="1" max={item.maxQty || 99999}
                 className="px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid={`alloc-qty-${i}`} />
               <button onClick={() => removeItem(i)} className="p-1.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-4 h-4" /></button>
             </div>
           ))}
-          <button onClick={addItem} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> Agregar item</button>
+          <button onClick={addItem} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('add_item')}</button>
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="alloc-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} Asignar Inventario
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} {t('allocate_inventory')}
             </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">Cancelar</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
         </div>
       )}
@@ -779,7 +831,7 @@ const AllocationModule = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleDateString()}</span>
-                <button onClick={() => handleDelete(a.allocation_id)} className="p-1 text-muted-foreground hover:text-destructive" title="Eliminar" data-testid={`alloc-delete-${a.allocation_id}`}>
+                <button onClick={() => handleDelete(a.allocation_id)} className="p-1 text-muted-foreground hover:text-destructive" title={t('delete')} data-testid={`alloc-delete-${a.allocation_id}`}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -789,7 +841,7 @@ const AllocationModule = () => {
             </div>
           </div>
         ))}
-        {allocations.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay allocations</div>}
+        {allocations.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('no_allocations')}</div>}
       </div>
     </div>
   );
@@ -797,6 +849,7 @@ const AllocationModule = () => {
 
 // ==================== PICKING MODULE ====================
 const PickingModule = () => {
+  const { t } = useLang();
   const [tickets, setTickets] = useState([]);
   const [orders, setOrders] = useState([]);
   const [operators, setOperators] = useState([]);
@@ -813,6 +866,8 @@ const PickingModule = () => {
     }).catch(() => {});
   }, []);
   const [activeTab, setActiveTab] = useState('pending'); // pending | completed | dashboard
+  const [activeBoardFilter, setActiveBoardFilter] = useState('ALL'); // ALL | SCHEDULING | BLANKS
+
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
@@ -860,6 +915,7 @@ const PickingModule = () => {
   }, []);
 
   const updateSize = (size, val) => setForm(p => ({ ...p, sizes: { ...p.sizes, [size]: val } }));
+  const getTotalAvail = (sz) => (sizeLocations[sz]?.locations || []).reduce((sum, loc) => sum + (loc.available || 0), 0);
   const totalPick = Object.values(form.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
 
   const openEdit = (t) => {
@@ -884,8 +940,8 @@ const PickingModule = () => {
   };
 
   const handleSubmit = async () => {
-    if (!form.order_number || !form.style) { toast.error('Numero de orden y style requeridos'); return; }
-    if (totalPick === 0) { toast.error('Ingresa al menos una cantidad por size'); return; }
+    if (!form.order_number || !form.style) { toast.error(t('order_style_req')); return; }
+    if (totalPick === 0) { toast.error(t('enter_qty_size')); return; }
     setLoading(true);
     try {
       const payload = { ...form, client: form.customer, sizes: Object.fromEntries(Object.entries(form.sizes).map(([k, v]) => [k, parseInt(v) || 0])) };
@@ -896,144 +952,238 @@ const PickingModule = () => {
         res = await poster('/pick-tickets', payload);
       }
       if (res.ok) {
-        toast.success(editingTicket ? 'Pick ticket actualizado' : 'Pick ticket creado');
+        toast.success(editingTicket ? t('ticket_updated') : t('ticket_created'));
         resetForm();
         loadTickets(); loadStats();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('conn_error')); }
     finally { setLoading(false); }
   };
 
   const handleConfirm = async (ticket) => {
-    if (!window.confirm('Confirmar este pick ticket?')) return;
+    if (!window.confirm(t('confirm_ticket'))) return;
     try {
       const res = await putter(`/pick-tickets/${ticket.ticket_id}/confirm`, { lines: ticket.lines || [] });
-      if (res.ok) { toast.success('Pick confirmado'); loadTickets(); loadStats(); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
+      if (res.ok) { toast.success(t('pick_confirmed')); loadTickets(); loadStats(); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('conn_error')); }
   };
 
-  const handlePrint = (t) => {
+  const handleQuickStatus = async (ticket_id, new_status) => {
+    try {
+      const res = await putter(`/pick-tickets/${ticket_id}/status`, { blank_status: new_status });
+      if (res.ok) { toast.success(t('status_updated')); loadTickets(); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('conn_error')); }
+  };
+
+  const handleQuickAssign = async (ticket_id, user_val) => {
+    try {
+      const op = operators.find(o => o.user_id === user_val || o.email === user_val) || {};
+      const payload = { 
+        operator_id: user_val || "", 
+        operator_name: op.name || op.email || "",
+        assigned_to: user_val || "",
+        assigned_to_name: op.name || op.email || ""
+      };
+      const res = await putter(`/pick-tickets/${ticket_id}/assign`, payload);
+      if (res.ok) { toast.success(t('assigned_correctly')); loadTickets(); loadStats(); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('conn_error')); }
+  };
+
+  const handlePrint = (ticket) => {
     const pw = window.open('', '_blank');
-    if (!pw) { toast.error('Permite popups para imprimir'); return; }
-    const sizes = t.sizes || {};
-    const sizeLocs = t.size_locations || {};
+    if (!pw) { toast.error(t('allow_popups')); return; }
+    const sizes = ticket.sizes || {};
+    const sizeLocs = ticket.size_locations || {};
     const totalQty = SIZES_ORDER.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
     const gridRows = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0).map(sz => {
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => `${l.location} (${l.available})`).join(', ') || '-';
       return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${sizes[sz]}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
-    pw.document.write(`<html><head><title>Pick Ticket - ${t.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${t.customer || ''}</div><div style="text-align:center;margin:6px 0"><svg id="barcode"></svg></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${t.customer || ''}</div><div style="font-size:12px;font-weight:bold">${t.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${t.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">Pick Ticket:</div><div style="font-size:11px;font-weight:bold">${t.ticket_id}</div><div style="font-size:18px;font-weight:bold">${t.style || ''}</div><div style="font-size:14px;font-weight:bold">${t.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">SIZE</th><th style="border:1px solid #000;padding:3px;font-size:10px">QTY</th><th style="border:1px solid #000;padding:3px;font-size:10px">LOCATION</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">TOTAL</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>Surtidor: ___________________</div><div>Fecha: ___________________</div></div><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script><script>try{JsBarcode("#barcode","${t.ticket_id}",{width:1.5,height:35,displayValue:false,margin:0})}catch(e){}setTimeout(function(){window.print()},500);<\/script></body></html>`);
+    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0"><svg id="barcode"></svg></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${ticket.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script><script>try{JsBarcode("#barcode","${ticket.ticket_id}",{width:1.5,height:35,displayValue:false,margin:0})}catch(e){}setTimeout(function(){window.print()},500);<\/script></body></html>`);
     pw.document.close();
   };
 
-  const getTotalAvail = (sz) => sizeLocations[sz]?.total_available || 0;
-
-  const pendingTickets = tickets.filter(t => t.status !== 'confirmed' && t.picking_status !== 'completed');
+  const pendingTicketsRaw = tickets.filter(t => t.status !== 'confirmed' && t.picking_status !== 'completed');
+  const pendingTickets = activeBoardFilter === 'ALL' 
+    ? pendingTicketsRaw 
+    : pendingTicketsRaw.filter(t => (t.board_category || 'UNSET') === activeBoardFilter);
   const completedTickets = tickets.filter(t => t.status === 'confirmed' || t.picking_status === 'completed');
   const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
 
-  // Ticket card renderer
-  const renderTicket = (t, showEdit = true) => {
-    const sizes = t.sizes || {};
-    const sizeLocs = t.size_locations || {};
+  // New ticket card renderer (Premium Kanban style)
+  const renderTicket = (ticket, showEdit = true) => {
+    const sizes = ticket.sizes || {};
+    const sizeLocs = ticket.size_locations || {};
     const hasSizes = Object.values(sizes).some(v => v > 0);
-    const pickedSizes = t.picked_sizes || {};
+    const pickedSizes = ticket.picked_sizes || {};
     const totalReq = Object.values(sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
     const totalPkd = Object.values(pickedSizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
     const pct = totalReq > 0 ? Math.round((totalPkd / totalReq) * 100) : 0;
+    
+    const statusColors = {
+      'pending': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+      'in_progress': 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+      'completed': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+      'confirmed': 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+    };
+
+    const currentStatus = t.picking_status === 'completed' ? 'completed' : t.picking_status || 'pending';
+
     return (
-      <div key={t.ticket_id} className="border border-border rounded-lg p-3 bg-card" data-testid={`pick-${t.ticket_id}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="font-mono font-bold text-sm">{t.ticket_id}</span>
-            <span className="ml-2 text-primary font-mono text-sm">{t.order_number}</span>
-            {t.customer && <span className="ml-2 text-xs text-muted-foreground">{t.customer}</span>}
+      <div key={ticket.ticket_id} className="group border border-border/40 rounded-xl bg-card/40 hover:bg-card transition-all relative shadow-sm flex flex-col md:flex-row md:items-center justify-between p-3 gap-4" data-testid={`pick-${ticket.ticket_id}`}>
+        {/* Left Status Bar */}
+        <div className={`absolute left-0 top-0 bottom-0 w-1 ${currentStatus === 'completed' ? 'bg-emerald-500' : currentStatus === 'in_progress' ? 'bg-yellow-500' : 'bg-blue-500'}`} />
+        
+        {/* Main Info */}
+        <div className="flex-1 min-w-0 pl-2">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-mono font-black text-primary text-sm uppercase tracking-tighter truncate max-w-[120px]" title={ticket.ticket_id}>
+              {ticket.ticket_id.split('_')[1] || ticket.ticket_id}
+            </span>
+            <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest min-w-[50px] text-center">
+              #{ticket.order_number}
+            </span>
+            {!hasSizes && (
+              <span className="text-[10px] font-black uppercase bg-amber-500/20 px-2 py-0.5 rounded text-amber-400 tracking-widest border border-amber-500/20 animate-pulse">
+                {t('draft')}
+              </span>
+            )}
+            <select
+              value={ticket.blank_status || ''}
+              onChange={(e) => handleQuickStatus(ticket.ticket_id, e.target.value)}
+              className={`bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest leading-none border-none focus:ring-0 cursor-pointer text-center text-ellipsis max-w-[120px] shadow-sm hover:shadow active:scale-95 transition-all ${!ticket.blank_status ? 'opacity-50' : ''}`}
+              onClick={e => e.stopPropagation()}
+            >
+              <option value="">- {t('status')} -</option>
+              {Array.from(new Set(['PENDIENTE', 'PARTIAL', 'ACTIVO', 'PICK TICKET READY', 'CONTADO/PICKED', 'COMPLETO', 'ORDENADO', ticket.blank_status])).filter(Boolean).map(st => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </select>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-xs px-2 py-0.5 rounded-full ${t.status === 'confirmed' ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'}`}>{t.status}</span>
-            {t.assigned_to_name && <span className="text-xs bg-purple-500/15 text-purple-400 px-2 py-0.5 rounded-full">{t.assigned_to_name}</span>}
-            {t.picking_status && t.picking_status !== 'unassigned' && <span className={`text-xs px-2 py-0.5 rounded-full ${t.picking_status === 'completed' ? 'bg-green-500/15 text-green-400' : t.picking_status === 'in_progress' ? 'bg-yellow-500/15 text-yellow-400' : 'bg-blue-500/15 text-blue-400'}`}>{t.picking_status}</span>}
-            <button onClick={() => handlePrint(t)} className="p-1 text-muted-foreground hover:text-foreground" title="Imprimir" data-testid={`pick-print-${t.ticket_id}`}><Printer className="w-3.5 h-3.5" /></button>
-            {showEdit && t.status !== 'confirmed' && t.picking_status !== 'completed' && (
-              <button onClick={() => openEdit(t)} className="p-1 text-muted-foreground hover:text-primary" title="Editar" data-testid={`pick-edit-${t.ticket_id}`}><Edit3 className="w-3.5 h-3.5" /></button>
-            )}
-            {t.status === 'pending' && t.picking_status !== 'completed' && (
-              <button onClick={() => handleConfirm(t)} className="px-2 py-0.5 bg-green-600 text-white rounded text-xs flex items-center gap-1" data-testid={`pick-confirm-${t.ticket_id}`}><CheckCircle className="w-3 h-3" /> Confirmar</button>
-            )}
+          <div className="text-xs font-bold text-foreground flex items-center gap-2 truncate">
+            {ticket.customer || t('no_client')}
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
+            <span className="text-muted-foreground uppercase text-[10px] tracking-widest truncate">{ticket.style}</span>
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">{new Date(ticket.created_at).toLocaleDateString()}</span>
           </div>
         </div>
-        {/* Progress bar */}
-        {totalReq > 0 && (
-          <div className="flex items-center gap-2 mt-1.5">
-            <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-              <div className={`h-full rounded-full ${pct === 100 ? 'bg-green-500' : pct > 0 ? 'bg-yellow-500' : 'bg-gray-500'}`} style={{ width: `${pct}%` }} />
-            </div>
-            <span className="text-xs text-muted-foreground">{totalPkd}/{totalReq} ({pct}%)</span>
+
+        {/* Progress */}
+        <div className="hidden md:block w-32 shrink-0">
+          <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-1">
+            <span>{currentStatus.replace('_', ' ')}</span>
+            <span>{pct}%</span>
           </div>
-        )}
-        {hasSizes && (
-          <div className="mt-2">
-            <div className="flex flex-wrap gap-1 mb-1">
-              {t.manufacturer && <span className="text-xs bg-secondary px-2 py-0.5 rounded">{t.manufacturer}</span>}
-              {t.style && <span className="text-xs bg-secondary px-2 py-0.5 rounded font-mono">{t.style}</span>}
-              {t.color && <span className="text-xs bg-secondary px-2 py-0.5 rounded">{t.color}</span>}
-              <span className="text-xs font-bold px-2 py-0.5">Total: {t.total_pick_qty || 0}</span>
-            </div>
-            <div className="space-y-0.5">
-              {SIZES_ORDER.filter(sz => sizes[sz] > 0).map(sz => {
-                const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
-                return (
-                  <div key={sz} className="flex items-center gap-2 text-xs bg-secondary/50 px-2 py-1 rounded">
-                    <span className="font-bold w-8">{sz}</span>
-                    <span className="font-mono text-primary w-12">{sizes[sz]}</span>
-                    {pickedSizes[sz] > 0 && <span className="text-green-400 font-mono w-16">picked: {pickedSizes[sz]}</span>}
-                    <div className="flex flex-wrap gap-1 flex-1">
-                      {locs.map((l, i) => <span key={i} className="font-mono text-xs bg-primary/10 text-primary px-1 py-0.5 rounded">{l.location} ({l.available})</span>)}
-                      {locs.length === 0 && <span className="text-muted-foreground">Sin ubicacion</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="h-1.5 bg-black/20 rounded-full overflow-hidden shadow-inner">
+            <div className={`h-full rounded-full transition-all duration-1000 ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
           </div>
-        )}
+          <div className="text-[10px] font-bold text-center mt-1">
+            {totalPkd} / {totalReq} {t('units')}
+          </div>
+        </div>
+
+        {/* Assignee */}
+        <div className="hidden md:flex w-32 shrink-0 text-[10px] font-black bg-secondary/50 rounded-lg justify-center items-center overflow-hidden border border-transparent hover:border-border/30 transition-all group/assign shadow-inner hover:shadow-md">
+          <Package className="w-3 h-3 text-indigo-400 ml-2 flex-shrink-0" />
+          <select 
+            value={ticket.assigned_to || ''} 
+            onChange={(e) => handleQuickAssign(ticket.ticket_id, e.target.value)}
+            className="w-full bg-transparent border-none text-[10px] font-black uppercase text-indigo-400 focus:ring-0 p-1.5 cursor-pointer truncate"
+            onClick={e => e.stopPropagation()}
+          >
+            <option value="" className="text-muted-foreground">{t('unassigned')}</option>
+            {operators.map(op => (
+              <option key={op.email} value={op.user_id || op.email}>
+                {op.name ? op.name.split(' ')[0] : op.email.split('@')[0]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-1 shrink-0 md:border-l md:border-border/20 md:pl-3">
+          <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title={t('print')}><Printer className="w-4 h-4" /></button>
+          {showEdit && currentStatus !== 'completed' && (
+            <button onClick={() => openEdit(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title="Editar / Ver Tallas"><Edit3 className="w-4 h-4" /></button>
+          )}
+          {ticket.status === 'pending' && currentStatus !== 'completed' && (
+            <button onClick={() => handleConfirm(ticket)} className="px-2 py-1 bg-emerald-500 text-black text-[9px] font-black uppercase rounded hover:bg-emerald-400 transition-all shadow-sm ml-1">OK</button>
+          )}
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Picking</h2>
+        <div className="flex items-center gap-2 bg-secondary/30 p-1 rounded-2xl border border-border/20">
+          {[
+            { id: 'pending', label: t('wms_picking_pending'), icon: ClipboardList, count: pendingTickets.length },
+            { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedTickets.length },
+            { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
+          ].map(tab => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button 
+                key={tab.id} 
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all
+                  ${active ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              >
+                <Icon className="w-4 h-4" />
+                {tab.label}
+                {tab.count !== undefined && (
+                  <span className={`px-1.5 py-0.5 rounded-md text-[9px] ${active ? 'bg-black/10' : 'bg-secondary'}`}>
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => { resetForm(); setShowForm(true); }} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-pick-btn">
-            <Plus className="w-4 h-4" /> Nuevo Pick Ticket
+          {activeTab === 'pending' && (
+            <div className="flex items-center bg-secondary/30 rounded-xl p-1 border border-border/20 mr-2">
+              {[t('all'), 'SCHEDULING', 'BLANKS'].map(board => {
+                const val = (board === 'TODOS' || board === 'ALL' || board === t('all')) ? 'ALL' : board;
+                const isActive = activeBoardFilter === val;
+                return (
+                  <button 
+                    key={board}
+                    onClick={() => setActiveBoardFilter(val)}
+                    className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${isActive ? 'bg-primary text-black shadow' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+                  >
+                    {board}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <button 
+            onClick={() => { resetForm(); setShowForm(true); }} 
+            className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
+            data-testid="new-pick-btn"
+          >
+            <Plus className="w-5 h-5" /> {t('wms_new_pick')}
           </button>
         </div>
-      </div>
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {[
-          { id: 'pending', label: `Pendientes (${pendingTickets.length})` },
-          { id: 'completed', label: `Completadas (${completedTickets.length})` },
-          { id: 'dashboard', label: 'Dashboard' }
-        ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-            data-testid={`pick-tab-${tab.id}`}>{tab.label}</button>
-        ))}
       </div>
       {/* Form (create/edit) */}
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="pick-form">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-bold text-foreground">{editingTicket ? `Editando: ${editingTicket.ticket_id}` : 'Nuevo Pick Ticket'}</span>
+            <span className="text-sm font-bold text-foreground">{editingTicket ? `${t('wms_editing')} ${editingTicket.ticket_id}` : t('wms_new_pick')}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">PO / Orden</label>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">PO / {t('order')}</label>
               {editingTicket ? (
                 <input value={form.order_number} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" data-testid="pick-order-select" />
               ) : (
@@ -1041,7 +1191,7 @@ const PickingModule = () => {
                   options={orders.map(o => `${o.order_number}${o.client ? ` - ${o.client}` : ''}`)}
                   value={form.order_number}
                   onChange={(val) => { const num = val.split(' - ')[0].trim(); handleOrderLookup(num); }}
-                  placeholder="Buscar o escribir orden..."
+                  placeholder={t('wms_search_order')}
                   allowCreate={true}
                   testId="pick-order-select"
                 />
@@ -1049,45 +1199,45 @@ const PickingModule = () => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder="Buscar customer..." testId="pick-customer" />
+              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Asignar Operador</label>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_assign_op')}</label>
               <select value={form.assigned_to} onChange={e => {
                 const op = operators.find(o => o.user_id === e.target.value || o.email === e.target.value);
                 setForm(p => ({ ...p, assigned_to: e.target.value, assigned_to_name: op ? (op.name || op.email) : '' }));
               }} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="pick-operator-select">
-                <option value="">Sin asignar</option>
+                <option value="">{t('unassigned')}</option>
                 {operators.map(op => <option key={op.user_id || op.email} value={op.user_id || op.email}>{op.name || op.email}</option>)}
               </select>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Quantity (auto)</label>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_qty_auto')}</label>
               <input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="pick-qty" />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Manufacturer</label>
-              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder="Buscar manufacturer..." testId="pick-manufacturer" />
-              {!form.customer && <div className="text-xs text-muted-foreground mt-0.5">Selecciona orden primero</div>}
+              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="pick-manufacturer" />
+              {!form.customer && <div className="text-xs text-muted-foreground mt-0.5">{t('select_order_first')}</div>}
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder="Buscar style..." testId="pick-style" />
+              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder="Buscar color..." testId="pick-color" />
-              {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">Selecciona para ver ubicaciones</div>}
+              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" />
+              {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('select_color_to_see_locs')}</div>}
             </div>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Cantidades por Size + Ubicaciones</div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_size_locs')}</div>
           <div className="overflow-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-xs uppercase text-muted-foreground"><th className="p-1 text-center w-16">Size</th><th className="p-1 text-center w-20">Qty</th><th className="p-1 text-left">Ubicacion(es)</th><th className="p-1 text-right w-20">Disponible</th></tr></thead>
+              <thead><tr className="text-xs uppercase text-muted-foreground"><th className="p-1 text-center w-16">{t('size')}</th><th className="p-1 text-center w-20">{t('qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('available')}</th></tr></thead>
               <tbody>
                 {SIZES_ORDER.map(sz => (
                   <tr key={sz} className="border-b border-border/50">
@@ -1096,7 +1246,7 @@ const PickingModule = () => {
                     <td className="p-1">
                       {(sizeLocations[sz]?.locations || []).length > 0 ? (
                         <div className="flex flex-wrap gap-1">{(sizeLocations[sz]?.locations || []).slice(0, 4).map((l, i) => <span key={i} className="text-xs font-mono bg-primary/15 text-primary px-1.5 py-0.5 rounded" title={`${l.available} units`}>{l.location} ({l.available})</span>)}{(sizeLocations[sz]?.locations || []).length > 4 && <span className="text-xs text-muted-foreground">+{(sizeLocations[sz]?.locations || []).length - 4}</span>}</div>
-                      ) : (<span className="text-xs text-muted-foreground">{form.style ? 'Sin ubicacion' : '-'}</span>)}
+                      ) : (<span className="text-xs text-muted-foreground">{form.style ? t('wms_no_loc') : '-'}</span>)}
                     </td>
                     <td className="p-1 text-right font-mono text-xs text-green-400">{getTotalAvail(sz) > 0 ? getTotalAvail(sz).toLocaleString() : '-'}</td>
                   </tr>
@@ -1104,70 +1254,113 @@ const PickingModule = () => {
               </tbody>
             </table>
           </div>
-          <div className="text-right font-bold text-sm">Total Pick: {totalPick} units</div>
+          <div className="text-right font-bold text-sm">{t('wms_total_pick', { count: totalPick })}</div>
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="pick-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingTicket ? 'Guardar Cambios' : 'Crear Pick Ticket'}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingTicket ? t('save_view') : t('wms_new_pick')}
             </button>
-            <button onClick={resetForm} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">Cancelar</button>
+            <button onClick={resetForm} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
         </div>
       )}
       {/* Tab Content */}
       {activeTab === 'pending' && (
-        <div className="space-y-2" data-testid="pick-pending-list">
-          {pendingTickets.map(t => renderTicket(t))}
-          {pendingTickets.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay pick tickets pendientes</div>}
+        <div className="space-y-8" data-testid="pick-pending-list">
+          {Object.entries(
+            pendingTickets.reduce((acc, ticket) => {
+              const cat = ticket.board_category || 'UNSET';
+              if (!acc[cat]) acc[cat] = [];
+              acc[cat].push(ticket);
+              return acc;
+            }, {})
+          ).map(([category, tickets]) => (
+            <div key={category} className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-[1px] flex-1 bg-border/40" />
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/20 shadow-sm">
+                  {category}
+                </span>
+                <div className="h-[1px] flex-1 bg-border/40" />
+              </div>
+              <div className="flex flex-col gap-2">
+                {tickets.map(ticket => renderTicket(ticket))}
+              </div>
+            </div>
+          ))}
+          {pendingTickets.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+              <ClipboardList className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_pending_picks')}</p>
+              <p className="text-xs mt-1">{t('wms_all_picked_hint')}</p>
+            </div>
+          )}
         </div>
       )}
       {activeTab === 'completed' && (
-        <div className="space-y-3" data-testid="pick-completed-list">
-          <div className="flex items-center gap-3">
-            <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="pick-filter-operator">
-              <option value="">Todos los operadores</option>
-              {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
-            </select>
-            <span className="text-xs text-muted-foreground">{filteredCompleted.length} completadas</span>
+        <div className="space-y-6">
+          <div className="flex items-center gap-3 bg-card p-4 rounded-2xl border border-border/20 shadow-lg">
+            <div className="p-2 bg-indigo-500/10 rounded-xl">
+              <Plus className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1 block">{t('wms_filter_op')}</label>
+              <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0" data-testid="pick-filter-operator">
+                <option value="">{t('wms_all_ops')}</option>
+                {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
+              </select>
+            </div>
+            <div className="px-4 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground uppercase tracking-widest">
+              {filteredCompleted.length} {t('completed')}
+            </div>
           </div>
-          <div className="space-y-2">
-            {filteredCompleted.map(t => renderTicket(t, false))}
-            {filteredCompleted.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay tickets completados</div>}
+          <div className="flex flex-col gap-2" data-testid="pick-completed-list">
+            {filteredCompleted.map(ticket => renderTicket(ticket, false))}
           </div>
+          {filteredCompleted.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+              <CheckCircle className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_completed_tickets')}</p>
+            </div>
+          )}
         </div>
       )}
       {activeTab === 'dashboard' && stats && (
-        <div className="space-y-4" data-testid="pick-dashboard">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-card border border-border rounded-lg p-4 text-center">
-              <div className="text-2xl font-bold text-foreground">{stats.total_tickets}</div>
-              <div className="text-xs text-muted-foreground uppercase">Total Tickets</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-4 text-center">
-              <div className="text-2xl font-bold text-green-400">{stats.completed}</div>
-              <div className="text-xs text-muted-foreground uppercase">Completados</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-4 text-center">
-              <div className="text-2xl font-bold text-yellow-400">{stats.in_progress}</div>
-              <div className="text-xs text-muted-foreground uppercase">En Progreso</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-4 text-center">
-              <div className="text-2xl font-bold text-blue-400">{stats.pending}</div>
-              <div className="text-xs text-muted-foreground uppercase">Pendientes</div>
-            </div>
+        <div className="space-y-8" data-testid="pick-dashboard">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { key: 'wms_kpi_total_tickets', val: stats.total_tickets, color: 'text-indigo-400', bg: 'bg-indigo-500/10', icon: ClipboardList },
+              { key: 'wms_kpi_completed', val: stats.completed, color: 'text-emerald-400', bg: 'bg-emerald-500/10', icon: CheckCircle },
+              { key: 'wms_kpi_in_progress', val: stats.in_progress, color: 'text-yellow-400', bg: 'bg-yellow-500/10', icon: Loader2 },
+              { key: 'wms_kpi_pending', val: stats.pending, color: 'text-blue-400', bg: 'bg-blue-500/10', icon: History },
+            ].map(s => {
+              const Icon = s.icon;
+              return (
+                <div key={s.label} className="bg-card/60 backdrop-blur-sm border border-border/40 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
+                  <div className={`absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity`}>
+                    <Icon className="w-16 h-16" />
+                  </div>
+                  <div className={`w-10 h-10 rounded-2xl ${s.bg} flex items-center justify-center mb-4`}>
+                    <Icon className={`w-5 h-5 ${s.color} ${s.key.includes('progress') ? 'animate-spin-slow' : ''}`} />
+                  </div>
+                  <div className={`text-3xl font-black tabular-nums tracking-tighter ${s.color}`}>{s.val}</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-1">{t(s.key)}</div>
+                </div>
+              );
+            })}
           </div>
-          <h3 className="text-sm font-bold text-foreground uppercase">Productividad por Operador</h3>
+          <h3 className="text-sm font-bold text-foreground uppercase">{t('wms_prod_per_op')}</h3>
           {stats.operators.length > 0 ? (
             <div className="overflow-auto">
               <table className="w-full text-sm">
                 <thead className="bg-secondary">
                   <tr>
-                    <th className="p-2 text-left text-xs uppercase text-muted-foreground">Operador</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">Completados</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">En Progreso</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">Asignados</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">Piezas Totales</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">Piezas Surtidas</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">% Eficiencia</th>
+                    <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('name')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_completed')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_progress')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_assigned')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_total_pcs')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_picked_pcs')}</th>
+                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_efficiency')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1194,7 +1387,7 @@ const PickingModule = () => {
               </table>
             </div>
           ) : (
-            <div className="text-center text-muted-foreground text-sm py-8">No hay datos de operadores</div>
+            <div className="text-center text-muted-foreground text-sm py-8">{t('no_operator_data')}</div>
           )}
         </div>
       )}
@@ -1202,113 +1395,27 @@ const PickingModule = () => {
   );
 };
 
-// ==================== PRODUCTION MODULE ====================
-const ProductionModule = () => {
-  const [boxes, setBoxes] = useState([]);
-  const [stateFilter, setStateFilter] = useState('');
-  const [selected, setSelected] = useState(new Set());
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(() => {
-    const params = stateFilter ? `?state=${stateFilter}` : '';
-    fetcher(`/boxes${params ? params : '?status=stored'}`).then(data => {
-      if (stateFilter) setBoxes(data.filter(b => b.state === stateFilter));
-      else setBoxes(data.filter(b => ['raw', 'wip', 'finished'].includes(b.state)));
-    }).catch(() => {});
-  }, [stateFilter]);
-  useEffect(() => { load(); }, [load]);
-
-  const toggleSelect = (id) => setSelected(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const selectAll = () => setSelected(boxes.length === selected.size ? new Set() : new Set(boxes.map(b => b.box_id)));
-
-  const handleMove = async (targetState) => {
-    if (selected.size === 0) { toast.error('Selecciona al menos una caja'); return; }
-    setLoading(true);
-    try {
-      const res = await poster('/production/move', { box_ids: [...selected], target_state: targetState });
-      if (res.ok) { const data = await res.json(); toast.success(`${data.moved?.length || 0} cajas movidas a ${targetState.toUpperCase()}`); setSelected(new Set()); load(); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Production</h2>
-        <div className="flex gap-2">
-          {['', 'raw', 'wip', 'finished'].map(s => (
-            <button key={s} onClick={() => { setStateFilter(s); setSelected(new Set()); }} className={`px-3 py-1 rounded text-xs ${stateFilter === s ? 'bg-primary text-primary-foreground' : 'bg-secondary text-foreground'}`}>
-              {s === '' ? 'All' : s.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      </div>
-      {selected.size > 0 && (
-        <div className="flex items-center gap-2 p-2 bg-primary/10 border border-primary/20 rounded-lg" data-testid="production-actions">
-          <span className="text-sm font-medium">{selected.size} seleccionadas</span>
-          <button onClick={() => handleMove('wip')} disabled={loading} className="px-3 py-1 bg-yellow-600 text-white rounded text-xs flex items-center gap-1 disabled:opacity-50" data-testid="move-wip-btn">
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Factory className="w-3 h-3" />} Mover a WIP
-          </button>
-          <button onClick={() => handleMove('finished')} disabled={loading} className="px-3 py-1 bg-green-600 text-white rounded text-xs flex items-center gap-1 disabled:opacity-50" data-testid="move-finished-btn">
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />} Mover a FINISHED
-          </button>
-        </div>
-      )}
-      <div className="overflow-auto max-h-[500px]">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary sticky top-0">
-            <tr>
-              <th className="p-2 text-left"><input type="checkbox" checked={boxes.length > 0 && selected.size === boxes.length} onChange={selectAll} className="rounded" /></th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Box ID</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">SKU</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Color</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Size</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Units</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">State</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Location</th>
-            </tr>
-          </thead>
-          <tbody>
-            {boxes.map(b => (
-              <tr key={b.box_id} className={`border-b border-border hover:bg-secondary/50 ${selected.has(b.box_id) ? 'bg-primary/10' : ''}`}>
-                <td className="p-2"><input type="checkbox" checked={selected.has(b.box_id)} onChange={() => toggleSelect(b.box_id)} className="rounded" /></td>
-                <td className="p-2 font-mono font-bold text-primary">{b.box_id}</td>
-                <td className="p-2">{b.sku}</td>
-                <td className="p-2">{b.color}</td>
-                <td className="p-2">{b.size}</td>
-                <td className="p-2">{b.units}</td>
-                <td className="p-2"><span className={`text-xs px-2 py-0.5 rounded-full ${b.state === 'finished' ? 'bg-green-500/15 text-green-400' : b.state === 'wip' ? 'bg-yellow-500/15 text-yellow-400' : 'bg-blue-500/15 text-blue-400'}`}>{b.state}</span></td>
-                <td className="p-2 text-muted-foreground">{b.location || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay cajas en produccion</div>}
-      </div>
-    </div>
-  );
-};
 
 // ==================== FINISHED GOODS MODULE ====================
 const FinishedGoodsModule = () => {
+  const { t } = useLang();
   const [boxes, setBoxes] = useState([]);
   const load = useCallback(() => { fetcher('/finished-goods').then(setBoxes).catch(() => {}); }, []);
   useEffect(() => { load(); }, [load]);
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-bold text-foreground">Finished Goods</h2>
-      <div className="text-sm text-muted-foreground mb-2">{boxes.length} cajas terminadas / {boxes.reduce((s, b) => s + (b.units || 0), 0)} units total</div>
+      <h2 className="text-lg font-bold text-foreground">{t('finished_goods')}</h2>
+      <div className="text-sm text-muted-foreground mb-2">{boxes.length} {t('wms_boxes')} {t('wms_prod_finished').toLowerCase()} / {boxes.reduce((s, b) => s + (b.units || 0), 0)} {t('wms_units')}</div>
       <div className="overflow-auto max-h-[500px]">
         <table className="w-full text-sm">
           <thead className="bg-secondary sticky top-0">
             <tr>
               <th className="p-2 text-left text-xs uppercase text-muted-foreground">Box ID</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">SKU</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Color</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Size</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Units</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Location</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_sku')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_color')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_size')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_units')}</th>
+              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('location')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1324,134 +1431,99 @@ const FinishedGoodsModule = () => {
             ))}
           </tbody>
         </table>
-        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay finished goods</div>}
+        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('no_finished_goods')}</div>}
       </div>
     </div>
   );
 };
 
-// ==================== SHIPPING MODULE ====================
-const ShippingModule = () => {
-  const [shipments, setShipments] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [finishedBoxes, setFinishedBoxes] = useState([]);
-  const [selectedBoxes, setSelectedBoxes] = useState(new Set());
-  const [form, setForm] = useState({ order_id: '', carrier: '', tracking: '', pallet: '' });
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const loadShipments = useCallback(() => { fetcher('/shipments').then(setShipments).catch(() => {}); }, []);
-  const loadFinished = useCallback(() => { fetcher('/finished-goods').then(setFinishedBoxes).catch(() => {}); }, []);
-  const loadOrders = useCallback(() => { fetcher('/orders').then(setOrders).catch(() => {}); }, []);
-  useEffect(() => { loadShipments(); loadFinished(); loadOrders(); }, [loadShipments, loadFinished, loadOrders]);
-
-  const toggleBox = (id) => setSelectedBoxes(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  const handleSubmit = async () => {
-    if (selectedBoxes.size === 0) { toast.error('Selecciona al menos una caja'); return; }
-    setLoading(true);
-    try {
-      const res = await poster('/shipments', { ...form, box_ids: [...selectedBoxes] });
-      if (res.ok) {
-        toast.success('Envio creado'); setShowForm(false); setSelectedBoxes(new Set());
-        setForm({ order_id: '', carrier: '', tracking: '', pallet: '' });
-        loadShipments(); loadFinished();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Shipping</h2>
-        <button onClick={() => setShowForm(!showForm)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-shipment-btn">
-          <Plus className="w-4 h-4" /> Nuevo Envio
-        </button>
-      </div>
-      {showForm && (
-        <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="shipment-form">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Orden (opcional)</label>
-              <select value={form.order_id} onChange={e => setForm(p => ({ ...p, order_id: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="ship-order">
-                <option value="">Sin orden</option>
-                {orders.map(o => <option key={o.order_id} value={o.order_id}>{o.order_number} - {o.client || ''}</option>)}
-              </select>
-            </div>
-            <input placeholder="Pallet #" value={form.pallet} onChange={e => setForm(p => ({ ...p, pallet: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground mt-auto" data-testid="ship-pallet" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <input placeholder="Carrier (ej: FedEx)" value={form.carrier} onChange={e => setForm(p => ({ ...p, carrier: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="ship-carrier" />
-            <input placeholder="Tracking #" value={form.tracking} onChange={e => setForm(p => ({ ...p, tracking: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="ship-tracking" />
-          </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Cajas Terminadas Disponibles</div>
-          <div className="max-h-[200px] overflow-auto space-y-1">
-            {finishedBoxes.map(b => (
-              <div key={b.box_id} className={`flex items-center gap-2 p-2 rounded text-sm cursor-pointer border ${selectedBoxes.has(b.box_id) ? 'border-primary bg-primary/10' : 'border-border bg-card'}`} onClick={() => toggleBox(b.box_id)}>
-                <input type="checkbox" checked={selectedBoxes.has(b.box_id)} readOnly className="rounded" />
-                <span className="font-mono font-bold text-primary">{b.box_id}</span>
-                <span>{b.sku} {b.color} {b.size}</span>
-                <span className="text-muted-foreground ml-auto">{b.units} units</span>
-              </div>
-            ))}
-            {finishedBoxes.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No hay cajas terminadas disponibles</div>}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={handleSubmit} disabled={loading || selectedBoxes.size === 0} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="ship-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />} Crear Envio ({selectedBoxes.size} cajas)
-            </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">Cancelar</button>
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        {shipments.map(s => (
-          <div key={s.shipment_id} className="border border-border rounded-lg p-3 bg-card" data-testid={`ship-${s.shipment_id}`}>
-            <div className="flex items-center justify-between">
-              <span className="font-mono font-bold text-sm">{s.shipment_id}</span>
-              <span className="text-xs text-muted-foreground">{s.total_boxes} cajas / {s.total_units} units</span>
-            </div>
-            {(s.carrier || s.tracking) && <div className="text-xs mt-1 text-muted-foreground">
-              {s.carrier && <span>Carrier: {s.carrier}</span>}
-              {s.tracking && <span className="ml-2">Tracking: {s.tracking}</span>}
-            </div>}
-            <div className="text-xs text-muted-foreground mt-1">{new Date(s.created_at).toLocaleString()}</div>
-          </div>
-        ))}
-        {shipments.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay envios</div>}
-      </div>
-    </div>
-  );
-};
 
 // ==================== MOVEMENTS MODULE ====================
 const MovementsModule = () => {
+  const { t } = useLang();
   const [movements, setMovements] = useState([]);
   const [typeFilter, setTypeFilter] = useState('');
   const load = useCallback(() => { fetcher(`/movements?movement_type=${typeFilter}`).then(setMovements).catch(() => {}); }, [typeFilter]);
   useEffect(() => { load(); }, [load]);
   const types = ['', 'receiving', 'putaway', 'allocation', 'deallocate', 'pick_ticket_created', 'pick_confirmed', 'production_move', 'shipment'];
+  const typeLabels = {
+    'receiving': t('wms_mv_receiving'),
+    'putaway': t('wms_mv_putaway'),
+    'allocation': t('wms_mv_allocation'),
+    'deallocate': t('wms_mv_deallocate'),
+    'pick_ticket_created': t('wms_mv_pick_ticket_created'),
+    'pick_confirmed': t('wms_mv_pick_confirmed'),
+    'production_move': t('wms_mv_production_move'),
+    'shipment': t('wms_mv_shipment')
+  };
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-foreground">Movements (Audit Log)</h2>
-      <div className="flex gap-1 flex-wrap">
-        {types.map(t => (
-          <button key={t} onClick={() => setTypeFilter(t)} className={`px-2 py-1 rounded text-xs ${typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-secondary text-foreground'}`}>
-            {t || 'All'}
-          </button>
-        ))}
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+          {t('wms_audit_log')}
+        </div>
+        <div className="flex gap-1.5 flex-wrap p-1 bg-secondary/30 rounded-xl border border-border/10">
+          {types.map(type => (
+            <button 
+              key={type} 
+              onClick={() => setTypeFilter(type)} 
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all 
+                ${typeFilter === type ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+            >
+              {type ? (typeLabels[type] || type) : t('all')}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="space-y-1 max-h-[500px] overflow-auto">
-        {movements.map(m => (
-          <div key={m.movement_id} className="flex items-center gap-3 p-2 border-b border-border text-sm">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${{receiving:'bg-blue-500/15 text-blue-400', putaway:'bg-green-500/15 text-green-400', allocation:'bg-orange-500/15 text-orange-400', pick_confirmed:'bg-purple-500/15 text-purple-400', shipment:'bg-emerald-500/15 text-emerald-400'}[m.type] || 'bg-gray-500/15 text-gray-400'}`}>{m.type}</span>
-            <span className="flex-1 text-xs text-muted-foreground truncate">{JSON.stringify(m.details || {}).substring(0, 120)}</span>
-            <span className="text-xs text-muted-foreground whitespace-nowrap">{m.user_name}</span>
-            <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(m.created_at).toLocaleString()}</span>
+      
+      <div className="space-y-3 bg-card/60 backdrop-blur-sm border border-border/20 rounded-3xl p-6 shadow-2xl max-h-[600px] overflow-auto custom-scrollbar">
+        {movements.map((m, i) => {
+          const typeColors = {
+            'receiving': 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+            'putaway': 'text-purple-400 bg-purple-500/10 border-purple-500/20',
+            'allocation': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+            'pick_confirmed': 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+            'shipment': 'text-rose-400 bg-rose-500/10 border-rose-500/20'
+          };
+          
+          return (
+            <div key={m.movement_id || i} className="flex items-center justify-between py-3 border-b border-border/10 last:border-0 group hover:translate-x-1 transition-transform">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className={`w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0 transition-colors ${typeColors[m.type] || 'bg-secondary/50 text-muted-foreground border-border/10'}`}>
+                  <History className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-black text-foreground mb-0.5 flex items-center gap-2">
+                    <span className="text-primary font-mono">{m.box_id}</span>
+                    <span className="uppercase tracking-tighter text-[10px] opacity-40">{t('wms_moved_to_label')}</span>
+                    <span className="text-emerald-400 font-mono italic">{m.to_loc || '-'}</span>
+                  </div>
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                    {typeLabels[m.type] || m.type?.replace('_', ' ')}
+                    <span className="w-1 h-1 rounded-full bg-border" />
+                    {t('by_label')}: {m.user_name || m.user || t('wms_mv_system')}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-xs font-black text-foreground tabular-nums opacity-60">
+                  {new Date(m.created_at).toLocaleDateString()}
+                </div>
+                <div className="text-[10px] font-bold text-muted-foreground opacity-40 uppercase">
+                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {movements.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
+            <History className="w-16 h-16 mb-4 stroke-[1px]" />
+            <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_movements')}</p>
           </div>
-        ))}
-        {movements.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay movimientos</div>}
+        )}
       </div>
     </div>
   );
@@ -1460,6 +1532,7 @@ const MovementsModule = () => {
 
 // ==================== CYCLE COUNT MODULE ====================
 const CycleCountModule = () => {
+  const { t } = useLang();
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
@@ -1476,14 +1549,16 @@ const CycleCountModule = () => {
     fetcher('/inventory/options?').then(d => setOptions({ customers: d.customers || [], styles: d.styles || [] })).catch(() => {});
   }, [load]);
 
+  const toggleNewForm = () => setShowForm(!showForm);
+
   const handleCreate = async () => {
-    if (!form.name) { toast.error('Nombre requerido'); return; }
+    if (!form.name) { toast.error(t('wms_name_req')); return; }
     setLoading(true);
     try {
       const res = await poster('/cycle-counts', form);
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Conteo creado: ${data.total_lines} items`);
+        toast.success(t('wms_cc_created', { count: data.total_lines }));
         setShowForm(false);
         setForm({ name: '', location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
         load();
@@ -1496,7 +1571,7 @@ const CycleCountModule = () => {
     try {
       const data = await fetcher(`/cycle-counts/${c.count_id}`);
       setSelectedCount(data);
-    } catch { toast.error('Error al cargar conteo'); }
+    } catch { toast.error(t('wms_cc_load_err')); }
   };
 
   const saveProgress = async (countedItems) => {
@@ -1505,7 +1580,7 @@ const CycleCountModule = () => {
     try {
       const res = await putter(`/cycle-counts/${selectedCount.count_id}/count`, { counted_items: countedItems });
       if (res.ok) {
-        toast.success('Progreso guardado');
+        toast.success(t('wms_cc_saved'));
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
         load();
@@ -1515,17 +1590,17 @@ const CycleCountModule = () => {
   };
 
   const approveCount = async () => {
-    if (!selectedCount || !window.confirm('Aprobar conteo y ajustar inventario?')) return;
+    if (!selectedCount || !window.confirm(t('wms_cc_approve_conf'))) return;
     setSaving(true);
     try {
       const res = await putter(`/cycle-counts/${selectedCount.count_id}/approve`, {});
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.message);
+        toast.success(data.message || t('success'));
         setSelectedCount(null);
         load();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('error')); }
     finally { setSaving(false); }
   };
 
@@ -1534,7 +1609,7 @@ const CycleCountModule = () => {
     const lines = selectedCount.lines || [];
     const grouped = {};
     lines.forEach(l => {
-      const key = l.inv_location || 'SIN UBICACION';
+      const key = l.inv_location || t('wms_no_loc').toUpperCase();
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });
@@ -1572,16 +1647,18 @@ const CycleCountModule = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className={`text-xs px-2 py-1 rounded-full font-bold ${selectedCount.status === 'approved' ? 'bg-green-500/15 text-green-400' : selectedCount.status === 'completed' ? 'bg-blue-500/15 text-blue-400' : 'bg-yellow-500/15 text-yellow-400'}`}>{selectedCount.status}</span>
+            <span className={`text-xs px-2 py-1 rounded-full font-bold ${selectedCount.status === 'approved' ? 'bg-green-500/15 text-green-400' : selectedCount.status === 'completed' ? 'bg-blue-500/15 text-blue-400' : 'bg-yellow-500/15 text-yellow-400'}`}>
+              {selectedCount.status === 'approved' ? t('wms_status_approved') : selectedCount.status === 'completed' ? t('wms_status_completed') : t('wms_status_in_progress')}
+            </span>
             {selectedCount.assigned_to_name && <span className="text-xs bg-purple-500/15 text-purple-400 px-2 py-1 rounded-full">{selectedCount.assigned_to_name}</span>}
           </div>
         </div>
         {/* Progress */}
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-bold">Progreso: {countedLines}/{totalLines} items</span>
+            <span className="text-sm font-bold">{t('wms_cc_progress_label')} {countedLines}/{totalLines} {t('wms_cc_items')}</span>
             <div className="flex items-center gap-3">
-              {discrepancies > 0 && <span className="text-xs bg-red-500/15 text-red-400 px-2 py-1 rounded-full font-bold">{discrepancies} discrepancias</span>}
+              {discrepancies > 0 && <span className="text-xs bg-red-500/15 text-red-400 px-2 py-1 rounded-full font-bold">{discrepancies} {t('wms_cc_discrepancies')}</span>}
               <span className="text-sm font-bold">{pct}%</span>
             </div>
           </div>
@@ -1605,11 +1682,11 @@ const CycleCountModule = () => {
                       <div className="text-xs text-muted-foreground">{line.color} / {line.size}</div>
                     </div>
                     <div className="text-center w-20">
-                      <div className="text-xs text-muted-foreground">Sistema</div>
+                      <div className="text-xs text-muted-foreground">{t('wms_cc_system')}</div>
                       <div className="text-sm font-bold">{line.system_qty}</div>
                     </div>
                     <div className="w-24">
-                      <div className="text-xs text-muted-foreground">Conteo</div>
+                      <div className="text-xs text-muted-foreground">{t('wms_cc_count')}</div>
                       <input type="number" min="0" value={line.counted_qty ?? ''} onChange={e => handleInputChange(line.line_id, e.target.value)}
                         className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono font-bold"
                         disabled={selectedCount.status === 'approved'}
@@ -1632,11 +1709,11 @@ const CycleCountModule = () => {
         {selectedCount.status !== 'approved' && (
           <div className="flex gap-3 sticky bottom-0 bg-background pt-3 border-t border-border">
             <button onClick={handleSaveAll} disabled={saving} className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50" data-testid="cc-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Guardar Conteo
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {t('wms_cc_save')}
             </button>
             {selectedCount.status === 'completed' && (
               <button onClick={approveCount} disabled={saving} className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50" data-testid="cc-approve">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Aprobar y Ajustar Inventario
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} {t('wms_cc_approve')}
               </button>
             )}
           </div>
@@ -1648,74 +1725,122 @@ const CycleCountModule = () => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">Inventario Ciclico</h2>
-        <button onClick={() => setShowForm(!showForm)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-cc-btn">
-          <Plus className="w-4 h-4" /> Nuevo Conteo
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+          {t('wms_cycle_count')}
+        </div>
+        <button 
+          onClick={() => setShowForm(!showForm)} 
+          className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
+          data-testid="new-cc-btn"
+        >
+          <Plus className="w-5 h-5" /> {t('wms_new_cc')}
         </button>
       </div>
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="cc-form">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Nombre del Conteo</label>
-              <input placeholder="Ej: Conteo zona RP10" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="cc-name" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_cc_name')}</label>
+              <input placeholder={t('wms_cc_name_placeholder')} value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="cc-name" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Asignar a</label>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_assign_op')}</label>
               <select value={form.assigned_to} onChange={e => { const op = operators.find(o => (o.user_id || o.email) === e.target.value); setForm(p => ({ ...p, assigned_to: e.target.value, assigned_to_name: op ? (op.name || op.email) : '' })); }} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="cc-assign">
-                <option value="">Sin asignar</option>
+                <option value="">{t('unassigned')}</option>
                 {operators.map(op => <option key={op.user_id || op.email} value={op.user_id || op.email}>{op.name || op.email}</option>)}
               </select>
             </div>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Filtros (dejar vacio para todo)</div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_cc_filters')}</div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Ubicacion (contiene)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_cc_loc_filter')}</label>
               <input placeholder="Ej: RP10" value={form.location_filter} onChange={e => setForm(p => ({ ...p, location_filter: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="cc-loc" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Customer</label>
-              <SearchableSelect options={options.customers} value={form.customer_filter} onChange={val => setForm(p => ({ ...p, customer_filter: val }))} placeholder="Todos..." testId="cc-customer" />
+              <label className="text-xs text-muted-foreground mb-1 block">{t('client')}</label>
+              <SearchableSelect options={options.customers} value={form.customer_filter} onChange={val => setForm(p => ({ ...p, customer_filter: val }))} placeholder={t('all')} testId="cc-customer" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Style</label>
-              <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder="Todos..." testId="cc-style" />
+              <label className="text-xs text-muted-foreground mb-1 block">{t('style')}</label>
+              <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder={t('all')} testId="cc-style" />
             </div>
           </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="cc-create">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />} Crear Conteo
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />} {t('wms_create_cc')}
             </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">Cancelar</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
         </div>
       )}
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {counts.map(c => {
           const pct = c.total_lines > 0 ? Math.round((c.counted_lines / c.total_lines) * 100) : 0;
+          const statusColors = {
+            'approved': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+            'completed': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+            'in_progress': 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+          };
+          
           return (
-            <button key={c.count_id} onClick={() => openCount(c)} className="w-full text-left border border-border rounded-lg p-3 bg-card hover:border-primary/50 transition-all" data-testid={`cc-${c.count_id}`}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm">{c.name}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${c.status === 'approved' ? 'bg-green-500/15 text-green-400' : c.status === 'completed' ? 'bg-blue-500/15 text-blue-400' : c.status === 'in_progress' ? 'bg-yellow-500/15 text-yellow-400' : 'bg-gray-500/15 text-gray-400'}`}>{c.status}</span>
-                  {c.assigned_to_name && <span className="text-xs bg-purple-500/15 text-purple-400 px-2 py-0.5 rounded-full">{c.assigned_to_name}</span>}
+            <button 
+              key={c.count_id} 
+              onClick={() => openCount(c)} 
+              className="group text-left border border-border/40 rounded-3xl bg-card/60 backdrop-blur-sm hover:border-primary/40 hover:bg-card transition-all relative overflow-hidden shadow-xl" 
+              data-testid={`cc-${c.count_id}`}
+            >
+              <div className={`h-1.5 w-full ${c.status === 'approved' ? 'bg-emerald-500' : c.status === 'completed' ? 'bg-blue-500' : 'bg-yellow-500'}`} />
+              
+              <div className="p-5">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                      <ClipboardList className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest inline-block mb-1">
+                        #{c.count_id.slice(-6)}
+                      </div>
+                      <h4 className="text-xs font-black uppercase tracking-tight text-foreground truncate max-w-[120px]">{c.name}</h4>
+                    </div>
+                  </div>
+                  <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${statusColors[c.status] || 'bg-secondary text-muted-foreground border-border/20'}`}>
+                    {c.status === 'approved' ? t('wms_status_approved') : c.status === 'completed' ? t('wms_status_completed') : t('wms_status_in_progress')}
+                  </div>
                 </div>
-                <span className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full ${pct === 100 ? 'bg-green-500' : pct > 0 ? 'bg-yellow-500' : 'bg-gray-500'}`} style={{ width: `${pct}%` }} />
+
+                <div className="bg-secondary/20 rounded-2xl p-4 mb-4 border border-border/10 shadow-inner">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_cc_progress_title')}</span>
+                    <span className="text-sm font-black tabular-nums">{pct}%</span>
+                  </div>
+                  <div className="h-2 bg-black/20 rounded-full overflow-hidden shadow-inner">
+                    <div className={`h-full rounded-full transition-all duration-700 ${pct === 100 ? 'bg-emerald-500' : 'bg-primary shadow-[0_0_10px_rgba(255,193,7,0.5)]'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="mt-2 text-[10px] font-bold text-muted-foreground flex items-center justify-between">
+                    <span>{c.counted_lines} {t('of')} {c.total_lines} {t('wms_cc_items')}</span>
+                    {c.assigned_to_name && <span className="text-indigo-400 italic">@{c.assigned_to_name}</span>}
+                  </div>
                 </div>
-                <span className="text-xs text-muted-foreground">{c.counted_lines}/{c.total_lines} ({pct}%)</span>
+
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 border-t border-border/10 pt-3">
+                  <span className="flex items-center gap-1"><History className="w-3 h-3" /> {new Date(c.created_at).toLocaleDateString()}</span>
+                  {c.location_filter && <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>}
+                </div>
               </div>
-              {c.location_filter && <span className="text-xs text-muted-foreground mt-1 block">Ubicacion: {c.location_filter}</span>}
             </button>
           );
         })}
-        {counts.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">No hay conteos ciclicos</div>}
       </div>
+      {counts.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+          <Search className="w-16 h-16 mb-4 stroke-[1px]" />
+          <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_cc')}</p>
+          <p className="text-xs mt-1">{t('wms_cc_hint')}</p>
+        </div>
+      )}
     </div>
   );
 };
@@ -1725,21 +1850,52 @@ const MODULE_COMPONENTS = {
   receiving: ReceivingModule,
   putaway: PutawayModule,
   inventory: InventoryModule,
-  orders: OrdersModule,
   picking: PickingModule,
-  production: ProductionModule,
   finished: FinishedGoodsModule,
-  shipping: ShippingModule,
   movements: MovementsModule,
   cycle_count: CycleCountModule,
 };
 
 export default function WMS() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [activeModule, setActiveModule] = useState('receiving');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light-theme'));
+  const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0 });
+
+  const MODULES = [
+    { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
+    { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
+    { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
+    { id: 'picking', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400', desc: t('wms_mod_picking_desc') },
+    { id: 'finished', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400', desc: t('wms_mod_finished_desc') },
+    { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
+    { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
+  ];
+
   const ActiveComponent = MODULE_COMPONENTS[activeModule] || ReceivingModule;
+
+  const loadBadges = useCallback(async () => {
+    try {
+      const [pendingBoxes, pendingTickets, activeCounts] = await Promise.all([
+        fetcher('/boxes?status=received'),
+        fetcher('/pick-tickets?status=pending'),
+        fetcher('/cycle-counts?status=in_progress')
+      ]);
+      setBadges({
+        putaway: pendingBoxes.length || 0,
+        picking: pendingTickets.length || 0,
+        cycle_count: activeCounts.length || 0
+      });
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadBadges();
+    const interval = setInterval(loadBadges, 30000); // Actualizar cada 30s
+    return () => clearInterval(interval);
+  }, [loadBadges]);
 
   // Handle URL parameters from Home Dashboard
   useEffect(() => {
@@ -1763,43 +1919,150 @@ export default function WMS() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-background flex text-foreground">
       <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+      
       {/* Sidebar */}
-      <aside className={`${sidebarCollapsed ? 'w-14' : 'w-52'} bg-card border-r border-border flex flex-col transition-all duration-200`}>
-        <div className="p-3 border-b border-border flex items-center gap-2">
-          <button onClick={() => navigate('/dashboard')} className="p-1 rounded hover:bg-secondary" data-testid="wms-back-btn">
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+      <aside 
+        className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col transition-all duration-300 relative z-20 shadow-2xl`}
+      >
+        <div className="p-4 border-b border-border/40 flex items-center gap-3">
+          <button 
+            onClick={() => navigate('/dashboard')} 
+            className="p-1.5 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group"
+            title={t('wms_back_main')}          >
+            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
           </button>
-          {!sidebarCollapsed && <span className="font-barlow font-bold text-sm text-foreground"><Warehouse className="w-4 h-4 inline mr-1 text-primary" />WMS</span>}
-          <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="ml-auto p-1 rounded hover:bg-secondary">
-            {sidebarCollapsed ? <ChevronRight className="w-3 h-3" /> : <X className="w-3 h-3" />}
+          {!sidebarCollapsed && (
+            <div className="flex flex-col">
+              <span className="font-barlow font-black text-lg tracking-tighter flex items-center gap-1.5 italic">
+                <Warehouse className="w-5 h-5 text-primary" />
+                MOS <span className="text-primary not-italic tracking-normal ml-0.5">WMS</span>
+              </span>
+            </div>
+          )}
+          <button 
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
+            className="ml-auto p-1.5 rounded-lg hover:bg-secondary/80 text-muted-foreground transition-all"
+          >
+            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <X className="w-4 h-4" />}
           </button>
         </div>
-        <nav className="flex-1 py-2 space-y-0.5 overflow-y-auto">
+
+        <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.map(m => {
             const Icon = m.icon;
             const isActive = activeModule === m.id;
+            const badgeCount = badges[m.id] || 0;
+            
             return (
-              <button key={m.id} onClick={() => setActiveModule(m.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-all ${isActive ? 'bg-primary/15 text-primary border-r-2 border-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
-                data-testid={`wms-nav-${m.id}`} title={m.label}>
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                {!sidebarCollapsed && <span>{m.label}</span>}
+              <button 
+                key={m.id} 
+                onClick={() => setActiveModule(m.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all relative group
+                  ${isActive 
+                    ? 'bg-primary/10 text-primary shadow-[0_0_15px_rgba(255,193,7,0.1)]' 
+                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
+                data-testid={`wms-nav-${m.id}`} 
+                title={m.label}
+              >
+                <div className={`p-1.5 rounded-lg transition-all ${isActive ? 'bg-primary/20 shadow-inner' : 'group-hover:bg-secondary'}`}>
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
+                </div>
+                
+                {!sidebarCollapsed && (
+                  <div className="flex flex-col items-start min-w-0 flex-1">
+                    <span className={`text-[13px] font-bold uppercase tracking-wide leading-none ${isActive ? 'text-primary' : ''}`}>
+                      {m.label}
+                    </span>
+                    {isActive && (
+                      <span className="text-[10px] text-muted-foreground truncate w-full mt-0.5 font-medium italic opacity-70">
+                        {t('wms_viewing_now')}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {!sidebarCollapsed && badgeCount > 0 && (
+                  <span className="bg-primary text-black text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[20px] shadow-[0_0_10px_rgba(255,193,7,0.5)]">
+                    {badgeCount}
+                  </span>
+                )}
+
+                {sidebarCollapsed && badgeCount > 0 && (
+                  <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-primary rounded-full shadow-[0_0_5px_rgba(255,193,7,0.8)] border-2 border-card" />
+                )}
+
+                {isActive && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-2/3 bg-primary rounded-r-full shadow-[2px_0_10px_rgba(255,193,7,0.5)]" />
+                )}
               </button>
             );
           })}
         </nav>
-        <div className="p-2 border-t border-border">
-          <button onClick={toggleTheme} className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded transition-all" data-testid="wms-theme-toggle" title={isDark ? 'Modo claro' : 'Modo oscuro'}>
-            {isDark ? <Sun className="w-4 h-4 flex-shrink-0" /> : <Moon className="w-4 h-4 flex-shrink-0" />}
-            {!sidebarCollapsed && <span>{isDark ? 'Modo Claro' : 'Modo Oscuro'}</span>}
+
+        <div className="p-3 border-t border-border/40 space-y-2">
+          {!sidebarCollapsed && (
+            <div className="bg-secondary/30 rounded-xl p-3 border border-border/20 backdrop-blur-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_5px_rgba(34,197,94,0.5)]" />
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t('wms_status')}</span>
+              </div>
+              <div className="text-[11px] font-medium text-foreground opacity-80">{t('wms_terminal')}</div>
+              <div className="text-[11px] font-medium text-foreground opacity-80 uppercase">{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+            </div>
+          )}
+          
+          <button 
+            onClick={toggleTheme} 
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary/10 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all group border border-border/20"
+            data-testid="wms-theme-toggle"
+          >
+            {isDark ? <Sun className="w-5 h-5 text-primary animate-spin-slow" /> : <Moon className="w-5 h-5 text-indigo-400" />}
+            {!sidebarCollapsed && <span className="text-xs font-bold">{isDark ? t('light_mode') : t('dark_mode')}</span>}
           </button>
         </div>
       </aside>
+
       {/* Main Content */}
-      <main className="flex-1 p-6 overflow-auto">
-        <ActiveComponent />
+      <main className="flex-1 overflow-auto custom-scrollbar relative">
+        {/* Module Header Overlay */}
+        <div className="sticky top-0 z-10 p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
+          {(() => {
+            const m = MODULES.find(mod => mod.id === activeModule);
+            const Icon = m?.icon || Package;
+            return (
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={`p-3 rounded-2xl bg-card border border-border/40 shadow-xl ${m?.color || 'text-primary'}`}>
+                    <Icon className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h1 className="text-3xl font-black italic uppercase tracking-tighter leading-none mb-1">
+                      {m?.label}
+                    </h1>
+                    <p className="text-sm text-muted-foreground font-medium flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      {m?.desc}
+                    </p>
+                  </div>
+                </div>
+                {/* Global Stats or Date */}
+                <div className="hidden lg:flex flex-col items-end">
+                  <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground opacity-50 mb-1">{t('wms_mgmt')}</div>
+                  <div className="text-lg font-mono font-black text-foreground/80 tabular-nums">
+                    {new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Component Content */}
+        <div className="p-6 pt-2">
+          <ActiveComponent />
+        </div>
       </main>
     </div>
   );

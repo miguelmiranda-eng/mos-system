@@ -75,6 +75,44 @@ async def run_automations(trigger_type, order, user, context=None):
                 await log_activity(user, "automation_triggered", {"automation_id": automation["automation_id"], "automation_name": automation["name"], "order_id": order.get("order_id")})
         except Exception as e:
             logger.error(f"Automation error: {e}")
+            
+    # --- HARDCODED WMS AUTOMATION ---
+    if trigger_type == "create":
+        try:
+            # We use a localized import here if needed, or just call the DB directly to avoid complex router imports
+            ticket_id = f"pick_{uuid.uuid4().hex[:12]}"
+            wms_style = order.get("style") or order.get("design_num") or order.get("design_#") or ""
+            
+            total_qty = order.get("quantity") or 0
+            
+            ticket_doc = {
+                "ticket_id": ticket_id,
+                "order_number": order.get("order_number", ""),
+                "customer": order.get("client") or "Unknown",
+                "client": order.get("client") or "",
+                "color": order.get("color") or "",
+                "quantity": total_qty,
+                "style": wms_style,
+                "sizes": order.get("sizes") or {},
+                "size_locations": {},
+                "total_pick_qty": total_qty,
+                "status": "pending",
+                "board_category": order.get("board", "UNSET"),
+                "blank_status": order.get("blank_status", ""),
+                "picking_status": "unassigned",
+                "assigned_to": None,
+                "assigned_to_name": None,
+                "assigned_at": None,
+                "picked_sizes": {},
+                "created_by": user.get("user_id"),
+                "created_by_name": user.get("name", "Sistema"),
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.wms_pick_tickets.insert_one(ticket_doc)
+            logger.info(f"Automatic Pick Ticket created: {ticket_id} for order {order.get('order_number')}")
+        except Exception as e:
+            logger.error(f"Error in hardcoded WMS automation: {e}")
+            
     return executed
 
 def check_conditions(conditions, order, context):

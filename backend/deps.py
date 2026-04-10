@@ -157,6 +157,8 @@ class OrderCreate(BaseModel):
     final_bill: Optional[str] = None
     screens: Optional[bool] = None
     board: Optional[str] = "SCHEDULING"
+    style: Optional[str] = None
+    sizes: Optional[Dict[str, int]] = None
     
     model_config = {
         "extra": "allow",
@@ -183,6 +185,8 @@ class OrderUpdate(BaseModel):
     trim_status: Optional[str] = None
     trim_box: Optional[str] = None
     sample: Optional[str] = None
+    style: Optional[str] = None
+    sizes: Optional[Dict[str, int]] = None
     artwork_status: Optional[str] = None
     betty_column: Optional[str] = None
     shipping: Optional[str] = None

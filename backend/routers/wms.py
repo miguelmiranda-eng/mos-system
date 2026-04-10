@@ -535,14 +535,92 @@ async def delete_allocation(allocation_id: str, request: Request):
 
 # ==================== PICK TICKETS ====================
 
+async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
+    """
+    Internal function to create a pick ticket.
+    Expected data: order_number, customer, client, manufacturer, style, color, quantity, sizes, board_category, assigned_to...
+    """
+    ticket_id = gen_id("pick")
+    order_number = data.get("order_number", "").strip()
+    style = data.get("style", "").strip()
+    
+    # Validation for manual creation might be stricter than automated skeleton
+    if not order_number:
+        raise HTTPException(400, "Numero de orden requerido")
+
+    sizes = data.get("sizes", {})
+    total_qty = sum(int(v) for v in sizes.values() if v)
+    if total_qty == 0 and data.get("quantity"):
+         total_qty = int(data.get("quantity"))
+
+    # Auto-lookup locations for each size from inventory
+    size_locations = {}
+    if style:
+        for sz, qty in sizes.items():
+            qty = int(qty) if qty else 0
+            if qty > 0:
+                inv_query = {
+                    "$or": [{"style": {"$regex": f"^{style}$", "$options": "i"}}, {"sku": {"$regex": f"^{style}$", "$options": "i"}}],
+                    "size": {"$regex": f"^{sz}$", "$options": "i"},
+                    "available": {"$gt": 0}
+                }
+                color = data.get("color", "").strip()
+                if color:
+                    inv_query["color"] = {"$regex": f"^{color}$", "$options": "i"}
+                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "inv_location": 1, "available": 1, "total_boxes": 1, "customer": 1}).sort("available", -1).to_list(50)
+                locs = [{"location": r.get("inv_location", ""), "available": r.get("available", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("inv_location")]
+                size_locations[sz] = locs
+
+    assigned_to = data.get("assigned_to", "").strip()
+    assigned_to_name = data.get("assigned_to_name", "").strip()
+
+    ticket_doc = {
+        "ticket_id": ticket_id,
+        "order_number": order_number,
+        "customer": data.get("customer", "").strip(),
+        "client": data.get("client", "").strip(),
+        "manufacturer": data.get("manufacturer", "").strip(),
+        "style": style,
+        "color": data.get("color", "").strip(),
+        "quantity": int(data.get("quantity", 0)),
+        "sizes": sizes,
+        "size_locations": size_locations,
+        "total_pick_qty": total_qty,
+        "status": "pending",
+        "board_category": data.get("board_category", "UNSET"),
+        "blank_status": data.get("blank_status", ""),
+        "picking_status": "assigned" if assigned_to else "unassigned",
+        "assigned_to": assigned_to or None,
+        "assigned_to_name": assigned_to_name or None,
+        "assigned_at": now_iso() if assigned_to else None,
+        "picked_sizes": {},
+        "created_by": user.get("user_id"),
+        "created_by_name": user.get("name", ""),
+        "created_at": now_iso()
+    }
+
+    await db.wms_pick_tickets.insert_one(ticket_doc)
+    ticket_doc.pop("_id", None)
+    
+    await log_movement(user, "pick_ticket_created", {"ticket_id": ticket_id, "order_number": order_number})
+    
+    if assigned_to:
+        await ws_manager.broadcast("ticket_assigned", {
+            "ticket_id": ticket_id,
+            "assigned_to": assigned_to,
+            "assigned_to_name": assigned_to_name,
+            "order_number": order_number,
+            "message": f"Nuevo pick ticket: {ticket_id} (PO: {order_number})"
+        })
+    
+    return ticket_doc
+
 @router.post("/move-stock")
 async def create_pick_ticket(request: Request):
     user = await require_auth(request)
     body = await request.json()
-
-    # Support direct pick ticket creation (new flow) or allocation-based
+    
     allocation_id = body.get("allocation_id", "").strip()
-
     if allocation_id:
         # Legacy allocation-based flow
         alloc = await db.wms_allocations.find_one({"allocation_id": allocation_id}, {"_id": 0})
@@ -574,79 +652,12 @@ async def create_pick_ticket(request: Request):
             "created_by_name": user.get("name", ""),
             "created_at": now_iso()
         }
+        await db.wms_pick_tickets.insert_one(ticket_doc)
+        ticket_doc.pop("_id", None)
+        await log_movement(user, "pick_ticket_created", {"ticket_id": ticket_id, "order_number": ticket_doc.get("order_number", "")})
+        return ticket_doc
     else:
-        # Direct pick ticket creation (new flow matching physical label)
-        order_number = body.get("order_number", "").strip()
-        customer = body.get("customer", "").strip()
-        client = body.get("client", "").strip()
-        manufacturer = body.get("manufacturer", "").strip()
-        style = body.get("style", "").strip()
-        color = body.get("color", "").strip()
-        quantity = int(body.get("quantity", 0))
-        sizes = body.get("sizes", {})  # { "XS": 0, "S": 216, "M": 0, ... }
-
-        if not order_number or not style:
-            raise HTTPException(400, "Numero de orden y style requeridos")
-
-        ticket_id = gen_id("pick")
-        total_qty = sum(int(v) for v in sizes.values() if v)
-
-        # Auto-lookup locations for each size from inventory
-        size_locations = {}
-        for sz, qty in sizes.items():
-            qty = int(qty) if qty else 0
-            if qty > 0:
-                inv_query = {
-                    "$or": [{"style": {"$regex": f"^{style}$", "$options": "i"}}, {"sku": {"$regex": f"^{style}$", "$options": "i"}}],
-                    "size": {"$regex": f"^{sz}$", "$options": "i"},
-                    "available": {"$gt": 0}
-                }
-                if color:
-                    inv_query["color"] = {"$regex": f"^{color}$", "$options": "i"}
-                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "inv_location": 1, "available": 1, "total_boxes": 1, "customer": 1}).sort("available", -1).to_list(50)
-                locs = [{"location": r.get("inv_location", ""), "available": r.get("available", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("inv_location")]
-                size_locations[sz] = locs
-
-        # Operator assignment (optional)
-        assigned_to = body.get("assigned_to", "").strip()
-        assigned_to_name = body.get("assigned_to_name", "").strip()
-
-        ticket_doc = {
-            "ticket_id": ticket_id,
-            "order_number": order_number,
-            "customer": customer,
-            "client": client,
-            "manufacturer": manufacturer,
-            "style": style,
-            "color": color,
-            "quantity": quantity,
-            "sizes": sizes,
-            "size_locations": size_locations,
-            "total_pick_qty": total_qty,
-            "status": "pending",
-            "picking_status": "assigned" if assigned_to else "unassigned",
-            "assigned_to": assigned_to or None,
-            "assigned_to_name": assigned_to_name or None,
-            "assigned_at": now_iso() if assigned_to else None,
-            "picked_sizes": {},
-            "created_by": user.get("user_id"),
-            "created_by_name": user.get("name", ""),
-            "created_at": now_iso()
-        }
-
-    await db.wms_pick_tickets.insert_one(ticket_doc)
-    ticket_doc.pop("_id", None)
-    await log_movement(user, "pick_ticket_created", {"ticket_id": ticket_id, "order_number": ticket_doc.get("order_number", "")})
-    # Notify operator in real-time if assigned
-    if assigned_to:
-        await ws_manager.broadcast("ticket_assigned", {
-            "ticket_id": ticket_id,
-            "assigned_to": assigned_to,
-            "assigned_to_name": assigned_to_name,
-            "order_number": order_number,
-            "message": f"Nuevo pick ticket: {ticket_id} (PO: {order_number})"
-        })
-    return ticket_doc
+        return await internal_create_picking_ticket(body, user)
 
 @router.get("/inventory/field-options")
 async def get_inventory_field_options(request: Request):
@@ -1414,3 +1425,18 @@ async def approve_cycle_count(count_id: str, request: Request):
     }})
     await log_movement(user, "cycle_count_approved", {"count_id": count_id, "adjustments": adjustments})
     return {"message": f"Conteo aprobado. {adjustments} ajustes aplicados al inventario.", "adjustments": adjustments}
+
+# ==================== QUICK INLINE UPDATES ====================
+
+@router.put("/pick-tickets/{ticket_id}/status")
+async def quick_status_update(ticket_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    if "blank_status" in body:
+        new_status = body["blank_status"]
+        await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {"blank_status": new_status}})
+        # Synchronize blank_status back to MOS orders
+        ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+        if ticket and ticket.get("order_number"):
+            await db.orders.update_one({"order_number": ticket["order_number"]}, {"$set": {"blank_status": new_status}})
+    return {"status": "ok"}

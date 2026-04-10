@@ -138,7 +138,7 @@ export const FILTER_COLUMNS = [
 export const DEFAULT_COLUMNS = [
   { key: 'order_number', label: 'Orden', type: 'text', width: 100 },
   { key: 'customer_po', label: 'Customer PO', type: 'text', width: 160 },
-  { key: 'store_po', label: 'Store PO', type: 'text', width: 160 },
+  { key: 'style', label: 'Style', type: 'text', width: 140 },
   { key: 'design_#', label: 'Design #', type: 'text', width: 140 },
   { key: 'color', label: 'Color', type: 'text', width: 140 },
   { key: 'cancel_date', label: 'Cancel Date', type: 'date', width: 150 },
