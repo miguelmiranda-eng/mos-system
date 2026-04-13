@@ -175,6 +175,23 @@ async def save_form_fields(request: Request):
     )
     return {"message": "Form fields saved"}
 
+@router.get("/home-layout")
+async def get_home_layout(request: Request):
+    await require_auth(request)
+    config = await db.config_home_layout.find_one({"config_id": "global"}, {"_id": 0})
+    return config or {}
+
+@router.put("/home-layout")
+async def save_home_layout(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    await db.config_home_layout.update_one(
+        {"config_id": "global"},
+        {"$set": {"config_id": "global", "layout": body.get("layout", []), "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    return {"message": "Home layout saved"}
+
 @router.get("/board-layout/{board_name}")
 async def get_board_layout(board_name: str, request: Request):
     user = await require_auth(request)

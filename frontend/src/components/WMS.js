@@ -1,17 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, Link2, ClipboardCheck,
   Factory, CheckCircle, History, ArrowLeft, Warehouse, Download, Plus,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
-  Sun, Moon, Home
+  Sun, Moon, Home, AlertTriangle, LayoutDashboard
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
+import InventoryDashboard from "./InventoryDashboard";
 import { useLang } from "../contexts/LanguageContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
+const AUTH_API = `${process.env.REACT_APP_BACKEND_URL}/api/auth`;
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
 const poster = (url, body) => fetch(`${API}${url}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
 const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
@@ -30,6 +32,7 @@ const ReceivingModule = () => {
     customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '',
     dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '',
+    is_bpo: false,
   });
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
@@ -101,8 +104,11 @@ const ReceivingModule = () => {
       if (res.ok) {
         const data = await res.json();
         toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
+        if (payload.is_bpo) {
+          handlePrintLabel(data);
+        }
         setShowForm(false);
-        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '' });
+        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error(t('error_connection')); }
@@ -255,6 +261,19 @@ const ReceivingModule = () => {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
+            <label className="flex items-center gap-2 cursor-pointer p-2 bg-background/50 border border-border rounded-lg group hover:border-primary/50 transition-all">
+              <input 
+                type="checkbox" 
+                checked={form.is_bpo} 
+                onChange={e => setForm(p => ({ ...p, is_bpo: e.target.checked }))}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer" 
+                data-testid="rcv-is-bpo" 
+              />
+              <div className="flex flex-col">
+                <span className="text-xs font-black uppercase tracking-widest text-foreground group-hover:text-primary transition-colors">BACK ORDER (B.O.)</span>
+                <span className="text-[9px] font-bold text-muted-foreground uppercase">{t('wms_bpo_hint') || 'Activar impresión automática'}</span>
+              </div>
+            </label>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
@@ -290,6 +309,11 @@ const ReceivingModule = () => {
                     {r.inv_location && (
                       <span className="text-[10px] font-black uppercase text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
                         <MapPin className="w-2.5 h-2.5" /> {r.inv_location}
+                      </span>
+                    )}
+                    {r.is_bpo && (
+                      <span className="text-[10px] font-black uppercase text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded flex items-center gap-1 border border-amber-500/20">
+                        B.O.
                       </span>
                     )}
                   </div>
@@ -413,6 +437,9 @@ const PutawayModule = () => {
   const [location, setLocation] = useState('');
   const [locations, setLocations] = useState([]);
   const [pendingBoxes, setPendingBoxes] = useState([]);
+  const [boxDetails, setBoxDetails] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
   const [showNewLoc, setShowNewLoc] = useState(false);
 
@@ -420,11 +447,42 @@ const PutawayModule = () => {
   const loadPending = useCallback(() => { fetcher('/boxes?status=received').then(setPendingBoxes).catch(() => {}); }, []);
   useEffect(() => { loadLocations(); loadPending(); }, [loadLocations, loadPending]);
 
+  const fetchBoxDetails = useCallback(async (id) => {
+    if (!id || id.length < 3) { setBoxDetails(null); return; }
+    setSearching(true);
+    try {
+      const res = await fetcher(`/boxes/${id}`);
+      if (res && res.box_id) setBoxDetails(res);
+      else setBoxDetails(null);
+    } catch { setBoxDetails(null); }
+    finally { setSearching(false); }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (boxId) fetchBoxDetails(boxId);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [boxId, fetchBoxDetails]);
+
   const handlePutaway = async () => {
     if (!boxId || !location) { toast.error(t('wms_box_loc_req')); return; }
-    const res = await poster('/putaway', { box_id: boxId, location });
-    if (res.ok) { toast.success(t('wms_box_located', { boxId, location })); setBoxId(''); loadPending(); }
-    else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+    setLoading(true);
+    try {
+      const payload = { box_id: boxId, location };
+      if (boxDetails && boxDetails.po) {
+        payload.po = boxDetails.po; // Enviar PO posiblemente editado
+      }
+      const res = await poster('/putaway', payload);
+      if (res.ok) { 
+        toast.success(t('wms_box_located', { boxId, location })); 
+        setBoxId(''); 
+        setBoxDetails(null);
+        loadPending(); 
+      }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+    } catch { toast.error(t('conn_error')); }
+    finally { setLoading(false); }
   };
 
   const handleCreateLoc = async () => {
@@ -451,13 +509,56 @@ const PutawayModule = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
           <div className="text-sm font-bold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-primary" /> {t('wms_scan_input')}</div>
-          <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
+          <div className="relative">
+            <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
+            {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />}
+          </div>
           <select value={location} onChange={e => setLocation(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="putaway-loc-select">
             <option value="">{t('wms_select_location')}</option>
             {locations.map(l => <option key={l.location_id} value={l.name}>{l.name} {l.zone ? `(${l.zone})` : ''}</option>)}
           </select>
-          <button onClick={handlePutaway} className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium" data-testid="putaway-submit">{t('wms_locate_btn')}</button>
+          <button 
+            onClick={handlePutaway} 
+            disabled={loading || !boxId || !location}
+            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50" 
+            data-testid="putaway-submit"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+            {t('wms_locate_btn')}
+          </button>
         </div>
+
+        {/* Box Info View */}
+        <div className="border border-border rounded-lg p-4 bg-card flex flex-col justify-center min-h-[150px]">
+          {boxDetails ? (
+            <div className="space-y-3 animate-in fade-in duration-300">
+               <div className="flex justify-between items-start">
+                 <div>
+                   <div className="text-[10px] font-black uppercase text-muted-foreground">{t('wms_label_sku')}</div>
+                   <div className="text-sm font-black text-primary">{boxDetails.sku}</div>
+                 </div>
+                 <div className="text-right">
+                   <div className="text-[10px] font-black uppercase text-muted-foreground">{t('units')}</div>
+                   <div className="text-sm font-black">{boxDetails.units}</div>
+                 </div>
+               </div>
+               <div className="p-3 bg-secondary/50 rounded-xl border border-border/20">
+                 <label className="text-[9px] font-black uppercase text-blue-400 block mb-1">PO / ORDER (Editable)</label>
+                 <input 
+                   value={boxDetails.po || ''} 
+                   onChange={e => setBoxDetails(p => ({ ...p, po: e.target.value }))}
+                   className="w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                 />
+               </div>
+            </div>
+          ) : (
+            <div className="text-center opacity-30 italic text-xs">
+              <Box className="w-8 h-8 mx-auto mb-2 opacity-20" />
+              {t('wms_scan_hint') || 'Escanea una caja para ver detalles'}
+            </div>
+          )}
+        </div>
+      </div>
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-bold text-foreground flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> {t('wms_locations')} ({locations.length})</div>
@@ -474,15 +575,14 @@ const PutawayModule = () => {
             {locations.map(l => (
               <div key={l.location_id} className="flex items-center justify-between px-2 py-1 text-xs bg-secondary/50 rounded">
                 <span className="font-mono font-medium">{l.name}</span>
-<span className="font-mono font-medium">{l.name}</span>
                 <span className="text-muted-foreground">{l.zone}</span>
               </div>
             ))}
           </div>
         </div>
-      </div>
-      <div className="border border-border/20 rounded-3xl p-6 bg-card/40 backdrop-blur-sm shadow-xl space-y-4">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60 flex items-center gap-2">
+
+        <div className="border border-border/20 rounded-3xl p-6 bg-card/40 backdrop-blur-sm shadow-xl space-y-4">
+          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60 flex items-center gap-2">
           <Package className="w-4 h-4" /> {t('wms_unlocated_mat')}
         </div>
         <div className="space-y-2 max-h-[400px] overflow-auto custom-scrollbar pr-2 font-mono">
@@ -518,6 +618,7 @@ const InventoryModule = () => {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [importing, setImporting] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [groupByCustomer, setGroupByCustomer] = useState(false);
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(() => {}); }, []);
   const load = useCallback(() => {
@@ -622,11 +723,20 @@ const InventoryModule = () => {
           data-testid="inv-toggle-filters"
         >
           <ScanLine className="w-4 h-4" /> 
-          {t('filters')}          {(customerFilter || categoryFilter) && (
+          {t('filters')}
+          {(customerFilter || categoryFilter) && (
             <span className="bg-black/10 px-2 py-0.5 rounded-lg text-[10px]">
               {[customerFilter, categoryFilter].filter(Boolean).length}
             </span>
           )}
+        </button>
+        <button 
+          onClick={() => setGroupByCustomer(!groupByCustomer)} 
+          className={`px-4 py-2.5 border border-border/40 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center gap-2 transition-all ${groupByCustomer ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground'}`} 
+          data-testid="inv-toggle-group"
+        >
+          <Package className="w-4 h-4" /> 
+          {groupByCustomer ? t('wms_ungroup') || 'Desagrupar' : t('wms_group_cust') || 'Agrupar Cliente'}
         </button>
       </div>
       {showFilters && (
@@ -667,28 +777,73 @@ const InventoryModule = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/10">
-              {inventory.map((inv, i) => (
-                <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
-                  <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
-                  <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
-                  <td className="p-4 text-[11px] font-bold">
-                    <span className="text-foreground">{inv.color}</span>
-                    <span className="mx-1 opacity-20">|</span>
-                    <span className="text-primary">{inv.size}</span>
-                  </td>
-                  <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
-                  <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
-                    {inv.inv_location || '-'}
-                  </td>
-                  <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
-                  <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
-                  <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
-                  <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
-                    {(inv.available || 0).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
+              {groupByCustomer ? (
+                Object.entries(
+                  inventory.reduce((acc, inv) => {
+                    const cust = inv.customer || t('no_client');
+                    if (!acc[cust]) acc[cust] = [];
+                    acc[cust].push(inv);
+                    return acc;
+                  }, {})
+                ).map(([customer, items]) => (
+                  <Fragment key={customer}>
+                    <tr className="bg-secondary/30">
+                      <td colSpan="9" className="p-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
+                          <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
+                          <span className="text-[10px] font-bold text-muted-foreground ml-2">({items.length} SKUs)</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {items.map((inv, i) => (
+                      <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
+                        <td className="p-4 text-[11px] font-bold text-muted-foreground/80 opacity-40">{inv.customer}</td>
+                        <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
+                        <td className="p-4 text-[11px] font-bold">
+                          <span className="text-foreground">{inv.color}</span>
+                          <span className="mx-1 opacity-20">|</span>
+                          <span className="text-primary">{inv.size}</span>
+                        </td>
+                        <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
+                        <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
+                          {inv.inv_location || '-'}
+                        </td>
+                        <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
+                        <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
+                        <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
+                        <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
+                          {(inv.available || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))
+              ) : (
+                inventory.map((inv, i) => (
+                  <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
+                    <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
+                    <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
+                    <td className="p-4 text-[11px] font-bold">
+                      <span className="text-foreground">{inv.color}</span>
+                      <span className="mx-1 opacity-20">|</span>
+                      <span className="text-primary">{inv.size}</span>
+                    </td>
+                    <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
+                    <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
+                      {inv.inv_location || '-'}
+                    </td>
+                    <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
+                    <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
+                    <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
+                    <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
+                      {(inv.available || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
           {inventory.length === 0 && (
@@ -854,6 +1009,7 @@ const PickingModule = () => {
   const [orders, setOrders] = useState([]);
   const [operators, setOperators] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [incidentTicket, setIncidentTicket] = useState(null);
   const [editingTicket, setEditingTicket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
@@ -1007,7 +1163,7 @@ const PickingModule = () => {
     pw.document.close();
   };
 
-  const pendingTicketsRaw = tickets.filter(t => t.status !== 'confirmed' && t.picking_status !== 'completed');
+  const pendingTicketsRaw = tickets.filter(t => t.status !== 'confirmed');
   const pendingTickets = activeBoardFilter === 'ALL' 
     ? pendingTicketsRaw 
     : pendingTicketsRaw.filter(t => (t.board_category || 'UNSET') === activeBoardFilter);
@@ -1031,12 +1187,12 @@ const PickingModule = () => {
       'confirmed': 'bg-purple-500/10 text-purple-400 border-purple-500/20'
     };
 
-    const currentStatus = t.picking_status === 'completed' ? 'completed' : t.picking_status || 'pending';
+    const currentStatus = ticket.picking_status === 'completed' ? 'completed' : ticket.picking_status || 'pending';
 
     return (
-      <div key={ticket.ticket_id} className="group border border-border/40 rounded-xl bg-card/40 hover:bg-card transition-all relative shadow-sm flex flex-col md:flex-row md:items-center justify-between p-3 gap-4" data-testid={`pick-${ticket.ticket_id}`}>
+      <div key={ticket.ticket_id} className={`group border border-border/40 rounded-xl transition-all relative shadow-sm flex flex-col md:flex-row md:items-center justify-between p-3 gap-4 ${ticket.is_virtual ? 'bg-secondary/20 border-dashed hover:bg-secondary/30' : 'bg-card/40 hover:bg-card'}`} data-testid={`pick-${ticket.ticket_id}`}>
         {/* Left Status Bar */}
-        <div className={`absolute left-0 top-0 bottom-0 w-1 ${currentStatus === 'completed' ? 'bg-emerald-500' : currentStatus === 'in_progress' ? 'bg-yellow-500' : 'bg-blue-500'}`} />
+        <div className={`absolute left-0 top-0 bottom-0 w-1 ${ticket.is_virtual ? 'bg-slate-400 opacity-30' : (currentStatus === 'completed' ? 'bg-emerald-500' : currentStatus === 'in_progress' ? 'bg-yellow-500' : 'bg-blue-500')}`} />
         
         {/* Main Info */}
         <div className="flex-1 min-w-0 pl-2">
@@ -1047,7 +1203,12 @@ const PickingModule = () => {
             <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest min-w-[50px] text-center">
               #{ticket.order_number}
             </span>
-            {!hasSizes && (
+            {ticket.is_virtual && (
+              <span className="text-[9px] font-black uppercase bg-primary text-black px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
+                <Plus className="w-2 h-2" /> {t('wms_new_pick') || 'NEW'}
+              </span>
+            )}
+            {!hasSizes && !ticket.is_virtual && (
               <span className="text-[10px] font-black uppercase bg-amber-500/20 px-2 py-0.5 rounded text-amber-400 tracking-widest border border-amber-500/20 animate-pulse">
                 {t('draft')}
               </span>
@@ -1071,6 +1232,12 @@ const PickingModule = () => {
             <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">{new Date(ticket.created_at).toLocaleDateString()}</span>
           </div>
+          {(ticket.job_title_a || ticket.job_title_b) && (
+            <div className="flex gap-2 mt-1">
+              {ticket.job_title_a && <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={ticket.job_title_a}>A: {ticket.job_title_a}</span>}
+              {ticket.job_title_b && <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={ticket.job_title_b}>B: {ticket.job_title_b}</span>}
+            </div>
+          )}
         </div>
 
         {/* Progress */}
@@ -1107,11 +1274,32 @@ const PickingModule = () => {
 
         {/* Actions */}
         <div className="flex items-center justify-end gap-1 shrink-0 md:border-l md:border-border/20 md:pl-3">
-          <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title={t('print')}><Printer className="w-4 h-4" /></button>
-          {showEdit && currentStatus !== 'completed' && (
-            <button onClick={() => openEdit(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title="Editar / Ver Tallas"><Edit3 className="w-4 h-4" /></button>
+          {!ticket.is_virtual && (
+            <>
+              <button 
+                onClick={() => setIncidentTicket(ticket)} 
+                className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-xl transition-all" 
+                title={t('wms_report_incident') || 'Reportar Problema'}
+              >
+                <AlertTriangle className="w-4 h-4" />
+              </button>
+              <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title={t('print')}><Printer className="w-4 h-4" /></button>
+            </>
           )}
-          {ticket.status === 'pending' && currentStatus !== 'completed' && (
+          {showEdit && currentStatus !== 'completed' && (
+            <button 
+              onClick={() => openEdit(ticket)} 
+              className={`p-1.5 rounded-lg transition-all flex items-center gap-1 ${ticket.is_virtual ? 'bg-primary text-black px-3 font-black text-[10px] uppercase hover:scale-105' : 'text-muted-foreground hover:text-primary hover:bg-primary/10'}`} 
+              title={ticket.is_virtual ? "Crear Ticket" : "Editar / Ver Tallas"}
+            >
+              {ticket.is_virtual ? (
+                <>{t('wms_new_pick') || 'Iniciar'}</>
+              ) : (
+                <Edit3 className="w-4 h-4" />
+              )}
+            </button>
+          )}
+          {ticket.status === 'pending' && !ticket.is_virtual && (
             <button onClick={() => handleConfirm(ticket)} className="px-2 py-1 bg-emerald-500 text-black text-[9px] font-black uppercase rounded hover:bg-emerald-400 transition-all shadow-sm ml-1">OK</button>
           )}
         </div>
@@ -1391,6 +1579,80 @@ const PickingModule = () => {
           )}
         </div>
       )}
+
+      {incidentTicket && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-red-500">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-black uppercase tracking-widest text-sm">{t('wms_report_incident') || 'Reportar Problema'}</h3>
+              </div>
+              <button onClick={() => setIncidentTicket(null)} className="p-1 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider">
+              {t('wms_incident_ticket') || 'Ticket'}: <span className="text-foreground">{incidentTicket.ticket_id}</span>
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU / ITEM</label>
+                <select 
+                  id="incident-sku"
+                  className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
+                >
+                  <option value={incidentTicket.style}>{incidentTicket.style}</option>
+                  {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
+                    <option key={sz} value={`${incidentTicket.style}-${sz}`}>{incidentTicket.style} ({sz})</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('qty') || 'Cantidad'}</label>
+                  <input id="incident-qty" type="number" defaultValue="1" min="1" className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('reason') || 'Razón'}</label>
+                  <select id="incident-reason" className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold">
+                    <option value="Dañado">Dañado</option>
+                    <option value="Manchado">Manchado</option>
+                    <option value="Incompleto">Incompleto</option>
+                    <option value="Otro">Otro</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button 
+                onClick={async () => {
+                  const sku = document.getElementById('incident-sku').value;
+                  const qty = document.getElementById('incident-qty').value;
+                  const reason = document.getElementById('incident-reason').value;
+                  try {
+                    const res = await poster(`/pick-tickets/${incidentTicket.ticket_id}/incidents`, { sku, qty, reason });
+                    if (res.ok) {
+                      toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
+                      setIncidentTicket(null);
+                    } else {
+                      toast.error('Error al reportar');
+                    }
+                  } catch { toast.error('Error de conexión'); }
+                }}
+                className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-red-500/20"
+              >
+                {t('confirm') || 'Confirmar'}
+              </button>
+              <button onClick={() => setIncidentTicket(null)} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all">
+                {t('cancel') || 'Cancelar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1400,39 +1662,148 @@ const PickingModule = () => {
 const FinishedGoodsModule = () => {
   const { t } = useLang();
   const [boxes, setBoxes] = useState([]);
-  const load = useCallback(() => { fetcher('/finished-goods').then(setBoxes).catch(() => {}); }, []);
-  useEffect(() => { load(); }, [load]);
+  const [bpoFilter, setBpoFilter] = useState('ALL'); // ALL | BPO | REGULAR
+  const [editingBox, setEditingBox] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => { 
+    const isBpo = bpoFilter === 'BPO' ? true : bpoFilter === 'REGULAR' ? false : undefined;
+    const params = isBpo !== undefined ? `?is_bpo=${isBpo}` : '';
+    fetcher(`/finished-goods${params}`).then(setBoxes).catch(() => {}); 
+  }, [bpoFilter]);
+
+  useEffect(() => { load(); }, [load, bpoFilter]);
+  const handleSaveBox = async () => {
+    if (!editingBox) return;
+    setSaving(true);
+    try {
+      const res = await putter(`/finished-goods/${editingBox.box_id}`, editingBox);
+      if (res.ok) {
+        toast.success(t('box_updated_success') || 'Caja actualizada correctamente');
+        setEditingBox(null);
+        load();
+      } else {
+        const err = await res.json();
+        toast.error(err.detail || 'Error al actualizar');
+      }
+    } catch { toast.error('Error de conexión'); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-bold text-foreground">{t('finished_goods')}</h2>
-      <div className="text-sm text-muted-foreground mb-2">{boxes.length} {t('wms_boxes')} {t('wms_prod_finished').toLowerCase()} / {boxes.reduce((s, b) => s + (b.units || 0), 0)} {t('wms_units')}</div>
-      <div className="overflow-auto max-h-[500px]">
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <div className="flex items-center bg-secondary/30 p-1 rounded-xl border border-border/20">
+          {[
+            { id: 'ALL', label: t('all') || 'Todos' },
+            { id: 'REGULAR', label: 'Regular' },
+            { id: 'BPO', label: 'Back Order (B.O.)' },
+          ].map(tab => (
+            <button 
+              key={tab.id}
+              onClick={() => setBpoFilter(tab.id)}
+              className={`px-4 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${bpoFilter === tab.id ? 'bg-primary text-black shadow' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-muted-foreground">{boxes.length} {t('wms_boxes')} {t('wms_prod_finished').toLowerCase()} / {boxes.reduce((s, b) => s + (b.units || 0), 0)} {t('wms_units')}</div>
+      </div>
+
+      <div className="overflow-auto max-h-[500px] border border-border/40 rounded-2xl bg-card/40 backdrop-blur-sm shadow-xl">
         <table className="w-full text-sm">
-          <thead className="bg-secondary sticky top-0">
+          <thead className="bg-secondary/80 sticky top-0 backdrop-blur-md">
             <tr>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">Box ID</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_sku')}</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_color')}</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_label_size')}</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('wms_units')}</th>
-              <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('location')}</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Box ID</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_sku')}</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_color')}</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_size')}</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_units')}</th>
+              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
+              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('actions')}</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border/10">
             {boxes.map(b => (
-              <tr key={b.box_id} className="border-b border-border hover:bg-secondary/50">
-                <td className="p-2 font-mono font-bold text-primary">{b.box_id}</td>
-                <td className="p-2">{b.sku}</td>
-                <td className="p-2">{b.color}</td>
-                <td className="p-2">{b.size}</td>
-                <td className="p-2">{b.units}</td>
-                <td className="p-2 text-muted-foreground">{b.location || '-'}</td>
+              <tr key={b.box_id} className="border-b border-border/5 hover:bg-primary/5 transition-all group">
+                <td className="p-3 font-mono font-black text-primary group-hover:scale-105 transition-transform origin-left">{b.box_id}</td>
+                <td className="p-3 font-bold">{b.sku}</td>
+                <td className="p-3 text-xs uppercase text-muted-foreground">{b.color}</td>
+                <td className="p-3 font-bold text-primary">{b.size}</td>
+                <td className="p-3 font-mono font-black tracking-tighter">{b.units}</td>
+                <td className="p-3 text-xs text-muted-foreground font-mono italic">
+                  {b.location || '-'}
+                  {b.is_bpo && <span className="ml-2 bg-amber-500/10 text-amber-500 text-[8px] px-1 rounded border border-amber-500/20">B.O.</span>}
+                </td>
+                <td className="p-3 text-right">
+                  <button onClick={() => setEditingBox(b)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all">
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
         {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('no_finished_goods')}</div>}
       </div>
+
+      {editingBox && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <h3 className="font-black uppercase tracking-widest text-sm text-primary flex items-center gap-2">
+                <Edit3 className="w-4 h-4" />
+                {t('wms_edit_box') || 'Editar Caja'} {editingBox.box_id}
+              </h3>
+              <button onClick={() => setEditingBox(null)} className="p-1 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU</label>
+                <input value={editingBox.sku} onChange={e => setEditingBox(p => ({ ...p, sku: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('color')}</label>
+                <input value={editingBox.color} onChange={e => setEditingBox(p => ({ ...p, color: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('size')}</label>
+                <input value={editingBox.size} onChange={e => setEditingBox(p => ({ ...p, size: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('units')}</label>
+                <input type="number" value={editingBox.units} onChange={e => setEditingBox(p => ({ ...p, units: parseInt(e.target.value) || 0 }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('location')}</label>
+                <input value={editingBox.location || ''} onChange={e => setEditingBox(p => ({ ...p, location: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold font-mono" />
+              </div>
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 cursor-pointer p-2 bg-secondary/50 rounded-xl">
+                  <input type="checkbox" checked={editingBox.is_bpo} onChange={e => setEditingBox(p => ({ ...p, is_bpo: e.target.checked }))} className="w-4 h-4 rounded border-border text-primary" />
+                  <span className="text-xs font-black uppercase tracking-widest">BACK ORDER (B.O.)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button 
+                onClick={handleSaveBox} 
+                className="flex-1 bg-primary text-black font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+                {t('save') || 'Guardar'}
+              </button>
+              <button onClick={() => setEditingBox(null)} className="flex-1 bg-secondary text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all">
+                {t('cancel') || 'Cancelar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1846,7 +2217,13 @@ const CycleCountModule = () => {
 };
 
 // ==================== MAIN WMS COMPONENT ====================
+
+// Wrapper so MODULE_COMPONENTS can receive props via the ActiveComponent pattern
+let _wmsInventoryDashboardProps = {};
+const InventoryDashboardWrapper = () => <InventoryDashboard {..._wmsInventoryDashboardProps} />;
+
 const MODULE_COMPONENTS = {
+  dashboard: InventoryDashboardWrapper,
   receiving: ReceivingModule,
   putaway: PutawayModule,
   inventory: InventoryModule,
@@ -1863,8 +2240,22 @@ export default function WMS() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light-theme'));
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0 });
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Fetch current user to detect associated_customer for auto-filtering
+  useEffect(() => {
+    fetch(`${AUTH_API}/me`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => { if (u) setCurrentUser(u); })
+      .catch(() => {});
+  }, []);
+
+  // Keep module wrapper props in sync with current user
+  const associatedCustomer = currentUser?.associated_customer || '';
+  _wmsInventoryDashboardProps = { customer: associatedCustomer, apiBase: API };
 
   const MODULES = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
     { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
     { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
@@ -1919,9 +2310,12 @@ export default function WMS() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex text-foreground">
-      <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
-      
+    <div className="min-h-screen bg-background flex flex-col text-foreground">
+      <div className="bg-red-600 text-white text-center py-2 font-bold text-xl animate-pulse z-50 relative">
+        ⚠️ ESTAS EN LA RAMA MASTER (CAMBIOS ACTIVOS) ⚠️
+      </div>
+      <div className="flex-1 flex overflow-hidden">
+        <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
       {/* Sidebar */}
       <aside 
         className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col transition-all duration-300 relative z-20 shadow-2xl`}
@@ -2064,6 +2458,7 @@ export default function WMS() {
           <ActiveComponent />
         </div>
       </main>
+      </div>
     </div>
   );
 }

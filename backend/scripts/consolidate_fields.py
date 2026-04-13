@@ -9,12 +9,15 @@ async def consolidate_fields():
     env_path = Path('backend/.env')
     load_dotenv(env_path)
     
-    mongo_url = os.environ.get('MONGODB_URL')
+    mongo_url = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URL')
     db_name = "mos-system"
-    if mongo_url:
-        match = re.search(r'/([^/?]+)(\?|$)', mongo_url)
-        if match:
-            db_name = match.group(1)
+    if not mongo_url:
+        print("Error: No MongoDB URL found in .env")
+        return
+        
+    match = re.search(r'/([^/?]+)(\?|$)', mongo_url)
+    if match:
+        db_name = match.group(1)
             
     client = AsyncIOMotorClient(mongo_url)
     db = client[db_name]
@@ -39,21 +42,22 @@ async def consolidate_fields():
         updates = {}
         unsets = {}
         
-        # 1. Check for standard fields inside custom_fields
-        if isinstance(custom_fields, dict):
-            for field in standard_fields:
-                if field in custom_fields:
-                    val = custom_fields[field]
-                    # Only move if root field is missing or empty
-                    if not order.get(field):
-                        # Use proper name for design_num -> design_#
-                        target_field = 'design_#' if field == 'design_num' else field
-                        updates[target_field] = val
-                    
-                    # Mark for deletion from custom_fields
-                    unsets[f"custom_fields.{field}"] = ""
+        # 1. Move ALL content from custom_fields to root
+        if isinstance(custom_fields, dict) and custom_fields:
+            for key, val in custom_fields.items():
+                # Handle special mapping for design_num / design_# if encountered
+                target_key = 'design_#' if key == 'design_num' else key
+                
+                # Only move if the root field is missing or the value in root is empty
+                # and the value in custom_fields is NOT null/empty
+                root_val = order.get(target_key)
+                if (root_val is None or root_val == "") and (val is not None and val != ""):
+                    updates[target_key] = val
+            
+            # ALWAYS remove the custom_fields object after processing
+            unsets["custom_fields"] = ""
 
-        # 2. Check for design_num at root (from previous migration logic)
+        # 2. Safety check for design_num at root
         if "design_num" in order:
             if not order.get("design_#"):
                 updates["design_#"] = order["design_num"]

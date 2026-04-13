@@ -1,7 +1,7 @@
 """Shared dependencies: DB, auth helpers, models, constants."""
 from fastapi import HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pathlib import Path
@@ -164,6 +164,17 @@ class OrderCreate(BaseModel):
         "extra": "allow",
         "populate_by_name": True
     }
+
+    @model_validator(mode='before')
+    @classmethod
+    def flatten_custom_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "custom_fields" in data:
+            custom = data.pop("custom_fields")
+            if isinstance(custom, dict):
+                for k, v in custom.items():
+                    if k not in data or data[k] is None:
+                        data[k] = v
+        return data
     
     @field_validator("board", mode="before")
     @classmethod
@@ -173,7 +184,6 @@ class OrderCreate(BaseModel):
         return v
 
     links: Optional[List[Dict[str, str]]] = []
-    custom_fields: Optional[Dict[str, Any]] = {}
 
 class OrderUpdate(BaseModel):
     client: Optional[str] = None
@@ -190,6 +200,10 @@ class OrderUpdate(BaseModel):
     artwork_status: Optional[str] = None
     betty_column: Optional[str] = None
     shipping: Optional[str] = None
+    job_title_a: Optional[Any] = None
+    job_title_b: Optional[Any] = None
+    screens: Optional[bool] = None
+    links: Optional[List[Dict[str, str]]] = None
     quantity: Optional[int] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
@@ -197,11 +211,21 @@ class OrderUpdate(BaseModel):
     design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     board: Optional[str] = None
-    custom_fields: Optional[Dict[str, Any]] = None
+
     model_config = {
         "extra": "allow",
         "populate_by_name": True
     }
+
+    @model_validator(mode='before')
+    @classmethod
+    def flatten_custom_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "custom_fields" in data:
+            custom = data.pop("custom_fields")
+            if isinstance(custom, dict):
+                for k, v in custom.items():
+                    data[k] = v
+        return data
 
 class CommentCreate(BaseModel):
     content: str

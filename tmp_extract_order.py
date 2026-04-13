@@ -1,9 +1,13 @@
-import json
+import asyncio
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+import httpx
 
-with open('backup_emergent_fast_20260406_095027.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
+async def test():
+    # Attempt to create an order
+    async with httpx.AsyncClient(base_url="http://localhost:8000/api") as client:
+        # Mock auth token logic if we can, or just test the DB logic directly
+        pass
 
-for order in data.get('orders', []):
-    if order.get('order_number') == '989':
-        print(json.dumps(order, indent=2))
-        break
+if __name__ == "__main__":
+    asyncio.run(test())

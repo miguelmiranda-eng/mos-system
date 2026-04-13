@@ -11,7 +11,7 @@ async def create_test_session():
     env_path = Path("backend") / ".env"
     load_dotenv(env_path)
     
-    mongo_url = os.environ.get('MONGODB_URL')
+    mongo_url = os.environ.get('MONGO_URL')
     if not mongo_url:
         print("MONGODB_URL not found")
         return

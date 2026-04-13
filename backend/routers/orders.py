@@ -124,6 +124,18 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
 
     order_id = f"ord_{uuid.uuid4().hex[:12]}"
     order_data = order.model_dump(by_alias=True)
+    # Merge extra fields to ensure they are at the root level in the DB
+    extra = order.model_extra or {}
+    order_data.update(extra)
+    
+    # CRITICAL: Prevent nested custom_fields from persisting
+    if "custom_fields" in order_data:
+        nested = order_data.pop("custom_fields")
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                if k not in order_data:
+                    order_data[k] = v
+    
     # Safety: ensure board is NEVER null — default to SCHEDULING
     if not order_data.get("board"):
         logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
@@ -154,13 +166,25 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
-    update_data = {k: v for k, v in order.model_dump(exclude_unset=True, by_alias=True).items() if v is not None}
-    # Safety: if board is explicitly set to empty/null, reject it
-    if "board" in update_data and not update_data["board"]:
-        logger.warning(f"Attempt to set board=null on order {order_id}, ignoring board field")
-        del update_data["board"]
+    update_data = order.model_dump(exclude_unset=True, by_alias=True)
+    # Merge extra fields provided in the update payload
     extra = order.model_extra or {}
     update_data.update(extra)
+    
+    # CRITICAL: Prevent nested custom_fields from persisting
+    if "custom_fields" in update_data:
+        nested = update_data.pop("custom_fields")
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                # On updates, we always merge to ensure root-level visibility
+                update_data[k] = v
+    
+    # Remove board=null check to allow clearing or moving via direct update if needed, 
+    # but ensure it exists if requested.
+    if "board" in update_data and update_data["board"] is None:
+        # If explicitly clearing board, we might want to default to SCHEDULING or allow it?
+        # Following the "flattening" philosophy, let's allow it but warn.
+        logger.warning(f"Board being cleared for order {order_id}")
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     old_board = existing.get("board")
     new_board = update_data.get("board")
@@ -575,10 +599,16 @@ async def export_orders_pdf(request: Request):
             ["Tablero Actual", order.get("board", "")]
         ]
         
-        # Add custom fields if any
-        custom_fields = order.get("custom_fields", {})
-        for k, v in custom_fields.items():
-            order_data.append([f"Custom: {k}", str(v)])
+        # Add non-standard fields to the table
+        standard_keys = {
+            "order_id", "order_number", "customer_po", "store_po", "client", "branding", 
+            "priority", "quantity", "due_date", "production_status", "board", "created_at", 
+            "updated_at", "images", "links", "comments", "cancel_date", "_id", "sizes", "style",
+            "custom_fields" # Exclude purely technical field
+        }
+        for k, v in order.items():
+            if k not in standard_keys and v is not None:
+                order_data.append([f"Custom: {k}", str(v)])
 
         t = Table(order_data, colWidths=[1.5 * inch, 4 * inch])
         t.setStyle(TableStyle([
@@ -702,15 +732,9 @@ async def import_orders_complete(request: Request):
         existing = await db.orders.find_one({"order_id": oid})
         if existing:
             if update_existing:
-                # Fields to sync: board, priority, statuses, custom_fields, po, etc.
-                sync_fields = [
-                    "board", "priority", "blank_status", "trim_status", "artwork_status", 
-                    "production_status", "sample", "betty_column", "custom_fields", 
-                    "color", "design_#", "final_bill", "customer_po", "store_po", 
-                    "cancel_date", "client", "branding", "quantity", "due_date", "notes",
-                    "blank_source", "trim_box", "job_title_a", "job_title_b", "shipping"
-                ]
-                update_doc = {f: clean_entry[f] for f in sync_fields if f in clean_entry}
+                # Sync all fields except protected ones to ensure flat custom fields are included
+                exclude_fields = {"_id", "order_id", "created_at", "updated_at", "_comments", "_image_files"}
+                update_doc = {k: v for k, v in clean_entry.items() if k not in exclude_fields}
 
                 update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
                 
@@ -832,7 +856,6 @@ async def import_orders_excel(
             try:
                 # Build order data from row
                 order_data = {}
-                custom_fields = {}
                 
                 for excel_col, internal_key in actual_mapping.items():
                     val = row[excel_col]
@@ -849,21 +872,26 @@ async def import_orders_excel(
                             # Try to clean up string dates
                             val = val.split(' ')[0]
 
-                    # Map to correct structure
-                    if internal_key in KNOWN_FIELDS:
-                        if internal_key == "quantity":
-                            try:
-                                order_data["quantity"] = int(float(val)) if val is not None else 0
-                            except:
-                                order_data["quantity"] = 0
-                        else:
-                            order_data[internal_key] = str(val).strip() if val is not None else None
+                    # Map to correct structure (FLATTENED)
+                    if internal_key == "quantity":
+                        try:
+                            order_data["quantity"] = int(float(val)) if val is not None else 0
+                        except:
+                            order_data["quantity"] = 0
                     else:
-                        # It's a custom field
-                        custom_fields[internal_key] = str(val).strip() if val is not None else None
+                        order_data[internal_key] = str(val).strip() if val is not None else None
 
-                if custom_fields:
-                    order_data["custom_fields"] = custom_fields
+                # 3. Add ALL other columns as custom fields at root (Dynamic detection)
+                excluded_cols = set(actual_mapping.keys())
+                for col in df.columns:
+                    if col not in excluded_cols:
+                        val = row[col]
+                        if not pd.isna(val) and str(val).strip().lower() != "nan":
+                            # Clean up the key: lowercase, no spaces, no special chars for consistency
+                            # But keep it readable enough
+                            clean_key = str(col).strip().replace(" ", "_").lower()
+                            if clean_key not in order_data:
+                                order_data[clean_key] = str(val).strip()
 
                 order_num = order_data.get("order_number")
                 if not order_num:

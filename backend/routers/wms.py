@@ -61,9 +61,7 @@ async def delete_location(location_id: str, request: Request):
         raise HTTPException(404, "Ubicacion no encontrada")
     return {"message": "Ubicacion eliminada"}
 
-# ==================== RECEIVING ====================
-
-@router.post("/receive-purchase")
+@router.post("/receiving")
 async def create_receiving(request: Request):
     user = await require_auth(request)
     body = await request.json()
@@ -75,7 +73,7 @@ async def create_receiving(request: Request):
     description = body.get("description", "").strip()
     country_of_origin = body.get("country_of_origin", "").strip()
     fabric_content = body.get("fabric_content", "").strip()
-    inv_location = body.get("inv_location", "").strip()
+    inv_location = body.get("inv_location", "").strip() or "Locación Temporal"
     lot_number = body.get("lot_number", "").strip()
     sku = body.get("sku", "").strip()
     dozens = int(body.get("dozens", 0) or 0)
@@ -83,6 +81,7 @@ async def create_receiving(request: Request):
     units = int(body.get("units", 0) or 0)
     vendor = body.get("vendor", manufacturer).strip()
     items = body.get("items", [])
+    is_bpo = body.get("is_bpo", False)
 
     if not style:
         raise HTTPException(400, "Style requerido")
@@ -94,103 +93,79 @@ async def create_receiving(request: Request):
         if color: parts.append(color.upper().replace(' ', '-')[:10])
         if size: parts.append(size.upper())
         sku = '-'.join(parts)
-        # Check for existing SKU and append sequence if duplicate
-        existing = await db.wms_inventory.find_one({"sku": {"$regex": f"^{sku}$", "$options": "i"}})
-        if not existing:
-            existing_box = await db.wms_boxes.find_one({"sku": {"$regex": f"^{sku}$", "$options": "i"}})
-        # SKU is fine as-is (reuse if exists or create new)
 
-    # Calculate total units: if units provided use it, else dozens*12 + pieces
+    # Calculate total units
     total_units = units if units > 0 else (dozens * 12 + pieces)
     if total_units <= 0 and not items:
         raise HTTPException(400, "Debe ingresar cantidad (dozens/pieces/units)")
 
     receiving_id = gen_id("rcv")
 
-    # If legacy items format
-    if items and not total_units:
-        last_box = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
-        seq = (last_box.get("seq_num", 0) if last_box else 0)
-        all_boxes = []
-        total_units = 0
+    # Box generation
+    last_box = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
+    seq = (last_box.get("seq_num", 0) if last_box else 0)
+    
+    box_docs = []
+    if items:
         for item in items:
             item_size = item.get("size", "").strip()
             boxes_count = int(item.get("boxes", 1))
             units_per_box = int(item.get("units_per_box", 1))
-            item_total = boxes_count * units_per_box
-            total_units += item_total
-            for i in range(boxes_count):
+            for _ in range(boxes_count):
                 seq += 1
                 box_id = f"BOX-{seq:06d}"
-                box = {
-                    "box_id": box_id, "barcode": box_id,
-                    "receiving_id": receiving_id,
-                    "vendor": vendor, "customer": customer,
-                    "manufacturer": manufacturer, "style": style,
+                box_docs.append({
+                    "box_id": box_id, "barcode": box_id, "receiving_id": receiving_id,
+                    "customer": customer, "manufacturer": manufacturer, "style": style,
                     "sku": sku or style, "color": color, "size": item_size,
-                    "description": description,
-                    "units": units_per_box, "seq_num": seq,
-                    "location": inv_location or None,
-                    "status": "received" if not inv_location else "stored",
-                    "state": "raw", "created_at": now_iso()
-                }
-                all_boxes.append(box)
-        if all_boxes:
-            await db.wms_boxes.insert_many([{k: v for k, v in b.items()} for b in all_boxes])
-        box_ids = [b["box_id"] for b in all_boxes]
+                    "units": units_per_box, "seq_num": seq, "location": inv_location,
+                    "status": "stored", "state": "raw", "is_bpo": is_bpo,
+                    "created_at": now_iso()
+                })
     else:
-        # New format: single entry with dozens/pieces/units
-        last_box = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
-        seq = (last_box.get("seq_num", 0) if last_box else 0)
         seq += 1
         box_id = f"BOX-{seq:06d}"
-        box = {
-            "box_id": box_id, "barcode": box_id,
-            "receiving_id": receiving_id,
-            "vendor": vendor, "customer": customer,
-            "manufacturer": manufacturer, "style": style,
+        box_docs.append({
+            "box_id": box_id, "barcode": box_id, "receiving_id": receiving_id,
+            "customer": customer, "manufacturer": manufacturer, "style": style,
             "sku": sku or style, "color": color, "size": size,
-            "description": description,
-            "units": total_units, "seq_num": seq,
-            "location": inv_location or None,
-            "status": "received" if not inv_location else "stored",
-            "state": "raw", "created_at": now_iso()
-        }
-        await db.wms_boxes.insert_one(box)
-        box_ids = [box_id]
+            "units": total_units, "seq_num": seq, "location": inv_location,
+            "status": "stored", "state": "raw", "is_bpo": is_bpo,
+            "created_at": now_iso()
+        })
+    
+    if box_docs:
+        await db.wms_boxes.insert_many(box_docs)
 
     receiving_doc = {
-        "receiving_id": receiving_id,
-        "customer": customer, "manufacturer": manufacturer,
-        "style": style, "color": color, "size": size,
-        "description": description,
-        "country_of_origin": country_of_origin,
-        "fabric_content": fabric_content,
-        "inv_location": inv_location, "vendor": vendor,
-        "lot_number": lot_number, "sku": sku,
-        "dozens": dozens, "pieces": pieces,
-        "total_units": total_units,
-        "box_ids": box_ids,
-        "received_by": user.get("user_id"),
-        "received_by_name": user.get("name", ""),
+        "receiving_id": receiving_id, "customer": customer, "manufacturer": manufacturer,
+        "style": style, "color": color, "size": size, "description": description,
+        "country_of_origin": country_of_origin, "fabric_content": fabric_content,
+        "inv_location": inv_location, "lot_number": lot_number, "sku": sku,
+        "total_units": total_units, "is_bpo": is_bpo,
+        "received_by": user.get("user_id"), "received_by_name": user.get("name", ""),
         "created_at": now_iso()
     }
     await db.wms_receiving.insert_one(receiving_doc)
-    receiving_doc.pop("_id", None)
-    await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units})
-    if size:
-        await _update_inventory(style, color, size, total_units, "add")
-    elif items:
+    await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo})
+    
+    # Update inventory
+    if items:
         for item in items:
-            item_size = item.get("size", "").strip()
-            item_qty = int(item.get("boxes", 1)) * int(item.get("units_per_box", 1))
-            await _update_inventory(style, color, item_size, item_qty, "add")
-    if inv_location:
-        existing_loc = await db.wms_locations.find_one({"name": inv_location})
-        if not existing_loc:
-            zone = inv_location.split('-')[0] if '-' in inv_location else "DEFAULT"
-            await db.wms_locations.insert_one({"location_id": gen_id("loc"), "name": inv_location, "zone": zone, "type": "rack", "active": True, "created_at": now_iso()})
-    receiving_doc["total_units"] = total_units
+            await _update_inventory_enhanced(style, color, item.get("size"), int(item.get("boxes", 1)) * int(item.get("units_per_box", 1)), "add", customer, inv_location, is_bpo)
+    else:
+        await _update_inventory_enhanced(style, color, size, total_units, "add", customer, inv_location, is_bpo)
+
+    # Ensure location exists
+    existing_loc = await db.wms_locations.find_one({"name": inv_location})
+    if not existing_loc:
+        await db.wms_locations.insert_one({
+            "location_id": gen_id("loc"), "name": inv_location, 
+            "zone": inv_location.split('-')[0] if '-' in inv_location else "RECEIVING",
+            "type": "rack", "active": True, "created_at": now_iso()
+        })
+
+    receiving_doc.pop("_id", None)
     return receiving_doc
 
 @router.get("/receiving")
@@ -272,29 +247,31 @@ async def putaway_bulk(request: Request):
 
 # ==================== INVENTORY ====================
 
-async def _update_inventory(sku, color, size, qty, operation="add"):
-    key = {"$or": [{"sku": sku}, {"style": sku}], "color": color or "", "size": size or ""}
+async def _update_inventory_enhanced(sku, color, size, qty, operation, customer="", location="", is_bpo=False):
+    key = {"sku": sku, "color": color or "", "size": size or "", "inv_location": location or ""}
     inv = await db.wms_inventory.find_one(key)
-    if not inv:
-        if operation == "add":
-            await db.wms_inventory.insert_one({
-                "sku": sku, "style": sku, "color": color or "", "size": size or "",
-                "inventory_id": gen_id("inv"),
-                "on_hand": qty, "allocated": 0, "available": qty,
-                "updated_at": now_iso()
-            })
-    else:
+    if not inv and operation == "add":
+        await db.wms_inventory.insert_one({
+            "sku": sku, "style": sku, "color": color or "", "size": size or "",
+            "inventory_id": gen_id("inv"), "customer": customer,
+            "inv_location": location, "is_bpo": is_bpo,
+            "on_hand": qty, "allocated": 0, "available": qty, "total_boxes": 1,
+            "updated_at": now_iso()
+        })
+    elif inv:
         doc_key = {"_id": inv["_id"]}
         if operation == "add":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": qty, "available": qty}, "$set": {"updated_at": now_iso()}})
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": qty, "available": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "is_bpo": is_bpo}})
         elif operation == "allocate":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"allocated": qty, "available": -qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deallocate":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"allocated": -qty, "available": qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deduct":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": -qty, "allocated": -qty}, "$set": {"updated_at": now_iso()}})
-        elif operation == "deduct_raw":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": -qty, "available": -qty}, "$set": {"updated_at": now_iso()}})
+
+async def _update_inventory(sku, color, size, qty, operation="add", location=""):
+    # Standard fallback for old calls
+    await _update_inventory_enhanced(sku, color, size, qty, operation, location=location)
 
 @router.get("/inventory")
 async def get_inventory(request: Request, sku: str = "", color: str = "", size: str = "", location: str = "", customer: str = "", category: str = "", style: str = ""):
@@ -415,9 +392,14 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     }
 
 @router.get("/movements/summary")
-async def inventory_summary(request: Request):
+async def inventory_summary(request: Request, customer: str = ""):
     await require_auth(request)
+    match_query = {}
+    if customer:
+        match_query["customer"] = {"$regex": customer, "$options": "i"}
+    
     pipeline = [
+        {"$match": match_query},
         {"$group": {
             "_id": None,
             "total_on_hand": {"$sum": "$on_hand"},
@@ -429,10 +411,21 @@ async def inventory_summary(request: Request):
     ]
     result = await db.wms_inventory.aggregate(pipeline).to_list(1)
     agg = result[0] if result else {}
-    total_locations = await db.wms_locations.count_documents({"active": True})
+    
+    # Locations count depends on the same customer filter if specified
+    if customer:
+        total_locations = len(await db.wms_inventory.distinct("inv_location", match_query))
+    else:
+        total_locations = await db.wms_locations.count_documents({"active": True})
+        
+    low_stock_query = {"available": {"$lte": 10}, "on_hand": {"$gt": 0}}
+    if customer:
+        low_stock_query["customer"] = {"$regex": customer, "$options": "i"}
+        
     low_stock = await db.wms_inventory.find(
-        {"available": {"$lte": 10}, "on_hand": {"$gt": 0}}, {"_id": 0}
+        low_stock_query, {"_id": 0}
     ).sort("available", 1).to_list(20)
+    
     return {
         "total_on_hand": agg.get("total_on_hand", 0),
         "total_allocated": agg.get("total_allocated", 0),
@@ -444,19 +437,89 @@ async def inventory_summary(request: Request):
         "low_stock": low_stock
     }
 
+@router.get("/inventory/chart-data")
+async def get_inventory_chart_data(request: Request, customer: str = ""):
+    await require_auth(request)
+    match_query = {}
+    if customer:
+        match_query["customer"] = {"$regex": customer, "$options": "i"}
+
+    # 1. Top 10 SKUs by total available units
+    top_skus_pipeline = [
+        {"$match": match_query},
+        {"$group": {"_id": "$sku", "available": {"$sum": "$available"}}},
+        {"$sort": {"available": -1}},
+        {"$limit": 10},
+        {"$project": {"name": "$_id", "value": "$available", "_id": 0}}
+    ]
+    top_skus = await db.wms_inventory.aggregate(top_skus_pipeline).to_list(10)
+
+    # 2. Units by Status/State (Finished Goods vs Raw vs WIP) — queried from wms_boxes
+    box_match = {}
+    if customer:
+        box_match["customer"] = {"$regex": customer, "$options": "i"}
+    state_pipeline = [
+        {"$match": box_match},
+        {"$group": {"_id": "$state", "count": {"$sum": "$units"}}},
+        {"$match": {"_id": {"$ne": None}}},
+        {"$project": {"name": {"$ifNull": ["$_id", "unknown"]}, "value": "$count", "_id": 0}}
+    ]
+    by_state = await db.wms_boxes.aggregate(state_pipeline).to_list(10)
+
+    # 3. Units by Manufacturer/Category
+    cat_pipeline = [
+        {"$match": match_query},
+        {"$group": {"_id": "$manufacturer", "count": {"$sum": "$available"}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 8},
+        {"$project": {"name": "$_id", "value": "$count", "_id": 0}}
+    ]
+    by_manufacturer = await db.wms_inventory.aggregate(cat_pipeline).to_list(8)
+
+    # 4. Activity History (last 15 days)
+    # We group movements by day. We filter movements by customer if details.customer matches
+    from datetime import timedelta
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=15)).strftime("%Y-%m-%d")
+    movement_query = {"created_at": {"$gte": cutoff_date}}
+    if customer:
+        movement_query["$or"] = [
+            {"details.customer": {"$regex": customer, "$options": "i"}},
+            {"details.receiving_id": {"$exists": True}}  # Always include receiving events
+        ]
+
+    # Activity count by day for last 15 days
+    activity_pipeline = [
+        {"$match": movement_query},
+        {"$addFields": {"date": {"$substr": ["$created_at", 0, 10]}}},
+        {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+        {"$limit": 15},
+        {"$project": {"date": "$_id", "count": 1, "_id": 0}}
+    ]
+    activity_history = await db.wms_movements.aggregate(activity_pipeline).to_list(15)
+
+    return {
+        "top_skus": top_skus,
+        "by_state": by_state,
+        "by_manufacturer": by_manufacturer,
+        "activity_history": activity_history
+    }
+
 # ==================== ORDERS (from CRM) ====================
 
 @router.get("/orders")
 async def list_wms_orders(request: Request, status: str = ""):
     await require_auth(request)
-    # Only show orders from BLANKS board OR with partial blank_status
+    # Broaden query: include orders from relevant boards for WMS
+    # Logic: include anything in scheduling/blanks, or with wms activity
     query = {"$or": [
-        {"board": {"$regex": "^blanks$", "$options": "i"}},
-        {"blank_status": {"$regex": "partial|parcial", "$options": "i"}}
+        {"board": {"$regex": "^blanks$|^crm$|^ventas$|^sales$|^scheduling$|^production$|^final bill$", "$options": "i"}},
+        {"blank_status": {"$regex": "partial|parcial|pending|ready|todo|picked", "$options": "i"}},
+        {"wms_status": {"$exists": True}}
     ]}
     if status:
         query["wms_status"] = status
-    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return orders
 
 @router.get("/orders/{order_id}")
@@ -615,6 +678,7 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     
     return ticket_doc
 
+@router.post("/pick-tickets")
 @router.post("/move-stock")
 async def create_pick_ticket(request: Request):
     user = await require_auth(request)
@@ -690,10 +754,103 @@ async def get_inventory_field_options(request: Request):
 @router.get("/pick-tickets")
 async def list_pick_tickets(request: Request, status: str = ""):
     await require_auth(request)
-    query = {}
-    if status: query["status"] = status
-    tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return tickets
+    query = {"status": status} if status else {}
+    
+    # Unified aggregation to get tickets + order info in one go
+    pipeline = [
+        {"$match": query},
+        {"$sort": {"created_at": -1}},
+        {"$limit": 1000},
+        {"$lookup": {
+            "from": "orders",
+            "localField": "order_number",
+            "foreignField": "order_number",
+            "as": "order_data"
+        }},
+        {"$addFields": {
+            "order_info": {"$arrayElemAt": ["$order_data", 0]}
+        }},
+        {"$project": {
+            "_id": 0,
+            "order_data": 0
+        }}
+    ]
+    
+    real_tickets = await db.wms_pick_tickets.aggregate(pipeline).to_list(1000)
+    
+    # Process job titles and other order info
+    for rt in real_tickets:
+        oi = rt.pop("order_info", None)
+        if oi:
+            for k in ["job_title_a", "job_title_b"]:
+                val = oi.get(k)
+                if isinstance(val, dict):
+                    rt[k] = val.get("desc", val.get("url", ""))
+                else:
+                    rt[k] = val
+            # Optionally sync more info if needed
+            if not rt.get("customer"): rt["customer"] = oi.get("client") or oi.get("branding")
+            
+    # --- VIRTUAL TICKETS LOGIC ---
+    # Automatically include orders in SCHEDULING or BLANKS that don't have a ticket yet
+    if not status or status == "pending":
+        existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
+        
+        virtual_query = {
+            "board": {"$regex": "^scheduling$|^blanks$", "$options": "i"},
+            "order_number": {"$nin": list(existing_order_numbers)}
+        }
+        
+        # Limit to 500 to avoid performance issues
+        virtual_orders = await db.orders.find(virtual_query, {"_id": 0}).sort("created_at", -1).to_list(500)
+        
+        for vo in virtual_orders:
+            # Safely handle job title objects
+            jt_a = vo.get("job_title_a")
+            if isinstance(jt_a, dict): jt_a = jt_a.get("desc", jt_a.get("url", ""))
+            
+            jt_b = vo.get("job_title_b")
+            if isinstance(jt_b, dict): jt_b = jt_b.get("desc", jt_b.get("url", ""))
+
+            real_tickets.append({
+                "ticket_id": f"virt_{vo.get('order_id')}",
+                "order_number": vo.get("order_number"),
+                "customer": vo.get("client") or vo.get("customer") or vo.get("branding") or "No Client",
+                "client": vo.get("client") or vo.get("customer") or vo.get("branding"),
+                "manufacturer": vo.get("manufacturer") or vo.get("branding"),
+                "style": vo.get("style"),
+                "color": vo.get("color"),
+                "quantity": vo.get("quantity") or 0,
+                "total_pick_qty": vo.get("quantity") or 0,
+                "status": "pending",
+                "blank_status": vo.get("blank_status") or "PENDIENTE",
+                "picking_status": "unassigned",
+                "board_category": vo.get("board", "UNSET").upper(),
+                "job_title_a": jt_a,
+                "job_title_b": jt_b,
+                "created_at": vo.get("created_at") or now_iso(),
+                "is_virtual": True
+            })
+
+    return real_tickets
+
+@router.post("/pick-tickets/{ticket_id}/incidents")
+async def report_incident(ticket_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    incident = {
+        "incident_id": gen_id("inc"),
+        "ticket_id": ticket_id,
+        "sku": body.get("sku"),
+        "qty": int(body.get("qty", 1)),
+        "reason": body.get("reason", "Dañado"),
+        "operator_id": user.get("user_id"),
+        "operator_name": user.get("name", user.get("email", "")),
+        "timestamp": now_iso()
+    }
+    await db.wms_incidents.insert_one(incident)
+    await log_movement(user, "incident_reported", {"ticket_id": ticket_id, "sku": incident["sku"], "qty": incident["qty"]})
+    return {"message": "Incidencia reportada", "incident_id": incident["incident_id"]}
 
 # ==================== OPERATOR MODULE ====================
 
@@ -783,7 +940,6 @@ async def save_pick_progress(ticket_id: str, request: Request):
     }
     if is_complete:
         update["completed_at"] = now_iso()
-        update["status"] = "confirmed"
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
     await log_movement(user, "pick_progress", {
@@ -793,29 +949,72 @@ async def save_pick_progress(ticket_id: str, request: Request):
     })
     return {"message": f"Progreso guardado ({picking_status})", "ticket_id": ticket_id, "picking_status": picking_status}
 
+@router.put("/pick-tickets/{ticket_id}/confirm")
 @router.post("/stocktakes/{stocktake_id}/finalize")
-async def confirm_pick(ticket_id: str, request: Request):
+async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = None):
+    # Use ticket_id if provided via newer route, else stocktake_id from older legacy route
+    target_id = ticket_id or stocktake_id
     user = await require_auth(request)
     body = await request.json()
     confirmed_lines = body.get("lines", [])
-    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": target_id})
     if not ticket:
         raise HTTPException(404, "Pick ticket no encontrado")
-    for line in confirmed_lines:
-        box_id = line.get("box_id")
-        qty = int(line.get("qty", 0))
-        box = await db.wms_boxes.find_one({"box_id": box_id})
-        if box:
-            new_units = max(0, box.get("units", 0) - qty)
-            update = {"units": new_units}
-            if new_units == 0:
-                update["status"] = "picked"
-            await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update})
-            await _update_inventory(box["sku"], box.get("color", ""), box.get("size", ""), qty, "deduct")
-    await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {"status": "confirmed", "confirmed_at": now_iso(), "confirmed_by": user.get("user_id")}})
+
+    # Handle confirmed lines (legacy or explicit)
+    if confirmed_lines:
+        for line in confirmed_lines:
+            box_id = line.get("box_id")
+            qty = int(line.get("qty", 0))
+            box = await db.wms_boxes.find_one({"box_id": box_id})
+            if box:
+                new_units = max(0, box.get("units", 0) - qty)
+                update = {"units": new_units}
+                if new_units == 0:
+                    update["status"] = "picked"
+                await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update})
+                await _update_inventory(box["sku"], box.get("color", ""), box.get("size", ""), qty, "deduct", location=box.get("location", ""))
+    else:
+        # Newer flow: Use picked_sizes to auto-deduct from available boxes
+        picked_sizes = ticket.get("picked_sizes") or ticket.get("sizes") or {}
+        style = ticket.get("style", "")
+        color = ticket.get("color", "")
+        for sz, qty in picked_sizes.items():
+            try:
+                qty_int = int(qty)
+            except (ValueError, TypeError):
+                continue
+            if qty_int <= 0: continue
+            
+            # Find boxes for this SKU/Color/Size
+            query = {
+                "$or": [{"style": style}, {"sku": style}],
+                "color": color, "size": sz, "status": "stored", "state": "raw", "units": {"$gt": 0}
+            }
+            boxes = await db.wms_boxes.find(query).sort("seq_num", 1).to_list(100)
+            remaining = qty_int
+            for box in boxes:
+                if remaining <= 0: break
+                take = min(box["units"], remaining)
+                new_units = box["units"] - take
+                upd = {"units": new_units}
+                if new_units == 0: upd["status"] = "picked"
+                await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+                await _update_inventory(box["sku"], box.get("color", ""), box.get("size", ""), take, "deduct", location=box.get("location", ""))
+                remaining -= take
+
+    await db.wms_pick_tickets.update_one({"ticket_id": target_id}, {"$set": {
+        "status": "confirmed", 
+        "picking_status": "completed", 
+        "confirmed_at": now_iso(), 
+        "confirmed_by": user.get("user_id")
+    }})
     await db.orders.update_one({"order_id": ticket.get("order_id")}, {"$set": {"wms_status": "picked"}})
-    await log_movement(user, "pick_confirmed", {"ticket_id": ticket_id, "lines": len(confirmed_lines)})
-    return {"message": "Pick confirmado", "ticket_id": ticket_id}
+    await log_movement(user, "pick_confirmed", {
+        "ticket_id": target_id, 
+        "items_confirmed": len(confirmed_lines) if confirmed_lines else "auto"
+    })
+    return {"message": "Pick confirmado", "ticket_id": target_id}
 
 @router.put("/pick-tickets/{ticket_id}/edit")
 async def edit_pick_ticket(ticket_id: str, request: Request):
@@ -968,10 +1167,24 @@ async def list_production(request: Request, state: str = ""):
 # ==================== FINISHED GOODS ====================
 
 @router.get("/finished-goods")
-async def list_finished_goods(request: Request):
+async def list_finished_goods(request: Request, is_bpo: bool = None):
     await require_auth(request)
-    boxes = await db.wms_boxes.find({"state": "finished"}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    query = {"state": "finished"}
+    if is_bpo is not None:
+        query["is_bpo"] = is_bpo
+    boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return boxes
+
+@router.put("/finished-goods/{box_id}")
+async def edit_finished_good(box_id: str, request: Request):
+    user = await require_admin(request)
+    body = await request.json()
+    update = {k: v for k, v in body.items() if k in ["units", "location", "po", "is_bpo", "sku", "color", "size"]}
+    result = await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Caja no encontrada")
+    await log_movement(user, "edit_finished_good", {"box_id": box_id, "changes": update})
+    return {"message": "Caja actualizada", "box_id": box_id}
 
 # ==================== SHIPPING ====================
 
@@ -1115,7 +1328,7 @@ async def export_inventory(request: Request):
     ws = wb.add_worksheet("Inventory")
     headers = ["Customer", "Style", "Color", "Size", "Description", "Category",
                "Manufacturer", "Location", "Total Boxes", "On Hand", "Allocated", "Available",
-               "Country of Origin", "Fabric Content"]
+               "Country of Origin", "Fabric Content", "Is BPO"]
     bold = wb.add_format({"bold": True})
     for i, h in enumerate(headers):
         ws.write(0, i, h, bold)
@@ -1134,6 +1347,7 @@ async def export_inventory(request: Request):
         ws.write(row, 11, inv.get("available", 0))
         ws.write(row, 12, inv.get("country_of_origin", ""))
         ws.write(row, 13, inv.get("fabric_content", ""))
+        ws.write(row, 14, "YES" if inv.get("is_bpo") else "NO")
     wb.close()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1434,9 +1648,22 @@ async def quick_status_update(ticket_id: str, request: Request):
     body = await request.json()
     if "blank_status" in body:
         new_status = body["blank_status"]
-        await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {"blank_status": new_status}})
-        # Synchronize blank_status back to MOS orders
-        ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
-        if ticket and ticket.get("order_number"):
-            await db.orders.update_one({"order_number": ticket["order_number"]}, {"$set": {"blank_status": new_status}})
+        # Determine if it's a virtual ticket or a real one
+        order_number = None
+        if ticket_id.startswith("virt_"):
+            # If virtual, the ID is virt_ORDER_ID. BUT wait, let's look at list_pick_tickets logic.
+            # It uses virt_vo.get('order_id')
+            order_id = ticket_id.replace("virt_", "")
+            order = await db.orders.find_one({"order_id": order_id})
+            if order:
+                order_number = order.get("order_number")
+        else:
+            ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+            if ticket:
+                await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {"blank_status": new_status}})
+                order_number = ticket.get("order_number")
+        
+        if order_number:
+            await db.orders.update_one({"order_number": order_number}, {"$set": {"blank_status": new_status}})
+            
     return {"status": "ok"}
