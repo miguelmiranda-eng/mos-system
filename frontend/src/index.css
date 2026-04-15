@@ -116,27 +116,74 @@ code {
         --accent-neutral: 240 4% 46%;
     }
 
-    .light-theme {
-        --background: 206 80% 96%;
-        --foreground: 215 30% 15%;
-        --card: 206 60% 98%;
-        --card-foreground: 215 30% 15%;
-        --popover: 206 60% 98%;
-        --popover-foreground: 215 30% 15%;
-        --primary: 348 91% 45%;
+    .light, .light-theme {
+        --background: 0 0% 98%;
+        --foreground: 158 50% 10%;
+        --card: 0 0% 100%;
+        --card-foreground: 142 50% 10%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 142 50% 10%;
+        --primary: 158 80% 40%; /* Emerald */
         --primary-foreground: 0 0% 100%;
-        --secondary: 208 50% 92%;
-        --secondary-foreground: 215 30% 15%;
-        --muted: 208 50% 92%;
-        --muted-foreground: 215 15% 45%;
-        --accent: 208 50% 92%;
-        --accent-foreground: 215 30% 15%;
+        --secondary: 158 25% 95%;
+        --secondary-foreground: 158 50% 10%;
+        --muted: 210 20% 95%;
+        --muted-foreground: 215 20% 45%;
+        --accent: 158 30% 92%;
+        --accent-foreground: 158 50% 10%;
         --destructive: 0 84% 50%;
         --destructive-foreground: 0 0% 100%;
-        --border: 210 35% 84%;
-        --input: 210 35% 84%;
-        --ring: 348 91% 50%;
+        --border: 215 20% 90%;
+        --input: 215 20% 90%;
+        --ring: 158 80% 40%;
+        
+        /* Custom Dashboard Variables - Premium Esmeralda */
+        --dashboard-bg: #f8fafc; 
+        --glass-bg: rgba(255, 255, 255, 0.75);
+        --glass-border: rgba(16, 185, 129, 0.12);
+        --text-main: #064e3b;
+        --text-muted: #64748b;
     }
+
+    .dark {
+        --background: 222 47% 5%;
+        --foreground: 210 40% 96%;
+        --card: 222 47% 8%;
+        --card-foreground: 210 40% 96%;
+        --popover: 222 47% 8%;
+        --popover-foreground: 210 40% 96%;
+        --primary: 348 91% 50%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 222 30% 12%;
+        --secondary-foreground: 210 40% 96%;
+        --muted: 222 30% 12%;
+        --muted-foreground: 215 20% 60%;
+        --accent: 220 20% 16%;
+        --accent-foreground: 210 40% 96%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 220 18% 18%;
+        --input: 220 18% 18%;
+        --ring: 348 91% 50%;
+        /* Custom Dashboard Variables */
+        --dashboard-bg: #050508;
+        --glass-bg: rgba(5, 5, 8, 0.4);
+        --glass-border: rgba(255, 255, 255, 0.05);
+        --text-main: #ffffff;
+        --text-muted: rgba(255, 255, 255, 0.4);
+    }
+}
+
+@keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+    animation: spin-slow 8s linear infinite;
+}
+
+body {
+    transition: background-color 0.5s ease, color 0.5s ease;
 }
 
 @layer base {

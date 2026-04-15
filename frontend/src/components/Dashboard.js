@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "../App";
 import { useNavigate } from "react-router-dom";
 import { useLang } from "../contexts/LanguageContext";
+import { useTheme } from "../contexts/ThemeContext";
 import {
   Search, Plus, LogOut, X, RefreshCw, Trash2, ListFilter,
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
@@ -65,10 +66,10 @@ const Dashboard = () => {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [openFilter, setOpenFilter] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('theme');
-    return saved ? saved === 'dark' : true;
-  });
+
+  // Theme from shared context (synced with CEODashboard and WMS)
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   // Column visibility & ordering
   const [hiddenColumns, setHiddenColumns] = useState({});
@@ -256,11 +257,6 @@ const Dashboard = () => {
     return () => { if (layoutSaveRef.current) clearTimeout(layoutSaveRef.current); };
   }, [boardColumnOrders, hiddenColumns, currentBoard]);
 
-  // Theme
-  useState(() => {
-    if (isDark) { document.documentElement.classList.remove('light-theme'); document.documentElement.classList.add('dark'); }
-    else { document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light-theme'); }
-  });
 
   useEffect(() => {
     setSelectedOrders([]);
@@ -302,15 +298,6 @@ const Dashboard = () => {
     };
     fetchExtra();
   }, [currentBoard, orders]);
-  const toggleTheme = () => {
-    setIsDark(prev => {
-      const next = !prev;
-      localStorage.setItem('theme', next ? 'dark' : 'light');
-      if (next) { document.documentElement.classList.remove('light-theme'); document.documentElement.classList.add('dark'); }
-      else { document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light-theme'); }
-      return next;
-    });
-  };
 
   // Visible columns
   const visibleColumns = (() => {
@@ -563,7 +550,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className={`h-screen flex flex-col overflow-hidden ${!isDark ? 'light-theme' : ''} bg-background text-foreground transition-colors duration-300`}>
+    <div className={`h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300`}>
       <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
       <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
@@ -575,9 +562,9 @@ const Dashboard = () => {
       )}
 
       {/* Header */}
-      <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-secondary/30 border-gray-200 shadow-sm'}`}>
+      <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-white/80 border-emerald-500/10 shadow-sm backdrop-blur-md'}`}>
         <div className="flex items-center gap-3 flex-shrink-0">
-          <h1 onClick={() => navigate('/home')} className={`font-roboto font-black text-base md:text-lg tracking-tight uppercase cursor-pointer hover:opacity-80 transition-opacity ${isDark ? 'text-glow-primary' : 'text-gray-900'}`}>MOS <span className="text-primary font-black">S</span><span className="text-primary hidden md:inline font-black">YSTEM</span></h1>
+          <h1 onClick={() => navigate('/home')} className={`font-roboto font-black text-base md:text-lg tracking-tight uppercase cursor-pointer hover:opacity-80 transition-opacity ${isDark ? 'text-glow-primary' : 'text-emerald-950'}`}>MOS <span className="text-primary font-black">S</span><span className="text-primary hidden md:inline font-black">YSTEM</span></h1>
           {/* Notifications Bell - next to logo */}
           <div>
             <button onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }} className={`p-2 rounded-lg relative flex items-center justify-center transition-all ${unreadCount > 0 ? 'text-primary' : (isDark ? 'text-muted-foreground hover:text-foreground' : 'text-gray-500 hover:text-gray-900')}`} title={t('notifications')} data-testid="notifications-btn">
