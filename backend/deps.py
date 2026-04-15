@@ -302,6 +302,12 @@ async def require_admin(request: Request) -> Dict:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
+async def require_ceo(request: Request) -> Dict:
+    user = await require_auth(request)
+    if user.get("role") not in ["admin", "ceo"]:
+        raise HTTPException(status_code=403, detail="CEO or Admin access required")
+    return user
+
 async def log_activity(user: Dict, action: str, details: Dict = None, previous_data: Dict = None):
     activity_doc = {
         "activity_id": f"act_{uuid.uuid4().hex[:12]}",

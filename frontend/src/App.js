@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Link } from "react-router-dom";
-import { useLang } from "./contexts/LanguageContext";
+import { useLang, LanguageProvider } from "./contexts/LanguageContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
@@ -142,9 +143,8 @@ const AuthCallback = () => {
               setUser(userData);
               // Small delay to ensure React state propagates before navigation
               await new Promise(r => setTimeout(r, 100));
-              
-              if (userData?.role === 'customer') {
-                navigate('/wms', { replace: true });
+              if (userData.role === 'ceo') {
+                navigate('/ceo-dashboard', { replace: true });
               } else {
                 navigate('/dashboard', { replace: true });
               }
@@ -268,6 +268,43 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
+// CEO Route
+const CEORoute = ({ children }) => {
+  const { t } = useLang();
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const [grace, setGrace] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setGrace(false), 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !grace) {
+      if (!user) {
+        navigate('/', { replace: true });
+      } else if (user.role !== 'admin' && user.role !== 'ceo') {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [user, loading, grace, navigate]);
+
+  if (loading || (grace && !user)) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-foreground font-barlow text-xl">{t('loading')}</div>
+      </div>
+    );
+  }
+
+  if (!user || (user.role !== 'admin' && user.role !== 'ceo')) {
+    return null;
+  }
+
+  return children;
+};
+
 // Landing Page
 const LandingPage = () => {
   const { t } = useLang();
@@ -287,6 +324,8 @@ const LandingPage = () => {
     if (user) {
       if (user.role === 'operator' || user.role === 'picker') {
         navigate('/operator');
+      } else if (user.role === 'ceo') {
+        navigate('/ceo-dashboard');
       } else {
         navigate('/dashboard');
       }
@@ -305,7 +344,11 @@ const LandingPage = () => {
       if (res.ok) {
         const userData = await res.json();
         setUser(userData);
-        navigate('/dashboard');
+        if (userData.role === 'ceo') {
+          navigate('/ceo-dashboard');
+        } else {
+          navigate('/dashboard');
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || 'Error al iniciar sesion');
@@ -556,6 +599,7 @@ import ActivityLogCenter from "./components/ActivityLogCenter";
 import UserManagementCenter from "./components/UserManagementCenter";
 import CatalogCenter from "./components/CatalogCenter";
 import OperatorsCenter from "./components/OperatorsCenter";
+import CEODashboard from "./components/CEODashboard";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -654,6 +698,11 @@ function AppRouter() {
           <Dashboard />
         </ProtectedRoute>
       } />
+      <Route path="/ceo-dashboard" element={
+        <CEORoute>
+          <CEODashboard />
+        </CEORoute>
+      } />
       <Route path="/wms" element={
         <ProtectedRoute allowCustomer={true}>
           <WMS />
@@ -693,19 +742,16 @@ function AppRouter() {
   );
 }
 
-import { LanguageProvider } from "./contexts/LanguageContext";
-
 function App() {
   return (
     <BrowserRouter>
-      <ThemeProvider>
-        <AuthProvider>
-
+      <AuthProvider>
+        <ThemeProvider>
           <LanguageProvider>
             <AppRouter />
           </LanguageProvider>
-        </AuthProvider>
-      </ThemeProvider>
+        </ThemeProvider>
+      </AuthProvider>
     </BrowserRouter>
 
   );

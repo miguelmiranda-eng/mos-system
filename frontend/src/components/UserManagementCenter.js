@@ -272,7 +272,7 @@ const UserManagementCenter = () => {
                       <SelectItem value="user">Usuario Estándar</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
                       <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="customer">Cliente Externo</SelectItem>
+                      <SelectItem value="ceo">CEO / Ejecutivo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -333,7 +333,7 @@ const UserManagementCenter = () => {
                       <SelectItem value="user">Usuario Estándar</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
                       <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="customer">Cliente Externo</SelectItem>
+                      <SelectItem value="ceo">CEO / Ejecutivo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -422,7 +422,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="user">Usuario</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
                         <SelectItem value="picker">Picker</SelectItem>
-                        <SelectItem value="customer">Cliente</SelectItem>
+                        <SelectItem value="ceo">CEO</SelectItem>
                       </SelectContent>
                     </Select>
 

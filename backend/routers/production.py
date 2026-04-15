@@ -257,17 +257,17 @@ async def get_capacity_plan(request: Request):
 
 # ==================== PRODUCTION ANALYTICS ====================
 
-@router.get("/production-analytics")
-async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
-    await require_auth(request)
+def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
     from datetime import timedelta
     now = datetime.now(timezone.utc)
     query = {}
-    # Date filtering
     if preset:
         if preset == 'today':
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            query["created_at"] = {"$gte": start.isoformat()}
+            local_now = now - timedelta(hours=7)
+            local_start = local_now.replace(hour=7, minute=0, second=0, microsecond=0)
+            if local_now < local_start: local_start = local_start - timedelta(days=1)
+            utc_start = local_start + timedelta(hours=7)
+            query["created_at"] = {"$gte": utc_start.isoformat()}
         elif preset == 'yesterday':
             start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             end = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -278,11 +278,19 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         elif preset == 'month':
             start = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
             query["created_at"] = {"$gte": start.isoformat()}
-    elif date_from or date_to:
+
+    # Fallback to date_from/date_to if query is still empty or forced
+    if not query.get("created_at") and (date_from or date_to):
         date_q = {}
         if date_from: date_q["$gte"] = date_from + "T00:00:00"
         if date_to: date_q["$lte"] = date_to + "T23:59:59"
         if date_q: query["created_at"] = date_q
+    return query
+
+@router.get("/production-analytics")
+async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
+    await require_auth(request)
+    query = _get_preset_query(preset, date_from, date_to)
     if machine: query["machine"] = machine
     if operator: query["operator"] = {"$regex": operator, "$options": "i"}
     if client: query["client"] = {"$regex": client, "$options": "i"}
@@ -295,7 +303,9 @@ async def get_production_analytics(request: Request, date_from: str = None, date
     # Metrics
     total_produced = sum(l.get("quantity_produced", 0) for l in logs)
     total_target = sum(order_qty_map.get(l.get("order_id"), 0) for l in logs)
-    avg_setup = sum(l.get("setup", 0) for l in logs) / max(len(logs), 1)
+    # Metrics: only count positive setups for the average calculation
+    setup_logs = [l.get("setup", 0) for l in logs if l.get("setup", 0) > 0]
+    avg_setup = sum(setup_logs) / max(len(setup_logs), 1)
     # By machine
     by_machine = {}
     for l in logs:
@@ -304,7 +314,7 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         by_machine[m]["produced"] += l.get("quantity_produced", 0)
         by_machine[m]["setup_total"] += l.get("setup", 0)
         by_machine[m]["count"] += 1
-    machines_data = [{"machine": k, "produced": v["produced"], "avg_setup": round(v["setup_total"] / max(v["count"], 1), 1), "count": v["count"]} for k, v in sorted(by_machine.items())]
+    machines_data = [{"machine": k, "produced": v["produced"], "avg_setup": int(round(v["setup_total"] / max(len([l for l in logs if l.get("machine") == k and l.get("setup", 0) > 0]), 1))), "count": v["count"]} for k, v in sorted(by_machine.items())]
     # By operator
     by_operator = {}
     for l in logs:
@@ -337,15 +347,29 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         by_po[po]["produced"] += l.get("quantity_produced", 0)
         by_po[po]["count"] += 1
     po_data = [{"order_number": k, "produced": v["produced"], "target": v["target"], "count": v["count"]} for k, v in sorted(by_po.items(), key=lambda x: x[1]["produced"], reverse=True)]
-    # Hourly trend
-    by_hour = {}
+    # Trend analysis (granularity based on period)
+    by_period = {}
+    # Determine granularity: hour for today, day for others
+    granularity = "hour" if preset == 'today' else "day"
+    # For custom ranges, if < 36 hours use hour, else use day
+    if preset == 'custom' and date_from and date_to:
+        from datetime import date
+        d1 = date.fromisoformat(date_from)
+        d2 = date.fromisoformat(date_to)
+        if (d2 - d1).days <= 1: granularity = "hour"
+        else: granularity = "day"
+
     for l in logs:
         try:
-            h = l.get("created_at", "")[:13]
-            if h not in by_hour: by_hour[h] = 0
-            by_hour[h] += l.get("quantity_produced", 0)
+            ts = l.get("created_at", "")
+            if granularity == "hour":
+                k = ts[:13] # YYYY-MM-DDTHH
+            else:
+                k = ts[:10] # YYYY-MM-DD
+            if k not in by_period: by_period[k] = 0
+            by_period[k] += l.get("quantity_produced", 0)
         except: pass
-    hourly_data = [{"hour": k, "produced": v} for k, v in sorted(by_hour.items())]
+    trend_data = [{"label": k, "produced": v} for k, v in sorted(by_period.items())]
     # Distinct values for filter dropdowns
     distinct_machines = sorted(set(l.get("machine", "") for l in logs if l.get("machine")))
     distinct_operators = sorted(set((l.get("operator") or l.get("user_name", "")) for l in logs))
@@ -373,10 +397,10 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         "total_produced": total_produced, "total_target": total_target,
         "total_remaining": total_remaining,
         "efficiency": round(total_produced / max(total_target, 1) * 100, 1),
-        "avg_setup": round(avg_setup, 1), "total_logs": len(logs),
+        "avg_setup": int(round(avg_setup)), "total_logs": len(logs),
         "by_machine": machines_data, "by_operator": operators_data,
         "by_shift": shifts_data, "by_client": clients_data,
-        "by_po": po_data, "hourly_trend": hourly_data,
+        "by_po": po_data, "trend_data": trend_data, "granularity": granularity,
         "by_production_status": prod_status_data,
         "filters": {"machines": distinct_machines, "operators": distinct_operators, "clients": distinct_clients},
         "logs": logs[:200]
@@ -387,101 +411,329 @@ async def generate_production_report(request: Request):
     user = await require_auth(request)
     body = await request.json()
     fmt = body.get("format", "excel")
+    preset = body.get("preset")
     filters = body.get("filters", {})
-    # Build query from filters
-    query = {}
-    if filters.get("date_from") or filters.get("date_to"):
-        dq = {}
-        if filters.get("date_from"): dq["$gte"] = filters["date_from"] + "T00:00:00"
-        if filters.get("date_to"): dq["$lte"] = filters["date_to"] + "T23:59:59"
-        query["created_at"] = dq
+    
+    # Build query using helper
+    query = _get_preset_query(preset, filters.get("date_from"), filters.get("date_to"))
     if filters.get("shift"): query["shift"] = filters["shift"]
     if filters.get("supervisor"): query["supervisor"] = {"$regex": filters["supervisor"], "$options": "i"}
     if filters.get("machine"): query["machine"] = filters["machine"]
+    
+    logger.info(f"Generating report: format={fmt}, preset={preset}, filters={filters}")
+    logger.info(f"Final Query: {query}")
+    
     logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", 1).to_list(50000)
-    if fmt == "pdf":
-        return await _generate_pdf_report(logs, filters)
-    else:
-        return await _generate_excel_report(logs, filters)
+    logger.info(f"Found {len(logs)} logs for report")
+    
+    # Save debug info to a file we can read
+    with open("report_debug.log", "a") as f:
+        f.write(f"\n[{datetime.now().isoformat()}] Report Request: {fmt}, {preset}, {filters}\n")
+        f.write(f"Query: {query}\n")
+        f.write(f"Logs found: {len(logs)}\n")
+        if logs:
+            f.write(f"Sample log date: {logs[0].get('created_at')}\n")
+    
+    # Summary calculation for the report
+    total_produced = sum(l.get("quantity_produced", 0) for l in logs)
+    setup_logs = [l.get("setup", 0) for l in logs if l.get("setup", 0) > 0]
+    avg_setup = sum(setup_logs) / max(len(setup_logs), 1)
+    
+    # Get target quantity for summary per PO
+    order_ids = list(set(l.get("order_id") for l in logs if l.get("order_id")))
+    orders_info = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "quantity": 1, "order_number": 1, "client": 1}).to_list(10000)
+    order_map = {o["order_id"]: o for o in orders_info}
+    
+    by_po = {}
+    by_machine = {}
+    by_client = {}
+    for l in logs:
+        oid = l.get("order_id")
+        if oid:
+            if oid not in by_po: by_po[oid] = {"order_number": l.get("order_number", "?"), "client": l.get("client", ""), "target": order_map.get(oid, {}).get("quantity", 0), "produced": 0}
+            by_po[oid]["produced"] += l.get("quantity_produced", 0)
+        
+        m = l.get("machine", "Desconocida")
+        by_machine[m] = by_machine.get(m, 0) + l.get("quantity_produced", 0)
+        
+        c = l.get("client", "Sin Cliente")
+        by_client[c] = by_client.get(c, 0) + l.get("quantity_produced", 0)
+    
+    summary = {
+        "total_produced": total_produced,
+        "avg_setup": int(round(avg_setup)),
+        "efficiency": round((total_produced / sum(o.get("target", 0) for o in by_po.values())) * 100, 1) if by_po else 0,
+        "by_po": sorted(list(by_po.values()), key=lambda x: x["produced"], reverse=True),
+        "by_machine": sorted([{"machine": k, "produced": v} for k, v in by_machine.items()], key=lambda x: x["produced"], reverse=True),
+        "by_client": sorted([{"client": k, "produced": v} for k, v in by_client.items()], key=lambda x: x["produced"], reverse=True)
+    }
 
-async def _generate_excel_report(logs, filters):
+    # Generate a unique timestamped filename
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    
+    if fmt == "pdf":
+        result = await _generate_pdf_report(logs, summary, filters)
+        result["filename"] = f"DASHBOARD_CEO_{ts}.pdf"
+        return result
+    else:
+        result = await _generate_excel_report(logs, summary, filters)
+        result["filename"] = f"ANALISIS_CEO_{ts}.xlsx"
+        return result
+
+async def _generate_excel_report(logs, summary, filters):
     import xlsxwriter, io, base64
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output, {'in_memory': True})
-    ws = wb.add_worksheet("Produccion")
-    bold = wb.add_format({'bold': True, 'bg_color': '#1a1a2e', 'font_color': 'white', 'border': 1})
-    cell = wb.add_format({'border': 1, 'text_wrap': True, 'valign': 'vcenter'})
-    headers = ['Fecha/Hora', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Tipo Diseno', 'Cantidad', 'Setup', 'Supervisor', 'Causa Parada']
-    for i, h in enumerate(headers):
-        ws.write(0, i, h, bold)
-        ws.set_column(i, i, 15)
+    
+    # Format tokens
+    title_fmt = wb.add_format({'bold': True, 'size': 18, 'font_color': '#1a1a2e'})
+    subtitle_fmt = wb.add_format({'size': 12, 'font_color': '#666666'})
+    header_fmt = wb.add_format({'bold': True, 'bg_color': '#1f2937', 'font_color': 'white', 'border': 1, 'align': 'center'})
+    
+    # KPI Cards Formats
+    kpi_label_emerald = wb.add_format({'bold': True, 'bg_color': '#ecfdf5', 'font_color': '#065f46', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    kpi_value_emerald = wb.add_format({'bold': True, 'size': 16, 'bg_color': '#ecfdf5', 'font_color': '#059669', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    
+    kpi_label_rose = wb.add_format({'bold': True, 'bg_color': '#fff1f2', 'font_color': '#9f1239', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    kpi_value_rose = wb.add_format({'bold': True, 'size': 16, 'bg_color': '#fff1f2', 'font_color': '#e11d48', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    
+    kpi_label_blue = wb.add_format({'bold': True, 'bg_color': '#eff6ff', 'font_color': '#1e40af', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    kpi_value_blue = wb.add_format({'bold': True, 'size': 16, 'bg_color': '#eff6ff', 'font_color': '#2563eb', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+
+    cell_fmt = wb.add_format({'border': 1, 'valign': 'vcenter'})
+    num_fmt = wb.add_format({'border': 1, 'num_format': '#,##0', 'align': 'right'})
+
+    # --- SHEET 1: PANEL EJECUTIVO ---
+    ws_res = wb.add_worksheet("📊 DASHBOARD")
+    ws_res.hide_gridlines(2) # Hide all gridlines for a clean look
+    
+    ws_res.set_column('A:A', 5)
+    ws_res.set_column('B:E', 25)
+    
+    # Header Row
+    ws_res.set_row(1, 40)
+    ws_res.write(1, 1, "REPORTE ESTRATÉGICO DE OPERACIONES", title_fmt)
+    
+    period_str = "Resumen Gerencial"
+    if filters.get("date_from"):
+        period_str = f"Periodo: {filters['date_from']} al {filters.get('date_to', '')}"
+    ws_res.write(2, 1, period_str, subtitle_fmt)
+    
+    # KPI SECTION - Make them TALL and prominent
+    ws_res.set_row(4, 30) # Label row
+    ws_res.set_row(5, 50) # Value row
+    
+    # Piezas Producidas Card
+    ws_res.write(4, 1, "PIEZAS PRODUCIDAS", kpi_label_emerald)
+    ws_res.write(5, 1, f"{summary.get('total_produced', 0):,}", kpi_value_emerald)
+    
+    # Eficiencia Card
+    ws_res.write(4, 2, "EFICIENCIA GLOBAL", kpi_label_blue)
+    ws_res.write(5, 2, f"{summary.get('efficiency', 0)}%", kpi_value_blue)
+    
+    # Setup Card
+    ws_res.write(4, 3, "PROMEDIO SETUP", kpi_label_rose)
+    ws_res.write(5, 3, f"{summary.get('avg_setup', 0)} min", kpi_value_rose)
+
+    # Detailed Table
+    ws_res.write(8, 1, "RENDIMIENTO POR ORDEN DE TRABAJO", wb.add_format({'bold': True, 'size': 14, 'bottom': 2}))
+    po_headers = ['Orden', 'Cliente', 'Meta', 'Producido', 'Avance %']
+    for i, h in enumerate(po_headers):
+        ws_res.write(9, i+1, h, header_fmt)
+
+    for row, po in enumerate(summary.get("by_po", [])[:20], 10):
+        target = po.get("target", 0)
+        produced = po.get("produced", 0)
+        progress = (produced / target) if target > 0 else 0
+        ws_res.write(row, 1, po.get("order_number", ""), cell_fmt)
+        ws_res.write(row, 2, po.get("client", ""), cell_fmt)
+        ws_res.write(row, 3, target, num_fmt)
+        ws_res.write(row, 4, produced, num_fmt)
+        ws_res.write(row, 5, progress, wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'}))
+
+    # Add Charts
+    if summary.get("by_machine"):
+        chart = wb.add_chart({'type': 'column'})
+        # Data for chart (we'll hide it in a separate sheet)
+        ws_data = wb.add_worksheet("_internal_data")
+        for i, m in enumerate(summary["by_machine"][:8]):
+            ws_data.write(i, 0, m["machine"])
+            ws_data.write(i, 1, m["produced"])
+        
+        chart.add_series({
+            'name': 'Producción',
+            'categories': '=_internal_data!$A$1:$A$8',
+            'values': '=_internal_data!$B$1:$B$8',
+            'fill': {'color': '#10b981'}
+        })
+        chart.set_title({'name': 'Producción por Máquina'})
+        chart.set_legend({'position': 'none'})
+        ws_res.insert_chart('B32', chart, {'x_scale': 1.5, 'y_scale': 1.5})
+
+    # --- SHEET 3: DETALLES ---
+    ws = wb.add_worksheet("TRANSACCIONES")
+    for i, h in enumerate(['Fecha/Hora', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Diseno', 'Cantidad', 'Setup', 'Supervisor', 'Parada']):
+        ws.write(0, i, h, header_fmt)
+        ws.set_column(i, i, 16)
     for row, l in enumerate(logs, 1):
-        ws.write(row, 0, l.get("created_at", "")[:19].replace("T", " "), cell)
-        ws.write(row, 1, l.get("order_number", ""), cell)
-        ws.write(row, 2, l.get("client", ""), cell)
-        ws.write(row, 3, l.get("machine", ""), cell)
-        ws.write(row, 4, l.get("operator", l.get("user_name", "")), cell)
-        ws.write(row, 5, l.get("shift", ""), cell)
-        ws.write(row, 6, l.get("design_type", ""), cell)
-        ws.write(row, 7, l.get("quantity_produced", 0), cell)
-        ws.write(row, 8, l.get("setup", 0), cell)
-        ws.write(row, 9, l.get("supervisor", ""), cell)
-        ws.write(row, 10, l.get("stop_cause", ""), cell)
+        ws.write(row, 0, l.get("created_at", "")[:19].replace("T", " "), cell_fmt)
+        ws.write(row, 1, l.get("order_number", ""), cell_fmt)
+        ws.write(row, 2, l.get("client", ""), cell_fmt)
+        ws.write(row, 3, l.get("machine", ""), cell_fmt)
+        ws.write(row, 4, l.get("operator", l.get("user_name", "")), cell_fmt)
+        ws.write(row, 5, l.get("shift", ""), cell_fmt)
+        ws.write(row, 6, l.get("design_type", ""), cell_fmt)
+        ws.write(row, 7, l.get("quantity_produced", 0), cell_fmt)
+        ws.write(row, 8, l.get("setup", 0), cell_fmt)
+        ws.write(row, 9, l.get("supervisor", ""), cell_fmt)
+        ws.write(row, 10, l.get("stop_cause", ""), cell_fmt)
+    
     wb.close()
     output.seek(0)
     data_b64 = base64.b64encode(output.read()).decode()
-    return {"filename": "reporte_produccion.xlsx", "data": data_b64, "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    return {"data": data_b64, "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 
-async def _generate_pdf_report(logs, filters):
+async def _generate_pdf_report(logs, summary, filters):
     from reportlab.lib.pagesizes import landscape, letter
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.charts.barcharts import VerticalBarChart
     import io, base64
+    
     output = io.BytesIO()
-    doc = SimpleDocTemplate(output, pagesize=landscape(letter), leftMargin=20, rightMargin=20, topMargin=30, bottomMargin=30)
+    doc = SimpleDocTemplate(output, pagesize=landscape(letter), leftMargin=30, rightMargin=30, topMargin=40, bottomMargin=40)
     styles = getSampleStyleSheet()
+    
+    # Custom Styles
+    styles.add(ParagraphStyle(name='ExecutiveTitle', parent=styles['Title'], fontSize=24, textColor=colors.HexColor('#111827'), spaceAfter=10))
+    styles.add(ParagraphStyle(name='ExecutiveSub', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#6b7280'), spaceAfter=20))
+    styles.add(ParagraphStyle(name='MetricValue', parent=styles['Normal'], fontSize=24, spaceBefore=10, spaceAfter=5, textColor=colors.HexColor('#e94560'), alignment=1, fontName='Helvetica-Bold'))
+    styles.add(ParagraphStyle(name='MetricLabel', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#6b7280'), alignment=1, fontName='Helvetica-Bold'))
+
     elements = []
-    elements.append(Paragraph("REPORTE DE PRODUCCION", styles['Title']))
-    filter_text = []
-    if filters.get("date_from"): filter_text.append(f"Desde: {filters['date_from']}")
-    if filters.get("date_to"): filter_text.append(f"Hasta: {filters['date_to']}")
-    if filters.get("shift"): filter_text.append(f"Turno: {filters['shift']}")
-    if filters.get("supervisor"): filter_text.append(f"Supervisor: {filters['supervisor']}")
-    if filter_text:
-        elements.append(Paragraph(" | ".join(filter_text), styles['Normal']))
-    elements.append(Spacer(1, 12))
-    headers = ['Fecha', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Diseno', 'Cant.', 'Setup', 'Supervisor', 'Parada']
+    
+    # PDF Title
+    elements.append(Paragraph("DASHBOARD ESTRATÉGICO DE PRODUCCIÓN", styles['ExecutiveTitle']))
+    elements.append(Paragraph(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Prosper Manufacturing", styles['ExecutiveSub']))
+    elements.append(Spacer(1, 10))
+    header_table_data = [[
+        Paragraph("<b>MOS SYSTEM | OPERATIONAL REPORT</b>", ParagraphStyle(name='H', fontSize=10, textColor=colors.white)),
+        Paragraph(datetime.now().strftime("%d %b %Y | %H:%M"), ParagraphStyle(name='T', fontSize=10, textColor=colors.white, alignment=2))
+    ]]
+    ht = Table(header_table_data, colWidths=[550, 150])
+    ht.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#111827')),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+    ]))
+    elements.append(ht)
+    elements.append(Spacer(1, 20))
+
+    elements.append(Paragraph("DASHBOARD ESTRATÉGICO DE PRODUCCIÓN", styles['ExecutiveTitle']))
+    period_str = "Status Gerencial"
+    if filters.get("date_from"): period_str = f"Rango: {filters['date_from']} al {filters.get('date_to','')}"
+    elements.append(Paragraph(period_str, styles['Normal']))
+    elements.append(Spacer(1, 20))
+    
+    # 2. KPI CARDS (More illustrative)
+    # Wrap KPIs in a table to look like cards
+    kpi_table_data = [
+        [
+            Paragraph("PIEZAS PRODUCIDAS", styles['MetricLabel']),
+            Paragraph("EFICIENCIA GLOBAL", styles['MetricLabel']),
+            Paragraph("PROMEDIO SETUP", styles['MetricLabel'])
+        ],
+        [
+            Paragraph(f"{summary.get('total_produced', 0):,}", styles['MetricValue']),
+            Paragraph(f"{summary.get('efficiency', 0)}%", styles['MetricValue']),
+            Paragraph(f"{summary.get('avg_setup', 0)} min", styles['MetricValue'])
+        ]
+    ]
+    kpi_table = Table(kpi_table_data, colWidths=[240, 240, 240])
+    kpi_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f9fafb')),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#e5e7eb')),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
+        ('TOPPADDING', (0, 0), (-1, -1), 15),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    elements.append(kpi_table)
+    elements.append(Spacer(1, 40))
+    
+    # 3. CHARTS & RECOGNITION (Simulation of charts since graphics in reportlab can be complex)
+    elements.append(Paragraph("PRODUCCIÓN POR MÁQUINA (TOP 5)", styles['Heading2']))
+    
+    # Table representation of a chart for better reliability
+    max_prod = max([m["produced"] for m in summary["by_machine"]]) if summary["by_machine"] else 1
+    chart_data = []
+    for m in summary["by_machine"][:5]:
+        width = (m["produced"] / max_prod) * 400
+        # We can simulate a "bar" with a table cell background
+        chart_data.append([
+            m["machine"], 
+            m["produced"], 
+            Table([[""]], colWidths=[width], rowHeights=[12], style=[('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#3b82f6'))])
+        ])
+    
+    ct = Table(chart_data, colWidths=[150, 100, 450])
+    ct.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(ct)
+    elements.append(Spacer(1, 40))
+
+    # 4. TOP CLIENTS & SUMMARY
+    elements.append(Paragraph("DISTRIBUCIÓN POR CLIENTE", styles['Heading2']))
+    client_data = [['Cliente', 'Unidades', '% del Total']]
+    total = summary.get("total_produced") or 1
+    for c in summary["by_client"][:8]:
+        perc = (c["produced"] / total) * 100
+        client_data.append([c["client"], f"{c['produced']:,}", f"{perc:.1f}%"])
+    
+    clt = Table(client_data, colWidths=[300, 150, 150])
+    clt.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#111827')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')]),
+    ]))
+    elements.append(clt)
+    
+    # Detailed logs on next page
+    elements.append(PageBreak())
+    elements.append(Paragraph("REGISTRO DETALLADO DE PRODUCCIÓN", styles['Heading2']))
+    
+    headers = ['Fecha', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Cant.', 'Setup', 'Supervisor', 'Parada']
     data = [headers]
     for l in logs:
         data.append([
             l.get("created_at", "")[:16].replace("T", " "),
             l.get("order_number", ""), l.get("client", "")[:15],
             l.get("machine", "").replace("MAQUINA", "M"), l.get("operator", l.get("user_name", ""))[:15],
-            l.get("shift", ""), l.get("design_type", ""),
+            l.get("shift", ""), 
             str(l.get("quantity_produced", 0)), str(l.get("setup", 0)),
-            l.get("supervisor", "")[:15], l.get("stop_cause", "")[:20]
+            l.get("supervisor", "")[:15], l.get("stop_cause", "")[:15]
         ])
-    t = Table(data, repeatRows=1)
+    
+    t = Table(data, repeatRows=1, colWidths=[90, 80, 100, 60, 90, 60, 50, 50, 80, 80])
     t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#111827')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTSIZE', (0, 0), (-1, -1), 7),
-        ('FONTSIZE', (0, 0), (-1, 0), 8),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+        ('GRID', (0, 0), (-1, -1), 0.2, colors.grey),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     elements.append(t)
-    # Summary
-    total = sum(l.get("quantity_produced", 0) for l in logs)
-    elements.append(Spacer(1, 12))
-    elements.append(Paragraph(f"Total registros: {len(logs)} | Total producido: {total:,} piezas", styles['Normal']))
+    
     doc.build(elements)
     output.seek(0)
     data_b64 = base64.b64encode(output.read()).decode()
-    return {"filename": "reporte_produccion.pdf", "data": data_b64, "content_type": "application/pdf"}
+    return {"filename": "reporte_ejecutivo_premium.pdf", "data": data_b64, "content_type": "application/pdf"}
 
 # ==================== EMAIL ROUTE ====================
 

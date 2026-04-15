@@ -2,11 +2,18 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Factory, Warehouse, Zap, History, Users, 
-  Database, Boxes, Layers, Tags, UserSquare, ArrowLeft, GripVertical, Columns, ClipboardList
+  Database, Boxes, Layers, Tags, UserSquare, ArrowLeft, GripVertical, Columns, ClipboardList,
+  LayoutDashboard, TrendingUp
 } from 'lucide-react';
+import { useAuth } from '../App';
 import { API } from '../lib/constants';
 import { GlobalColumnManager } from './dashboard/GlobalColumnManager';
 import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
+
+const ICON_MAP = { 
+  Warehouse, Boxes, Database, History, Zap, Users, Layers, Tags, 
+  UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp 
+};
 
 // Stable section definitions (by id, used for ordering)
 const SECTIONS_DEFS = [
@@ -42,14 +49,24 @@ const SECTIONS_DEFS = [
       { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Administra clientes, brandings, colores y estados (dropdowns).', icon: 'Tags' },
       { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para progreso de producción.', icon: 'UserSquare' },
     ]
+  },
+  {
+    id: 'insights',
+    title: 'Insights & Reportes',
+    icon: 'LayoutDashboard',
+    color: 'from-blue-500/20 to-indigo-500/20',
+    roles: ['admin', 'ceo'],
+    items: [
+      { name: 'Dashboard Ejecutivo', path: '/ceo-dashboard', desc: 'Vista consolidada de KPIs de producción de la planta.', icon: 'TrendingUp' },
+    ]
   }
 ];
 
-const ICON_MAP = { Warehouse, Boxes, Database, History, Zap, Users, Layers, Tags, UserSquare, Factory, Columns, ClipboardList };
 const DEFAULT_ORDER = SECTIONS_DEFS.map(s => s.id);
 
 const HomeDashboard = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [counts, setCounts] = useState({});
   const [order, setOrder] = useState(DEFAULT_ORDER);
   const [saving, setSaving] = useState(false);
@@ -147,7 +164,10 @@ const HomeDashboard = () => {
     else navigate(`/dashboard?action=${item.action}`);
   };
 
-  const orderedSections = order.map(id => SECTIONS_DEFS.find(s => s.id === id)).filter(Boolean);
+  const orderedSections = order
+    .map(id => SECTIONS_DEFS.find(s => s.id === id))
+    .filter(Boolean)
+    .filter(s => !s.roles || s.roles.includes(user?.role));
 
   return (
     <div className="min-h-screen bg-background p-6 md:p-10 font-barlow relative overflow-hidden">
