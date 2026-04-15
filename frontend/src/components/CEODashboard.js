@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { 
   Factory, Timer, CheckCircle2, AlertCircle, TrendingUp, Calendar, 
-  ArrowLeft, Download, RefreshCw, Layers, LayoutDashboard, Cpu, Users, MapPin, Clock, Sun, Moon
+  ArrowLeft, Download, RefreshCw, Layers, LayoutDashboard, Cpu, Users, MapPin, Clock, Sun, Moon, Languages
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
@@ -19,6 +19,7 @@ const CHART_COLORS_LIGHT = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444
 
 const StatCard = ({ title, value, subvalue, icon: Icon, color, description }) => {
   const { theme } = useTheme();
+  const { t } = useLang();
   const isDark = theme === 'dark';
   
   return (
@@ -48,7 +49,7 @@ const StatCard = ({ title, value, subvalue, icon: Icon, color, description }) =>
             <div className={`absolute right-0 top-6 w-48 p-3 backdrop-blur-xl border rounded-2xl text-[9px] font-medium leading-relaxed opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-50 shadow-2xl ${
               isDark ? 'bg-black/90 border-white/10 text-white/70' : 'bg-white/95 border-emerald-500/20 text-emerald-950'
             }`}>
-              <span className={`font-black block mb-1 uppercase tracking-widest ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`}>Fuente de datos</span>
+              <span className={`font-black block mb-1 uppercase tracking-widest ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`}>{t('ceo_data_source')}</span>
               {description}
             </div>
           </div>
@@ -73,7 +74,7 @@ const CEODashboard = () => {
   const CHART_COLORS = isDark ? CHART_COLORS_DARK : CHART_COLORS_LIGHT;
 
   const navigate = useNavigate();
-  const { t } = useLang();
+  const { t, toggleLang, lang } = useLang();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('week'); // today, week, month, custom
@@ -92,10 +93,10 @@ const CEODashboard = () => {
         const result = await res.json();
         setData(result);
       } else {
-        toast.error('Error cargando analíticos');
+        toast.error(t('ceo_err_analytics'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     } finally {
       setLoading(false);
     }
@@ -145,12 +146,12 @@ const CEODashboard = () => {
         downloadLink.href = linkSource;
         downloadLink.download = filename;
         downloadLink.click();
-        toast.success(`Reporte ${format.toUpperCase()} generado`);
+        toast.success(t('ceo_report_gen').replace('{format}', format.toUpperCase()));
       } else {
-        toast.error('Error generando reporte');
+        toast.error(t('ceo_err_report'));
       }
     } catch {
-      toast.error('Error de conexión al exportar');
+      toast.error(t('ceo_err_export'));
     }
   };
 
@@ -162,39 +163,39 @@ const CEODashboard = () => {
     if (!data) return [];
     return [
       { 
-        title: 'Piezas Producidas', 
+        title: t('ceo_pieces_produced'), 
         value: data.total_produced.toLocaleString(), 
-        subvalue: `${data.total_logs} registros`, 
+        subvalue: `${data.total_logs} ${t('ceo_records')}`, 
         icon: CheckCircle2, 
         color: 'emerald',
-        description: 'Suma de todas las piezas capturadas por los operadores en estaciones de trabajo hoy.'
+        description: t('ceo_desc_produced')
       },
       { 
-        title: 'Eficiencia Global', 
+        title: t('ceo_global_efficiency'), 
         value: `${data.efficiency}%`, 
-        subvalue: 'vs Meta', 
+        subvalue: t('ceo_vs_goal'), 
         icon: TrendingUp, 
         color: 'blue',
-        description: 'Porcentaje de avance comparando la producción actual contra la meta teórica programada.'
+        description: t('ceo_desc_efficiency')
       },
       { 
-        title: 'Promedio Setup', 
+        title: t('ceo_avg_setup'), 
         value: `${Math.round(data.avg_setup)} min`, 
-        subvalue: 'por labor', 
+        subvalue: t('ceo_per_labor'), 
         icon: Timer, 
         color: 'orange',
-        description: 'Tiempo medio que tarda el equipo en preparar la máquina antes de iniciar la producción.'
+        description: t('ceo_desc_setup')
       },
       { 
-        title: 'Restante Estimado', 
+        title: t('ceo_est_remaining'), 
         value: data.total_remaining.toLocaleString(), 
-        subvalue: 'por completar', 
+        subvalue: t('ceo_to_complete'), 
         icon: AlertCircle, 
         color: 'red',
-        description: 'Total de piezas que aún faltan por producir para cumplir con las órdenes activas del periodo.'
+        description: t('ceo_desc_remaining')
       }
     ];
-  }, [data]);
+  }, [data, t]);
 
   const trendChartData = useMemo(() => {
     if (!data?.trend_data) return [];
@@ -254,19 +255,36 @@ const CEODashboard = () => {
                   <LayoutDashboard className={`w-5 h-5 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
                 </div>
                 <h1 className={`text-4xl font-black uppercase tracking-[-0.05em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>
-                  EXECUTIVE <span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-[#e94560] to-[#ff758c]' : 'from-emerald-600 to-emerald-400'}`}>INSIGHTS</span>
+                  {t('ceo_exclusive_insights').split(' ')[0]} <span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-[#e94560] to-[#ff758c]' : 'from-emerald-600 to-emerald-400'}`}>{t('ceo_exclusive_insights').split(' ')[1]}</span>
                 </h1>
               </div>
               <p className={`font-medium text-[11px] uppercase tracking-[0.3em] flex items-center gap-3 ${isDark ? 'text-muted-foreground/60' : 'text-emerald-800/40'}`}>
-                Operaciones <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`font-black uppercase tracking-widest text-[9px] ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>PROSPER MANUFACTURING</span> 
+                {t('ceo_operations')} <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
+                <span className={`font-black uppercase tracking-widest text-[9px] ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>{t('ceo_prosper_mfg')}</span> 
                 <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`px-2 py-0.5 border rounded text-[9px] ${isDark ? 'border-[#e94560]/30 text-[#e94560]/80' : 'border-emerald-500/20 text-emerald-600'}`}>Solo Lectura</span>
+                <span className={`px-2 py-0.5 border rounded text-[9px] ${isDark ? 'border-[#e94560]/30 text-[#e94560]/80' : 'border-emerald-500/20 text-emerald-600'}`}>{t('ceo_read_only')}</span>
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-6">
+            <button
+              onClick={toggleLang}
+              className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
+                isDark 
+                  ? 'bg-white/5 hover:bg-white/10 border-white/10 text-white' 
+                  : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 text-emerald-900 shadow-sm'
+              }`}
+            >
+              <div className={`p-1.5 rounded-lg transition-colors ${
+                isDark ? 'group-hover:bg-[#e94560]/20' : 'group-hover:bg-emerald-500/10'
+              }`}>
+                <Languages className={`w-4 h-4 transition-transform group-hover:rotate-12 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-widest">
+                {lang === 'es' ? 'English' : 'Español'}
+              </span>
+            </button>
             <ThemeSwitch />
             <div className={`flex flex-wrap items-center gap-4 p-2 rounded-3xl border backdrop-blur-xl ${
               isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-emerald-500/10 shadow-sm'
@@ -282,7 +300,7 @@ const CEODashboard = () => {
                         : (isDark ? 'text-muted-foreground hover:text-white' : 'text-emerald-700/60 hover:text-emerald-700')
                     }`}
                   >
-                    {p === 'today' ? 'Hoy' : p === 'week' ? 'Semana' : 'Mes'}
+                    {p === 'today' ? t('ceo_today') : p === 'week' ? t('ceo_week') : t('ceo_month')}
                   </button>
                 ))}
               </div>
@@ -297,7 +315,7 @@ const CEODashboard = () => {
                       isDark ? 'bg-white/5 border-white/10 text-white focus:border-[#e94560]/50' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-900 focus:border-emerald-500/40'
                     }`}
                   />
-                  <span className="text-[10px] font-black opacity-30">TO</span>
+                  <span className="text-[10px] font-black opacity-30">{t('ceo_to')}</span>
                   <input 
                     type="date" 
                     value={dateTo} 
@@ -328,7 +346,7 @@ const CEODashboard = () => {
                     isDark ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-500/10'
                   }`}
                 >
-                  <Download className="w-3.5 h-3.5" /> Excel
+                  <Download className="w-3.5 h-3.5" /> {t('ceo_excel')}
                 </button>
                 <button 
                   onClick={() => handleExport('pdf')}
@@ -336,7 +354,7 @@ const CEODashboard = () => {
                     isDark ? 'bg-[#e94560]/10 hover:bg-[#e94560]/20 text-[#e94560] border-[#e94560]/20' : 'bg-emerald-700 hover:bg-emerald-800 text-white border-transparent'
                   }`}
                 >
-                  <Download className="w-3.5 h-3.5" /> PDF
+                  <Download className="w-3.5 h-3.5" /> {t('ceo_pdf')}
                 </button>
               </div>
             </div>
@@ -363,14 +381,14 @@ const CEODashboard = () => {
               <div className="flex items-center gap-4">
                 <div className={`w-1.5 h-10 rounded-full shadow-lg ${isDark ? 'bg-gradient-to-b from-[#e94560] to-[#ff758c] shadow-[#e94560]/50' : 'bg-gradient-to-b from-emerald-600 to-emerald-400 shadow-emerald-500/30'}`} />
                 <div>
-                  <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>Tendencia de Producción</h2>
-                  <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>Industrial Analytics Engine</p>
+                  <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_production_trend')}</h2>
+                  <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_industrial_engine')}</p>
                 </div>
               </div>
               <div className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl border ${
                 isDark ? 'text-[#e94560] bg-[#e94560]/10 border-[#e94560]/20' : 'text-emerald-600 bg-emerald-500/5 border-emerald-500/10'
               }`}>
-                <TrendingUp className="w-3 h-3" /> {data.granularity === 'hour' ? 'Unidades / Hora' : 'Unidades / Día'}
+                <TrendingUp className="w-3 h-3" /> {data.granularity === 'hour' ? t('ceo_units_hour') : t('ceo_units_day')}
               </div>
             </div>
             
@@ -438,8 +456,8 @@ const CEODashboard = () => {
                 <Cpu className={`w-6 h-6 ${isDark ? 'text-blue-500 text-glow-blue' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>Carga Máquinas</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>Plant Resource View</p>
+                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_machine_load')}</h2>
+                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_plant_resource')}</p>
               </div>
             </div>
             
@@ -447,8 +465,8 @@ const CEODashboard = () => {
               {data?.by_machine.map((m, i) => (
                 <div key={i} className="space-y-3 group/item">
                   <div className="flex justify-between text-[11px] font-black uppercase tracking-widest">
-                    <span className={`${isDark ? 'text-white/60 group-hover/item:text-white' : 'text-emerald-900/60 group-hover/item:text-emerald-950'} transition-colors`}>{m.machine}</span>
-                    <span className={`${isDark ? 'text-blue-400' : 'text-emerald-600'} group-hover/item:scale-110 transition-transform`}>{m.produced.toLocaleString()} <span className="text-[9px] opacity-40 ml-0.5">unid</span></span>
+                    <span className={`${isDark ? 'text-white/60 group-hover/item:text-white' : 'text-emerald-900/60 group-hover/item:text-emerald-950'} transition-colors`}>{m.machine.replace(/MAQUINA/gi, t('ceo_machine_label'))}</span>
+                    <span className={`${isDark ? 'text-blue-400' : 'text-emerald-600'} group-hover/item:scale-110 transition-transform`}>{m.produced.toLocaleString()} <span className="text-[9px] opacity-40 ml-0.5">{t('ceo_unit_short')}</span></span>
                   </div>
                   <div className={`h-2 w-full rounded-full overflow-hidden border p-[1px] ${isDark ? 'bg-white/5 border-white/5' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
                     <div 
@@ -476,8 +494,8 @@ const CEODashboard = () => {
                 <Layers className={`w-6 h-6 ${isDark ? 'text-emerald-500 text-glow-emerald' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>Top Clientes</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>Client Portfolio Impact</p>
+                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_top_clients')}</h2>
+                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_client_impact')}</p>
               </div>
             </div>
             <div className="h-[320px] w-full mt-4">
@@ -530,8 +548,8 @@ const CEODashboard = () => {
                 <Calendar className={`w-6 h-6 ${isDark ? 'text-orange-500 text-glow-orange' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>Turnos</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>Operational Shift Balance</p>
+                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_shifts')}</h2>
+                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_shift_balance')}</p>
               </div>
             </div>
             <div className="h-[320px] w-full mt-4 flex items-center justify-center">
@@ -570,7 +588,17 @@ const CEODashboard = () => {
                     verticalAlign="bottom" 
                     height={36} 
                     iconType="circle"
-                    formatter={(val) => <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-white/40' : 'text-emerald-800/40'}`}>{val}</span>}
+                    formatter={(val) => {
+                      const shiftKeys = {
+                        'Mañana': 'ceo_shift_morning',
+                        'Tarde': 'ceo_shift_afternoon',
+                        'Noche': 'ceo_shift_night',
+                        'Morning': 'ceo_shift_morning',
+                        'Afternoon': 'ceo_shift_afternoon',
+                        'Night': 'ceo_shift_night'
+                      };
+                      return <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-white/40' : 'text-emerald-800/40'}`}>{t(shiftKeys[val] || val)}</span>
+                    }}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -581,7 +609,7 @@ const CEODashboard = () => {
 
       <footer className="mt-16 pt-8 border-t border-border/30 text-center relative z-10 transition-colors duration-500">
         <p className="text-[10px] font-black uppercase tracking-[0.5em] text-muted-foreground/30 italic">
-          MOS EXECUTIVE ENGINE v5.4.0 — Control Estratégico Industrial
+          {t('ceo_footer')}
         </p>
       </footer>
     </div>
@@ -590,6 +618,7 @@ const CEODashboard = () => {
 
 const Loader = ({ loading }) => {
   const { theme } = useTheme();
+  const { t } = useLang();
   const isDark = theme === 'dark';
   if (!loading) return null;
   
@@ -604,7 +633,7 @@ const Loader = ({ loading }) => {
       </div>
       <div className="space-y-2 text-center">
         <p className={`text-sm font-black uppercase tracking-[0.5em] animate-pulse ${isDark ? 'text-white' : 'text-emerald-950'}`}>
-          Sincronizando flujos
+          {t('ceo_syncing')}
         </p>
       </div>
     </div>
