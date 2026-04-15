@@ -4,7 +4,8 @@ import { Toaster as Sonner, toast } from "sonner"
 const Toaster = ({
   ...props
 }) => {
-  const { theme = "system" } = useTheme()
+  const themeContext = useTheme()
+  const theme = themeContext?.theme || "system"
 
   return (
     <Sonner

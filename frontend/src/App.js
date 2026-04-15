@@ -5,6 +5,8 @@ import { useLang } from "./contexts/LanguageContext";
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
+import { ThemeProvider } from "next-themes";
+
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -139,7 +141,12 @@ const AuthCallback = () => {
               setUser(userData);
               // Small delay to ensure React state propagates before navigation
               await new Promise(r => setTimeout(r, 100));
-              navigate('/dashboard', { replace: true });
+              
+              if (userData?.role === 'customer') {
+                navigate('/wms', { replace: true });
+              } else {
+                navigate('/dashboard', { replace: true });
+              }
               return;
             } else {
               const errData = await response.json().catch(() => ({}));
@@ -182,7 +189,7 @@ const AuthCallback = () => {
 };
 
 // Protected Route
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, allowCustomer = false }) => {
   const { t } = useLang();
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -195,10 +202,14 @@ const ProtectedRoute = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!loading && !grace && !user) {
-      navigate('/', { replace: true });
+    if (!loading && !grace) {
+      if (!user) {
+        navigate('/', { replace: true });
+      } else if (user.role === 'customer' && !allowCustomer) {
+        navigate('/wms', { replace: true });
+      }
     }
-  }, [user, loading, grace, navigate]);
+  }, [user, loading, grace, navigate, allowCustomer]);
 
   if (loading || (grace && !user)) {
     return (
@@ -232,7 +243,11 @@ const AdminRoute = ({ children }) => {
       if (!user) {
         navigate('/', { replace: true });
       } else if (user.role !== 'admin') {
-        navigate('/dashboard', { replace: true });
+        if (user.role === 'customer') {
+          navigate('/wms', { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
       }
     }
   }, [user, loading, grace, navigate]);
@@ -639,7 +654,7 @@ function AppRouter() {
         </ProtectedRoute>
       } />
       <Route path="/wms" element={
-        <ProtectedRoute>
+        <ProtectedRoute allowCustomer={true}>
           <WMS />
         </ProtectedRoute>
       } />
@@ -682,12 +697,15 @@ import { LanguageProvider } from "./contexts/LanguageContext";
 function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <LanguageProvider>
-          <AppRouter />
-        </LanguageProvider>
-      </AuthProvider>
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+        <AuthProvider>
+          <LanguageProvider>
+            <AppRouter />
+          </LanguageProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
+
   );
 }
 
