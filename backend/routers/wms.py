@@ -1,7 +1,7 @@
 """WMS (Warehouse Management System) routes."""
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import StreamingResponse
-from deps import db, get_current_user, require_auth, require_admin
+from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, io, json, logging
@@ -376,16 +376,17 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     styles = await db.wms_inventory.aggregate(style_pipeline).to_list(500)
     colors = await db.wms_inventory.aggregate(color_pipeline).to_list(500)
 
-    # Customers list (always unfiltered)
+    # Customers list: Fetch directly from MOS Orders (client column)
     cust_pipeline = [
-        {"$group": {"_id": {"$toLower": "$customer"}, "val": {"$first": "$customer"}}},
-        {"$match": {"_id": {"$ne": ""}}},
+        {"$match": {"client": {"$nin": [None, "", " "]}}},
+        {"$group": {"_id": {"$toLower": "$client"}, "val": {"$first": "$client"}}},
         {"$sort": {"_id": 1}}
     ]
-    custs = await db.wms_inventory.aggregate(cust_pipeline).to_list(500)
+    custs = await db.orders.aggregate(cust_pipeline).to_list(1000)
+    merged_customers = sorted(list(set([c["val"] for c in custs])))
 
     return {
-        "customers": [c["val"] for c in custs],
+        "customers": merged_customers,
         "manufacturers": [m["val"] for m in mfrs],
         "styles": [s["val"] for s in styles],
         "colors": [c["val"] for c in colors]
@@ -783,11 +784,7 @@ async def list_pick_tickets(request: Request, status: str = ""):
         oi = rt.pop("order_info", None)
         if oi:
             for k in ["job_title_a", "job_title_b"]:
-                val = oi.get(k)
-                if isinstance(val, dict):
-                    rt[k] = val.get("desc", val.get("url", ""))
-                else:
-                    rt[k] = val
+                rt[k] = oi.get(k)
             # Optionally sync more info if needed
             if not rt.get("customer"): rt["customer"] = oi.get("client") or oi.get("branding")
             
@@ -805,13 +802,6 @@ async def list_pick_tickets(request: Request, status: str = ""):
         virtual_orders = await db.orders.find(virtual_query, {"_id": 0}).sort("created_at", -1).to_list(500)
         
         for vo in virtual_orders:
-            # Safely handle job title objects
-            jt_a = vo.get("job_title_a")
-            if isinstance(jt_a, dict): jt_a = jt_a.get("desc", jt_a.get("url", ""))
-            
-            jt_b = vo.get("job_title_b")
-            if isinstance(jt_b, dict): jt_b = jt_b.get("desc", jt_b.get("url", ""))
-
             real_tickets.append({
                 "ticket_id": f"virt_{vo.get('order_id')}",
                 "order_number": vo.get("order_number"),
@@ -826,8 +816,8 @@ async def list_pick_tickets(request: Request, status: str = ""):
                 "blank_status": vo.get("blank_status") or "PENDIENTE",
                 "picking_status": "unassigned",
                 "board_category": vo.get("board", "UNSET").upper(),
-                "job_title_a": jt_a,
-                "job_title_b": jt_b,
+                "job_title_a": vo.get("job_title_a"),
+                "job_title_b": vo.get("job_title_b"),
                 "created_at": vo.get("created_at") or now_iso(),
                 "is_virtual": True
             })

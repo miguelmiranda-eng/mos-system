@@ -39,6 +39,7 @@ import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
 import { AutomationsModal } from "./dashboard/AutomationsModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
+import OrderHistoryModal from "./OrderHistoryModal";
 import { SystemGuideModal } from "./dashboard/SystemGuideModal";
 import { ImportExcelModal } from "./dashboard/ImportExcelModal";
 // Existing top-level components
@@ -81,6 +82,7 @@ const Dashboard = () => {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
+  const [historyOrder, setHistoryOrder] = useState(null);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -1260,7 +1262,14 @@ const Dashboard = () => {
                           return (
                             <tr key={order.order_id} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
                               <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" /></td>
-              <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><button onClick={() => setCommentsOrder(order)} className="p-1.5 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95" title={t('comments')}><MessageSquare className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" /></button></td>
+              <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+                <div className="flex flex-col gap-1 items-center">
+                  <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
+                  {isAdmin && (
+                    <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
+                  )}
+                </div>
+              </td>
                               
                               {/* Fixed Column 3 Data */}
                               {(() => {
@@ -1352,6 +1361,7 @@ const Dashboard = () => {
       <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
+      <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
 
       {/* Trash Modal */}
       <Dialog open={showTrash} onOpenChange={setShowTrash}>

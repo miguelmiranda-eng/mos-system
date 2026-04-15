@@ -44,6 +44,9 @@ const UserManagementCenter = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreatePw, setShowCreatePw] = useState(false);
   const [showResetPw, setShowResetPw] = useState(false);
+  const [customers, setCustomers] = useState([]);
+  const [newCust, setNewCust] = useState('');
+  const [inviteCust, setInviteCust] = useState('');
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -57,8 +60,19 @@ const UserManagementCenter = () => {
     }
   };
 
+  const fetchCustomers = async () => {
+    try {
+      const res = await fetch(`${API}/wms/inventory/options`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setCustomers(data.customers || []);
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     fetchUsers();
+    fetchCustomers();
   }, []);
 
   const handleCreateUser = async () => {
@@ -67,7 +81,13 @@ const UserManagementCenter = () => {
     try {
       const res = await fetch(`${API}/auth/create-user`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ email: newEmail.trim(), password: newPassword, name: newName.trim(), role: newRole })
+        body: JSON.stringify({ 
+          email: newEmail.trim(), 
+          password: newPassword, 
+          name: newName.trim(), 
+          role: newRole,
+          associated_customer: newRole === 'customer' ? newCust : ''
+        })
       });
       if (res.ok) {
         toast.success(`Usuario ${newEmail} creado`);
@@ -150,16 +170,23 @@ const UserManagementCenter = () => {
     try {
       const res = await fetch(`${API}/users/invite`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole })
+        body: JSON.stringify({ 
+          email: inviteEmail.trim(), 
+          role: inviteRole,
+          associated_customer: inviteRole === 'customer' ? inviteCust : ''
+        })
       });
       if (res.ok) { toast.success(`${inviteEmail} invitado como ${inviteRole}`); setInviteEmail(''); setInviteRole('user'); fetchUsers(); }
       else { const data = await res.json(); toast.error(data.detail || t('invite_err')); }
     } catch { toast.error(t('invite_err')); } finally { setInviting(false); }
   };
 
-  const handleRoleChange = async (userId, newRole) => {
+  const handleRoleChange = async (userId, newRole, customer = '') => {
     try {
-      const res = await fetch(`${API}/users/${userId}/role`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ role: newRole }) });
+      const res = await fetch(`${API}/users/${userId}/role`, { 
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', 
+        body: JSON.stringify({ role: newRole, associated_customer: customer }) 
+      });
       if (res.ok) { toast.success('Rol actualizado'); fetchUsers(); }
     } catch { toast.error('Error actualizando rol'); }
   };
@@ -245,9 +272,23 @@ const UserManagementCenter = () => {
                       <SelectItem value="user">Usuario Estándar</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
                       <SelectItem value="picker">Picker / Almacén</SelectItem>
+                      <SelectItem value="customer">Cliente Externo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {inviteRole === 'customer' && (
+                  <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Cliente Asociado</label>
+                    <Select value={inviteCust} onValueChange={setInviteCust}>
+                      <SelectTrigger className="w-full h-12 bg-secondary/70 border-primary/30 rounded-xl focus:ring-primary/50 text-xs">
+                        <SelectValue placeholder="Seleccionar Cliente..." />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-[300]">
+                        {customers.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <button onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}
                   className="w-full py-4 bg-primary text-black rounded-xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50 mt-4">
                   {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Enviar Invitación
@@ -292,9 +333,23 @@ const UserManagementCenter = () => {
                       <SelectItem value="user">Usuario Estándar</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
                       <SelectItem value="picker">Picker / Almacén</SelectItem>
+                      <SelectItem value="customer">Cliente Externo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {newRole === 'customer' && (
+                   <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
+                     <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Cliente Asociado</label>
+                     <Select value={newCust} onValueChange={setNewCust}>
+                       <SelectTrigger className="w-full h-12 bg-secondary/70 border-primary/30 rounded-xl focus:ring-primary/50 text-xs">
+                         <SelectValue placeholder="Seleccionar Cliente..." />
+                       </SelectTrigger>
+                       <SelectContent className="bg-popover border-border z-[300]">
+                         {customers.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                       </SelectContent>
+                     </Select>
+                   </div>
+                )}
                 <button onClick={handleCreateUser} disabled={creating || !newEmail.trim() || !newPassword}
                   className="w-full py-4 bg-primary text-black rounded-xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50 mt-4">
                   {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Crear Cuenta
@@ -353,6 +408,7 @@ const UserManagementCenter = () => {
                        {u.name || 'Sin Nombre'}
                        {u.auth_type === 'email' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black tracking-widest">EMAIL</span>}
                        {u.role === 'picker' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black tracking-widest">PICKER</span>}
+                       {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">CLIENTE: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>
                   </div>
@@ -366,6 +422,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="user">Usuario</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
                         <SelectItem value="picker">Picker</SelectItem>
+                        <SelectItem value="customer">Cliente</SelectItem>
                       </SelectContent>
                     </Select>
 

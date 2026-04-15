@@ -5,11 +5,12 @@ import {
   Package, MapPin, ClipboardList, BarChart3, Link2, ClipboardCheck,
   Factory, CheckCircle, History, ArrowLeft, Warehouse, Download, Plus,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
-  Sun, Moon, Home, AlertTriangle, LayoutDashboard
+  Sun, Moon, Home, AlertTriangle, LayoutDashboard, ExternalLink, LogOut
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
 import InventoryDashboard from "./InventoryDashboard";
+import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
@@ -1232,12 +1233,43 @@ const PickingModule = () => {
             <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">{new Date(ticket.created_at).toLocaleDateString()}</span>
           </div>
-          {(ticket.job_title_a || ticket.job_title_b) && (
-            <div className="flex gap-2 mt-1">
-              {ticket.job_title_a && <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={ticket.job_title_a}>A: {ticket.job_title_a}</span>}
-              {ticket.job_title_b && <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={ticket.job_title_b}>B: {ticket.job_title_b}</span>}
-            </div>
-          )}
+          {(() => {
+            const renderJobLink = (jt, label) => {
+              if (!jt) return null;
+              const isObj = typeof jt === 'object';
+              const text = isObj ? (jt.desc || jt.url || "") : jt;
+              const url = isObj ? jt.url : null;
+
+              if (url) {
+                return (
+                  <a 
+                    href={url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[9px] bg-primary/5 text-primary px-1.5 py-0.5 rounded border border-primary/20 hover:bg-primary/10 transition-colors group/link truncate max-w-[120px]"
+                    title={text}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <span className="font-bold opacity-60">{label}:</span>
+                    <span className="truncate">{text}</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover/link:opacity-100 transition-opacity" />
+                  </a>
+                );
+              }
+              return (
+                <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={text}>
+                  {label}: {text}
+                </span>
+              );
+            };
+
+            return (ticket.job_title_a || ticket.job_title_b) && (
+              <div className="flex gap-2 mt-1">
+                {renderJobLink(ticket.job_title_a, 'A')}
+                {renderJobLink(ticket.job_title_b, 'B')}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Progress */}
@@ -2241,6 +2273,9 @@ export default function WMS() {
   const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light-theme'));
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0 });
   const [currentUser, setCurrentUser] = useState(null);
+  const [historyOrder, setHistoryOrder] = useState(null);
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
 
   // Fetch current user to detect associated_customer for auto-filtering
   useEffect(() => {
@@ -2288,6 +2323,13 @@ export default function WMS() {
     return () => clearInterval(interval);
   }, [loadBadges]);
 
+  // Forzar Dashboard para el rol customer y asegurar cliente filtrado
+  useEffect(() => {
+    if (currentUser?.role === 'customer') {
+      setActiveModule('dashboard');
+    }
+  }, [currentUser]);
+
   // Handle URL parameters from Home Dashboard
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2309,6 +2351,35 @@ export default function WMS() {
     });
   };
 
+  const handleLogout = async () => {
+    try {
+      await fetch(`${AUTH_API}/logout`, { method: 'POST', credentials: 'include' });
+    } catch {}
+    localStorage.removeItem("mos_user");
+    window.location.href = '/';
+  };
+
+  const handleGlobalOrderSearch = async (e) => {
+    e.preventDefault();
+    if (!globalSearch.trim()) return;
+    setIsSearching(true);
+    try {
+      // Usar el endpoint de reportes para buscar la orden por PO
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/reports/order-history/${globalSearch}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryOrder(data.order);
+        setGlobalSearch('');
+      } else {
+        toast.error('Orden / PO no encontrado');
+      }
+    } catch {
+      toast.error('Error al buscar orden');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col text-foreground">
       <div className="bg-red-600 text-white text-center py-2 font-bold text-xl animate-pulse z-50 relative">
@@ -2320,31 +2391,54 @@ export default function WMS() {
       <aside 
         className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col transition-all duration-300 relative z-20 shadow-2xl`}
       >
-        <div className="p-4 border-b border-border/40 flex items-center gap-3">
-          <button 
-            onClick={() => navigate('/dashboard')} 
-            className="p-1.5 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group"
-            title={t('wms_back_main')}          >
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
-          </button>
-          {!sidebarCollapsed && (
-            <div className="flex flex-col">
-              <span className="font-barlow font-black text-lg tracking-tighter flex items-center gap-1.5 italic">
-                <Warehouse className="w-5 h-5 text-primary" />
-                MOS <span className="text-primary not-italic tracking-normal ml-0.5">WMS</span>
-              </span>
-            </div>
-          )}
-          <button 
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
-            className="ml-auto p-1.5 rounded-lg hover:bg-secondary/80 text-muted-foreground transition-all"
-          >
-            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <X className="w-4 h-4" />}
-          </button>
+        <div className="p-4 border-b border-border/40 flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => navigate('/dashboard')} 
+              className="p-1.5 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group"
+              title={t('wms_back_main')}          >
+              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
+            </button>
+            {!sidebarCollapsed && (
+              <div className="flex flex-col">
+                <span className="font-barlow font-black text-lg tracking-tighter flex items-center gap-1.5 italic">
+                  <Warehouse className="w-5 h-5 text-primary" />
+                  MOS <span className="text-primary not-italic tracking-normal ml-0.5">WMS</span>
+                </span>
+              </div>
+            )}
+            <button 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
+              className="ml-auto p-1.5 rounded-lg hover:bg-secondary/80 text-muted-foreground transition-all"
+            >
+              {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <X className="w-4 h-4" />}
+            </button>
+          </div>
+
+          <div className={`flex ${sidebarCollapsed ? 'flex-col' : 'flex-row'} gap-2`}>
+            <button 
+              onClick={toggleTheme} 
+              className="flex-1 flex items-center justify-center gap-2 p-2 rounded-xl bg-secondary/10 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all border border-border/20"
+              title={isDark ? t('light_mode') : t('dark_mode')}
+              data-testid="wms-theme-toggle"
+            >
+              {isDark ? <Sun className="w-4 h-4 text-primary animate-spin-slow" /> : <Moon className="w-4 h-4 text-indigo-400" />}
+              {!sidebarCollapsed && <span className="text-[10px] font-bold uppercase tracking-wider">{isDark ? t('light_mode') : t('dark_mode')}</span>}
+            </button>
+            
+            <button 
+              onClick={handleLogout} 
+              className="flex-1 flex items-center justify-center gap-2 p-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20"
+              title="Cerrar Sesión"
+            >
+              <LogOut className="w-4 h-4" />
+              {!sidebarCollapsed && <span className="text-[10px] font-bold uppercase tracking-wider">Salir</span>}
+            </button>
+          </div>
         </div>
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
-          {MODULES.map(m => {
+          {MODULES.filter(m => currentUser?.role !== 'customer' || m.id === 'dashboard').map(m => {
             const Icon = m.icon;
             const isActive = activeModule === m.id;
             const badgeCount = badges[m.id] || 0;
@@ -2406,15 +2500,6 @@ export default function WMS() {
               <div className="text-[11px] font-medium text-foreground opacity-80 uppercase">{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
             </div>
           )}
-          
-          <button 
-            onClick={toggleTheme} 
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary/10 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all group border border-border/20"
-            data-testid="wms-theme-toggle"
-          >
-            {isDark ? <Sun className="w-5 h-5 text-primary animate-spin-slow" /> : <Moon className="w-5 h-5 text-indigo-400" />}
-            {!sidebarCollapsed && <span className="text-xs font-bold">{isDark ? t('light_mode') : t('dark_mode')}</span>}
-          </button>
         </div>
       </aside>
 
@@ -2441,11 +2526,27 @@ export default function WMS() {
                     </p>
                   </div>
                 </div>
-                {/* Global Stats or Date */}
-                <div className="hidden lg:flex flex-col items-end">
-                  <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground opacity-50 mb-1">{t('wms_mgmt')}</div>
-                  <div className="text-lg font-mono font-black text-foreground/80 tabular-nums">
-                    {new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
+                {/* Global Search Order - Admin Only */}
+                <div className="flex items-center gap-4">
+                  {currentUser?.role === 'admin' && (
+                    <form onSubmit={handleGlobalOrderSearch} className="relative group">
+                      <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${isSearching ? 'text-primary animate-pulse' : 'text-muted-foreground group-focus-within:text-primary'}`} />
+                      <input 
+                        type="text"
+                        placeholder="Buscar PO / Orden..."
+                        value={globalSearch}
+                        onChange={(e) => setGlobalSearch(e.target.value)}
+                        className="h-10 pl-10 pr-4 bg-secondary/40 border border-border/50 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-secondary/60 transition-all w-48 lg:w-64 placeholder:text-muted-foreground/50"
+                      />
+                      {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-primary" />}
+                    </form>
+                  )}
+
+                  <div className="hidden lg:flex flex-col items-end">
+                    <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground opacity-50 mb-1">{t('wms_mgmt')}</div>
+                    <div className="text-lg font-mono font-black text-foreground/80 tabular-nums">
+                      {new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2457,6 +2558,7 @@ export default function WMS() {
         <div className="p-6 pt-2">
           <ActiveComponent />
         </div>
+        <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
       </main>
       </div>
     </div>

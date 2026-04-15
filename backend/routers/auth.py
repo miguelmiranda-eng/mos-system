@@ -163,6 +163,7 @@ async def admin_create_user(request: Request, response: Response):
     password = body.get("password", "")
     name = body.get("name", "").strip()
     role = body.get("role", "user")
+    associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email invalido")
     if not password or len(password) < 6:
@@ -176,6 +177,7 @@ async def admin_create_user(request: Request, response: Response):
         "user_id": user_id, "email": email, "name": name or email.split("@")[0],
         "picture": "", "role": role, "auth_type": "email",
         "password_hash": hashed,
+        "associated_customer": associated_customer,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.users.update_one({"email": email}, {"$set": new_user}, upsert=True)

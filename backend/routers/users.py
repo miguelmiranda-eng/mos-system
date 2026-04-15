@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api")
 @router.get("/users/list")
 async def list_users_for_mention(request: Request):
     await require_auth(request)
-    users = await db.users.find({}, {"_id": 0, "email": 1, "name": 1, "picture": 1, "user_id": 1}).to_list(200)
+    users = await db.users.find({}, {"_id": 0, "email": 1, "name": 1, "picture": 1, "user_id": 1, "associated_customer": 1}).to_list(200)
     return users
 
 @router.get("/users")
@@ -25,14 +25,19 @@ async def invite_user(request: Request):
     body = await request.json()
     email = body.get("email", "").strip().lower()
     role = body.get("role", "user")
+    associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
-    new_user = {"email": email, "name": email.split("@")[0], "picture": "", "role": role, "invited_by": user, "created_at": datetime.now(timezone.utc).isoformat()}
+    new_user = {
+        "email": email, "name": email.split("@")[0], "picture": "", "role": role, 
+        "associated_customer": associated_customer,
+        "invited_by": user, "created_at": datetime.now(timezone.utc).isoformat()
+    }
     await db.users.update_one({"email": email}, {"$set": new_user}, upsert=True)
-    await log_activity(user, "invite_user", {"email": email, "role": role})
+    await log_activity(user, "invite_user", {"email": email, "role": role, "associated_customer": associated_customer})
     return {"message": f"Usuario {email} invitado como {role}"}
 
 @router.put("/users/{user_id}/role")
@@ -40,10 +45,15 @@ async def update_user_role(user_id: str, request: Request):
     user = await require_admin(request)
     body = await request.json()
     new_role = body.get("role", "user")
-    result = await db.users.update_one({"email": user_id}, {"$set": {"role": new_role}})
-    if result.modified_count == 0:
+    associated_customer = body.get("associated_customer", "")
+    update_data = {"role": new_role}
+    if associated_customer is not None:
+        update_data["associated_customer"] = associated_customer
+        
+    result = await db.users.update_one({"email": user_id}, {"$set": update_data})
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role})
+    await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role, "associated_customer": associated_customer})
     return {"message": f"Rol de {user_id} actualizado a {new_role}"}
 
 @router.delete("/users/{user_id}")

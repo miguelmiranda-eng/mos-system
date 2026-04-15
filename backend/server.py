@@ -35,6 +35,7 @@ from routers.users import router as users_router
 from routers.activity import router as activity_router
 from routers.production import router as production_router
 from routers.wms import router as wms_router
+from routers.reports import router as reports_router
 
 
 app.include_router(auth_router)
@@ -45,6 +46,7 @@ app.include_router(users_router)
 app.include_router(activity_router)
 app.include_router(production_router)
 app.include_router(wms_router)
+app.include_router(reports_router)
 
 
 # Auto-restore database on startup
