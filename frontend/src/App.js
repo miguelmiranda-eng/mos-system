@@ -6,8 +6,6 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
-import { ThemeProvider } from "./contexts/ThemeContext";
-
 
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
