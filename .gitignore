@@ -124,3 +124,23 @@ frontend/node_modules/.cache/default-development/31.pack
 *.env
 *.env.*
 backup_*.json
+
+# Windows Python venv
+backend/Lib/
+backend/Include/
+
+# Binaries and executables
+*.exe
+backend/scripts/*.exe
+
+# Logs and temporary files
+*.log
+report_debug.log
+test_report.*
+
+# Research and Scratch
+scratch/
+test_reports/
+load_test_results.txt
+test_result.md
+auth_testing.md
