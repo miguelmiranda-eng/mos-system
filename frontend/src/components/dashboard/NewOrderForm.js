@@ -1,5 +1,11 @@
-import { useState, useEffect } from "react";
-import { Loader2, AlertTriangle, X } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { 
+  Plus, Loader2, AlertTriangle, Link2, 
+  FileSearch, CheckCircle2, PackageSearch,
+  Zap, Info, ExternalLink, X
+} from "lucide-react";
+import { toast } from "sonner";
+import { API } from "../../lib/constants";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "../ui/select";
 import { useLang } from "../../contexts/LanguageContext";
@@ -22,6 +28,85 @@ export const NewOrderForm = ({
   const { t } = useLang();
   const [formData, setFormData] = useState({});
   const [sizes, setSizes] = useState(SIZES_ORDER.reduce((acc, s) => ({ ...acc, [s]: '' }), {}));
+  
+  // Printavo Import State
+  const [printavoUrl, setPrintavoUrl] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importedItems, setImportedItems] = useState([]);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+
+  const handlePrintavoAnalyze = async () => {
+    if (!printavoUrl.trim()) {
+      toast.error("Por favor ingresa un enlace o ubicación de PDF");
+      return;
+    }
+    
+    setImportLoading(true);
+    setImportedItems([]);
+    try {
+      const res = await fetch(`${API}/import/printavo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ url: printavoUrl })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error analizando enlace");
+      
+      if (data.items && data.items.length > 0) {
+        setImportedItems(data.items);
+        toast.success(`Se encontraron ${data.items.length} artículos en Printavo`);
+        if (data.items.length === 1) {
+          applyImportedData(data.items[0]);
+        }
+      } else {
+        toast.warning("No se detectaron prendas o datos de talla automáticamente");
+      }
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const applyImportedData = (item) => {
+    setFormData(prev => ({
+      ...prev,
+      order_number: item.order_number || prev.order_number,
+      order_name: item.style || prev.order_name,
+      client: (options.clients || []).find(c => item.client && item.client.toUpperCase().includes(c.toUpperCase())) || item.client || prev.client,
+      branding: (options.brandings || []).find(b => item.branding && b.toUpperCase().includes(item.branding.toUpperCase())) || item.branding || prev.branding,
+      style: item.style || prev.style,
+      color: item.color || prev.color,
+      customer_po: item.customer_po || prev.customer_po,
+      store_po: item.store_po || prev.store_po,
+      "store_po#": item.store_po || prev["store_po#"],
+      "design_#": item["design_#"] || prev["design_#"],
+      cancel_date: item.cancel_date || prev.cancel_date,
+      due_date: item.due_date || prev.due_date,
+      job_title_a: { url: printavoUrl, desc: item.job_title_desc || "Printavo WO" },
+      quantity: item.quantity || prev.quantity,
+      notes: (prev.notes ? prev.notes + "\n" : "") + (item.notes || ""),
+      ...(item.unit_price ? { unit_price: item.unit_price } : {})
+    }));
+    
+    if (item.sizes) {
+      setSizes(prev => {
+        const newSizes = { ...prev };
+        Object.keys(item.sizes).forEach(sz => {
+          if (newSizes.hasOwnProperty(sz)) {
+            newSizes[sz] = item.sizes[sz].toString();
+          }
+        });
+        return newSizes;
+      });
+    }
+    
+    setShowImportPanel(false);
+    setImportedItems([]);
+    toast.success("Datos aplicados al formulario");
+  };
 
   // Sync form data structure when keys change
   useEffect(() => {
@@ -59,7 +144,7 @@ export const NewOrderForm = ({
             onValueChange={(v) => !isPreview && set(key, v === 'none' ? '' : v)}
             disabled={isPreview}
           >
-            <SelectTrigger className="bg-secondary border-border h-9" data-testid={`field-${key}`}>
+            <SelectTrigger className="bg-secondary border-border h-9">
               <SelectValue placeholder="Seleccionar" />
             </SelectTrigger>
             <SelectContent className="bg-popover border-border z-[600] max-h-[250px]">
@@ -106,7 +191,7 @@ export const NewOrderForm = ({
           <input 
             type="date" value={value} onChange={(e) => set(key, e.target.value)}
             disabled={isPreview}
-            className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" data-testid={`field-${key}`} />
+            className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" />
         </div>
       );
     }
@@ -119,7 +204,7 @@ export const NewOrderForm = ({
             <input 
               type="checkbox" checked={!!value} onChange={(e) => set(key, e.target.checked)} 
               disabled={isPreview}
-              className="w-4 h-4 cursor-pointer" data-testid={`field-${key}`} />
+              className="w-4 h-4 cursor-pointer" />
             <span className="text-sm text-foreground">{value ? 'Si' : 'No'}</span>
           </label>
         </div>
@@ -134,7 +219,7 @@ export const NewOrderForm = ({
             value={value} onChange={(e) => set(key, e.target.value)}
             disabled={isPreview}
             placeholder={isPreview ? "Area de notas..." : "Notas adicionales..."}
-            className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none h-20" data-testid={`field-${key}`} />
+            className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none h-20" />
         </div>
       );
     }
@@ -147,11 +232,11 @@ export const NewOrderForm = ({
           <input 
             type="url" value={parsed.url} onChange={(e) => set(key, { ...parsed, url: e.target.value })}
             disabled={isPreview}
-            placeholder="https://..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" data-testid={`field-${key}-url`} />
+            placeholder="https://..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" />
           <input 
             type="text" value={parsed.desc} onChange={(e) => set(key, { ...parsed, desc: e.target.value })}
             disabled={isPreview}
-            placeholder="Descripcion..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-8 text-xs text-foreground mt-1" data-testid={`field-${key}-desc`} />
+            placeholder="Descripcion..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-8 text-xs text-foreground mt-1" />
         </div>
       );
     }
@@ -175,8 +260,7 @@ export const NewOrderForm = ({
               key === 'order_number' && duplicateWarning 
                 ? (duplicateWarning.in_trash ? 'border-yellow-500 ring-1 ring-yellow-500/30' : 'border-destructive ring-1 ring-destructive/30') 
                 : 'border-border'
-            }`}
-            data-testid={`field-${key}`} />
+            }`} />
           {key === 'order_number' && checkingDuplicate && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-2.5 text-muted-foreground" />}
         </div>
         {key === 'order_number' && duplicateWarning && (
@@ -184,7 +268,7 @@ export const NewOrderForm = ({
             duplicateWarning.in_trash 
               ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-600 dark:text-yellow-500' 
               : 'bg-destructive/10 border-destructive/30 text-destructive'
-          }`} data-testid="duplicate-warning">
+          }`}>
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             <span className="leading-tight">
               {duplicateWarning.in_trash 
@@ -224,10 +308,94 @@ export const NewOrderForm = ({
 
       {/* Combined Scrollable Area */}
       <div className={`flex-1 overflow-y-auto p-0 custom-scrollbar ${isPreview ? 'bg-secondary/10' : 'bg-gradient-to-b from-transparent to-secondary/10'}`}>
-        <div className="p-6 space-y-8">
+        <div className="px-6 py-8">
+          <div className="max-w-4xl mx-auto space-y-8">
           
-          {/* Form Fields Section */}
-          <div className="space-y-5">
+          {/* Printavo Magic Import */}
+          <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform pointer-events-none">
+              <Zap className="w-16 h-16 text-primary" />
+            </div>
+            
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary shadow-inner">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Importación Mágica</h3>
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60">Extrae datos desde Printavo (Enlace o PDF)</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowImportPanel(!showImportPanel)}
+                className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline relative z-10"
+              >
+                {showImportPanel ? "Ocultar" : "Abrir Motor"}
+              </button>
+            </div>
+
+            {showImportPanel && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input 
+                      type="text" 
+                      value={printavoUrl}
+                      onChange={(e) => setPrintavoUrl(e.target.value)}
+                      placeholder="https://prosper-mfg.printavo.com/work_orders/..."
+                      className="w-full bg-background border border-border/50 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                    />
+                  </div>
+                  <button 
+                    onClick={handlePrintavoAnalyze}
+                    disabled={importLoading}
+                    className="px-6 py-2.5 bg-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                  >
+                    {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Analizar"}
+                  </button>
+                </div>
+
+                {importedItems.length > 1 && (
+                  <div className="space-y-2 border-t border-border/20 pt-4">
+                    <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tighter">Múltiples estilos detectados. Selecciona uno:</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {importedItems.map((item, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={() => applyImportedData(item)}
+                          className="flex items-center gap-3 p-3 bg-card border border-border rounded-xl hover:border-primary/50 transition-all text-left group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-[10px] font-black">
+                            {idx + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black truncate">{item.style || "Sin Estilo"}</p>
+                            <p className="text-[9px] uppercase font-bold text-muted-foreground">{Object.keys(item.sizes || {}).length} Tallas • {item.quantity} Uni.</p>
+                          </div>
+                          <Plus className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {importedItems.length === 0 && !importLoading && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-secondary/50 rounded-lg border border-border/30">
+                    <Info className="w-3.5 h-3.5 text-primary" />
+                    <p className="text-[9px] font-bold text-muted-foreground uppercase leading-relaxed">
+                      Carga el enlace de la Work Order o el PDF de Invoice para extraer tallas y cantidades automáticamente.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Section: Order Info */}
+          <div className="space-y-6">
             {rows.map((row, i) => (
               <div key={i} className={`grid gap-5 ${row.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                 {row.map(key => renderField(key))}
@@ -277,6 +445,7 @@ export const NewOrderForm = ({
             </div>
           )}
 
+          </div>
         </div>
       </div>
 
