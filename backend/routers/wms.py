@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, Fil
 from fastapi.responses import StreamingResponse
 from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
 from ws_manager import ws_manager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid, io, json, logging
 
 router = APIRouter(prefix="/api/wms")
@@ -22,7 +22,7 @@ async def log_movement(user, movement_type, details):
         "details": details,
         "user_id": user.get("user_id"),
         "user_name": user.get("name", user.get("email", "")),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     })
 
 # ==================== LOCATIONS ====================
@@ -41,7 +41,7 @@ async def create_location(request: Request):
         raise HTTPException(400, "Ubicacion ya existe")
     loc = {
         "location_id": gen_id("loc"), "name": name, "zone": zone,
-        "type": loc_type, "active": True, "created_at": now_iso()
+        "type": loc_type, "active": True, "created_at": now_iso(),
     }
     await db.wms_locations.insert_one(loc)
     loc.pop("_id", None)
@@ -119,8 +119,10 @@ async def create_receiving(request: Request):
                     "customer": customer, "manufacturer": manufacturer, "style": style,
                     "sku": sku or style, "color": color, "size": item_size,
                     "units": units_per_box, "seq_num": seq, "location": inv_location,
-                    "status": "stored", "state": "raw", "is_bpo": is_bpo,
-                    "created_at": now_iso()
+                    "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
+                    "lpn_id": box_id, "coo": country_of_origin, "lot_number": lot_number,
+                    "asn_reference": body.get("asn_reference", "").strip(),
+                    "created_at": now_iso(),
                 })
     else:
         seq += 1
@@ -130,12 +132,52 @@ async def create_receiving(request: Request):
             "customer": customer, "manufacturer": manufacturer, "style": style,
             "sku": sku or style, "color": color, "size": size,
             "units": total_units, "seq_num": seq, "location": inv_location,
-            "status": "stored", "state": "raw", "is_bpo": is_bpo,
-            "created_at": now_iso()
+            "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
+            "lpn_id": box_id, "coo": country_of_origin, "lot_number": lot_number,
+            "asn_reference": body.get("asn_reference", "").strip(),
+            "created_at": now_iso(),
         })
     
     if box_docs:
         await db.wms_boxes.insert_many(box_docs)
+        
+        # WMS 2.0: Directed Work Task Generator (Cross-Dock vs Putaway)
+        tasks_to_insert = []
+        for box in box_docs:
+            bd_style = box.get("style", "").upper()
+            bd_color = box.get("color", "")
+            
+            # Busqueda de demanda (Backorders)
+            demand_query = {
+                "board": {"$regex": "^scheduling$|^blanks$|^crm$", "$options": "i"},
+                "style": {"$regex": f"^{bd_style}$", "$options": "i"}
+            }
+            if bd_color:
+                demand_query["color"] = {"$regex": f"^{bd_color}$", "$options": "i"}
+                
+            urgent_order = await db.orders.find_one(demand_query)
+            
+            task_type = "cross_dock" if urgent_order else "putaway"
+            priority = "HOT" if urgent_order and urgent_order.get("priority", "").upper() == "HOT" else "NORMAL"
+            suggested_zone = "ZONA PRODUCCION" if task_type == "cross_dock" else inv_location
+            
+            tasks_to_insert.append({
+                "task_id": gen_id("tsk"),
+                "lpn_id": box["box_id"],
+                "task_type": task_type,
+                "priority": priority,
+                "status": "pending",
+                "assigned_to": None,
+                "context": {
+                    "suggested_zone": suggested_zone, 
+                    "sku": box["sku"],
+                    "order_number": urgent_order.get("order_number") if urgent_order else None
+                },
+                "created_at": now_iso(),
+            })
+            
+        if tasks_to_insert:
+            await db.wms_tasks.insert_many(tasks_to_insert)
 
     receiving_doc = {
         "receiving_id": receiving_id, "customer": customer, "manufacturer": manufacturer,
@@ -144,7 +186,7 @@ async def create_receiving(request: Request):
         "inv_location": inv_location, "lot_number": lot_number, "sku": sku,
         "total_units": total_units, "is_bpo": is_bpo,
         "received_by": user.get("user_id"), "received_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     }
     await db.wms_receiving.insert_one(receiving_doc)
     await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo})
@@ -162,7 +204,7 @@ async def create_receiving(request: Request):
         await db.wms_locations.insert_one({
             "location_id": gen_id("loc"), "name": inv_location, 
             "zone": inv_location.split('-')[0] if '-' in inv_location else "RECEIVING",
-            "type": "rack", "active": True, "created_at": now_iso()
+            "type": "rack", "active": True, "created_at": now_iso(),
         })
 
     receiving_doc.pop("_id", None)
@@ -248,26 +290,37 @@ async def putaway_bulk(request: Request):
 # ==================== INVENTORY ====================
 
 async def _update_inventory_enhanced(sku, color, size, qty, operation, customer="", location="", is_bpo=False):
-    key = {"sku": sku, "color": color or "", "size": size or "", "inv_location": location or ""}
+    key = {"sku": sku, "color": color or "", "size": size or "", "location": location or ""}
     inv = await db.wms_inventory.find_one(key)
     if not inv and operation == "add":
         await db.wms_inventory.insert_one({
             "sku": sku, "style": sku, "color": color or "", "size": size or "",
             "inventory_id": gen_id("inv"), "customer": customer,
-            "inv_location": location, "is_bpo": is_bpo,
-            "on_hand": qty, "allocated": 0, "available": qty, "total_boxes": 1,
+            "location": location, "is_bpo": is_bpo,
+            "units_on_hand": qty, "units_allocated": 0, "total_boxes": 1,
             "updated_at": now_iso()
         })
     elif inv:
         doc_key = {"_id": inv["_id"]}
         if operation == "add":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": qty, "available": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "is_bpo": is_bpo}})
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "is_bpo": is_bpo}})
         elif operation == "allocate":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"allocated": qty, "available": -qty}, "$set": {"updated_at": now_iso()}})
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_allocated": qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deallocate":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"allocated": -qty, "available": qty}, "$set": {"updated_at": now_iso()}})
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deduct":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"on_hand": -qty, "allocated": -qty}, "$set": {"updated_at": now_iso()}})
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
+
+            # WMS 2.0 Cycle Count Trigger
+            new_hand = inv.get("on_hand", 0) - qty
+            if new_hand < 50:
+                existing_cc = await db.wms_tasks.find_one({"task_type": "cycle_count", "context.sku": sku, "status": "pending"})
+                if not existing_cc:
+                    await db.wms_tasks.insert_one({
+                        "task_id": gen_id("tsk"), "task_type": "cycle_count", "priority": "HIGH", "status": "pending",
+                        "assigned_to": None, "context": {"sku": sku, "suggested_zone": location, "reason": "Threshold breach (<50)"},
+                        "created_at": now_iso(),
+                    })
 
 async def _update_inventory(sku, color, size, qty, operation="add", location=""):
     # Standard fallback for old calls
@@ -282,13 +335,42 @@ async def get_inventory(request: Request, sku: str = "", color: str = "", size: 
     if color: query["color"] = {"$regex": color, "$options": "i"}
     if size: query["size"] = {"$regex": size, "$options": "i"}
     if customer: query["customer"] = {"$regex": customer, "$options": "i"}
-    if category: query["category"] = {"$regex": category, "$options": "i"}
-    if location: query["inv_location"] = {"$regex": location, "$options": "i"}
-    inventory = await db.wms_inventory.find(query, {"_id": 0}).sort("sku", 1).to_list(5000)
+    if category == "LOW_STOCK":
+        query["units_on_hand"] = {"$lte": 10, "$gt": 0}
+    elif category:
+        query["category"] = {"$regex": category, "$options": "i"}
+    if location: query["location"] = {"$regex": location, "$options": "i"}
+    
+    # Use aggregation to project/alias for frontend compatibility
+    pipeline = [
+        {"$match": query},
+        {"$project": {
+            "_id": 0,
+            "sku": 1,
+            "style": 1,
+            "color": 1,
+            "size": 1,
+            "description": 1,
+            "customer": 1,
+            "manufacturer": 1,
+            "category": 1,
+            "location": 1,
+            "total_boxes": 1,
+            "last_updated": 1,
+            "on_hand": "$units_on_hand",
+            "allocated": "$units_allocated",
+            "available": {"$subtract": ["$units_on_hand", "$units_allocated"]},
+            "inv_location": "$location",
+            "units_on_hand": 1,
+            "units_allocated": 1,
+        }},
+        {"$sort": {"sku": 1}}
+    ]
+    inventory = await db.wms_inventory.aggregate(pipeline).to_list(5000)
     return inventory
 
-@router.put("/inventory/{inventory_id}")
-async def inventory_filters(request: Request):
+@router.get("/inventory/filters")
+async def inventory_filters_v2(request: Request):
     """Return unique filter values for inventory dropdowns."""
     await require_auth(request)
     customers = await db.wms_inventory.distinct("customer")
@@ -318,8 +400,10 @@ async def locations_lookup(request: Request, style: str = "", color: str = ""):
         sz = r.get("size", "")
         if sz not in by_size:
             by_size[sz] = {"size": sz, "locations": [], "total_available": 0, "total_boxes": 0}
-        loc = r.get("inv_location", "")
-        avail = r.get("available", r.get("on_hand", 0))
+        loc = r.get("location", "")
+        on_hand = r.get("units_on_hand", 0)
+        allocated = r.get("units_allocated", 0)
+        avail = on_hand - allocated
         boxes = r.get("total_boxes", 0)
         if loc and avail > 0:
             by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", "")})
@@ -403,9 +487,9 @@ async def inventory_summary(request: Request, customer: str = ""):
         {"$match": match_query},
         {"$group": {
             "_id": None,
-            "total_on_hand": {"$sum": "$on_hand"},
-            "total_allocated": {"$sum": "$allocated"},
-            "total_available": {"$sum": "$available"},
+            "total_on_hand": {"$sum": "$units_on_hand"},
+            "total_allocated": {"$sum": "$units_allocated"},
+            "total_available": {"$sum": {"$subtract": ["$units_on_hand", "$units_allocated"]}},
             "total_skus": {"$sum": 1},
             "total_boxes_sum": {"$sum": "$total_boxes"}
         }}
@@ -415,19 +499,19 @@ async def inventory_summary(request: Request, customer: str = ""):
     
     # Locations count depends on the same customer filter if specified
     if customer:
-        total_locations = len(await db.wms_inventory.distinct("inv_location", match_query))
+        total_locations = len(await db.wms_inventory.distinct("location", match_query))
     else:
         total_locations = await db.wms_locations.count_documents({"active": True})
         
-    low_stock_query = {"available": {"$lte": 10}, "on_hand": {"$gt": 0}}
+    low_stock_query = {"units_on_hand": {"$lte": 10}, "units_on_hand": {"$gt": 0}}
     if customer:
         low_stock_query["customer"] = {"$regex": customer, "$options": "i"}
         
     low_stock = await db.wms_inventory.find(
         low_stock_query, {"_id": 0}
-    ).sort("available", 1).to_list(20)
+    ).sort("units_on_hand", 1).to_list(20)
     
-    return {
+    summary = {
         "total_on_hand": agg.get("total_on_hand", 0),
         "total_allocated": agg.get("total_allocated", 0),
         "total_available": agg.get("total_available", 0),
@@ -437,6 +521,12 @@ async def inventory_summary(request: Request, customer: str = ""):
         "low_stock_items": len(low_stock),
         "low_stock": low_stock
     }
+    return summary
+
+@router.get("/inventory/summary")
+async def inventory_summary_alias(request: Request, customer: str = ""):
+    """Explicitly support the InventoryModule's summary call path."""
+    return await inventory_summary(request, customer)
 
 @router.get("/inventory/chart-data")
 async def get_inventory_chart_data(request: Request, customer: str = ""):
@@ -448,7 +538,7 @@ async def get_inventory_chart_data(request: Request, customer: str = ""):
     # 1. Top 10 SKUs by total available units
     top_skus_pipeline = [
         {"$match": match_query},
-        {"$group": {"_id": "$sku", "available": {"$sum": "$available"}}},
+        {"$group": {"_id": "$sku", "available": {"$sum": "$units_on_hand"}}},
         {"$sort": {"available": -1}},
         {"$limit": 10},
         {"$project": {"name": "$_id", "value": "$available", "_id": 0}}
@@ -461,7 +551,7 @@ async def get_inventory_chart_data(request: Request, customer: str = ""):
         box_match["customer"] = {"$regex": customer, "$options": "i"}
     state_pipeline = [
         {"$match": box_match},
-        {"$group": {"_id": "$state", "count": {"$sum": "$units"}}},
+        {"$group": {"_id": "$status", "count": {"$sum": "$qty"}}},
         {"$match": {"_id": {"$ne": None}}},
         {"$project": {"name": {"$ifNull": ["$_id", "unknown"]}, "value": "$count", "_id": 0}}
     ]
@@ -470,7 +560,7 @@ async def get_inventory_chart_data(request: Request, customer: str = ""):
     # 3. Units by Manufacturer/Category
     cat_pipeline = [
         {"$match": match_query},
-        {"$group": {"_id": "$manufacturer", "count": {"$sum": "$available"}}},
+        {"$group": {"_id": "$manufacturer", "count": {"$sum": "$units_on_hand"}}},
         {"$sort": {"count": -1}},
         {"$limit": 8},
         {"$project": {"name": "$_id", "value": "$count", "_id": 0}}
@@ -569,7 +659,7 @@ async def create_allocation(request: Request):
         "status": "allocated",
         "allocated_by": user.get("user_id"),
         "allocated_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     }
     await db.wms_allocations.insert_one(alloc_doc)
     alloc_doc.pop("_id", None)
@@ -660,7 +750,9 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
         "picked_sizes": {},
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
+        "sla_deadline": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+        "sla_status": "on_time"
     }
 
     await db.wms_pick_tickets.insert_one(ticket_doc)
@@ -715,7 +807,7 @@ async def create_pick_ticket(request: Request):
             "lines": pick_lines, "status": "pending",
             "created_by": user.get("user_id"),
             "created_by_name": user.get("name", ""),
-            "created_at": now_iso()
+            "created_at": now_iso(),
         }
         await db.wms_pick_tickets.insert_one(ticket_doc)
         ticket_doc.pop("_id", None)
@@ -1138,7 +1230,7 @@ async def production_move(request: Request):
         "target_state": target_state, "moved": moved,
         "moved_by": user.get("user_id"),
         "moved_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     }
     await db.wms_production_moves.insert_one(move_doc)
     move_doc.pop("_id", None)
@@ -1204,7 +1296,7 @@ async def create_shipment(request: Request):
         "carrier": carrier, "tracking": tracking,
         "shipped_by": user.get("user_id"),
         "shipped_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     }
     await db.wms_shipments.insert_one(shipment_doc)
     shipment_doc.pop("_id", None)
@@ -1343,6 +1435,109 @@ async def export_inventory(request: Request):
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": "attachment; filename=inventory.xlsx"})
 
+
+# ==================== ASN (Advanced Shipping Notice) ====================
+
+@router.post("/asn")
+async def create_asn(request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    asn_id = gen_id("asn")
+    
+    items = body.get("items", [])
+    if not items:
+        raise HTTPException(400, "El ASN debe contener al menos un item")
+        
+    normalized_items = []
+    for it in items:
+        normalized_items.append({
+            "sku": str(it.get("sku", "")).strip().upper(),
+            "color": str(it.get("color", "")).strip().upper(),
+            "size": str(it.get("size", "")).strip().upper(),
+            "quantity": int(it.get("quantity", 0))
+        })
+        
+    doc = {
+        "asn_id": asn_id,
+        "vendor": body.get("vendor", "").strip().upper(),
+        "expected_date": body.get("expected_date", ""),
+        "items": normalized_items,
+        "status": "pending",
+        "created_at": now_iso(),
+        "created_by": user.get("user_id")
+    }
+    
+    await db.wms_asn.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@router.get("/asn")
+async def list_asn(request: Request):
+    await require_auth(request)
+    return await db.wms_asn.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+@router.post("/asn/import")
+async def import_asn(request: Request, file: UploadFile = File(...)):
+    user = await require_auth(request)
+    import openpyxl
+    contents = await file.read()
+    wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "Archivo vacio")
+        
+    headers = [str(h).strip() for h in rows[0]]
+    col_map = {h: i for i, h in enumerate(headers)}
+    
+    def get(row, name):
+        idx = col_map.get(name)
+        if idx is None or idx >= len(row): return ""
+        return str(row[idx]).strip() if row[idx] is not None else ""
+
+    items = []
+    for row in rows[1:]:
+        sku = get(row, "SKU").upper() or get(row, "Style").upper()
+        if not sku: continue
+        items.append({
+            "sku": sku,
+            "color": get(row, "Color").upper(),
+            "size": get(row, "Size").upper(),
+            "quantity": int(float(get(row, "Quantity") or 0))
+        })
+        
+    doc = {
+        "asn_id": gen_id("asn"),
+        "vendor": "EXCEL_IMPORT",
+        "expected_date": now_iso(),
+        "items": items,
+        "status": "pending",
+        "created_at": now_iso(),
+        "created_by": user.get("user_id")
+    }
+    await db.wms_asn.insert_one(doc)
+    return {"status": "success", "asn_id": doc["asn_id"], "items_count": len(items)}
+
+# ==================== SUPERVISOR OVERRIDES ====================
+
+@router.put("/pick-tickets/{ticket_id}/prioritize")
+async def prioritize_ticket(ticket_id: str, request: Request):
+    user = await require_admin(request)
+    res = await db.wms_pick_tickets.update_one(
+        {"ticket_id": ticket_id},
+        {"": {"priority": "HOT", "updated_at": now_iso()}}
+    )
+    if res.modified_count == 0:
+        raise HTTPException(404, "Ticket no encontrado")
+        
+    await db.wms_tasks.update_many(
+        {"context.ticket_id": ticket_id},
+        {"$set": {"priority": "HOT", "updated_at": now_iso()}}
+    )
+    
+    await log_movement(user, "ticket_prioritized", {"ticket_id": ticket_id})
+    return {"status": "success", "message": "Ticket escalado a HOT"}
+
 # ==================== IMPORT INVENTORY ====================
 
 @router.post("/import/inventory")
@@ -1373,51 +1568,82 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
     locations_set = set()
     skipped = 0
 
+
     for row in rows[1:]:
-        style = get(row, 'Style', '')
+        style = get(row, 'Style', '').strip().upper()
         if not style:
             skipped += 1
             continue
 
-        color = get(row, 'Color', '')
-        size = get(row, 'Size', '')
-        inv_loc = get(row, 'InvLocation', '')
+        color = get(row, 'Color', '').strip().upper()
+        size = str(get(row, 'Size', '')).strip().upper()
+        inv_loc = get(row, 'InvLocation', '').strip().upper()
         total_boxes = int(float(get(row, 'Total Boxes', 0) or 0))
         total_units = int(float(get(row, 'TotalUnits', 0) or 0))
+        description = get(row, 'Description', '').strip().upper()
+        coo = get(row, 'CountryofOrigin', '').strip().upper()
 
         if inv_loc:
             locations_set.add(inv_loc)
 
+        inventory_id = f"inv_{uuid.uuid4().hex[:12]}"
         inventory_docs.append({
-            "inventory_id": f"inv_{uuid.uuid4().hex[:12]}",
-            "customer": get(row, 'CustomerID', ''),
+            "inventory_id": inventory_id,
+            "customer": get(row, 'CustomerID', '').strip().upper(),
             "style": style,
             "sku": style,
             "color": color,
             "size": size,
-            "size_header": get(row, 'SizeHeader', ''),
-            "manufacturer": get(row, 'Manufacturer', ''),
-            "description": get(row, 'Description', ''),
-            "category": get(row, 'Category', ''),
-            "country_of_origin": get(row, 'CountryofOrigin', ''),
-            "fabric_content": get(row, 'FabricContent', ''),
+            "size_header": get(row, 'SizeHeader', '').strip().upper(),
+            "manufacturer": get(row, 'Manufacturer', '').strip().upper(),
+            "description": description,
+            "category": get(row, 'Category', '').strip().upper(),
+            "country_of_origin": coo,
+            "fabric_content": get(row, 'FabricContent', '').strip().upper(),
             "import_number": get(row, 'ImportNumber', ''),
             "po": get(row, 'PO', ''),
             "bpo": get(row, 'BPO', ''),
-            "inv_location": inv_loc,
+            "location": inv_loc,
             "total_boxes": total_boxes,
-            "on_hand": total_units,
-            "allocated": 0,
-            "available": total_units,
+            "units_on_hand": total_units,
+            "units_allocated": 0,
             "updated_at": now
         })
 
-    # Clear existing imported inventory and bulk insert
+        # Generate LPNs (boxes) for this line item
+        if total_boxes > 0:
+            units_per_box = total_units // total_boxes
+            remainder = total_units % total_boxes
+            for i in range(total_boxes):
+                box_units = units_per_box + (1 if i < remainder else 0)
+                box_docs.append({
+                    "box_id": f"LPN_{uuid.uuid4().hex[:8].upper()}",
+                    "inventory_id": inventory_id,
+                    "sku": style,
+                    "color": color,
+                    "size": size,
+                    "units": box_units,
+                    "location": inv_loc,
+                    "state": "putaway",
+                    "customer": get(row, 'CustomerID', '').strip().upper(),
+                    "coo": coo,
+                    "created_at": now
+                })
+
+    # Clear old data (WMS 2.0 Fresh Start)
+    await db.wms_inventory.delete_many({})
+    await db.wms_boxes.delete_many({})
+
     await db.wms_inventory.delete_many({})
     if inventory_docs:
         batch_size = 1000
         for i in range(0, len(inventory_docs), batch_size):
             await db.wms_inventory.insert_many(inventory_docs[i:i+batch_size])
+    if box_docs:
+        batch_size = 1000
+        for i in range(0, len(box_docs), batch_size):
+            await db.wms_boxes.insert_many(box_docs[i:i+batch_size])
+
 
     # Auto-create locations
     locations_created = 0
@@ -1530,7 +1756,7 @@ async def create_cycle_count(request: Request):
         "lines": count_lines,
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name", ""),
-        "created_at": now_iso()
+        "created_at": now_iso(),
     }
     await db.wms_cycle_counts.insert_one(count_doc)
     count_doc.pop("_id", None)
@@ -1657,3 +1883,89 @@ async def quick_status_update(ticket_id: str, request: Request):
             await db.orders.update_one({"order_number": order_number}, {"$set": {"blank_status": new_status}})
             
     return {"status": "ok"}
+
+# ==================== WMS 2.0 DIRECTED TASKS ====================
+
+@router.get("/tasks/next")
+async def get_next_task(request: Request, user_zone: str = ""):
+    """Directed Work System: Retrieves the single highest priority task for the operator."""
+    user = await require_auth(request)
+    
+    # Try finding HOT priority first
+    hot_query = {"status": "pending", "priority": "HOT"}
+    if user_zone:
+        hot_query["context.suggested_zone"] = {"$regex": f"^{user_zone}$", "$options": "i"}
+        
+    next_task = await db.wms_tasks.find_one(hot_query, sort=[("created_at", 1)])
+    
+    # Fallback to NORMAL
+    if not next_task:
+        normal_query = {"status": "pending"}
+        if user_zone:
+            normal_query["context.suggested_zone"] = {"$regex": f"^{user_zone}$", "$options": "i"}
+        # Fetch top 50 to sort by Travel Sequence in memory
+        tasks = await db.wms_tasks.find(normal_query).sort("created_at", 1).to_list(50)
+        if tasks:
+            def get_sort_key(t):
+                loc = t.get("context", {}).get("suggested_zone", "ZZ-99-9")
+                parts = loc.split("-")
+                aisle = parts[0] if len(parts) > 0 else "ZZ"
+                section = parts[1] if len(parts) > 1 else "99"
+                level = parts[2] if len(parts) > 2 else "9"
+                return (aisle, section, level)
+            tasks.sort(key=get_sort_key)
+            next_task = tasks[0]
+        else:
+            next_task = None
+        
+    if not next_task:
+        return {"task": None, "message": "No pending tasks."}
+        
+    # Claim it for the user
+    task_id = next_task["task_id"]
+    await db.wms_tasks.update_one(
+        {"task_id": task_id},
+        {"$set": {"status": "assigned", "assigned_to": user.get("user_id"), "assigned_at": now_iso()}}
+    )
+    
+    # Hydrate lpn_details automatically
+    lpn_id = next_task.get("lpn_id")
+    if lpn_id:
+        lpn = await db.wms_boxes.find_one({"box_id": lpn_id}, {"_id": 0})
+        next_task["lpn_details"] = lpn
+        
+    next_task.pop("_id", None)
+    return {"task": next_task}
+
+@router.post("/tasks/{task_id}/complete")
+async def complete_task(task_id: str, request: Request):
+    """Marks a directed task as complete and permanently updates core objects."""
+    user = await require_auth(request)
+    body = await request.json()
+    scan_validation = body.get("scan", "")
+    
+    task = await db.wms_tasks.find_one({"task_id": task_id})
+    if not task:
+        raise HTTPException(404, "Task not found")
+        
+    lpn_id = task.get("lpn_id")
+    if lpn_id and scan_validation != lpn_id:
+        raise HTTPException(400, "Validation failed: Scanned LPN does not match Task LPN.")
+        
+    # Execution Logic
+    if task["task_type"] == "putaway":
+        dest_location = body.get("destination_location", "").strip()
+        if not dest_location:
+            raise HTTPException(400, "destination_location is required for putaway")
+        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "stored"}})
+        
+    elif task["task_type"] == "cross_dock":
+        dest_location = body.get("destination_location", "Produccion")
+        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "cross_docked"}})
+        
+    await db.wms_tasks.update_one({"task_id": task_id}, {
+        "$set": {"status": "completed", "completed_at": now_iso(), "completed_by": user.get("name", "")}
+    })
+    
+    await log_movement(user, "task_completed", {"task_id": task_id, "type": task["task_type"]})
+    return {"message": "Task successfully executed"}
