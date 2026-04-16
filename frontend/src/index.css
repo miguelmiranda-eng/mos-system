@@ -290,3 +290,12 @@ body {
 .animate-float-slower {
     animation: float-slower 35s ease-in-out infinite;
 }
+@keyframes messenger-float {
+    0%, 100% { transform: translateY(0) translateX(0); }
+    25% { transform: translateY(-10px) translateX(5px); }
+    50% { transform: translateY(0) translateX(10px); }
+    75% { transform: translateY(10px) translateX(5px); }
+}
+.animate-messenger-float {
+    animation: messenger-float 6s ease-in-out infinite;
+}

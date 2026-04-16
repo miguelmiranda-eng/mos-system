@@ -135,7 +135,7 @@ const Dashboard = () => {
   // Core data hook
   const {
     orders, setOrders, allOrders, unfilteredOrders, loading, operationLoading, setOperationLoading,
-    options, productionSummary, notifications, unreadCount, markNotificationsRead,
+    options, productionSummary, notifications, unreadCount, markNotificationsRead, markNotificationRead,
     automationRunning, automationMessage, columns, columnWidths, setColumnWidths,
     fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary,
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
@@ -160,6 +160,10 @@ const Dashboard = () => {
   }, [isAdmin, user]); // eslint-disable-line react-hooks/exhaustive-deps
   const visibleBoards = isAdmin ? activeBoards : activeBoards.filter(b => (myBoardPerms[b] || 'edit') !== 'none');
   const canEditBoard = isAdmin || (myBoardPerms[currentBoard] || 'edit') === 'edit';
+  
+  // Specific notification metrics
+  const unreadMentions = notifications.filter(n => n.type === 'mention' && !n.read).length;
+
   const setFilters = (updater) => {
     setBoardFilters(prev => ({ ...prev, [currentBoard]: typeof updater === 'function' ? updater(prev[currentBoard] || {}) : updater }));
   };
@@ -551,6 +555,113 @@ const Dashboard = () => {
     return [...opts, EMPTY_FILTER];
   };
 
+  const renderTableRows = () => {
+    const renderOrderRow = (order) => {
+      const sq = searchQuery.toLowerCase();
+      const getVal = (v) => {
+        if (!v) return "";
+        if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
+        return String(v).trim().toLowerCase();
+      };
+      const isSearchMatch = searchQuery && (
+        getVal(order.order_number).includes(sq) ||
+        getVal(order.client).includes(sq) ||
+        getVal(order.store_po).includes(sq) ||
+        getVal(order.customer_po).includes(sq) ||
+        getVal(order.job_title_a).includes(sq) ||
+        getVal(order.job_title_b).includes(sq) ||
+        getVal(order.branding).includes(sq) ||
+        getVal(order.notes).includes(sq)
+      );
+      return (
+        <tr key={order.order_id} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
+          <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+            <input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
+          </td>
+          <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+            <div className="flex flex-col gap-1 items-center">
+              <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
+              {isAdmin && (
+                <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
+              )}
+            </div>
+          </td>
+          
+          {/* Fixed Column 3 Data */}
+          {(() => {
+            const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
+            return (
+              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                {isMaster ? (
+                  <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                ) : (
+                  <EditableCell 
+                    value={order.order_number} 
+                    field="order_number" 
+                    orderId={order.order_id} 
+                    onUpdate={handleCellUpdate} 
+                    type="text" 
+                    isDark={isDark} 
+                    className={`font-mono font-black ${isSearchMatch ? 'text-primary' : ''}`}
+                  />
+                )}
+              </td>
+            );
+          })()}
+
+          {/* Draggable Column Data */}
+          {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
+            const isOrderNum = col.key === 'order_number';
+            const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
+            return (
+              <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
+                {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
+                  <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
+                )}
+              </td>
+            );
+          })}
+          {(() => {
+            const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
+              <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-black text-foreground/80">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
+            );
+          })()}
+        </tr>
+      );
+    };
+
+    if (!groupByDate) return orders.map(renderOrderRow);
+    const groups = {};
+    const dateLabelsMap = {};
+    columns.filter(c => c.type === 'date').forEach(c => { dateLabelsMap[c.key] = c.label; });
+    dateLabelsMap['created_at'] = lang === 'es' ? 'Creacion' : 'Created';
+    orders.forEach(o => {
+      const raw = o[groupByDate];
+      const dateKey = raw ? new Date(raw).toLocaleDateString() : (lang === 'es' ? 'Sin fecha' : 'No date');
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(o);
+    });
+    const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
+    const noDateLabel = lang === 'es' ? 'Sin fecha' : 'No date';
+    const sortedEntries = Object.entries(groups).sort(([a], [b]) => {
+      if (a === noDateLabel) return 1;
+      if (b === noDateLabel) return -1;
+      const da = new Date(a), db = new Date(b);
+      return da - db;
+    });
+    
+    return sortedEntries.map(([dateKey, groupOrders]) => (
+      <React.Fragment key={dateKey}>
+        <tr data-testid={`date-group-${dateKey}`}>
+          <td colSpan={colSpan} className={`py-2 px-4 font-roboto font-black text-sm uppercase tracking-wide ${isDark ? 'bg-primary/10 text-primary border-b border-primary/30' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
+            <CalendarDays className="w-4 h-4 inline mr-2 -mt-0.5" />{dateLabelsMap[groupByDate] || groupByDate}: <span className="font-mono">{dateKey}</span> <span className="font-normal text-xs text-muted-foreground ml-2">({groupOrders.length})</span>
+          </td>
+        </tr>
+        {groupOrders.map(renderOrderRow)}
+      </React.Fragment>
+    ));
+  };
+
   return (
     <div className={`h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300`}>
       <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
@@ -666,7 +777,17 @@ const Dashboard = () => {
         </div>
         <div className="w-px h-5 bg-border mx-0.5 flex-shrink-0"></div>
         <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
-          {user?.picture && <img src={user.picture} alt="" className="w-6 h-6 md:w-7 md:h-7 rounded-full" />}
+          <div className="relative group cursor-help" title={unreadMentions > 0 ? `${unreadMentions} menciones pendientes` : ''}>
+            {user?.picture && <img src={user.picture} alt="" className={`w-6 h-6 md:w-7 md:h-7 rounded-full border border-border/50 transition-all ${unreadMentions > 0 ? 'ring-2 ring-amber-500/50 ring-offset-2 ring-offset-background' : ''}`} />}
+            {unreadMentions > 0 && (
+              <div className="absolute -top-1.5 -right-1.5 flex items-center justify-center pointer-events-none">
+                 <div className="absolute inset-0 bg-amber-500 rounded-full animate-ping opacity-75"></div>
+                 <div className="relative bg-amber-600 text-white p-0.5 rounded-full shadow-lg border border-background">
+                    <AtSign className="w-2 h-2" />
+                 </div>
+              </div>
+            )}
+          </div>
           <div className="flex-col leading-tight hidden sm:flex"><span className={`text-xs font-medium text-foreground`}>{user?.name}</span>{isAdmin && <span className="text-[10px] text-primary font-bold">Admin</span>}</div>
           <button onClick={logout} className="p-1.5 text-muted-foreground hover:text-foreground flex-shrink-0" title={t('logout')}><LogOut className="w-3.5 h-3.5" /></button>
         </div>
@@ -853,6 +974,61 @@ const Dashboard = () => {
       <div className="border-b border-white/10 relative overflow-hidden min-h-[160px] flex flex-col justify-end">
         {/* Dynamic Landscape Background Layer */}
         <DynamicLandscape timeOfDay={timeOfDay} />
+        
+        {/* Messenger-Style Floating Mention Bubbles */}
+        <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
+          {notifications.filter(n => n.type === 'mention' && !n.read).map((n, idx) => (
+            <div 
+              key={n.notification_id}
+              className="absolute pointer-events-auto cursor-pointer animate-messenger-float group/bubble"
+              style={{
+                left: `${10 + (idx * 15) % 80}%`,
+                top: `${20 + (idx * 10) % 60}%`,
+                animationDelay: `${idx * 0.7}s`
+              }}
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (markNotificationRead) markNotificationRead(n.notification_id);
+                if (!n.order_id) return;
+                let targetOrder = allOrders.find(o => o.order_id === n.order_id);
+                if (!targetOrder) {
+                  try { 
+                    const res = await fetch(`${API}/orders/${n.order_id}`, { credentials: 'include' }); 
+                    if (res.ok) targetOrder = await res.json(); 
+                  } catch { }
+                }
+                if (targetOrder) {
+                  setCurrentBoard(targetOrder.board);
+                  setHighlightedCommentId(n.comment_id || null);
+                  setTimeout(() => setCommentsOrder(targetOrder), 300);
+                }
+              }}
+            >
+              {/* Bubble */}
+              <div className="relative">
+                <div className="w-12 h-12 md:w-14 md:h-14 rounded-full border-2 border-white shadow-2xl overflow-hidden bg-primary/20 backdrop-blur-sm transition-transform group-hover/bubble:scale-110 group-active/bubble:scale-95">
+                  {n.sender_picture ? (
+                    <img src={n.sender_picture} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-primary text-white font-black text-xl">
+                      {n.sender_name ? n.sender_name[0].toUpperCase() : '@'}
+                    </div>
+                  )}
+                </div>
+                {/* At-sign Badge */}
+                <div className="absolute -bottom-1 -right-1 bg-amber-500 text-white p-1 rounded-full border-2 border-white shadow-lg">
+                  <AtSign className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                </div>
+                
+                {/* Tooltip Snippet */}
+                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black/80 text-white text-[10px] md:text-xs py-1.5 px-3 rounded-xl backdrop-blur-md border border-white/20 whitespace-nowrap opacity-0 group-hover/bubble:opacity-100 transition-opacity pointer-events-none shadow-2xl z-50">
+                  <div className="font-black text-amber-500 uppercase tracking-tighter mb-0.5">{n.sender_name || 'Alguien'}</div>
+                  <div className="max-w-[150px] truncate opacity-90">{n.message.split('en orden')[0]}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
         
         {/* Animated accent lines (reduced opacity) */}
         <div className="absolute inset-0 opacity-10 pointer-events-none z-[1]">
@@ -1241,108 +1417,7 @@ const Dashboard = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {(() => {
-                        const renderOrderRow = (order) => {
-                          const sq = searchQuery.toLowerCase();
-                          const getVal = (v) => {
-                            if (!v) return "";
-                            if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
-                            return String(v).toLowerCase();
-                          };
-                          const isSearchMatch = searchQuery && (
-                            getVal(order.order_number).includes(sq) ||
-                            getVal(order.client).includes(sq) ||
-                            getVal(order.store_po).includes(sq) ||
-                            getVal(order.customer_po).includes(sq) ||
-                            getVal(order.job_title_a).includes(sq) ||
-                            getVal(order.job_title_b).includes(sq) ||
-                            getVal(order.branding).includes(sq) ||
-                            getVal(order.notes).includes(sq)
-                          );
-                          return (
-                            <tr key={order.order_id} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
-                              <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" /></td>
-              <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-                <div className="flex flex-col gap-1 items-center">
-                  <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
-                  {isAdmin && (
-                    <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
-                  )}
-                </div>
-              </td>
-                              
-                              {/* Fixed Column 3 Data */}
-                              {(() => {
-                                const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
-                                return (
-                                  <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
-                                    {isMaster ? (
-                                      <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
-                                    ) : (
-                                      <EditableCell 
-                                        value={order.order_number} 
-                                        field="order_number" 
-                                        orderId={order.order_id} 
-                                        onUpdate={handleCellUpdate} 
-                                        type="text" 
-                                        isDark={isDark} 
-                                        className={`font-mono font-black ${isSearchMatch ? 'text-primary' : ''}`}
-                                      />
-                                    )}
-                                  </td>
-                                );
-                              })()}
-
-                              {/* Draggable Column Data */}
-                              {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
-                                const isOrderNum = col.key === 'order_number';
-                                const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
-                                return (
-                                  <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
-                                    {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
-                                      <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
-                                    )}
-                                  </td>
-                                );
-                              })}
-                              {(() => {
-                                const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
-                                  <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-black text-foreground/80">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
-                                );
-                              })()}
-                            </tr>
-                          );
-                        };
-                        if (!groupByDate) return orders.map(renderOrderRow);
-                        const groups = {};
-                        const dateLabelsMap = {};
-                        columns.filter(c => c.type === 'date').forEach(c => { dateLabelsMap[c.key] = c.label; });
-                        dateLabelsMap['created_at'] = lang === 'es' ? 'Creacion' : 'Created';
-                        orders.forEach(o => {
-                          const raw = o[groupByDate];
-                          const dateKey = raw ? new Date(raw).toLocaleDateString() : (lang === 'es' ? 'Sin fecha' : 'No date');
-                          if (!groups[dateKey]) groups[dateKey] = [];
-                          groups[dateKey].push(o);
-                        });
-                        const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
-                        const noDateLabel = lang === 'es' ? 'Sin fecha' : 'No date';
-                        const sortedEntries = Object.entries(groups).sort(([a], [b]) => {
-                          if (a === noDateLabel) return 1;
-                          if (b === noDateLabel) return -1;
-                          const da = new Date(a), db = new Date(b);
-                          return da - db;
-                        });
-                        return sortedEntries.map(([dateKey, groupOrders]) => (
-                          <React.Fragment key={dateKey}>
-                            <tr data-testid={`date-group-${dateKey}`}>
-                              <td colSpan={colSpan} className={`py-2 px-4 font-roboto font-black text-sm uppercase tracking-wide ${isDark ? 'bg-primary/10 text-primary border-b border-primary/30' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
-                                <CalendarDays className="w-4 h-4 inline mr-2 -mt-0.5" />{dateLabelsMap[groupByDate] || groupByDate}: <span className="font-mono">{dateKey}</span> <span className="font-normal text-xs text-muted-foreground ml-2">({groupOrders.length})</span>
-                              </td>
-                            </tr>
-                            {groupOrders.map(renderOrderRow)}
-                          </React.Fragment>
-                        ));
-                      })()}
+                      {renderTableRows()}
                     </tbody>
                   </table>
                   {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}

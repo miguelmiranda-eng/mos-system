@@ -441,6 +441,8 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
                 "notification_id": f"notif_{uuid.uuid4().hex[:12]}", "user_id": uid, "type": "mention",
                 "message": f"{user['name']} te menciono en orden {order.get('order_number', order_id)}",
                 "order_id": order_id, "order_number": order.get("order_number"),
+                "sender_name": user.get("name"),
+                "sender_picture": user.get("picture"),
                 "read": False, "created_at": datetime.now(timezone.utc).isoformat()
             })
     else:
@@ -451,6 +453,8 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
                     "notification_id": f"notif_{uuid.uuid4().hex[:12]}", "user_id": uid, "type": "comment",
                     "message": f"{user['name']} comento en orden {order.get('order_number', order_id)}",
                     "order_id": order_id, "order_number": order.get("order_number"),
+                    "sender_name": user.get("name"),
+                    "sender_picture": user.get("picture"),
                     "read": False, "created_at": datetime.now(timezone.utc).isoformat()
                 })
     if notif_docs:
@@ -846,13 +850,15 @@ async def import_orders_excel(
                 if match_name:
                     actual_mapping[match_name] = internal_key
 
+        logger.info(f"Excel Import Mapping: {actual_mapping}")
+
         # Final check: at least order_number must be mapped
         if not any(v == "order_number" for v in actual_mapping.values()):
             raise HTTPException(status_code=400, detail="El archivo Excel debe contener una columna para el número de orden (ej: 'Order #') o debe haber sido mapeada.")
 
         stats = {"total_rows": len(df), "created": 0, "updated": 0, "skipped": 0, "errors": 0}
         
-        for _, row in df.iterrows():
+        for index, row in df.iterrows():
             try:
                 # Build order data from row
                 order_data = {}
@@ -878,6 +884,19 @@ async def import_orders_excel(
                             order_data["quantity"] = int(float(val)) if val is not None else 0
                         except:
                             order_data["quantity"] = 0
+                    elif internal_key == "order_number":
+                        # CRITICAL: Handle float order numbers (e.g., 101.0 -> "101")
+                        if val is not None:
+                            try:
+                                f_val = float(val)
+                                if f_val == int(f_val):
+                                    order_data["order_number"] = str(int(f_val))
+                                else:
+                                    order_data["order_number"] = str(val).strip()
+                            except:
+                                order_data["order_number"] = str(val).strip()
+                        else:
+                            order_data["order_number"] = None
                     else:
                         order_data[internal_key] = str(val).strip() if val is not None else None
 
@@ -887,16 +906,16 @@ async def import_orders_excel(
                     if col not in excluded_cols:
                         val = row[col]
                         if not pd.isna(val) and str(val).strip().lower() != "nan":
-                            # Clean up the key: lowercase, no spaces, no special chars for consistency
-                            # But keep it readable enough
                             clean_key = str(col).strip().replace(" ", "_").lower()
                             if clean_key not in order_data:
                                 order_data[clean_key] = str(val).strip()
 
                 order_num = order_data.get("order_number")
-                if not order_num:
+                if not order_num or not str(order_num).strip():
                     stats["skipped"] += 1
                     continue
+
+                order_num = str(order_num).strip()
 
                 # Check if it exists
                 existing = await db.orders.find_one({"order_number": order_num})
@@ -906,7 +925,6 @@ async def import_orders_excel(
                         # Update order
                         oid = existing["order_id"]
                         order_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        # Si es un update, usamos $set para no borrar otros campos
                         await db.orders.update_one({"order_id": oid}, {"$set": order_data})
                         stats["updated"] += 1
                     else:
@@ -928,7 +946,7 @@ async def import_orders_excel(
                     await log_activity(user, "create_order_excel", {"order_id": order_id, "order_number": order_num})
 
             except Exception as e:
-                logger.error(f"Error importing row in excel: {e}")
+                logger.error(f"Error importing row {index} in excel: {e}")
                 stats["errors"] += 1
 
         # Broadcast sync

@@ -45,7 +45,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
 
   useEffect(() => {
     if (!orderSearch.trim()) { setMatchedOrder(null); setLogs([]); setTotalProduced(0); return; }
-    const found = orders.find(o => o.order_number && o.order_number.toLowerCase() === orderSearch.trim().toLowerCase() && o.board !== 'PAPELERA DE RECICLAJE');
+    const found = orders.find(o => o.order_number && String(o.order_number).trim().toLowerCase() === orderSearch.trim().toLowerCase() && o.board !== 'PAPELERA DE RECICLAJE');
     setMatchedOrder(found || null);
   }, [orderSearch, orders]);
 

@@ -20,8 +20,20 @@ async def get_notifications(request: Request, limit: int = 50):
 async def mark_notifications_read(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
-    await db.notifications.update_many({"user_id": user_id, "read": False}, {"$set": {"read": True}})
+    await db.notifications.update_many({"user_id": user_id, "read": False, "type": {"$ne": "mention"}}, {"$set": {"read": True}})
     return {"message": "All notifications marked as read"}
+
+@router.put("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, request: Request):
+    user = await require_auth(request)
+    user_id = user.get("user_id", user.get("email"))
+    result = await db.notifications.update_one(
+        {"notification_id": notification_id, "user_id": user_id}, 
+        {"$set": {"read": True}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Notification marked as read"}
 
 @router.get("/activity")
 async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0, action_filter: str = None, search: str = None):

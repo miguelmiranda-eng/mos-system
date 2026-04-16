@@ -38,10 +38,18 @@ export const useOrders = (currentBoard, boardFilters) => {
   const [hiddenBoards, setHiddenBoards] = useState([]);
   const [groupConfig, setGroupConfig] = useState({ label_to_group: {}, group_colors: {} });
   const [columnWidths, setColumnWidths] = useState(() => {
+    try {
+      const saved = localStorage.getItem('mos_column_widths');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore error */ }
     const widths = {};
     DEFAULT_COLUMNS.forEach(col => widths[col.key] = col.width);
     return widths;
   });
+
+  useEffect(() => {
+    localStorage.setItem('mos_column_widths', JSON.stringify(columnWidths));
+  }, [columnWidths]);
 
   const fetchOrders = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -177,7 +185,22 @@ export const useOrders = (currentBoard, boardFilters) => {
   };
 
   const markNotificationsRead = async () => {
-    try { await fetch(`${API}/notifications/read`, { method: 'PUT', credentials: 'include' }); setUnreadCount(0); setNotifications(prev => prev.map(n => ({ ...n, read: true }))); } catch { /* silent */ }
+    try { 
+      await fetch(`${API}/notifications/read`, { method: 'PUT', credentials: 'include' }); 
+      setNotifications(prev => {
+        const next = prev.map(n => n.type !== 'mention' ? { ...n, read: true } : n);
+        setUnreadCount(next.filter(n => !n.read).length);
+        return next;
+      });
+    } catch { /* silent */ }
+  };
+
+  const markNotificationRead = async (notificationId) => {
+    try { 
+      await fetch(`${API}/notifications/${notificationId}/read`, { method: 'PUT', credentials: 'include' }); 
+      setNotifications(prev => prev.map(n => n.notification_id === notificationId ? { ...n, read: true } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    } catch { /* silent */ }
   };
 
   const [removedDefaults, setRemovedDefaults] = useState([]);
@@ -201,7 +224,7 @@ export const useOrders = (currentBoard, boardFilters) => {
           const newWidths = {};
           activeDefaults.forEach(col => newWidths[col.key] = col.width);
           custom.forEach(col => newWidths[col.key] = col.width || 150);
-          setColumnWidths(newWidths);
+          setColumnWidths(prev => ({ ...newWidths, ...prev }));
         }
       } catch { /* use defaults */ }
     };
@@ -351,17 +374,18 @@ export const useOrders = (currentBoard, boardFilters) => {
       if (res.ok) {
         const results = await res.json();
         const filtered = results.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
-        if (filtered.length === 1) {
+        if (filtered.length >= 1) {
           const found = filtered[0];
           setCurrentBoard(found.board);
-          const isExactOrderedMatch = found.order_number && String(found.order_number).toLowerCase() === searchQuery.trim().toLowerCase();
-          const msg = isExactOrderedMatch 
-            ? `${t('order')} ${found.order_number} → ${found.board}`
-            : `Referencia encontrada en orden: ${found.order_number} (${found.board})`;
-          toast.success(msg);
-          return null;
-        } else if (filtered.length > 1) {
-          toast.info(`${filtered.length} coincidencias encontradas`);
+          if (filtered.length === 1) {
+            const isExactOrderedMatch = found.order_number && String(found.order_number).trim().toLowerCase() === searchQuery.trim().toLowerCase();
+            const msg = isExactOrderedMatch 
+              ? `${t('order')} ${found.order_number} → ${found.board}`
+              : `Referencia encontrada en orden: ${found.order_number} (${found.board})`;
+            toast.success(msg);
+          } else {
+            toast.info(`${filtered.length} coincidencias encontradas`);
+          }
           return filtered;
         } else {
           toast.error(`Referencia no encontrada globalmente`);
@@ -407,6 +431,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
     handleAddColumn, handleDeleteColumn, saveCustomColumns, saveColumnsConfig, removedDefaults,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
-    groupConfig, fetchGroups
+    groupConfig, fetchGroups,
+    markNotificationRead
   };
 };
