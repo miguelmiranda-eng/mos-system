@@ -72,9 +72,14 @@ const Sidebar = ({
         {!isCollapsed && (
           <button
             onClick={() => navigate('/home')}
-            className={cn("text-left hover:opacity-70 transition-opacity leading-none truncate", isDark ? "text-white/70" : "text-neutral-700")}
+            className="text-left hover:opacity-70 transition-opacity leading-none"
           >
-            <span className="text-[12px] font-semibold block truncate">Prosper Manufacturing</span>
+            <span className={cn("text-[13px] font-bold tracking-tight block", isDark ? "text-white" : "text-navy")}>
+              MOS <span className="text-royal">System</span>
+            </span>
+            <span className={cn("text-[10px] font-medium", isDark ? "text-white/35" : "text-neutral-400")}>
+              Prosper Mfg.
+            </span>
           </button>
         )}
         <button
