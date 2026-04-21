@@ -263,11 +263,21 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
     query = {}
     if preset:
         if preset == 'today':
-            local_now = now - timedelta(hours=7)
-            local_start = local_now.replace(hour=7, minute=0, second=0, microsecond=0)
-            if local_now < local_start: local_start = local_start - timedelta(days=1)
-            utc_start = local_start + timedelta(hours=7)
-            query["created_at"] = {"$gte": utc_start.isoformat()}
+            TZ_OFFSET = 7  # UTC-7 (Mountain Time)
+            DAY_START_HOUR = 7
+            DAY_END_HOUR = 19  # daily cycle ends at 19:00 local
+            local_now = now - timedelta(hours=TZ_OFFSET)
+            local_start = local_now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
+            if local_now.hour < DAY_START_HOUR:
+                local_start -= timedelta(days=1)
+            utc_start = local_start + timedelta(hours=TZ_OFFSET)
+            if local_now.hour >= DAY_END_HOUR:
+                # After 19:00 local — cap query at end of day so next-day logs aren't included
+                local_end = local_now.replace(hour=DAY_END_HOUR, minute=0, second=0, microsecond=0)
+                utc_end = local_end + timedelta(hours=TZ_OFFSET)
+                query["created_at"] = {"$gte": utc_start.isoformat(), "$lte": utc_end.isoformat()}
+            else:
+                query["created_at"] = {"$gte": utc_start.isoformat()}
         elif preset == 'yesterday':
             start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             end = now.replace(hour=0, minute=0, second=0, microsecond=0)

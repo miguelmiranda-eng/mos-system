@@ -27,6 +27,16 @@ export const useOrders = (currentBoard, boardFilters) => {
   const [allOrders, setAllOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [operationLoading, setOperationLoading] = useState(false);
+  const opLoadingTimerRef = useRef(null);
+  const safeSetOperationLoading = useCallback((val) => {
+    if (val) {
+      if (opLoadingTimerRef.current) clearTimeout(opLoadingTimerRef.current);
+      opLoadingTimerRef.current = setTimeout(() => setOperationLoading(false), 30000);
+    } else {
+      if (opLoadingTimerRef.current) { clearTimeout(opLoadingTimerRef.current); opLoadingTimerRef.current = null; }
+    }
+    setOperationLoading(val);
+  }, []);
   const [options, setOptions] = useState({});
   const [productionSummary, setProductionSummary] = useState({});
   const [notifications, setNotifications] = useState([]);
@@ -239,7 +249,13 @@ export const useOrders = (currentBoard, boardFilters) => {
     loadColors();
   }, []);
 
-  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  const lastBoardRef = useRef(null);
+  useEffect(() => {
+    const isNewBoard = lastBoardRef.current !== currentBoard;
+    lastBoardRef.current = currentBoard;
+    // Non-silent (shows spinner) on board switch or initial load; silent on filter change
+    fetchOrders(!isNewBoard);
+  }, [currentBoard, boardFilters]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchOptions(); }, [fetchOptions]);
   useEffect(() => { fetchAllOrders(); }, [fetchAllOrders]);
   useEffect(() => { fetchProductionSummary(); }, [fetchProductionSummary]);
@@ -253,10 +269,12 @@ export const useOrders = (currentBoard, boardFilters) => {
   const reconnectTimer = useRef(null);
   const fetchOrdersRef = useRef(fetchOrders);
   const fetchProdRef = useRef(fetchProductionSummary);
+  const fetchNotifsRef = useRef(fetchNotifications);
   const selfUpdateRef = useRef(false);
 
   useEffect(() => { fetchOrdersRef.current = fetchOrders; }, [fetchOrders]);
   useEffect(() => { fetchProdRef.current = fetchProductionSummary; }, [fetchProductionSummary]);
+  useEffect(() => { fetchNotifsRef.current = fetchNotifications; }, [fetchNotifications]);
 
   const sessionExpiredRef = useRef(false);
 
@@ -273,6 +291,7 @@ export const useOrders = (currentBoard, boardFilters) => {
           }
           if (msg.type === 'order_change') {
             fetchOrdersRef.current(true);
+            if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
           }
           // Detect session expired message from server
           if (msg.type === 'error' && msg.code === 401) {
@@ -328,23 +347,23 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   const handleBulkMove = async (selectedOrders, targetBoard) => {
     if (selectedOrders.length === 0) return;
-    setOperationLoading(true);
+    safeSetOperationLoading(true);
     selfUpdateRef.current = true;
-    try { 
-      const res = await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) }); 
+    try {
+      const res = await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) });
       if (res.ok) {
-        toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`); 
-        fetchOrders(); 
-        fetchAllOrders(); 
+        toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`);
+        fetchOrders();
+        fetchAllOrders();
       } else {
         const err = await res.json();
         toast.error(err.detail || t('move_err'));
         fetchOrders();
       }
-    } catch { 
-      toast.error(t('move_err')); 
-    } finally { 
-      setOperationLoading(false); 
+    } catch {
+      toast.error(t('move_err'));
+    } finally {
+      safeSetOperationLoading(false);
     }
   };
 
@@ -355,11 +374,11 @@ export const useOrders = (currentBoard, boardFilters) => {
       const data = await res.json();
       const lastUndoable = data.logs.find(l => l.undoable && !l.undone && l.action !== 'undo_action');
       if (!lastUndoable) return toast.info(t('no_undo_actions'));
-      setOperationLoading(true);
+      safeSetOperationLoading(true);
       const undoRes = await fetch(`${API}/undo/${lastUndoable.activity_id}`, { method: 'POST', credentials: 'include' });
       if (undoRes.ok) { const actionLabels = getActionLabels(t); toast.success(`${t('undo')}: ${actionLabels[lastUndoable.action] || lastUndoable.action}`); fetchOrders(); }
       else { const err = await undoRes.json(); toast.error(err.detail || t('undo_error')); }
-    } catch { toast.error(t('undo_error')); } finally { setOperationLoading(false); }
+    } catch { toast.error(t('undo_error')); } finally { safeSetOperationLoading(false); }
   };
 
   const handleGlobalSearch = async (searchQuery, setCurrentBoard) => {
@@ -368,7 +387,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (searchQuery.trim() === '201492') {
       return '__GUIDE__';
     }
-    setOperationLoading(true);
+    safeSetOperationLoading(true);
     try {
       const res = await fetch(`${API}/orders?search=${encodeURIComponent(searchQuery)}`, { credentials: 'include' });
       if (res.ok) {
@@ -392,7 +411,7 @@ export const useOrders = (currentBoard, boardFilters) => {
           return null;
         }
       }
-    } catch { toast.error(t('search_err')); } finally { setOperationLoading(false); }
+    } catch { toast.error(t('search_err')); } finally { safeSetOperationLoading(false); }
     return null;
   };
 
@@ -424,7 +443,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   };
 
   return {
-    orders, setOrders, allOrders, unfilteredOrders, loading, operationLoading, setOperationLoading,
+    orders, setOrders, allOrders, unfilteredOrders, loading, operationLoading, setOperationLoading: safeSetOperationLoading,
     options, productionSummary, notifications, unreadCount, markNotificationsRead,
     automationRunning, automationMessage, columns, columnWidths, setColumnWidths,
     fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary,

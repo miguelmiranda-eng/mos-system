@@ -52,15 +52,15 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
     setReportLoading(true);
     try {
       const filters = {};
+      let backendPreset = undefined;
       if (reportDate) { filters.date_from = reportDate; filters.date_to = reportDate; }
       else if (preset !== 'custom') {
-        const now = new Date();
-        if (preset === 'today') { filters.date_from = now.toISOString().slice(0, 10); filters.date_to = filters.date_from; }
+        backendPreset = preset; // let backend apply timezone-correct day boundaries
       } else { if (dateFrom) filters.date_from = dateFrom; if (dateTo) filters.date_to = dateTo; }
       if (reportShift) filters.shift = reportShift;
       if (reportSupervisor) filters.supervisor = reportSupervisor;
       if (filterMachine) filters.machine = filterMachine;
-      const res = await fetch(`${API}/production-report`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ format, filters }) });
+      const res = await fetch(`${API}/production-report`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ format, preset: backendPreset, filters }) });
       if (res.ok) {
         const result = await res.json();
         const byteChars = atob(result.data);

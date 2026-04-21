@@ -25,7 +25,7 @@ import {
 } from "./ui/dropdown-menu";
 import { ScrollArea } from "./ui/scroll-area";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { Toaster, toast } from "sonner";
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -51,8 +51,11 @@ import GanttView from "./GanttView";
 import CapacityPlanModal from "./CapacityPlanModal";
 import ProductionScreen from "./ProductionScreen";
 import DynamicLandscape from "./dashboard/DynamicLandscape";
+import Sidebar from "./dashboard/Sidebar";
+import CommandPalette from "./dashboard/CommandPalette";
 
 // Shared constants and hooks
+import { cn } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API } from "../lib/constants";
 import { useOrders } from "../hooks/useOrders";
 
@@ -83,6 +86,7 @@ const Dashboard = () => {
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
   const [historyOrder, setHistoryOrder] = useState(null);
+  const [highlightedOrderId, setHighlightedOrderId] = useState(null);
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -108,6 +112,7 @@ const Dashboard = () => {
   const [trashOrders, setTrashOrders] = useState([]);
   const [trashLoading, setTrashLoading] = useState(false);
   const [groupByDate, setGroupByDate] = useState(null);
+  const [collapsedGroups, setCollapsedGroups] = useState({});
   const [openFilterKey, setOpenFilterKey] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
   const [showNewBoard, setShowNewBoard] = useState(false);
@@ -118,11 +123,35 @@ const Dashboard = () => {
   const [showGuide, setShowGuide] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [detailsOrder, setDetailsOrder] = useState(null);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
-  // Update clock every second
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    if (!highlightedOrderId) return;
+    const attemptScroll = (attempts = 0) => {
+      const row = document.querySelector(`[data-order-id="${highlightedOrderId}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (attempts < 8) {
+        setTimeout(() => attemptScroll(attempts + 1), 200);
+      }
+    };
+    attemptScroll();
+    const timer = setTimeout(() => setHighlightedOrderId(null), 3000);
+    return () => clearTimeout(timer);
+  }, [highlightedOrderId]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        console.log('Command Palette triggered');
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const timeOfDay = (() => {
@@ -208,6 +237,9 @@ const Dashboard = () => {
     };
     loadMasterConfig();
   }, [currentBoard]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset collapsed groups when board or grouping changes
+  useEffect(() => { setCollapsedGroups({}); }, [currentBoard, groupByDate]);
 
   // Auto-save MASTER view config per user (debounced)
   const saveTimerRef = useRef(null);
@@ -303,7 +335,7 @@ const Dashboard = () => {
       } catch { }
     };
     fetchExtra();
-  }, [currentBoard, orders]);
+  }, [currentBoard]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Visible columns
   const visibleColumns = (() => {
@@ -323,7 +355,7 @@ const Dashboard = () => {
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
     try {
-      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false }) });
+      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, hidden_columns: hiddenColumns[currentBoard] || [], column_order: boardColumnOrders[currentBoard] || [], group_by_date: groupByDate }) });
       if (res.ok) {
         const newView = await res.json();
         toast.success(`${t('save_view')}: "${newViewName}"`);
@@ -343,8 +375,21 @@ const Dashboard = () => {
   };
   const handleApplyView = (view) => {
     viewApplyingRef.current = true;
-    if (view === null) { setFilters({}); setActiveViewName(null); activeViewIdRef.current = null; }
-    else { setFilters(view.filters || {}); setActiveViewName(view.name); activeViewIdRef.current = view.view_id; }
+    if (view === null) {
+      setFilters({});
+      setActiveViewName(null);
+      activeViewIdRef.current = null;
+    } else {
+      setFilters(view.filters || {});
+      setActiveViewName(view.name);
+      activeViewIdRef.current = view.view_id;
+      if (view.hidden_columns !== undefined)
+        setHiddenColumns(prev => ({ ...prev, [currentBoard]: view.hidden_columns || [] }));
+      if (view.column_order?.length)
+        setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: view.column_order }));
+      if (view.group_by_date !== undefined)
+        setGroupByDate(view.group_by_date || null);
+    }
   };
   const handleTogglePinView = async (viewId, pinned) => { try { await fetch(`${API}/config/saved-views/${viewId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pinned: !pinned }) }); fetchSavedViews(); } catch { /* silent */ } };
   const handleDeleteView = async (viewId) => { try { await fetch(`${API}/config/saved-views/${viewId}`, { method: 'DELETE', credentials: 'include' }); fetchSavedViews(); toast.success(t('view_deleted')); } catch { /* silent */ } };
@@ -359,11 +404,16 @@ const Dashboard = () => {
     viewAutoSaveRef.current = setTimeout(() => {
       fetch(`${API}/config/saved-views/${viewId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ filters })
+        body: JSON.stringify({
+          filters,
+          hidden_columns: hiddenColumns[currentBoard] || [],
+          column_order: boardColumnOrders[currentBoard] || [],
+          group_by_date: groupByDate,
+        })
       }).then(() => fetchSavedViews()).catch(() => { });
     }, 1200);
     return () => { if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current); };
-  }, [filters, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, hiddenColumns, boardColumnOrders, groupByDate, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset active view when board changes to prevent overwriting
   useEffect(() => {
@@ -397,8 +447,48 @@ const Dashboard = () => {
   };
   const handleColumnDragEnd = () => setDraggedCol(null);
 
-  const handleToggleColumnVisibility = (colKey) => {
-    setHiddenColumns(prev => { const boardHidden = prev[currentBoard] || []; const isHidden = boardHidden.includes(colKey); return { ...prev, [currentBoard]: isHidden ? boardHidden.filter(k => k !== colKey) : [...boardHidden, colKey] }; });
+  const handleToggleColumnVisibility = async (colKey) => {
+    setHiddenColumns(prev => {
+      const current = prev[currentBoard] || [];
+      const next = current.includes(colKey) ? current.filter(x => x !== colKey) : [...current, colKey];
+      const newHidden = { ...prev, [currentBoard]: next };
+      
+      // Auto-save layout
+      fetch(`${API}/config/board-layout/${currentBoard}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ hidden_columns: next, column_order: boardColumnOrders[currentBoard] || [] })
+      }).catch(err => console.error('Error saving layout:', err));
+      
+      return newHidden;
+    });
+  };
+
+  const handleUpdateColumnOrder = (newOrder) => {
+    setBoardColumnOrders(prev => {
+      const updated = { ...prev, [currentBoard]: newOrder };
+      
+      // Auto-save layout
+      fetch(`${API}/config/board-layout/${currentBoard}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ hidden_columns: hiddenColumns[currentBoard] || [], column_order: newOrder })
+      }).catch(err => console.error('Error saving layout:', err));
+      
+      return updated;
+    });
+  };
+
+  const handleCreateBoard = async () => {
+    if (!newBoardName.trim()) return;
+    const ok = await createBoard(newBoardName.trim().toUpperCase());
+    if (ok) {
+      setShowNewBoard(false);
+      setNewBoardName('');
+      fetchBoards();
+    }
   };
 
   // Trash
@@ -470,11 +560,17 @@ const Dashboard = () => {
     }
   };
 
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const bulkDeleteTimerRef = useRef(null);
   const handleBulkDelete = async () => {
     if (selectedOrders.length === 0) return;
-    const confirmMsg = `${t('delete')} ${selectedOrders.length} ${t('orders')}?`;
-    if (!window.confirm(confirmMsg)) return;
-    
+    if (!bulkDeleteConfirm) {
+      setBulkDeleteConfirm(true);
+      bulkDeleteTimerRef.current = setTimeout(() => setBulkDeleteConfirm(false), 3000);
+      return;
+    }
+    clearTimeout(bulkDeleteTimerRef.current);
+    setBulkDeleteConfirm(false);
     try {
       await handleBulkMove(selectedOrders, "PAPELERA DE RECICLAJE");
       setSelectedOrders([]);
@@ -574,11 +670,11 @@ const Dashboard = () => {
         getVal(order.notes).includes(sq)
       );
       return (
-        <tr key={order.order_id} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''}`} data-testid={`order-row-${order.order_id}`}>
-          <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+        <tr key={order.order_id} data-order-id={order.order_id} data-testid={`order-row-${order.order_id}`} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''} ${highlightedOrderId === order.order_id ? 'order-row-flash' : ''}`}>
+          <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
             <input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
           </td>
-          <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+          <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
             <div className="flex flex-col gap-1 items-center">
               <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
               {isAdmin && (
@@ -591,19 +687,14 @@ const Dashboard = () => {
           {(() => {
             const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
             return (
-              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 ${isSearchMatch ? 'bg-primary/10' : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-primary/5' : 'bg-primary/10') : (isDark ? 'bg-background group-hover:bg-transparent' : 'bg-background group-hover:bg-transparent')}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 cursor-pointer ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-blue-50/30')}`} 
+                  style={{ width: 160, minWidth: 160, maxWidth: 160 }}
+                  onClick={() => setDetailsOrder(order)}
+              >
                 {isMaster ? (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                  <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                 ) : (
-                  <EditableCell 
-                    value={order.order_number} 
-                    field="order_number" 
-                    orderId={order.order_id} 
-                    onUpdate={handleCellUpdate} 
-                    type="text" 
-                    isDark={isDark} 
-                    className={`font-mono font-black ${isSearchMatch ? 'text-primary' : ''}`}
-                  />
+                  <span className="font-bold text-xs tracking-tighter group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis block">{order.order_number}</span>
                 )}
               </td>
             );
@@ -623,7 +714,7 @@ const Dashboard = () => {
           })}
           {(() => {
             const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
-              <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-black text-foreground/80">{remaining}</span><span className={`font-mono font-black ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
+              <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold text-foreground/80">{remaining}</span><span className={`font-mono font-bold ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
             );
           })()}
         </tr>
@@ -632,40 +723,74 @@ const Dashboard = () => {
 
     if (!groupByDate) return orders.map(renderOrderRow);
     const groups = {};
-    const dateLabelsMap = {};
-    columns.filter(c => c.type === 'date').forEach(c => { dateLabelsMap[c.key] = c.label; });
-    dateLabelsMap['created_at'] = lang === 'es' ? 'Creacion' : 'Created';
+    const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
+    const groupLabelMap = {
+      cancel_date: 'Cancel Date',
+      client: lang === 'es' ? 'Cliente' : 'Client',
+      priority: lang === 'es' ? 'Prioridad' : 'Priority',
+    };
+    const noValueLabel = isDateField ? (lang === 'es' ? 'Sin fecha' : 'No date') : (lang === 'es' ? 'Sin asignar' : 'None');
     orders.forEach(o => {
       const raw = o[groupByDate];
-      const dateKey = raw ? new Date(raw).toLocaleDateString() : (lang === 'es' ? 'Sin fecha' : 'No date');
-      if (!groups[dateKey]) groups[dateKey] = [];
-      groups[dateKey].push(o);
+      const groupKey = isDateField
+        ? (raw ? new Date(raw).toLocaleDateString() : noValueLabel)
+        : (raw || noValueLabel);
+      if (!groups[groupKey]) groups[groupKey] = [];
+      groups[groupKey].push(o);
     });
     const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
-    const noDateLabel = lang === 'es' ? 'Sin fecha' : 'No date';
     const sortedEntries = Object.entries(groups).sort(([a], [b]) => {
-      if (a === noDateLabel) return 1;
-      if (b === noDateLabel) return -1;
-      const da = new Date(a), db = new Date(b);
-      return da - db;
+      if (a === noValueLabel) return 1;
+      if (b === noValueLabel) return -1;
+      if (isDateField) { const da = new Date(a), db = new Date(b); return da - db; }
+      return a.localeCompare(b);
     });
     
-    return sortedEntries.map(([dateKey, groupOrders]) => (
-      <React.Fragment key={dateKey}>
-        <tr data-testid={`date-group-${dateKey}`}>
-          <td colSpan={colSpan} className={`py-2 px-4 font-roboto font-black text-sm uppercase tracking-wide ${isDark ? 'bg-primary/10 text-primary border-b border-primary/30' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
-            <CalendarDays className="w-4 h-4 inline mr-2 -mt-0.5" />{dateLabelsMap[groupByDate] || groupByDate}: <span className="font-mono">{dateKey}</span> <span className="font-normal text-xs text-muted-foreground ml-2">({groupOrders.length})</span>
-          </td>
-        </tr>
-        {groupOrders.map(renderOrderRow)}
-      </React.Fragment>
-    ));
+    return sortedEntries.map(([dateKey, groupOrders]) => {
+      const isCollapsed = !!collapsedGroups[dateKey];
+      return (
+        <React.Fragment key={dateKey}>
+          <tr data-testid={`date-group-${dateKey}`}>
+            <td colSpan={colSpan} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`}>
+              <button
+                onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))}
+                className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-primary/20' : 'text-blue-700 hover:bg-blue-100'}`}
+              >
+                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
+                <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
+                {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
+                <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
+              </button>
+            </td>
+          </tr>
+          {!isCollapsed && groupOrders.map(renderOrderRow)}
+        </React.Fragment>
+      );
+    });
   };
 
   return (
-    <div className={`h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300`}>
-      <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
-      <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* ENTERPRISE SIDEBAR */}
+      <Sidebar 
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
+        currentBoard={currentBoard}
+        setCurrentBoard={setCurrentBoard}
+        boards={activeBoards}
+        trashCount={trashCount}
+        onShowTrash={() => { setShowTrash(true); fetchTrashOrders(); }}
+        onShowAutomations={() => setShowAutomations(true)}
+        onShowAnalytics={() => { setShowAnalytics(true); fetchAllOrders(); }}
+        isAdmin={isAdmin}
+        navigate={navigate}
+        isDark={isDark}
+      />
+
+      {/* MAIN CONTENT AREA */}
+      <div className={`relative flex-1 flex flex-col overflow-hidden transition-colors duration-300`}>
+        <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
+        <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
       {automationRunning && (
         <div className="fixed bottom-6 right-6 z-[200] flex items-center gap-3 bg-primary text-primary-foreground px-5 py-3 rounded-lg shadow-2xl animate-pulse" data-testid="automation-running-indicator">
@@ -674,524 +799,404 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Header */}
-      <header className={`border-b px-2 md:px-4 py-2 flex items-center justify-between z-50 ${isDark ? 'glass-header border-border' : 'bg-white/80 border-emerald-500/10 shadow-sm backdrop-blur-md'}`}>
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <h1 onClick={() => navigate('/home')} className={`font-roboto font-black text-base md:text-lg tracking-tight uppercase cursor-pointer hover:opacity-80 transition-opacity ${isDark ? 'text-glow-primary' : 'text-emerald-950'}`}>MOS <span className="text-primary font-black">S</span><span className="text-primary hidden md:inline font-black">YSTEM</span></h1>
-          {/* Notifications Bell - next to logo */}
-          <div>
-            <button onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }} className={`p-2 rounded-lg relative flex items-center justify-center transition-all ${unreadCount > 0 ? 'text-primary' : (isDark ? 'text-muted-foreground hover:text-foreground' : 'text-gray-500 hover:text-gray-900')}`} title={t('notifications')} data-testid="notifications-btn">
-              <Bell className={`w-5 h-5 md:w-6 md:h-6 ${unreadCount > 0 ? 'animate-pulse-primary' : ''}`} />
-              {unreadCount > 0 && (
-                <>
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] bg-destructive text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-lg border-2 border-background animate-bounce" data-testid="notification-badge">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] bg-destructive rounded-full animate-ping-soft opacity-75"></span>
-                </>
-              )}
-            </button>
-            {showNotifications && require('react-dom').createPortal(
-              <div className={`fixed left-2 md:left-4 top-[60px] w-80 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[99999] bg-card border-border`} data-testid="notifications-dropdown">
-                <div className="p-3 border-b border-border flex items-center justify-between">
-                  <span className="font-roboto font-black text-sm uppercase tracking-widest text-primary text-glow-primary">Notificaciones</span>
-                  {unreadCount > 0 && <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold animate-pulse">NUEVAS</span>}
-                </div>
-                {notifications.length > 0 ? notifications.slice(0, 20).map(n => {
-                  const isMention = n.type === 'mention' || n.type === 'comment';
-                  return (
-                    <div key={n.notification_id} className={`p-4 border-b border-border/40 text-sm cursor-pointer transition-all hover:bg-primary/5 ${!n.read ? (isMention ? 'mention-highlight' : 'bg-primary/5') : 'opacity-80'}`}
-                      onClick={async () => {
-                        setShowNotifications(false);
-                        if (!n.order_id) return;
-                        let targetOrder = allOrders.find(o => o.order_id === n.order_id);
-                        if (!targetOrder) {
-                          try { const res = await fetch(`${API}/orders/${n.order_id}`, { credentials: 'include' }); if (res.ok) targetOrder = await res.json(); } catch { /* silent */ }
-                        }
-                        if (targetOrder) {
-                          setCurrentBoard(targetOrder.board);
-                          if (n.type === 'comment' || n.type === 'mention') {
-                            setHighlightedCommentId(n.comment_id || null);
-                            setTimeout(() => setCommentsOrder(targetOrder), 300);
-                          }
-                        }
-                      }}
-                      data-testid={`notification-${n.notification_id}`}>
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-0.5 p-1.5 rounded-full ${isMention ? 'bg-primary/20 text-primary shadow-inner' : 'bg-secondary text-muted-foreground'}`}>
-                          {n.type === 'mention' ? <AtSign className="w-4 h-4 animate-pulse" /> : 
-                           n.type === 'move' ? <ArrowRightLeft className="w-4 h-4" /> : 
-                           <MessageSquare className="w-4 h-4" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className={`leading-relaxed ${!n.read ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
-                            {isMention && <span className="text-[10px] text-primary font-black uppercase tracking-tighter mr-1.5 inline-block px-1.5 py-0 bg-primary/10 rounded border border-primary/20">Mencion</span>}
-                            {n.message}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1.5 uppercase font-medium tracking-tighter">
-                            {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            <span className="opacity-30">•</span>
-                            {new Date(n.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                        {!n.read && <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0 shadow-[0_0_8px_hsl(var(--primary))]"></div>}
-                      </div>
+
+      {/* Header - Cleaned up version */}
+      <header className={`h-16 px-4 flex items-center justify-between z-40 border-b ${isDark ? 'bg-navy-dark border-white/5 shadow-lg' : 'bg-white border-gray-200 shadow-sm'}`}>
+        <div className="flex items-center gap-4 flex-1">
+          <div className="flex items-center gap-3 max-w-md w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group">
+            <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors" />
+            <input 
+              type="text" 
+              value={searchQuery} 
+              onChange={(e) => setSearchQuery(e.target.value)} 
+              onKeyDown={async (e) => { 
+                if (e.key === 'Enter') { 
+                  const results = await handleGlobalSearch(searchQuery, setCurrentBoard); 
+                  if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } 
+                  else if (results) setSearchResults(results); 
+                } 
+              }} 
+              placeholder={t('search_placeholder')} 
+              className="w-full bg-transparent border-none text-sm outline-none focus:outline-none focus:ring-0 placeholder:text-muted-foreground/50 transition-all font-medium py-1"
+            />
+          </div>
+        </div>
+
+        {unreadMentions > 0 && (() => {
+          const BALLOON_COLORS = ['bg-royal', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-purple-500', 'bg-cyan-500'];
+          const mentionNotifs = notifications.filter(n => n.type === 'mention' && !n.read).slice(0, 6);
+          return (
+            <div className="self-stretch flex items-start mx-2">
+              <div className="flex items-start gap-1.5 px-2 h-full">
+                {mentionNotifs.map((n, i) => (
+                  <div
+                    key={n.notification_id || i}
+                    className="flex flex-col items-center group cursor-pointer"
+                    title={n.message}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      markNotificationRead(n.notification_id || n.id);
+                      const targetOrder = allOrders.find(o => o.order_id === n.order_id);
+                      if (targetOrder) {
+                        setHighlightedCommentId(n.comment_id || null);
+                        setCommentsOrder(targetOrder);
+                      }
+                    }}
+                  >
+                    <div className={`w-7 h-7 rounded-full ${BALLOON_COLORS[i % BALLOON_COLORS.length]} shadow-md group-hover:scale-110 transition-transform flex items-center justify-center text-white font-black text-sm select-none`}>
+                      @
                     </div>
-                  );
-                }) : <div className="p-8 text-center"><div className="text-muted-foreground text-sm font-medium">Bandeja de entrada vacía</div><div className="text-[10px] text-muted-foreground/60 uppercase mt-1 tracking-widest">No hay nuevas alertas</div></div>}
-              </div>,
-              document.body
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 flex-1 justify-center max-w-xs md:max-w-md mx-2 md:mx-4">
-          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } else if (results) setSearchResults(results); } }} placeholder={t('search_placeholder')} className={`w-full rounded px-2 md:px-3 py-1.5 text-sm bg-secondary/50 border border-border text-foreground`} data-testid="global-search-input" />
-          <button onClick={async () => { const results = await handleGlobalSearch(searchQuery, setCurrentBoard); if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } else if (results) setSearchResults(results); }} className={`p-1.5 rounded flex-shrink-0 bg-secondary/80 border border-border hover:bg-secondary`} data-testid="global-search-btn"><Search className="w-4 h-4" /></button>
-        </div>
-        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
-          {/* Grouped utilities */}
-          <div className={`flex items-center gap-0.5 rounded-xl border border-border p-0.5 ${isDark ? 'bg-secondary/40' : 'bg-secondary/60'}`}>
-            <button onClick={toggleTheme} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={isDark ? t('light_mode') : t('dark_mode')} data-testid="theme-toggle-btn">{isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}</button>
-            <button onClick={toggleLang} className={`p-1.5 rounded-lg flex items-center gap-0.5 text-[10px] font-bold flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} data-testid="lang-toggle-btn"><Languages className="w-3.5 h-3.5" />{lang === 'es' ? 'EN' : 'ES'}</button>
-            <button onClick={() => setShowAutomations(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('automations')} data-testid="automations-btn"><Zap className="w-3.5 h-3.5" /></button>
-            <button onClick={() => { setShowTrash(true); fetchTrashOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 relative transition-all ${trashCount > 0 ? 'text-destructive/80 hover:text-destructive hover:bg-destructive/10' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/80'}`} title={t('trash')} data-testid="trash-btn">
-              <Trash2 className="w-3.5 h-3.5" />
-              {trashCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-destructive text-white text-[8px] font-black rounded-full flex items-center justify-center px-0.5 shadow-sm border border-background">
-                  {trashCount > 99 ? '99+' : trashCount}
-                </span>
-              )}
-            </button>
-            <button onClick={() => { setShowAnalytics(true); fetchAllOrders(); }} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('analytics')} data-testid="analytics-btn"><BarChart3 className="w-3.5 h-3.5" /></button>
-          </div>
-          {isAdmin && (<>
-            <div className={`flex items-center gap-0.5 rounded-xl border border-border p-0.5 ml-1 ${isDark ? 'bg-secondary/40' : 'bg-secondary/60'}`}>
-              <button onClick={handleQuickUndo} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('undo_last')} data-testid="quick-undo-btn"><Undo2 className="w-3.5 h-3.5" /></button>
-              <button onClick={() => navigate('/users')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('invite_users')} data-testid="invite-users-btn"><UserPlus className="w-3.5 h-3.5" /></button>
-              <button onClick={() => navigate('/activity-log')} className={`p-1.5 rounded-lg flex-shrink-0 hidden md:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title={t('activity_log')} data-testid="activity-log-btn"><History className="w-3.5 h-3.5" /></button>
-              <button onClick={() => navigate('/catalog-center')} className={`p-1.5 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestión de Catálogos" data-testid="manage-catalogs-btn"><Settings className="w-3.5 h-3.5" /></button>
-              <button onClick={() => navigate('/operators-center')} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Gestionar Operadores" data-testid="manage-operators-btn"><Users className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setShowFormFields(true)} className={`p-1.5 rounded-lg flex-shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all`} title="Campos del Formulario" data-testid="manage-form-fields-btn"><ClipboardList className="w-3.5 h-3.5" /></button>
-            </div>
-          </>)}
-        </div>
-        <div className="w-px h-5 bg-border mx-0.5 flex-shrink-0"></div>
-        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
-          <div className="relative group cursor-help" title={unreadMentions > 0 ? `${unreadMentions} menciones pendientes` : ''}>
-            {user?.picture && <img src={user.picture} alt="" className={`w-6 h-6 md:w-7 md:h-7 rounded-full border border-border/50 transition-all ${unreadMentions > 0 ? 'ring-2 ring-amber-500/50 ring-offset-2 ring-offset-background' : ''}`} />}
-            {unreadMentions > 0 && (
-              <div className="absolute -top-1.5 -right-1.5 flex items-center justify-center pointer-events-none">
-                 <div className="absolute inset-0 bg-amber-500 rounded-full animate-ping opacity-75"></div>
-                 <div className="relative bg-amber-600 text-white p-0.5 rounded-full shadow-lg border border-background">
-                    <AtSign className="w-2 h-2" />
-                 </div>
+                    <div className="w-px h-4 bg-foreground/30" />
+                    <div className="w-2 h-1 rounded-b-full bg-foreground/20" />
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+          );
+        })()}
+
+        <div className="flex items-center gap-4">
+          {/* Quick Actions */}
+          <div className="flex items-center gap-1">
+            <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all" title={isDark ? t('light_mode') : t('dark_mode')}>
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>
+            <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1">
+              <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
+            </button>
+            <div className="relative">
+              <button
+                data-testid="notifications-btn"
+                onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }}
+                className={cn("p-2 rounded hover:bg-muted/50 relative transition-colors", showNotifications && "bg-muted")}
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-royal rounded-full border-2 border-background" />}
+              </button>
+              {showNotifications && (
+                <div data-testid="notifications-dropdown" className={cn("absolute top-12 right-0 w-80 md:w-96 border rounded-sm shadow-2xl z-[500] animate-in slide-in-from-top-2 overflow-hidden", isDark ? "bg-card border-white/10" : "bg-white border-border")}>
+                  <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/20">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Notificaciones</span>
+                    {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{unreadCount} Nuevas</span>}
+                  </div>
+                  <ScrollArea className="max-h-[350px]">
+                    {(!notifications || notifications.length === 0) ? (
+                      <div className="p-8 flex flex-col items-center justify-center gap-2">
+                        <Bell className="w-8 h-8 text-muted-foreground/20" />
+                        <span className="text-xs text-muted-foreground font-bold uppercase tracking-tight">Sin notificaciones</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        {notifications.map((n, i) => (
+                          <button
+                            key={n.notification_id || i}
+                            onClick={() => { if (!n.read && markNotificationRead) markNotificationRead(n.notification_id || n.id); }}
+                            className={cn(
+                              "text-left p-4 border-b border-border/40 hover:bg-muted/50 transition-colors select-text cursor-default",
+                              !n.read ? "bg-royal/5 border-l-[3px] border-l-royal" : "opacity-75"
+                            )}
+                          >
+                            <div className="flex justify-between items-start mb-1.5">
+                              <span className={cn("text-xs font-bold uppercase tracking-tight flex-1", !n.read ? "text-foreground" : "text-muted-foreground")}>{n.title || "Aviso del Sistema"}</span>
+                              <span className="text-[9px] text-muted-foreground ml-2 font-medium">{n.created_at ? new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Ahora'}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">{n.message}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ScrollArea>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex-col leading-tight hidden sm:flex"><span className={`text-xs font-medium text-foreground`}>{user?.name}</span>{isAdmin && <span className="text-[10px] text-primary font-bold">Admin</span>}</div>
-          <button onClick={logout} className="p-1.5 text-muted-foreground hover:text-foreground flex-shrink-0" title={t('logout')}><LogOut className="w-3.5 h-3.5" /></button>
+
+          <div className="h-6 w-px bg-border mx-2" />
+
+          <div className="flex items-center gap-3">
+            <div className="text-right hidden sm:block">
+              <p className="text-xs font-bold leading-none">{user?.name}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">{user?.role || 'User'}</p>
+            </div>
+            {user?.picture ? (
+              <img src={user.picture} alt="" className="w-8 h-8 rounded-full border border-white/10" />
+            ) : (
+                <div className="w-8 h-8 rounded-full bg-royal/20 flex items-center justify-center text-royal font-bold text-xs uppercase">
+                  {user?.name?.[0]}
+                </div>
+            )}
+            <button onClick={logout} className="p-2 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+               <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Board Bar */}
-      <div className="px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shadow-lg bg-cover bg-center scanline" style={{ ...getBoardStyle(currentBoard), color: '#FFFFFF' }}>
+      {/* Enterprise Suite Command Bar (Unified) */}
+      <div className={cn(
+        "px-6 py-4 flex flex-col gap-4 border-b z-30 transition-all",
+        isDark ? "bg-navy border-white/5 shadow-2xl" : "bg-card border-gray-200 shadow-sm"
+      )}>
+        {/* TOP ROW: Views, Metrics and Board Identifier */}
+        <div className="flex items-end justify-between w-full">
+          <div className="flex items-center gap-6 relative z-10">
+            {/* Saved Views Selector */}
+            <div className="flex flex-col items-center">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 text-center">Vistas Guardadas</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex items-center justify-between gap-3 px-4 py-2 bg-muted/20 border border-border/20 rounded-lg hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none min-w-[160px] w-[180px]">
+                  <span className={cn("text-xs font-bold uppercase tracking-tight flex-1 text-center", activeViewName ? "text-royal" : "text-muted-foreground")}>
+                    {activeViewName || "Vista Estándar"}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-muted-foreground group-hover:text-royal transition-colors" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
+                   {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">No hay vistas guardadas</div>}
+                   
+                   {pinnedViews.length > 0 && (
+                     <div className="p-2 border-b border-border/50">
+                       <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">Fijadas</div>
+                       {pinnedViews.map(view => (
+                         <div key={view.view_id} className="flex items-center gap-1 group">
+                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                             {view.name}
+                           </DropdownMenuItem>
+                           <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
+                         </div>
+                       ))}
+                     </div>
+                   )}
 
-        {/* LEFT: Board selector + count */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <DropdownMenu>
-            <DropdownMenuTrigger className="h-8.5 bg-white/10 border border-white/25 text-white font-roboto font-black text-sm md:text-base backdrop-blur-md rounded-2xl flex items-center justify-between px-3 md:px-5 hover:bg-white/20 transition-all outline-none focus:ring-2 focus:ring-white/30 shadow-lg glow-primary gap-2 min-w-[140px] md:min-w-[200px]" data-testid="board-selector">
-              <span className="truncate font-black tracking-tight">{currentBoard}</span>
-              <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="z-[500] min-w-[240px] max-h-[70vh] flex flex-col border border-border/50 bg-card/95 backdrop-blur-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 rounded-3xl p-1.5" side="bottom" align="start">
-              <ScrollArea className="flex-1 w-full overflow-y-auto pr-1">
-                {visibleBoards.filter(b => !b.startsWith('MAQUINA')).map(board => (
-                  <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2.5 px-5 text-sm font-black tracking-tight rounded-2xl cursor-pointer transition-colors ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
-                    {board}
-                    {currentBoard === board ? <Check className="w-4 h-4" /> : <div className="w-4" />}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator className="opacity-50 my-1.5" />
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="flex items-center justify-between py-2.5 px-5 text-sm font-black text-primary cursor-pointer hover:bg-primary/5 uppercase tracking-wider rounded-2xl">
-                    <div className="flex items-center gap-2.5"><Monitor className="w-4.5 h-4.5" /><span>MAQUINAS</span></div>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent className="z-[501] min-w-[200px] max-h-[50vh] overflow-y-auto shadow-2xl p-1.5 rounded-2xl bg-card border border-border/50">
-                      {visibleBoards.filter(b => b.startsWith('MAQUINA')).map(board => (
-                        <DropdownMenuItem key={board} onClick={() => { setCurrentBoard(board); setSelectedOrders([]); }} className={`flex items-center justify-between py-2 px-4 text-xs md:text-sm font-black tracking-tight rounded-xl cursor-pointer ${currentBoard === board ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary text-foreground'}`}>
-                          {board}{currentBoard === board && <Check className="w-4 h-4 ml-2" />}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
-              </ScrollArea>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                   {unpinnedViews.length > 0 && (
+                     <div className="p-2">
+                       <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">Todas</div>
+                       {unpinnedViews.map(view => (
+                         <div key={view.view_id} className="flex items-center gap-1 group">
+                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                             {view.name}
+                           </DropdownMenuItem>
+                           <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
+                           <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                         </div>
+                       ))}
+                     </div>
+                   )}
 
-          <span className="text-[11px] font-mono font-bold bg-white/15 backdrop-blur-sm px-2.5 py-1 rounded-lg flex-shrink-0 border border-white/10 shadow-inner" data-testid="order-count">
-            {orders.length} <span className="text-[9px] font-normal opacity-70">ORD_QTY</span>
-          </span>
-        </div>
-
-        {/* CENTER / RIGHT: Action buttons */}
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide flex-shrink-0">
-          {/* Primary actions */}
-          {currentBoard === 'SCHEDULING' && (
-            <>
-              <button onClick={() => setShowNewOrder(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
-                data-testid="new-order-btn">
-                <Plus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t('new_order')}</span>
-              </button>
-              {isAdmin && (
-                <button onClick={() => setShowImportExcel(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-sm transition-all whitespace-nowrap shadow-sm"
-                  data-testid="import-excel-btn">
-                  <FileDown className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Import Excel</span>
-                </button>
-              )}
-            </>
-          )}
-
-          {/* Consistent nav buttons group */}
-          <div className="flex items-center gap-1 bg-white/10 backdrop-blur-sm border border-white/15 rounded-xl p-1">
-            <button onClick={() => { setShowProduction(true); fetchAllOrders(); }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-500/80 hover:bg-emerald-500 transition-all whitespace-nowrap"
-              data-testid="production-btn">
-              <Factory className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('production')}</span>
-            </button>
-            <button onClick={() => setShowGantt(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
-              data-testid="gantt-btn">
-              <GanttChart className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('gantt')}</span>
-            </button>
-            <button onClick={() => setShowCapacityPlan(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-500/80 hover:bg-orange-500 transition-all whitespace-nowrap"
-              data-testid="capacity-plan-btn">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('plan')}</span>
-            </button>
-            <button onClick={() => setShowProductionScreen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
-              data-testid="production-screen-btn">
-              <Monitor className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{t('prod_screen_title')}</span>
-            </button>
-            <button onClick={() => window.location.href = '/wms'}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-white/20 transition-all whitespace-nowrap"
-              data-testid="wms-btn">
-              <Warehouse className="w-3.5 h-3.5" /> WMS
-            </button>
+                   <DropdownMenuSeparator className="bg-border/50" />
+                   <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
+                     Restablecer Vista <RefreshCw className="w-3 h-3" />
+                   </DropdownMenuItem>
+                </DropdownMenuContent>
+             </DropdownMenu>
           </div>
 
-          {/* Admin tools — icon tray */}
-          {isAdmin && (
-            <div className="flex items-center gap-0.5 bg-white/10 backdrop-blur-sm border border-white/15 rounded-xl p-1 ml-0.5">
-              {!showNewBoard ? (
-                <button onClick={() => setShowNewBoard(true)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Crear tablero" data-testid="create-board-btn"><Plus className="w-4 h-4" /></button>
-              ) : (
-                <div className="flex items-center gap-1 px-2 py-1">
-                  <input type="text" value={newBoardName} onChange={e => setNewBoardName(e.target.value)}
-                    onKeyDown={async e => { if (e.key === 'Enter' && newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } if (e.key === 'Escape') setShowNewBoard(false); }}
-                    placeholder="Nombre..." className="w-24 h-6 px-2 text-xs bg-white/10 border border-white/30 rounded text-white placeholder-white/50" autoFocus data-testid="new-board-input" />
-                  <button onClick={async () => { if (newBoardName.trim()) { const ok = await createBoard(newBoardName.trim()); if (ok) { setNewBoardName(''); setShowNewBoard(false); } } }} className="p-0.5 hover:bg-white/10 rounded"><Plus className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => { setShowNewBoard(false); setNewBoardName(''); }} className="p-0.5 hover:bg-white/10 rounded"><X className="w-3.5 h-3.5" /></button>
-                </div>
-              )}
-              {currentBoard !== 'MASTER' && currentBoard !== 'COMPLETOS' && currentBoard !== 'PAPELERA DE RECICLAJE' && (
-                <button onClick={() => setDeleteBoardConfirm({ step: 1, name: currentBoard })} className="p-1.5 rounded-lg hover:bg-red-500/50 transition-all" title={`Eliminar ${currentBoard}`} data-testid="delete-board-btn"><Trash2 className="w-4 h-4" /></button>
-              )}
-              <button onClick={() => setShowAddColumn(true)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('add_column')} data-testid="add-column-btn"><PlusCircle className="w-4 h-4" /></button>
-              <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
-                <PopoverTrigger asChild>
-                  <button className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title="Ocultar/Mostrar Tableros" data-testid="board-visibility-btn">
-                    <Eye className="w-4 h-4" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl border z-[400] bg-card border-border p-0" align="end">
-                  <div className="p-3 border-b border-border font-roboto font-black text-xs uppercase tracking-widest text-foreground text-glow-primary">Visibilidad de Tableros</div>
-                  {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
-                    const isHidden = hiddenBoards.includes(b);
-                    return (
-                      <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
-                        {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                        <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                      </button>
-                    );
-                  })}
-                  <button onClick={() => setShowMachinesVisibility(!showMachinesVisibility)} className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black bg-secondary/30 text-primary uppercase tracking-widest mt-1 hover:bg-secondary/50 transition-all">
-                    <div className="flex items-center gap-1.5"><Monitor className="w-3 h-3" /> MAQUINAS</div>
-                    {showMachinesVisibility ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </button>
-                  {showMachinesVisibility && allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).map(b => {
-                    const isHidden = hiddenBoards.includes(b);
-                    return (
-                      <button key={b} onClick={() => toggleBoardVisibility(b)} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-all ${isHidden ? 'opacity-50' : ''}`} data-testid={`board-vis-${b}`}>
-                        {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                        <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                      </button>
-                    );
-                  })}
-                  <div className="p-2 border-t border-border"><p className="text-[10px] text-muted-foreground">Los tableros ocultos no aparecen en el selector.</p></div>
-                </PopoverContent>
-              </Popover>
-              <button onClick={() => setShowColumnManager(!showColumnManager)} className="p-1.5 rounded-lg hover:bg-white/20 transition-all" title={t('show_columns')} data-testid="column-manager-btn"><Settings className="w-4 h-4" /></button>
+          <div className="h-10 w-px bg-border/40" />
+
+          {/* Quick Metrics */}
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col">
+               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Órdenes</span>
+               <span className="text-xl font-bold tracking-tighter">{orders.length}</span>
+            </div>
+            <div className="flex flex-col">
+               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Total Qty</span>
+               <span className="text-xl font-bold tracking-tighter text-royal">
+                 {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
+               </span>
+            </div>
+          </div>
+
+          <div className="h-10 w-px bg-border/40 ml-2" />
+
+          {/* Board Title Identifier */}
+          <div className="text-[2.5rem] mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/30 pointer-events-none select-none whitespace-nowrap leading-none ml-2">
+            {currentBoard}
+          </div>
+
+          </div>
+
+          {/* Top-right action buttons */}
+          <div className="flex items-center gap-2 self-center">
+            <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
+              <Plus className="w-3.5 h-3.5" />
+              Nueva Orden
+            </button>
+            <div className="flex items-center rounded-lg overflow-hidden border border-emerald-600/40 shadow-sm shadow-emerald-600/10">
+              <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} title="Producción" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all border-r border-emerald-500/40">
+                <Factory className="w-3.5 h-3.5" />
+                Production
+              </button>
+              <button onClick={() => setShowProductionScreen(true)} title="Pantalla de Producción (TV)" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all">
+                <Monitor className="w-3.5 h-3.5" />
+                TV
+              </button>
+            </div>
+            <button onClick={() => setShowCapacityPlan(true)} title="Planificación" className="flex items-center gap-2 px-4 py-1.5 bg-card border border-border text-foreground hover:bg-muted hover:text-royal rounded-lg font-bold text-[10px] uppercase tracking-widest shadow-sm hover:shadow-md transition-all whitespace-nowrap">
+              <TrendingUp className="w-3.5 h-3.5" />
+              PLAN
+            </button>
+          </div>
+        </div>
+        </div>
+
+        {/* BOTTOM ROW: Controls and Actions */}
+        <div className="flex items-center justify-between w-full pt-2">
+          {/* Left Controls */}
+          <div className="flex items-center gap-2">
+            {/* View Toggle */}
+            <div className="flex items-center border border-border rounded-lg overflow-hidden mr-4 bg-muted/10">
+            <button 
+              onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(false); }} 
+              className={cn("px-3 py-2 transition-all border-r border-border", !calendarMode && !readyCalendarMode && !blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
+              title="Vista de Tabla"
+            >
+              <Table2 size={16} />
+            </button>
+            {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
+              <button
+                onClick={() => { setCalendarMode(true); setReadyCalendarMode(false); setBlanksTrackingMode(false); }}
+                className={cn("px-3 py-2 transition-all border-r border-border", calendarMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
+                title="Calendario"
+              >
+                <CalendarDays size={16} />
+              </button>
+            )}
+            {currentBoard === 'SCHEDULING' && (
+              <>
+                <button 
+                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(true); setBlanksTrackingMode(false); }} 
+                  className={cn("px-3 py-2 transition-all border-r border-border", readyCalendarMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
+                  title="Ready to Scheduled"
+                >
+                  <CalendarCheck size={16} />
+                </button>
+                <button 
+                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(true); }} 
+                  className={cn("px-3 py-2 transition-all", blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
+                  title="Seguimiento de Blanks"
+                >
+                  <ClipboardList size={16} />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Grouping Selector */}
+          {!calendarMode && !readyCalendarMode && !blanksTrackingMode && (
+            <div className="mr-4">
+              <Select value={groupByDate || 'none'} onValueChange={val => setGroupByDate(val === 'none' ? null : val)}>
+                <SelectTrigger className="w-[180px] h-9 bg-muted/40 border-border/40 text-xs font-bold uppercase tracking-tight rounded-lg outline-none">
+                  <SelectValue placeholder="No grouping" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border z-[100]">
+                  <SelectItem value="none" className="text-xs font-bold uppercase">No grouping</SelectItem>
+                  <SelectItem value="cancel_date" className="text-xs font-bold uppercase">Cancel Date</SelectItem>
+                  <SelectItem value="client" className="text-xs font-bold uppercase">By Client</SelectItem>
+                  <SelectItem value="priority" className="text-xs font-bold uppercase">By Priority</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           )}
+          </div>
+
+          {/* Right Actions */}
+          <div className="flex items-center gap-2">
+            {/* Mechanic Actions */}
+            <div className="flex items-center gap-1.5 p-1">
+             <button
+                onClick={() => setShowGantt(true)}
+                title="Gantt"
+                className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"
+              >
+                <GanttChart size={18} />
+                <span className="sr-only">Gantt</span>
+              </button>
+          </div>
+
+          <div className="h-8 w-px bg-border/40 mx-2" />
+
+          {/* Admin Tools */}
+          {isAdmin && (
+             <div className="flex items-center gap-1.5 p-1 bg-muted/20 rounded-lg border border-border/20">
+                <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
+                <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>
+                
+                <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
+                  <PopoverTrigger asChild>
+                    <button className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all" title="Visibilidad de Tableros">
+                      <Eye size={18} />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[400] bg-card border-border p-0" align="end">
+                    <div className="p-3 border-b border-border font-roboto font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
+                    <ScrollArea className="h-60">
+                      {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
+                        const isHidden = hiddenBoards.includes(b);
+                        const isDeletable = b !== 'MASTER' && b !== 'COMPLETOS' && b !== 'PAPELERA DE RECICLAJE';
+                        return (
+                          <div key={b} className="flex items-center group/item hover:bg-secondary/50 transition-all">
+                            <button onClick={() => toggleBoardVisibility(b)} className={`flex-1 flex items-center gap-2 px-3 py-2 text-left text-sm ${isHidden ? 'opacity-50' : ''}`}>
+                              {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                              <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                            </button>
+                            {isDeletable && (
+                              <button 
+                                onClick={() => { setShowBoardVisibility(false); setDeleteBoardConfirm({ step: 1, name: b }); }}
+                                className="p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all"
+                                title={`Eliminar ${b}`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </ScrollArea>
+                  </PopoverContent>
+                </Popover>
+
+                <button onClick={() => setShowImportExcel(true)} title="Importar Excel" className="p-2.5 rounded-lg hover:bg-emerald-600/10 text-emerald-600 transition-all"><FileDown size={18} /></button>
+                <button onClick={() => setShowColumnManager(!showColumnManager)} title="Columnas" className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all"><Settings size={18} /></button>
+             </div>
+          )}
+
+
         </div>
       </div>
 
       {/* Column Manager Panel */}
       {showColumnManager && (
-        <div className={`border-b px-4 py-3 bg-secondary/30 border-border`} data-testid="column-manager-panel">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Columnas del tablero: {currentBoard}</span>
-            <button onClick={() => setShowColumnManager(false)} className="p-1 hover:bg-secondary rounded"><X className="w-4 h-4" /></button>
+        <div className={`border-b px-6 py-4 transition-all animate-in slide-in-from-top-2 duration-300 ${isDark ? 'bg-navy/40 border-white/5' : 'bg-muted/30 border-gray-100'}`}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-royal" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Gestión de Columnas: {currentBoard}</span>
+            </div>
+            <button onClick={() => setShowColumnManager(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
           </div>
           <div className="flex flex-wrap gap-2">
             {columns.map(col => {
               const isHidden = (hiddenColumns[currentBoard] || []).includes(col.key);
               return (
-                <div key={col.key} className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-all ${isHidden ? 'opacity-40 border-dashed border-border' : 'bg-secondary border-border'}`} data-testid={`col-mgr-${col.key}`}>
-                  <button onClick={() => handleToggleColumnVisibility(col.key)} className="hover:text-primary" title={isHidden ? 'Mostrar' : 'Ocultar'}>{isHidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</button>
-                  <span className={isHidden ? 'line-through' : ''}>{col.label}</span>
-                  {isAdmin && <button onClick={() => handleDeleteColumn(col.key)} className="hover:text-destructive ml-1" title={t('delete')} data-testid={`delete-col-${col.key}`}><X className="w-3 h-3" /></button>}
-                </div>
+                <button
+                  key={col.key}
+                  onClick={() => handleToggleColumnVisibility(col.key)}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
+                    isHidden 
+                      ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60" 
+                      : "bg-background border-border text-foreground hover:border-royal/50"
+                  )}
+                >
+                  {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
+                  {col.label}
+                </button>
               );
             })}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-2">{lang === 'en' ? 'Drag columns in the table to reorder. Changes saved per user.' : 'Arrastra las columnas en la tabla para reordenar. Cambios guardados por usuario.'}</p>
         </div>
       )}
-
-      {/* Dynamic Control Center Container */}
-      <div className="border-b border-white/10 relative overflow-hidden min-h-[160px] flex flex-col justify-end">
-        {/* Dynamic Landscape Background Layer */}
-        <DynamicLandscape timeOfDay={timeOfDay} />
-        
-        {/* Messenger-Style Floating Mention Bubbles */}
-        <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
-          {notifications.filter(n => n.type === 'mention' && !n.read).map((n, idx) => (
-            <div 
-              key={n.notification_id}
-              className="absolute pointer-events-auto cursor-pointer animate-messenger-float group/bubble"
-              style={{
-                left: `${10 + (idx * 15) % 80}%`,
-                top: `${20 + (idx * 10) % 60}%`,
-                animationDelay: `${idx * 0.7}s`
-              }}
-              onClick={async (e) => {
-                e.stopPropagation();
-                if (markNotificationRead) markNotificationRead(n.notification_id);
-                if (!n.order_id) return;
-                let targetOrder = allOrders.find(o => o.order_id === n.order_id);
-                if (!targetOrder) {
-                  try { 
-                    const res = await fetch(`${API}/orders/${n.order_id}`, { credentials: 'include' }); 
-                    if (res.ok) targetOrder = await res.json(); 
-                  } catch { }
-                }
-                if (targetOrder) {
-                  setCurrentBoard(targetOrder.board);
-                  setHighlightedCommentId(n.comment_id || null);
-                  setTimeout(() => setCommentsOrder(targetOrder), 300);
-                }
-              }}
-            >
-              {/* Bubble */}
-              <div className="relative">
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-full border-2 border-white shadow-2xl overflow-hidden bg-primary/20 backdrop-blur-sm transition-transform group-hover/bubble:scale-110 group-active/bubble:scale-95">
-                  {n.sender_picture ? (
-                    <img src={n.sender_picture} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-primary text-white font-black text-xl">
-                      {n.sender_name ? n.sender_name[0].toUpperCase() : '@'}
-                    </div>
-                  )}
-                </div>
-                {/* At-sign Badge */}
-                <div className="absolute -bottom-1 -right-1 bg-amber-500 text-white p-1 rounded-full border-2 border-white shadow-lg">
-                  <AtSign className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                </div>
-                
-                {/* Tooltip Snippet */}
-                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black/80 text-white text-[10px] md:text-xs py-1.5 px-3 rounded-xl backdrop-blur-md border border-white/20 whitespace-nowrap opacity-0 group-hover/bubble:opacity-100 transition-opacity pointer-events-none shadow-2xl z-50">
-                  <div className="font-black text-amber-500 uppercase tracking-tighter mb-0.5">{n.sender_name || 'Alguien'}</div>
-                  <div className="max-w-[150px] truncate opacity-90">{n.message.split('en orden')[0]}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        
-        {/* Animated accent lines (reduced opacity) */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none z-[1]">
-          <div className="absolute top-0 left-0 w-full h-px bg-white/20 animate-pulse"></div>
-          <div className="absolute bottom-0 left-0 w-full h-px bg-black/20"></div>
-        </div>
-
-        {/* Saved Views + Filters Row (Pure Glass) */}
-        <div className="px-3 md:px-5 relative z-10 border-t border-white/5">
-          <div className="flex items-center gap-2 py-2 overflow-x-auto scrollbar-hide">
-            {/* View pills */}
-            <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button onClick={() => handleApplyView(null)}
-                className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap transition-all border ${
-                  activeViewName === null
-                    ? 'bg-white text-primary border-white shadow-lg scale-105'
-                    : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-                }`}
-                data-testid="view-general">{t('general')}</button>
-
-              {pinnedViews.map(v => (
-                <div key={v.view_id} className="relative group flex-shrink-0">
-                  <button onClick={() => handleApplyView(v)}
-                    className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap flex items-center gap-1 transition-all border ${
-                      activeViewName === v.name
-                        ? 'bg-white text-primary border-white shadow-lg scale-105'
-                        : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-                    }`}
-                    data-testid={`view-pinned-${v.name}`}>
-                    <Pin className="w-2.5 h-2.5 opacity-70" /> {v.name}
-                  </button>
-                  <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-50">
-                    <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
-                    <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
-                  </div>
-                </div>
-              ))}
-
-              {unpinnedViews.map(v => (
-                <div key={v.view_id} className="relative group flex-shrink-0">
-                  <button onClick={() => handleApplyView(v)}
-                    className={`px-3 py-1.5 text-[11px] font-black rounded-full whitespace-nowrap transition-all border ${
-                      activeViewName === v.name
-                        ? 'bg-white text-primary border-white shadow-lg scale-105'
-                        : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-                    }`}>{v.name}</button>
-                  <div className="absolute -top-1.5 -right-1.5 hidden group-hover:flex gap-0.5 z-50">
-                    <button onClick={(e) => { e.stopPropagation(); handleTogglePinView(v.view_id, v.pinned); }} className="w-4 h-4 bg-primary rounded-full flex items-center justify-center shadow-sm"><Pin className="w-2.5 h-2.5 text-white" /></button>
-                    <button onClick={(e) => { e.stopPropagation(); handleDeleteView(v.view_id); }} className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center shadow-sm"><X className="w-2.5 h-2.5 text-white" /></button>
-                  </div>
-                </div>
-              ))}
-
-              {Object.keys(filters).some(k => filters[k]) && (
-                showSaveView ? (
-                  <div className="flex items-center gap-1 bg-black/20 backdrop-blur-md rounded-full px-2 py-0.5 border border-white/20 animate-in fade-in zoom-in-95">
-                    <input type="text" value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSaveView()} placeholder={t('view_name')} className="bg-transparent border-none outline-none px-2 py-0.5 text-[11px] w-28 text-white placeholder:text-white/40" autoFocus data-testid="save-view-input" />
-                    <button onClick={handleSaveView} className="p-1.5 bg-white text-primary rounded-full transition-transform hover:scale-110 active:scale-95" data-testid="save-view-confirm"><Check className="w-3 h-3 font-black" /></button>
-                    <button onClick={() => setShowSaveView(false)} className="p-1.5 text-white/60 hover:text-white"><X className="w-3 h-3" /></button>
-                  </div>
-                ) : (
-                  <button onClick={() => setShowSaveView(true)} className="px-3 py-1.5 text-[10px] font-black text-white bg-white/10 hover:bg-white/20 rounded-full flex items-center gap-1.5 border border-white/20 transition-all shadow-xl backdrop-blur-md" data-testid="save-view-btn">
-                    <Save className="w-3.5 h-3.5" /> {t('save_view')}
-                  </button>
-                )
-              )}
-            </div>
-
-            <div className="flex-1" />
-
-            {/* RIGHT: View toggles + Group by */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
-                <div className={`flex items-center rounded-xl p-0.5 border bg-black/20 border-white/10 backdrop-blur-sm`}>
-                  <button onClick={() => { setCalendarMode(false); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
-                    className={`p-1.5 rounded-lg transition-all ${ !calendarMode && !blanksTrackingMode && !readyCalendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
-                    title={t('table_view')} data-testid="toggle-table-view"><Table2 className="w-4 h-4" /></button>
-                  <button onClick={() => { setCalendarMode(true); setBlanksTrackingMode(false); setReadyCalendarMode(false); }}
-                    className={`p-1.5 rounded-lg transition-all ${calendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
-                    title={t('calendar_view')} data-testid="toggle-calendar-view"><CalendarDays className="w-4 h-4" /></button>
-                  {currentBoard === 'SCHEDULING' && (<>
-                    <button onClick={() => { setReadyCalendarMode(true); setCalendarMode(false); setBlanksTrackingMode(false); }}
-                      className={`p-1.5 rounded-lg transition-all ${readyCalendarMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
-                      title="Ready To Schedule" data-testid="toggle-ready-calendar"><CalendarCheck className="w-4 h-4" /></button>
-                    <button onClick={() => { setBlanksTrackingMode(true); setCalendarMode(false); setReadyCalendarMode(false); }}
-                      className={`p-1.5 rounded-lg transition-all ${blanksTrackingMode ? 'bg-white text-primary shadow-sm scale-110' : 'text-white/60 hover:text-white'}`}
-                      title="Seguimiento de Blanks" data-testid="toggle-blanks-tracking"><ClipboardList className="w-4 h-4" /></button>
-                  </>)}
-                </div>
-              )}
-
-              <div className="flex items-center gap-1.5">
-                <Select value={groupByDate || 'none'} onValueChange={(v) => setGroupByDate(v === 'none' ? null : v)}>
-                  <SelectTrigger className={`w-32 md:w-36 h-8 text-[10px] font-black rounded-xl border transition-all bg-black/20 border-white/10 text-white hover:bg-black/30 backdrop-blur-sm`}>
-                    <SelectValue placeholder={t('all')} />
-                  </SelectTrigger>
-                  <SelectContent className="z-[600] bg-card/95 backdrop-blur-xl border-border">
-                    <SelectItem value="none">{lang === 'es' ? 'Sin agrupar' : 'No grouping'}</SelectItem>
-                    {columns.filter(c => c.type === 'date').map(dc => <SelectItem key={dc.key} value={dc.key}>{dc.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Stats + Clock Row (Pure Glass) */}
-        <div className="px-2 md:px-4 py-3 relative z-10">
-          <div className="flex items-center gap-3 overflow-visible">
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest shrink-0">
-              <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl font-black bg-white/20 text-white border border-white/30 shadow-lg backdrop-blur-md`}>
-                <span className="opacity-70 text-[10px] uppercase font-black tracking-tighter">{t('total')}</span>
-                <span className="font-barlow text-xl">{orders.length}</span>
-              </div>
-              <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl font-black bg-white/10 text-white border border-white/10 shadow-lg backdrop-blur-md transition-all ${selectedOrders.length > 0 ? 'border-primary/50' : ''}`}>
-                <span className="opacity-60 text-[10px] uppercase font-black tracking-tighter">QTY</span>
-                <span className="font-barlow text-xl">
-                  {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* Active Filters Row (Restored) */}
-            <div className="flex-1 flex items-center gap-2 overflow-x-auto scrollbar-hide px-2">
-              {Object.entries(filters).map(([k, v]) => {
-                if (!v) return null;
-                const col = columns.find(c => c.key === k) || { label: k };
-                return (
-                  <div key={k} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/30 border border-white/10 text-white text-[10px] font-black uppercase tracking-wider shrink-0 animate-in fade-in slide-in-from-left-2 backdrop-blur-md">
-                    <span className="opacity-50">{col.label}:</span>
-                    <span className="text-white font-black">{Array.isArray(v) ? `${v.length}` : (typeof v === 'object' ? '...' : String(v))}</span>
-                    <button onClick={() => setFilters(prev => { const n={...prev}; delete n[k]; return n; })} className="ml-1 p-0.5 hover:bg-white/20 rounded-full transition-colors"><X className="w-3 h-3" /></button>
-                  </div>
-                );
-              })}
-            </div>
-            
-            <div className="ml-auto flex items-center gap-6">
-              {/* Digital Clock */}
-              <div className="hidden md:flex flex-col items-end justify-center px-4 py-1.5 rounded-2xl bg-black/30 border border-white/10 backdrop-blur-xl shadow-2xl">
-                <div className="flex items-center gap-2">
-                  <span className="clock-text text-xl font-black text-white leading-none">
-                    {currentTime.toLocaleTimeString([], { hour12: false })}
-                  </span>
-                  <div className={`w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_white] ${
-                    timeOfDay === 'morning' ? 'bg-orange-300' :
-                    timeOfDay === 'afternoon' ? 'bg-emerald-400' : 'bg-blue-400'
-                  }`}></div>
-                </div>
-                <div className="text-[9px] font-black uppercase tracking-[0.2em] text-white/60 leading-none mt-1">
-                  {currentTime.toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
-                </div>
-              </div>
-
-              {(Object.keys(filters).some(k => filters[k]) || groupByDate) && (
-                <button onClick={() => { setFilters({}); setActiveViewName(null); setGroupByDate(null); }} className="px-4 py-2 bg-white text-primary rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5">
-                  <X className="w-3.5 h-3.5" /> {t('clear')}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Floating Bulk Actions Bar */}
       {selectedOrders.length > 0 && (
@@ -1206,19 +1211,19 @@ const Dashboard = () => {
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase font-bold opacity-50 hidden sm:inline">{t('move_to')}:</span>
                 <DropdownMenu>
-                  <DropdownMenuTrigger className={`min-w-[120px] md:w-48 h-9 md:h-10 flex items-center justify-between px-3 md:px-4 text-xs md:text-sm font-black rounded-lg md:rounded-xl border bg-secondary/50 border-border text-foreground hover:bg-secondary`} data-testid="bulk-move-select">
+                  <DropdownMenuTrigger className={`min-w-[120px] md:w-48 h-9 md:h-10 flex items-center justify-between px-3 md:px-4 text-xs md:text-sm font-bold rounded-lg md:rounded-xl border bg-secondary/50 border-border text-foreground hover:bg-secondary`} data-testid="bulk-move-select">
                     <span className="truncate mr-1 md:mr-2">{t('move_to')}</span>
                     <ChevronDown className="w-4 h-4 md:w-5 md:h-5 opacity-70" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
                     {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => (
-                      <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-black py-3.5 px-5 text-sm md:text-base tracking-tight">
+                      <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
                         {board}
                       </DropdownMenuItem>
                     ))}
                     <DropdownMenuSeparator className="opacity-50" />
                     <DropdownMenuSub>
-                      <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-black text-primary cursor-pointer text-sm md:text-base">
+                      <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold text-primary cursor-pointer text-sm md:text-base">
                         <div className="flex items-center gap-2.5">
                           <Monitor className="w-5 h-5" /> 
                           <span>MAQUINAS</span>
@@ -1226,7 +1231,7 @@ const Dashboard = () => {
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl">
                         {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
-                          <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-black py-3.5 px-5 text-sm md:text-base tracking-tight">
+                          <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
                             {board}
                           </DropdownMenuItem>
                         ))}
@@ -1248,9 +1253,9 @@ const Dashboard = () => {
 
               <div className="h-6 w-px bg-border mx-1"></div>
 
-              <button onClick={handleBulkDelete} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
+              <button onClick={handleBulkDelete} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${bulkDeleteConfirm ? 'bg-red-500 text-white animate-pulse' : isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{t('trash')}</span>
+                <span>{bulkDeleteConfirm ? '¿Confirmar?' : t('trash')}</span>
               </button>
             </div>
 
@@ -1280,7 +1285,7 @@ const Dashboard = () => {
                         {(() => {
                           const isReflection = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
                           return (
-                            <th className={`py-4 px-3 sticky left-[96px] z-30 text-left text-[10px] font-black tracking-[0.2em] uppercase border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80 border-b border-border/60' : 'bg-gray-50 text-gray-400 border-b border-gray-200'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                            <th className={`py-4 px-3 sticky left-[96px] z-30 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80 border-b border-border/60' : 'bg-gray-50 text-gray-400 border-b border-gray-200'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
                                 <Popover open={openFilter === (isReflection ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? (isReflection ? '_board' : 'order_number') : null)}>
@@ -1291,7 +1296,7 @@ const Dashboard = () => {
                                     {isReflection ? (
                                       <>
                                         <div className="flex items-center justify-between mb-2">
-                                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Board</span>
+                                          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
                                           {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                         </div>
                                         <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
@@ -1320,12 +1325,17 @@ const Dashboard = () => {
                                     ) : (
                                       <>
                                         <div className="flex items-center justify-between mb-2">
-                                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Orden</span>
+                                          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Orden</span>
                                           {filters['order_number'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                         </div>
                                         <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
                                       </>
                                     )}
+                                    <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                                      <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
+                                        {t('save_view')}
+                                      </button>
+                                    </div>
                                   </PopoverContent>
                                 </Popover>
                               </div>
@@ -1342,7 +1352,7 @@ const Dashboard = () => {
                           const isDate = col.type === 'date';
 
                           return (
-                            <th key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-black tracking-[0.2em] uppercase border-r border-border/5 shadow-sm ${isDark ? 'text-zinc-500/80' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                            <th key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-border/5 shadow-sm ${isDark ? 'text-zinc-500/80' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                                   {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
@@ -1354,7 +1364,7 @@ const Dashboard = () => {
                                     </PopoverTrigger>
                                     <PopoverContent className="z-[600] min-w-[240px] bg-card border-border p-4 shadow-2xl overflow-y-auto max-h-[400px]">
                                       <div className="flex items-center justify-between mb-2">
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{col.label}</span>
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{col.label}</span>
                                         {filterVal && <button onClick={() => setFilters(prev => { const n={...prev}; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                       </div>
                                       
@@ -1405,6 +1415,11 @@ const Dashboard = () => {
                                           />
                                         </div>
                                       )}
+                                      <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                                        <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
+                                          {t('save_view')}
+                                        </button>
+                                      </div>
                                     </PopoverContent>
                                   </Popover>
                                 </div>
@@ -1413,7 +1428,7 @@ const Dashboard = () => {
                             </th>
                           );
                         })}
-                        <th className={`py-4 px-3 text-left text-[10px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-zinc-500/80' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
+                        <th className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase ${isDark ? 'text-zinc-500/80' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1478,7 +1493,7 @@ const Dashboard = () => {
       <Dialog open={!!searchResults} onOpenChange={() => setSearchResults(null)}>
         <DialogContent className="max-w-6xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
-            <DialogTitle className="font-roboto text-2xl font-black uppercase tracking-tight flex items-center gap-3 text-glow-primary">
+            <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
               <Search className="w-6 h-6 text-primary" /> Resultados de busqueda <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
@@ -1487,12 +1502,12 @@ const Dashboard = () => {
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 bg-secondary/95 backdrop-blur-md z-20">
                   <tr className="border-b border-border/50">
-                    <th className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary/95 z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)]">{t('order')}</th>
-                    <th className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</th>
+                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary/95 z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)]">{t('order')}</th>
+                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</th>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
-                      <th key={col.key} className="text-left py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</th>
+                      <th key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</th>
                     ))}
-                    <th className="text-center py-3 px-4 font-black uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary/95 z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)]">Accion</th>
+                    <th className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary/95 z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)]">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1511,11 +1526,11 @@ const Dashboard = () => {
                           }} 
                           type="text" 
                           isDark={isDark}
-                          className="font-mono font-black text-primary text-base"
+                          className="font-mono font-bold text-primary text-base"
                         />
                       </td>
                       <td className="py-3 px-4 border-l border-border/5">
-                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                        <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                       </td>
                       {columns.filter(c => c.key !== 'order_number').map(col => (
                         <td key={col.key} className="py-3 px-4 border-l border-border/5">
@@ -1536,13 +1551,22 @@ const Dashboard = () => {
                         </td>
                       ))}
                       <td className="py-3 px-4 text-center sticky right-0 bg-background/95 z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors">
-                        <button 
-                          onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(order.order_number || ''); toast.success(`${order.order_number} → ${order.board}`); }}
-                          className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
-                          title="Ir al tablero"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1.5 justify-center">
+                          <button
+                            onClick={() => { setCommentsOrder(order); setSearchResults(null); }}
+                            className="p-2 rounded-xl bg-secondary/60 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all shadow-sm"
+                            title="Ver comentarios"
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(''); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                            className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
+                            title="Ir al tablero"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1584,26 +1608,168 @@ const Dashboard = () => {
                   <Trash2 className="w-10 h-10 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-barlow font-black uppercase text-destructive">Confirmacion Final</h2>
+                  <h2 className="text-xl font-barlow font-bold uppercase text-destructive">Confirmacion Final</h2>
                   <p className="text-sm text-muted-foreground mt-2">Vas a eliminar <strong className="text-destructive">"{deleteBoardConfirm.name}"</strong> permanentemente.</p>
                   <p className="text-base font-bold text-foreground mt-3">Estas completamente seguro?</p>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-bold" data-testid="cancel-delete-final">No, conservar tablero</button>
-                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard('MASTER'); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-black uppercase tracking-wide" data-testid="confirm-delete-final">Eliminar definitivamente</button>
+                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard('MASTER'); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-bold uppercase tracking-wide" data-testid="confirm-delete-final">Eliminar definitivamente</button>
               </div>
             </>
           )}
         </DialogContent>
       </Dialog>
       {/* System Guide Modal — triggered by secret code 201492 */}
+      <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
+      <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
+      <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
+      {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
+      <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
+
+      {/* Save View Modal */}
+      <Dialog open={showSaveView} onOpenChange={setShowSaveView}>
+        <DialogContent className="max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="font-roboto text-xl uppercase tracking-widest text-glow-primary flex items-center gap-2">
+              <Save className="w-5 h-5 text-royal" /> {t('save_view')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre de la Vista</label>
+              <input 
+                value={newViewName} 
+                onChange={(e) => setNewViewName(e.target.value)} 
+                placeholder="Ej: Solo Prioridad Alta" 
+                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all" 
+                autoFocus
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground uppercase leading-relaxed font-bold opacity-60">
+              * SE GUARDARAN LOS FILTROS ACTUALES DEL TABLERO {currentBoard}.
+            </p>
+          </div>
+          <DialogFooter>
+            <button onClick={() => setShowSaveView(false)} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-all">{t('cancel')}</button>
+            <button onClick={handleSaveView} disabled={!newViewName.trim()} className="px-6 py-2 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all disabled:opacity-50">{t('save')}</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Board Modal */}
+      <Dialog open={showNewBoard} onOpenChange={setShowNewBoard}>
+        <DialogContent className="max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="font-roboto text-xl uppercase tracking-widest text-glow-primary">
+              Nuevo Tablero
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre del Tablero</label>
+              <input 
+                value={newBoardName} 
+                onChange={(e) => setNewBoardName(e.target.value)} 
+                placeholder="Ej: CALIDAD, EMBALAJE..." 
+                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all uppercase" 
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <button onClick={() => setShowNewBoard(false)} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-all">Cancelar</button>
+            <button 
+              onClick={handleCreateBoard} 
+              disabled={!newBoardName.trim()} 
+              className="px-6 py-2 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all disabled:opacity-50"
+            >
+              Crear Tablero
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <SystemGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
 
       {/* Import Excel Modal */}
       <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
+      {/* Enterprise Side-Drawer Detail View */}
+      {detailsOrder && (
+        <aside className="w-[450px] border-l bg-card shadow-2xl animate-in slide-in-from-right duration-300 z-50 flex flex-col">
+          <div className="p-6 border-b flex items-center justify-between bg-muted/10">
+             <div>
+                <p className="text-[10px] font-bold text-royal uppercase tracking-[0.2em] mb-1">Detalles de Orden</p>
+                <h3 className="text-2xl font-bold tracking-tighter uppercase leading-none">{detailsOrder.order_number}</h3>
+             </div>
+             <button onClick={() => setDetailsOrder(null)} className="p-2 rounded hover:bg-muted/50 transition-colors">
+                <X className="w-5 h-5" />
+             </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+             {/* Header Info */}
+             <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-1">
+                   <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Cliente</label>
+                   <p className="text-sm font-bold uppercase">{detailsOrder.client || '—'}</p>
+                </div>
+                <div className="space-y-1">
+                   <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Estado</label>
+                   <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-royal" />
+                      <p className="text-sm font-bold uppercase text-royal">{detailsOrder.production_status || 'Pendiente'}</p>
+                   </div>
+                </div>
+             </div>
+
+             <div className="h-px bg-border/40" />
+
+             {/* Job Description */}
+             <div className="space-y-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Instrucciones del Job</label>
+                <div className="p-4 bg-muted/30 rounded-sm border border-border/20">
+                   <p className="text-sm font-semibold leading-relaxed">{detailsOrder.job_title_a || 'Sin descripción detallada'}</p>
+                </div>
+             </div>
+
+             {/* Dynamic Fields */}
+             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                {visibleColumns.slice(0, 20).map(col => (
+                   <div key={col.key} className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{col.label}</label>
+                      <div className="text-xs font-bold truncate">
+                        {renderDetailValue(detailsOrder[col.key])}
+                      </div>
+                   </div>
+                ))}
+             </div>
+          </div>
+          <div className="p-6 border-t bg-muted/20 flex gap-3">
+             <button onClick={() => setCommentsOrder(detailsOrder)} className="flex-1 py-3 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all">
+                Abrir Mensajería
+             </button>
+             <button onClick={() => setDetailsOrder(null)} className="px-6 py-3 border border-border rounded-sm font-bold text-xs uppercase tracking-widest hover:bg-muted/50 transition-all">
+                Cerrar
+             </button>
+          </div>
+        </aside>
+      )}
+
+      {/* Command Palette */}
+      <CommandPalette 
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        onNewOrder={() => setShowNewOrder(true)}
+        onShowAutomations={() => setShowAutomations(true)}
+        onShowAnalytics={() => setShowAnalytics(true)}
+        onNavigateBoard={(b) => setCurrentBoard(b)}
+        t={t}
+      />
     </div>
-  );
+  </div>
+);
 };
 
 export default Dashboard;
