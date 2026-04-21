@@ -19,7 +19,7 @@
   /* Shadcn / Semantic Mapping */
   --background: 218 40% 97%;  /* very faint blue-white */
   --foreground: 0 0% 10%;
-  
+
   --card: 218 30% 99%;         /* cards almost white with blue whisper */
   --card-foreground: 0 0% 10%;
   
@@ -122,8 +122,8 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 
 ::-webkit-scrollbar-track {

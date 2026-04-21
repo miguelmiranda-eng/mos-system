@@ -687,7 +687,7 @@ const Dashboard = () => {
           {(() => {
             const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
             return (
-              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 cursor-pointer ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-blue-50/30')}`} 
+              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 cursor-pointer ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} 
                   style={{ width: 160, minWidth: 160, maxWidth: 160 }}
                   onClick={() => setDetailsOrder(order)}
               >
