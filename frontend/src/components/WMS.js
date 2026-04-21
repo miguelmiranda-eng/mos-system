@@ -12,6 +12,7 @@ import SearchableSelect from "./SearchableSelect";
 import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
+import { useTheme } from "../contexts/ThemeContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const AUTH_API = `${process.env.REACT_APP_BACKEND_URL}/api/auth`;
@@ -2551,7 +2552,8 @@ export default function WMS() {
   const { t } = useLang();
   const [activeModule, setActiveModule] = useState('directed');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light-theme'));
+  const { theme, toggleTheme: toggleAppTheme } = useTheme();
+  const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0 });
   const [currentUser, setCurrentUser] = useState(null);
   const [historyOrder, setHistoryOrder] = useState(null);
@@ -2625,15 +2627,7 @@ export default function WMS() {
     }
   }, []);
 
-  const toggleTheme = () => {
-    setIsDark(prev => {
-      const next = !prev;
-      localStorage.setItem('theme', next ? 'dark' : 'light');
-      if (next) { document.documentElement.classList.remove('light-theme'); document.documentElement.classList.add('dark'); }
-      else { document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light-theme'); }
-      return next;
-    });
-  };
+  const toggleTheme = toggleAppTheme;
 
   const handleLogout = async () => {
     try {
@@ -2666,9 +2660,6 @@ export default function WMS() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col text-foreground">
-      <div className="bg-red-600 text-white text-center py-2 font-bold text-xl animate-pulse z-50 relative">
-        ⚠️ ESTAS EN LA RAMA MASTER (CAMBIOS ACTIVOS) ⚠️
-      </div>
       <div className="flex-1 flex overflow-hidden">
         <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
       {/* Sidebar */}

@@ -598,6 +598,7 @@ import UserManagementCenter from "./components/UserManagementCenter";
 import CatalogCenter from "./components/CatalogCenter";
 import OperatorsCenter from "./components/OperatorsCenter";
 import CEODashboard from "./components/CEODashboard";
+import QCDashboard from "./components/QCDashboard";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -735,6 +736,11 @@ function AppRouter() {
         <AdminRoute>
           <UserManagementCenter />
         </AdminRoute>
+      } />
+      <Route path="/qc" element={
+        <ProtectedRoute>
+          <QCDashboard />
+        </ProtectedRoute>
       } />
     </Routes>
   );

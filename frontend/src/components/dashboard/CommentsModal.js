@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign, FileText, File as FileIcon, FileSpreadsheet, Download, Pin, PinOff } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "../ui/dialog";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
 
@@ -427,7 +428,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="max-w-[95vw] md:max-w-4xl max-h-[90vh] bg-card border-border overflow-hidden flex flex-col" data-testid="comments-modal">
+      <DialogPortal>
+        <DialogOverlay className="backdrop-blur-sm bg-black/20" />
+        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-50 w-full max-w-[95vw] md:max-w-4xl max-h-[90vh] translate-x-[-50%] translate-y-[-50%] bg-card border border-border overflow-hidden flex flex-col shadow-lg sm:rounded-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95" data-testid="comments-modal">
         <DialogHeader>
           <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3">
             <MessageSquare className="w-5 h-5" /> {t('comments')} - {order.order_number}
@@ -739,7 +742,8 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             </button>
           </div>
         </div>
-      </DialogContent>
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   );
 };

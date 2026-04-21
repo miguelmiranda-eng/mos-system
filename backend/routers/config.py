@@ -236,6 +236,9 @@ async def create_saved_view(request: Request):
         "view_id": f"view_{uuid.uuid4().hex[:12]}", "user_id": user_id,
         "name": body.get("name", "Sin nombre"), "board": body.get("board", "MASTER"),
         "filters": body.get("filters", {}), "pinned": body.get("pinned", False),
+        "hidden_columns": body.get("hidden_columns", []),
+        "column_order": body.get("column_order", []),
+        "group_by_date": body.get("group_by_date", None),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.saved_views.insert_one(view_doc)
@@ -253,6 +256,12 @@ async def update_saved_view(view_id: str, request: Request):
         update_data["name"] = body["name"]
     if "filters" in body:
         update_data["filters"] = body["filters"]
+    if "hidden_columns" in body:
+        update_data["hidden_columns"] = body["hidden_columns"]
+    if "column_order" in body:
+        update_data["column_order"] = body["column_order"]
+    if "group_by_date" in body:
+        update_data["group_by_date"] = body["group_by_date"]
     await db.saved_views.update_one({"view_id": view_id, "user_id": user_id}, {"$set": update_data})
     return {"message": "View updated"}
 

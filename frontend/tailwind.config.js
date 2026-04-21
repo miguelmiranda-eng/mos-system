@@ -5,18 +5,33 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Roboto', 'sans-serif'],
-        roboto: ['Roboto', 'sans-serif'],
+        sans: ['Blinker', 'Inter', 'sans-serif'],
+        blinker: ['Blinker', 'sans-serif'],
+        inter: ['Inter', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)'
+        lg: '4px',
+        md: '2px',
+        sm: '1px',
+        sharp: '0px',
       },
       colors: {
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        navy: {
+          DEFAULT: '#0B1F3A',
+          light: '#1A2E4B',
+          dark: '#050D1A',
+        },
+        royal: {
+          DEFAULT: '#1E5BFF',
+          hover: '#0041E6',
+        },
+        enterprise: {
+          light: '#F5F7FA',
+          dark: '#1A1A1A',
+        },
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))'
@@ -48,11 +63,6 @@ module.exports = {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
-        rush: 'hsl(var(--accent-rush))',
-        priority: 'hsl(var(--accent-priority))',
-        event: 'hsl(var(--accent-event))',
-        done: 'hsl(var(--accent-done))',
-        neutral: 'hsl(var(--accent-neutral))',
         chart: {
           '1': 'hsl(var(--chart-1))',
           '2': 'hsl(var(--chart-2))',

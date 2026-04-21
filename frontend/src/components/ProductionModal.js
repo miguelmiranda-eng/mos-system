@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "./ui/dialog";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Loader2, Plus, Trash2, ClipboardList, Factory, Search, CheckCircle2 } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
@@ -90,7 +91,9 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] bg-card border-border overflow-hidden flex flex-col" data-testid="production-modal">
+      <DialogPortal>
+      <DialogOverlay className="backdrop-blur-sm bg-black/20" />
+      <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-50 w-full max-w-3xl max-h-[90vh] translate-x-[-50%] translate-y-[-50%] bg-card border border-border overflow-hidden flex flex-col shadow-lg sm:rounded-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95" data-testid="production-modal">
         <DialogHeader>
           <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-2">
             <Factory className="w-5 h-5 text-primary" /> {t('production_title')}
@@ -179,7 +182,8 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
             </table>
           ) : matchedOrder ? <p className="text-center text-muted-foreground text-sm py-4">{t('no_production')}</p> : <p className="text-center text-muted-foreground text-sm py-4">{t('select_order_history')}</p>}
         </div>
-      </DialogContent>
+      </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   );
 };

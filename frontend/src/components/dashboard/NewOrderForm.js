@@ -12,17 +12,18 @@ import { useLang } from "../../contexts/LanguageContext";
 
 const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
 
-export const NewOrderForm = ({ 
-  formFieldKeys = [], 
-  options = {}, 
-  groupConfig = {}, 
-  allColumns = [], 
-  onClose, 
-  onSubmit, 
+export const NewOrderForm = ({
+  formFieldKeys = [],
+  options = {},
+  groupConfig = {},
+  allColumns = [],
+  onClose,
+  onSubmit,
   loading = false,
   duplicateWarning = null,
   checkingDuplicate = false,
   setDuplicateWarning,
+  checkDuplicate,
   isPreview = false
 }) => {
   const { t } = useLang();
@@ -248,10 +249,13 @@ export const NewOrderForm = ({
         <label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground/80 font-black">{col.label}</label>
         <div className="relative">
           <input 
-            type="text" value={value} 
-            onChange={(e) => { 
-              set(key, e.target.value); 
-              if (key === 'order_number' && setDuplicateWarning) setDuplicateWarning(null); 
+            type="text" value={value}
+            onChange={(e) => {
+              set(key, e.target.value);
+              if (key === 'order_number' && setDuplicateWarning) setDuplicateWarning(null);
+            }}
+            onBlur={(e) => {
+              if (key === 'order_number' && checkDuplicate) checkDuplicate(e.target.value);
             }}
             placeholder={col.type === 'link' ? 'https://...' : ''}
             readOnly={isReadOnly}

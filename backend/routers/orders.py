@@ -411,8 +411,6 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
     mentions = []
     for u in all_users:
         uid = u.get("user_id", u.get("email"))
-        if uid == current_user_id:
-            continue
         uname = (u.get("name") or "").strip()
         uemail = (u.get("email") or "").strip()
         if uname and f"@{uname.lower()}" in content_lower:
@@ -441,6 +439,7 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
                 "notification_id": f"notif_{uuid.uuid4().hex[:12]}", "user_id": uid, "type": "mention",
                 "message": f"{user['name']} te menciono en orden {order.get('order_number', order_id)}",
                 "order_id": order_id, "order_number": order.get("order_number"),
+                "comment_id": comment_id,
                 "sender_name": user.get("name"),
                 "sender_picture": user.get("picture"),
                 "read": False, "created_at": datetime.now(timezone.utc).isoformat()

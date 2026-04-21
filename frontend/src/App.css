@@ -8,50 +8,7 @@
     color: hsl(210 40% 96%);
 }
 
-/* Scrollbar Styles */
-::-webkit-scrollbar {
-    width: 14px;
-    height: 14px;
-}
 
-::-webkit-scrollbar-track {
-    background: hsl(0 20% 10%);
-}
-
-::-webkit-scrollbar-thumb {
-    background: hsl(0 75% 45%);
-    border-radius: 7px;
-    border: 2px solid hsl(0 20% 10%);
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: hsl(0 80% 55%);
-}
-
-::-webkit-scrollbar-corner {
-    background: hsl(0 20% 10%);
-}
-
-.light ::-webkit-scrollbar-track,
-.light-theme ::-webkit-scrollbar-track {
-    background: hsl(158 20% 94%);
-}
-
-.light ::-webkit-scrollbar-thumb,
-.light-theme ::-webkit-scrollbar-thumb {
-    background: hsl(158 50% 60%);
-    border: 2px solid hsl(158 20% 94%);
-}
-
-.light ::-webkit-scrollbar-thumb:hover,
-.light-theme ::-webkit-scrollbar-thumb:hover {
-    background: hsl(158 60% 45%);
-}
-
-.light ::-webkit-scrollbar-corner,
-.light-theme ::-webkit-scrollbar-corner {
-    background: hsl(158 20% 94%);
-}
 
 /* Sticky Header Glass Effect */
 .glass-header {
@@ -78,16 +35,16 @@ table th {
     border-bottom: 1px solid hsl(var(--border) / 0.5);
 }
 
-/* Dark theme table headers (default) */
-:root table th {
+/* Dark theme table headers */
+html.dark table th {
     background: hsl(220 28% 11% / 0.95);
 }
 
-/* Light theme table headers */
-.light table th,
-.light-theme table th {
-    background: rgba(255, 255, 255, 0.95);
-    border-bottom-color: rgba(16, 185, 129, 0.10);
+/* Light theme table headers — gradient band */
+html:not(.dark) table th {
+    background: linear-gradient(90deg, hsl(218 35% 96%) 0%, hsl(220 28% 97%) 100%);
+    border-bottom: 1px solid hsl(214 32% 88%);
+    box-shadow: 0 1px 0 hsl(214 32% 91%);
 }
 
 table tr {

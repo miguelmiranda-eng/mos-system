@@ -37,6 +37,7 @@ from routers.production import router as production_router
 from routers.wms import router as wms_router
 from routers.reports import router as reports_router
 from routers.import_router import router as import_router
+from routers.qc import router as qc_router
 
 
 app.include_router(auth_router)
@@ -49,6 +50,7 @@ app.include_router(production_router)
 app.include_router(wms_router)
 app.include_router(reports_router)
 app.include_router(import_router)
+app.include_router(qc_router)
 
 
 # Auto-restore database on startup

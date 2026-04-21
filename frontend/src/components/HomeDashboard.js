@@ -181,9 +181,14 @@ const HomeDashboard = () => {
             <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center border border-primary/30">
               <Factory className="w-6 h-6 text-primary" />
             </div>
-            <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter text-foreground">
-              MOS <span className="text-primary tracking-normal font-medium">HOME</span>
-            </h1>
+            <div className="flex flex-col leading-tight">
+              <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter text-foreground">
+                MOS <span className="text-primary tracking-normal font-medium">HOME</span>
+              </h1>
+              <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-muted-foreground/60">
+                by <span className="text-foreground/80">Prosper</span> <span className="text-primary">Manufacturing</span>
+              </span>
+            </div>
           </div>
           <p className="text-muted-foreground font-medium max-w-xl">
             Panel de control centralizado.{' '}
@@ -279,7 +284,13 @@ const HomeDashboard = () => {
       </div>
 
       <footer className="mt-20 pt-10 border-t border-border flex justify-between items-center text-[10px] font-bold text-muted-foreground/40 uppercase tracking-[0.3em]">
-        <div>MOS SYSTEM v5.4.0</div>
+        <div className="flex items-center gap-2">
+          <span>MOS System</span>
+          <span className="text-muted-foreground/20">·</span>
+          <span>v5.4.0</span>
+          <span className="text-muted-foreground/20">·</span>
+          <span>Licenciado a <span className="text-primary/60">Prosper Manufacturing</span></span>
+        </div>
         <div>Control Industrial de Alta Precisión</div>
       </footer>
 

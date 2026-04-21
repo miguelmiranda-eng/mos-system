@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLang } from "../../contexts/LanguageContext";
-import { Dialog, DialogContent } from "../ui/dialog";
+import { Dialog, DialogPortal, DialogOverlay } from "../ui/dialog";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
 import { NewOrderForm } from "./NewOrderForm";
@@ -85,8 +86,14 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-[95vw] md:max-w-4xl bg-card border-border h-[90vh] p-0 flex flex-col [&>button:last-child]:hidden shadow-2xl transition-all duration-300" onInteractOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
-        <NewOrderForm 
+      <DialogPortal>
+        <DialogOverlay className="backdrop-blur-sm bg-black/20" />
+        <DialogPrimitive.Content
+          className="fixed left-[50%] top-[50%] z-50 max-w-[95vw] md:max-w-4xl w-full translate-x-[-50%] translate-y-[-50%] bg-card border border-border h-[90vh] p-0 flex flex-col shadow-2xl transition-all duration-300 sm:rounded-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
+        <NewOrderForm
           formFieldKeys={formFieldKeys}
           options={options}
           groupConfig={groupConfig}
@@ -97,8 +104,10 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
           duplicateWarning={duplicateWarning}
           checkingDuplicate={checkingDuplicate}
           setDuplicateWarning={setDuplicateWarning}
+          checkDuplicate={checkDuplicate}
         />
-      </DialogContent>
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   );
 };
