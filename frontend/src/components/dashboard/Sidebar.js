@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ChevronRight,
   ChevronLeft,
-  Settings,
   Users,
   History,
   BarChart3,
@@ -10,11 +9,13 @@ import {
   Box,
   Cpu,
   ChevronDown,
-  ShieldCheck
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+
+const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
 const Sidebar = ({
   isCollapsed,
@@ -34,172 +35,166 @@ const Sidebar = ({
   const isAnyMachineActive = machineBoards.includes(currentBoard);
   const [isMachinesOpen, setIsMachinesOpen] = useState(isAnyMachineActive);
 
+  const navItem = (isActive) => cn(
+    "w-full flex items-center gap-2.5 px-3 py-[5px] transition-colors duration-100 text-[12.5px] font-medium rounded-sm",
+    isActive
+      ? isDark ? "text-white" : "text-royal font-semibold"
+      : isDark ? "text-white/45 hover:text-white/80" : "text-neutral-500 hover:text-neutral-800"
+  );
+
+  const iconCls = (isActive) => cn(
+    "flex-shrink-0 transition-colors",
+    isActive
+      ? isDark ? "text-white/80" : "text-royal"
+      : isDark ? "text-white/25" : "text-neutral-400"
+  );
+
+  const sectionLabel = cn(
+    "text-[10px] font-bold uppercase tracking-[0.15em] px-3 pt-3 pb-1",
+    isDark ? "text-white/25" : "text-neutral-400"
+  );
+
   return (
     <aside
       className={cn(
-        "flex flex-col transition-all duration-300 border-r z-50",
-        isCollapsed ? "w-16" : "w-64",
-        isDark ? "bg-navy-dark border-white/5 text-white" : "bg-white border-royal/10 text-foreground shadow-xl"
+        "flex flex-col transition-all duration-300 border-r z-50 flex-shrink-0",
+        isCollapsed ? "w-12" : "w-48",
+        isDark
+          ? "bg-[hsl(222,28%,10%)] border-white/6"
+          : "bg-[#f7f8fa] border-neutral-200"
       )}
     >
-      {/* Sidebar Header — blue-tinted in light mode */}
+      {/* Header */}
       <div className={cn(
-        "h-16 flex items-center justify-between px-4 border-b",
-        isDark ? "border-white/5" : "bg-royal/5 border-royal/15"
+        "h-11 flex items-center justify-between px-3 border-b flex-shrink-0",
+        isDark ? "border-white/6" : "border-neutral-200"
       )}>
         {!isCollapsed && (
           <button
             onClick={() => navigate('/home')}
-            className="text-left hover:opacity-80 transition-opacity flex flex-col leading-tight"
+            className={cn("text-left hover:opacity-70 transition-opacity leading-none truncate", isDark ? "text-white/70" : "text-neutral-700")}
           >
-            <span className={cn("font-barlow-semi font-bold text-xl tracking-tighter", isDark ? "text-white" : "text-navy")}>
-              MOS <span className="text-royal">SYSTEM</span>
-            </span>
-            <span className={cn("text-[13px] font-bold uppercase tracking-[0.12em]", isDark ? "text-white/60" : "text-navy/60")}>
-              by <span className={cn("font-black text-base", isDark ? "text-royal" : "text-royal")}>Prosper Mfg.</span>
-            </span>
+            <span className="text-[12px] font-semibold block truncate">Prosper Manufacturing</span>
           </button>
         )}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className={cn("p-1.5 rounded transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-royal/10 text-royal/60 hover:text-royal")}
+          className={cn("p-1 rounded transition-colors flex-shrink-0 ml-auto", isDark ? "text-white/20 hover:text-white/50" : "text-neutral-400 hover:text-neutral-600")}
         >
-          {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          {isCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
         </button>
       </div>
 
-      {/* Primary Navigation */}
-      <div className="flex-1 py-4 overflow-y-auto custom-scrollbar">
-        <div className="px-3 mb-2">
-          {!isCollapsed && <p className={cn("text-[10px] font-bold uppercase tracking-widest px-3 mb-2", isDark ? "text-white/40" : "text-royal/60")}>Tableros</p>}
-          <nav className="space-y-1">
-            {regularBoards.map((board) => (
-              <button
-                key={board}
-                onClick={() => setCurrentBoard(board)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold",
-                  currentBoard === board
-                    ? "bg-royal text-white shadow-lg shadow-royal/25"
-                    : isDark
-                      ? "text-white/70 hover:bg-royal/10 hover:text-white"
-                      : "text-foreground/70 hover:bg-royal/8 hover:text-royal"
-                )}
-                title={isCollapsed ? board : ""}
-              >
-                <div
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: currentBoard === board ? 'rgba(255,255,255,0.8)' : (BOARD_COLORS[board]?.accent || '#666') }}
-                />
-                {!isCollapsed && <span className="truncate">{board}</span>}
-              </button>
-            ))}
+      {/* Nav */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar pb-4">
 
-            {!isCollapsed && machineBoards.length > 0 && (
-              <Collapsible open={isMachinesOpen} onOpenChange={setIsMachinesOpen} className="w-full">
-                <CollapsibleTrigger asChild>
-                  <button className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold group mt-2",
-                    isAnyMachineActive && !isMachinesOpen
-                      ? "bg-royal/10 text-royal"
-                      : isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal"
-                  )}>
-                    <Cpu size={18} className={cn(isAnyMachineActive ? "text-royal" : "text-muted-foreground")} />
-                    <span className="flex-1 text-left font-barlow-semi font-bold tracking-wide">MÁQUINAS</span>
-                    <ChevronDown size={14} className={cn("transition-transform duration-200", isMachinesOpen && "rotate-180")} />
+        {/* Boards */}
+        {!isCollapsed && <p className={sectionLabel}>General</p>}
+        <nav className="px-1.5">
+          {regularBoards.map((board) => (
+            <button
+              key={board}
+              onClick={() => setCurrentBoard(board)}
+              className={navItem(currentBoard === board)}
+              title={isCollapsed ? board : ""}
+            >
+              <div
+                className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", currentBoard === board ? "opacity-100" : "opacity-40")}
+                style={{ backgroundColor: BOARD_COLORS[board]?.accent || (isDark ? '#555' : '#aaa') }}
+              />
+              {!isCollapsed && <span className="truncate">{toTitle(board)}</span>}
+            </button>
+          ))}
+
+          {/* Machines collapsible */}
+          {!isCollapsed && machineBoards.length > 0 && (
+            <Collapsible open={isMachinesOpen} onOpenChange={setIsMachinesOpen} className="w-full">
+              <CollapsibleTrigger asChild>
+                <button className={navItem(isAnyMachineActive)}>
+                  <Cpu size={13} className={iconCls(isAnyMachineActive)} />
+                  <span className="flex-1 text-left">máquinas</span>
+                  <ChevronDown size={11} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isMachinesOpen && "rotate-180")} />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
+                {machineBoards.map((board) => (
+                  <button
+                    key={board}
+                    onClick={() => setCurrentBoard(board)}
+                    className={navItem(currentBoard === board)}
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 opacity-50" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#aaa' }} />
+                    <span className="truncate">{toTitle(board)}</span>
                   </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-1 mt-1 ml-4 pl-2 border-l border-royal/20">
-                  {machineBoards.map((board) => (
-                    <button
-                      key={board}
-                      onClick={() => setCurrentBoard(board)}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-3 py-1.5 rounded-lg transition-all text-xs font-semibold",
-                        currentBoard === board
-                          ? "bg-royal text-white"
-                          : isDark ? "text-white/50 hover:bg-royal/10 hover:text-white" : "text-foreground/50 hover:bg-royal/8 hover:text-royal"
-                      )}
-                    >
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#666' }} />
-                      <span className="truncate">{board}</span>
-                    </button>
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+
+          {isCollapsed && machineBoards.length > 0 && (
+            <button
+              onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
+              className={navItem(isAnyMachineActive)}
+              title="Máquinas"
+            >
+              <Cpu size={13} className={iconCls(isAnyMachineActive)} />
+            </button>
+          )}
+        </nav>
+
+        {/* Tools */}
+        {!isCollapsed && <p className={sectionLabel}>Herramientas</p>}
+        <nav className="px-1.5">
+          <button onClick={() => navigate('/qc')} className={navItem(false)} title={isCollapsed ? "Control de Calidad" : ""}>
+            <ShieldCheck size={13} className={iconCls(false)} />
+            {!isCollapsed && <span>Control de Calidad</span>}
+          </button>
+          <button onClick={onShowAnalytics} className={navItem(false)} title={isCollapsed ? "Análisis" : ""}>
+            <BarChart3 size={13} className={iconCls(false)} />
+            {!isCollapsed && <span>Análisis</span>}
+          </button>
+          <button onClick={onShowTrash} className={navItem(false)} title={isCollapsed ? "Papelera" : ""}>
+            <div className="relative flex-shrink-0">
+              <Trash2 size={13} className={iconCls(false)} />
+              {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
+            </div>
+            {!isCollapsed && <span className="flex-1 text-left">Papelera</span>}
+            {!isCollapsed && trashCount > 0 && (
+              <span className={cn("text-[9px] px-1 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
+                {trashCount}
+              </span>
             )}
+          </button>
+        </nav>
 
-            {isCollapsed && machineBoards.length > 0 && (
-              <button
-                onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
-                className={cn(
-                  "w-full flex justify-center py-2 rounded-lg transition-all mt-2",
-                  isAnyMachineActive ? "text-royal bg-royal/10" : isDark ? "text-white/40 hover:bg-royal/10" : "text-foreground/40 hover:bg-royal/8"
-                )}
-                title="MÁQUINAS"
-              >
-                <Cpu size={18} />
-              </button>
-            )}
-          </nav>
-        </div>
-
-        <div className="px-3 mt-6">
-          {!isCollapsed && <p className={cn("text-[10px] font-bold uppercase tracking-widest px-3 mb-2", isDark ? "text-white/40" : "text-royal/60")}>Herramientas</p>}
-          <nav className="space-y-1">
-            <button
-              onClick={() => navigate('/qc')}
-              className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold", isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal")}
-            >
-              <ShieldCheck size={18} />
-              {!isCollapsed && <span>Control de Calidad</span>}
-            </button>
-            <button
-              onClick={onShowAnalytics}
-              className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold", isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal")}
-            >
-              <BarChart3 size={18} />
-              {!isCollapsed && <span>Análisis</span>}
-            </button>
-            <button
-              onClick={onShowTrash}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold",
-                isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal"
-              )}
-            >
-              <div className="relative">
-                <Trash2 size={18} />
-                {trashCount > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 bg-royal rounded-full animate-pulse" />}
-              </div>
-              {!isCollapsed && <span className="flex-1 text-left">Papelera</span>}
-              {!isCollapsed && trashCount > 0 && <span className={cn("text-[10px] px-1.5 rounded", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal")}>{trashCount}</span>}
-            </button>
-          </nav>
-        </div>
-
+        {/* Admin */}
         {isAdmin && (
-          <div className="px-3 mt-6">
-            {!isCollapsed && <p className={cn("text-[10px] font-bold uppercase tracking-widest px-3 mb-2", isDark ? "text-white/40" : "text-royal/60")}>Admin</p>}
-            <nav className="space-y-1">
-              <button onClick={() => navigate('/users')} className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold", isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal")}>
-                <Users size={18} />
+          <>
+            {!isCollapsed && <p className={sectionLabel}>Admin</p>}
+            <nav className="px-1.5">
+              <button onClick={() => navigate('/users')} className={navItem(false)} title={isCollapsed ? "Usuarios" : ""}>
+                <Users size={13} className={iconCls(false)} />
                 {!isCollapsed && <span>Usuarios</span>}
               </button>
-              <button onClick={() => navigate('/activity-log')} className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold", isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal")}>
-                <History size={18} />
+              <button onClick={() => navigate('/activity-log')} className={navItem(false)} title={isCollapsed ? "Log Actividad" : ""}>
+                <History size={13} className={iconCls(false)} />
                 {!isCollapsed && <span>Log Actividad</span>}
               </button>
-              <button onClick={() => navigate('/catalog-center')} className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-semibold", isDark ? "text-white/70 hover:bg-royal/10 hover:text-white" : "text-foreground/70 hover:bg-royal/8 hover:text-royal")}>
-                <Box size={18} />
+              <button onClick={() => navigate('/catalog-center')} className={navItem(false)} title={isCollapsed ? "Catálogos" : ""}>
+                <Box size={13} className={iconCls(false)} />
                 {!isCollapsed && <span>Catálogos</span>}
               </button>
             </nav>
-          </div>
+          </>
         )}
       </div>
 
-      {/* Sidebar Footer removed per user request */}
+      {/* Footer */}
+      {!isCollapsed && (
+        <div className={cn("px-3 py-2.5 border-t text-[10px]", isDark ? "border-white/6 text-white/20" : "border-neutral-200 text-neutral-400")}>
+          MOS <span className={isDark ? "text-royal/60" : "text-royal/70"}>System</span> · Prosper Mfg.
+        </div>
+      )}
     </aside>
   );
 };
