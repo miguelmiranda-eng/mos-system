@@ -15,6 +15,15 @@ from reportlab.lib.units import inch
 
 router = APIRouter(prefix="/api/orders")
 
+
+def _merge_custom_fields(order: dict):
+    if not order:
+        return order
+    custom = order.get("custom_fields")
+    if isinstance(custom, dict):
+        return {**custom, **order}
+    return order
+
 # Helper to create notifications for all users except the actor
 async def _notify_all(actor, notif_type, message, order_id=None, order_number=None):
     all_users = await db.users.find({}, {"_id": 0, "user_id": 1}).to_list(200)
@@ -57,7 +66,7 @@ async def get_orders(request: Request, board: str = None, search: str = None):
             {"notes": {"$regex": search, "$options": "i"}}
         ]
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return orders
+    return [_merge_custom_fields(order) for order in orders]
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
@@ -105,7 +114,7 @@ async def get_order(order_id: str, request: Request):
             order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    return order
+    return _merge_custom_fields(order)
 
 async def internal_create_order(order: OrderCreate, user: dict) -> dict:
     """Core logic for order creation, reusable by API and internal processes."""
@@ -242,7 +251,7 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     if new_board and old_board != new_board:
         boards_affected.append(new_board)
     await ws_manager.broadcast("order_change", {"action": "update", "order_id": order_id, "boards": boards_affected})
-    return {**(final_order or updated), "_automations_executed": executed_automations}
+    return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
 @router.post("/{order_id}/move")
 async def move_order(order_id: str, request: Request):
@@ -264,7 +273,7 @@ async def move_order(order_id: str, request: Request):
     await _run_automations("move", updated, user, {"from_board": old_board, "to_board": target_board})
     await _notify_all(user, "move", f"{user['name']} movio orden {existing.get('order_number', order_id)} de {old_board} a {target_board}", order_id, existing.get("order_number"))
     await ws_manager.broadcast("order_change", {"action": "move", "boards": [old_board, target_board]})
-    return updated
+    return _merge_custom_fields(updated)
 
 @router.delete("/{order_id}")
 async def delete_order(order_id: str, request: Request):
@@ -323,7 +332,7 @@ async def export_orders(request: Request):
         raise HTTPException(status_code=400, detail="order_ids required")
     orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0}).to_list(len(order_ids))
     await log_activity(user, "export_orders", {"order_count": len(orders)})
-    return {"orders": orders}
+    return {"orders": [_merge_custom_fields(order) for order in orders]}
 
 # ==================== LINKS ====================
 

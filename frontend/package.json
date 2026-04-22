@@ -65,6 +65,7 @@
   },
   "scripts": {
     "start": "craco start",
+    "local-server": "craco start",
     "build": "craco build",
     "test": "craco test"
   },
