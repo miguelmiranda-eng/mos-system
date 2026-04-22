@@ -72,7 +72,7 @@ DEFAULT_OPTIONS = {
     ],
     "production_statuses": [
         "NECESITA LABEL", "PROCESO DE NECK LABEL", "LABEL LISTO", "EN ESPERA", "EN PRODUCCION",
-        "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "LISTO PARA FULFILLMENT",
+        "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC", "LISTO PARA FULFILLMENT",
         "LISTO PARA ENVIO", "CANCELLED", "EJEMPLO APROBADO", "PROCESO DE LABEL",
         "LISTO PARA INVENTARIO", "ESPERA DE APROBAC"
     ],
@@ -89,7 +89,7 @@ DEFAULT_OPTIONS = {
         "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EJEMPLOS", "COMPLETOS", "EDI",
         "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
         "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
-        "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL"
+        "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL", "CONTROL DE CALIDAD"
     ],
     "trigger_types": ["create", "move", "update", "status_change"],
     "action_types": ["send_email", "move_board", "assign_field", "notify_slack"],
@@ -159,6 +159,7 @@ class OrderCreate(BaseModel):
     board: Optional[str] = "SCHEDULING"
     style: Optional[str] = None
     sizes: Optional[Dict[str, int]] = None
+    locked_by_qc: Optional[bool] = False
     
     model_config = {
         "extra": "allow",
@@ -211,6 +212,7 @@ class OrderUpdate(BaseModel):
     design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     board: Optional[str] = None
+    locked_by_qc: Optional[bool] = None
 
     model_config = {
         "extra": "allow",

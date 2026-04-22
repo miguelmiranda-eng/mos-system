@@ -10,6 +10,7 @@ import {
   Cpu,
   ChevronDown,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -152,6 +153,10 @@ const Sidebar = ({
           <button onClick={() => navigate('/qc')} className={navItem(false)} title={isCollapsed ? "Control de Calidad" : ""}>
             <ShieldCheck size={15} className={iconCls(false)} />
             {!isCollapsed && <span>Control de Calidad</span>}
+          </button>
+          <button onClick={() => navigate('/insights')} className={navItem(false)} title={isCollapsed ? "Insights" : ""}>
+            <Sparkles size={15} className={iconCls(false)} />
+            {!isCollapsed && <span>Insights</span>}
           </button>
           <button onClick={onShowAnalytics} className={navItem(false)} title={isCollapsed ? "Análisis" : ""}>
             <BarChart3 size={15} className={iconCls(false)} />

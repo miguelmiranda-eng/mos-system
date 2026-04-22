@@ -15,8 +15,48 @@ async def list_users_for_mention(request: Request):
 async def get_users(request: Request):
     await require_admin(request)
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(200)
+    
+    # Pre-aggregate activity data
+    pipeline = [
+        {"$group": {
+            "_id": "$user_email",
+            "last_activity": {"$max": "$timestamp"},
+            "total_tasks": {"$sum": 1},
+            "projects_touched": {"$addToSet": "$details.order_id"}
+        }}
+    ]
+    activity_stats = await db.activity_logs.aggregate(pipeline).to_list(100)
+    activity_map = {item["_id"]: item for item in activity_stats}
+    
+    # Pre-aggregate session data
+    session_pipeline = [
+        {"$group": {
+            "_id": "$user_id",
+            "login_count": {"$sum": 1}
+        }}
+    ]
+    session_stats = await db.user_sessions.aggregate(session_pipeline).to_list(100)
+    session_map = {item["_id"]: item for item in session_stats}
+
     for u in users:
-        u["user_id"] = u.get("email", "")
+        email = u.get("email", "")
+        uid = u.get("user_id", email)
+        u["user_id"] = uid
+        
+        # User Metrics
+        stats = activity_map.get(email, {})
+        u["last_activity"] = stats.get("last_activity", None)
+        u["total_tasks"] = stats.get("total_tasks", 0)
+        u["projects_count"] = len(stats.get("projects_touched", []))
+        
+        # Status / Verification
+        u["status"] = "active" # Placeholder for future logic
+        u["email_verified"] = True # We consider them verified if they are in the tenant
+        
+        # Sessions
+        sess = session_map.get(uid, {})
+        u["login_count"] = sess.get("login_count", 1) # Fallback to 1 if we lost session data
+        
     return users
 
 @router.post("/users/invite")

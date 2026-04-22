@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   UserPlus, Loader2, Shield, User, Trash2, ChevronDown, ChevronUp, 
   Eye, EyeOff, Pencil, Ban, Mail, Lock, KeyRound, Check, X, ClipboardCheck,
-  ArrowLeft, Users, Search, RefreshCw, Smartphone
+  ArrowLeft, Users, Search, RefreshCw, Smartphone, Activity, Clock
 } from 'lucide-react';
 import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -411,6 +411,26 @@ const UserManagementCenter = () => {
                        {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">CLIENTE: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>
+                    
+                    {/* Advanced Metrics Row */}
+                    <div className="flex flex-wrap items-center gap-3 mt-2">
+                      <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
+                        <Smartphone className="w-3 h-3 text-primary/70" />
+                        <span>Sesiones: <span className="text-foreground">{u.login_count || 0}</span></span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
+                        <ClipboardCheck className="w-3 h-3 text-primary/70" />
+                        <span>Proyectos: <span className="text-foreground">{u.projects_count || 0}</span></span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
+                        <Activity className="w-3 h-3 text-primary/70" />
+                        <span>Tareas: <span className="text-foreground">{u.total_tasks || 0}</span></span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
+                        <Clock className="w-3 h-3 text-primary/70" />
+                        <span>Actividad: <span className="text-foreground">{u.last_activity ? new Date(u.last_activity).toLocaleDateString() : 'N/D'}</span></span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">
