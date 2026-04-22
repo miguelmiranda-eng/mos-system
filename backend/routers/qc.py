@@ -48,16 +48,46 @@ async def get_qc_stats(request: Request):
     await require_auth(request)
     total = await db.qc_records.count_documents({})
     passed = await db.qc_records.count_documents({"result": "PASS"})
+    conditional = await db.qc_records.count_documents({"result": "CONDITIONAL"})
     failed = await db.qc_records.count_documents({"result": "FAIL"})
     critical = await db.qc_records.count_documents({"severity": "CRITICAL"})
     pass_rate = round(passed / total * 100, 1) if total > 0 else 0
     return {
         "total": total,
         "passed": passed,
+        "conditional": conditional,
         "failed": failed,
         "critical_findings": critical,
         "pass_rate": pass_rate,
     }
+
+
+@router.get("/unaudited")
+async def get_unaudited_orders(request: Request):
+    await require_auth(request)
+    p = request.query_params
+    # Only manual (non-auto-generated) QC records count as "audited"
+    audited = await db.qc_records.distinct("order_number", {"auto_generated": {"$ne": True}})
+    base_filter = {"production_status": "NECESITA QC", "order_number": {"$nin": audited}}
+    if p.get("search"):
+        s = p["search"]
+        query = {
+            "$and": [
+                base_filter,
+                {"$or": [
+                    {"order_number": {"$regex": s, "$options": "i"}},
+                    {"client": {"$regex": s, "$options": "i"}},
+                ]}
+            ]
+        }
+    else:
+        query = base_filter
+    orders = await db.orders.find(
+        query,
+        {"_id": 0, "order_id": 1, "order_number": 1, "client": 1,
+         "quantity": 1, "job_title_a": 1, "status": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(500)
+    return orders
 
 
 @router.post("")
@@ -102,12 +132,15 @@ async def create_qc_record(request: Request):
     await db.qc_records.insert_one(doc)
     doc.pop("_id", None)
 
-    # Lock order if FAIL, unlock if PASS or CONDITIONAL
+    # Unlock on any result, but set status to CORRECIÓN DE QC if not PASS
     if order_id:
-        locked = doc["result"] == "FAIL"
+        lock_update = {"locked_by_qc": False, "updated_at": now_iso()}
+        if doc["result"] in ["FAIL", "CONDITIONAL"]:
+            lock_update["production_status"] = "CORRECIÓN DE QC"
+        
         await db.orders.update_one(
             {"order_id": order_id},
-            {"$set": {"locked_by_qc": locked, "updated_at": now_iso()}}
+            {"$set": lock_update}
         )
 
     await log_activity(user, "create_qc_record", {
@@ -135,12 +168,15 @@ async def update_qc_record(qc_id: str, request: Request):
     await db.qc_records.update_one({"qc_id": qc_id}, {"$set": update})
     updated = await db.qc_records.find_one({"qc_id": qc_id}, {"_id": 0})
 
-    # Sync lock status when result changes
+    # Sync status and unlock when result changes
     if "result" in update and existing.get("order_id"):
-        locked = update["result"] == "FAIL"
+        lock_update = {"locked_by_qc": False, "updated_at": now_iso()}
+        if update["result"] in ["FAIL", "CONDITIONAL"]:
+            lock_update["production_status"] = "CORRECIÓN DE QC"
+
         await db.orders.update_one(
             {"order_id": existing["order_id"]},
-            {"$set": {"locked_by_qc": locked, "updated_at": now_iso()}}
+            {"$set": lock_update}
         )
 
     await log_activity(user, "update_qc_record", {"qc_id": qc_id})

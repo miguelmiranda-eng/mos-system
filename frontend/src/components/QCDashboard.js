@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ShieldCheck, Plus, X, Loader2, Search, RefreshCw,
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
-  ClipboardList, TrendingUp, AlertTriangle, BadgeX, Camera, Image as ImageIcon,
+  ClipboardList, BadgeX, Camera, Image as ImageIcon,
   FileText, File as FileIcon, FileSpreadsheet, Link2
 } from 'lucide-react';
 import { API } from '../lib/constants';
@@ -27,7 +27,7 @@ const FINDING_TYPES = [
 const SEVERITIES = [
   { value: 'CRITICAL', label: 'Crítico',  color: 'text-red-500',    bg: 'bg-red-500/10 border-red-500/30' },
   { value: 'MAJOR',    label: 'Mayor',    color: 'text-orange-500', bg: 'bg-orange-500/10 border-orange-500/30' },
-  { value: 'MINOR',    label: 'Menor',    color: 'text-yellow-500', bg: 'bg-yellow-500/10 border-yellow-500/30' },
+  { value: 'MINOR',    label: 'Menor',    label: 'Menor',    color: 'text-yellow-500', bg: 'bg-yellow-500/10 border-yellow-500/30' },
 ];
 
 const RESULTS = [
@@ -205,7 +205,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
 
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 
-function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
+function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
@@ -216,12 +216,13 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
   const [fileInputKey, setFileInputKey] = useState(0);
 
   useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
     if (editRecord) {
       setForm({
         order_number: editRecord.order_number || '',
         client: editRecord.client || '',
-        request_date: editRecord.request_date || new Date().toISOString().split('T')[0],
-        inspection_date: editRecord.inspection_date || new Date().toISOString().split('T')[0],
+        request_date: editRecord.request_date || today,
+        inspection_date: editRecord.inspection_date || today,
         finding_type: editRecord.finding_type || 'COSTURA',
         severity: editRecord.severity || 'MINOR',
         result: editRecord.result || 'PASS',
@@ -232,13 +233,25 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
         quantity: editRecord.quantity || '',
         job_title_a: editRecord.job_title_a || '',
       });
+      setResolvedOrderId(editRecord.order_id || '');
+    } else if (prefillOrder) {
+      setForm({
+        ...EMPTY_FORM,
+        order_number: prefillOrder.order_number || '',
+        client: prefillOrder.client || '',
+        quantity: prefillOrder.quantity || '',
+        job_title_a: prefillOrder.job_title_a || '',
+        request_date: today,
+        inspection_date: today,
+      });
+      setResolvedOrderId(prefillOrder.order_id || '');
     } else {
-      setForm({ ...EMPTY_FORM, request_date: new Date().toISOString().split('T')[0], inspection_date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, request_date: today, inspection_date: today });
+      setResolvedOrderId('');
     }
     setImagePreviews([]);
     setIsDragging(false);
-    setResolvedOrderId(editRecord?.order_id || '');
-  }, [editRecord, open]);
+  }, [editRecord, prefillOrder, open]);
 
   const processFiles = (files) => {
     const fileList = Array.from(files);
@@ -615,23 +628,34 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
+const QC_TABS = [
+  { id: 'general',     label: 'General',     icon: ClipboardList, countKey: null,          activeText: 'text-slate-300',  activeBorder: 'border-slate-400',  inactiveText: isDark => isDark ? 'text-white/40' : 'text-slate-400' },
+  { id: 'pass',        label: 'Aprobado',    icon: CheckCircle2,  countKey: 'passed',       activeText: 'text-green-400',  activeBorder: 'border-green-500',  inactiveText: () => 'text-green-600' },
+  { id: 'conditional', label: 'Condicional', icon: AlertCircle,   countKey: 'conditional',  activeText: 'text-yellow-400', activeBorder: 'border-yellow-500', inactiveText: () => 'text-yellow-600' },
+  { id: 'fail',        label: 'Rechazado',   icon: XCircle,       countKey: 'failed',       activeText: 'text-red-400',    activeBorder: 'border-red-500',    inactiveText: () => 'text-red-600' },
+];
+
+const RESULT_TAB_MAP = { PASS: 'pass', CONDITIONAL: 'conditional', FAIL: 'fail' };
+
 export default function QCDashboard() {
   const navigate = useNavigate();
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
   const [records, setRecords] = useState([]);
-  const [stats, setStats] = useState({ total: 0, passed: 0, failed: 0, critical_findings: 0, pass_rate: 0 });
+  const [unauditedOrders, setUnauditedOrders] = useState([]);
+  const [stats, setStats] = useState({ total: 0, passed: 0, conditional: 0, failed: 0, critical_findings: 0, pass_rate: 0 });
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('general');
   const [modalOpen, setModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [editRecord, setEditRecord] = useState(null);
+  const [prefillOrder, setPrefillOrder] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
   // Filters
   const [search, setSearch] = useState('');
-  const [filterResult, setFilterResult] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -639,22 +663,28 @@ export default function QCDashboard() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      if (filterResult) params.set('result', filterResult);
-      if (filterSeverity) params.set('severity', filterSeverity);
-      if (dateFrom) params.set('date_from', dateFrom);
-      if (dateTo) params.set('date_to', dateTo);
-
-      const [recRes, statRes] = await Promise.all([
-        fetch(`${API}/qc?${params}`, { credentials: 'include' }),
-        fetch(`${API}/qc/stats`, { credentials: 'include' }),
-      ]);
-      if (recRes.ok) setRecords(await recRes.json());
+      const statRes = await fetch(`${API}/qc/stats`, { credentials: 'include' });
       if (statRes.ok) setStats(await statRes.json());
+
+      if (activeTab === 'general') {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        const res = await fetch(`${API}/qc/unaudited?${params}`, { credentials: 'include' });
+        if (res.ok) setUnauditedOrders(await res.json());
+      } else {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        if (filterSeverity) params.set('severity', filterSeverity);
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        const resultMap = { pass: 'PASS', conditional: 'CONDITIONAL', fail: 'FAIL' };
+        params.set('result', resultMap[activeTab]);
+        const res = await fetch(`${API}/qc?${params}`, { credentials: 'include' });
+        if (res.ok) setRecords(await res.json());
+      }
     } catch { toast.error('Error al cargar datos'); }
     finally { setLoading(false); }
-  }, [search, filterResult, filterSeverity, dateFrom, dateTo]);
+  }, [search, activeTab, filterSeverity, dateFrom, dateTo]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -664,6 +694,9 @@ export default function QCDashboard() {
       if (idx >= 0) { const next = [...prev]; next[idx] = saved; return next; }
       return [saved, ...prev];
     });
+    if (saved.result && RESULT_TAB_MAP[saved.result]) {
+      setActiveTab(RESULT_TAB_MAP[saved.result]);
+    }
     fetchAll();
   };
 
@@ -678,11 +711,16 @@ export default function QCDashboard() {
     finally { setDeleting(null); }
   };
 
-  const clearFilters = () => { setSearch(''); setFilterResult(''); setFilterSeverity(''); setDateFrom(''); setDateTo(''); };
-  const hasFilters = search || filterResult || filterSeverity || dateFrom || dateTo;
+  const openNewQC = (order = null) => {
+    setEditRecord(null);
+    setPrefillOrder(order);
+    setModalOpen(true);
+  };
+
+  const clearFilters = () => { setSearch(''); setFilterSeverity(''); setDateFrom(''); setDateTo(''); };
+  const hasFilters = search || filterSeverity || dateFrom || dateTo;
 
   const base = isDark ? "bg-[#080f1a] text-white" : "bg-slate-50 text-navy";
-  const cardBorder = isDark ? "border-white/8" : "border-slate-200";
   const inputCls = cn(
     "px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors h-9",
     isDark ? "bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-royal" : "bg-white border-slate-200 text-navy placeholder:text-slate-400 focus:border-royal"
@@ -715,7 +753,7 @@ export default function QCDashboard() {
             <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
           </button>
           <button
-            onClick={() => { setEditRecord(null); setModalOpen(true); }}
+            onClick={() => openNewQC(null)}
             className="flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-xl font-bold text-sm hover:bg-royal/90 transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -729,14 +767,48 @@ export default function QCDashboard() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard isDark={isDark} icon={ClipboardList} label="Total Inspecciones" value={stats.total} color="bg-royal/10 text-royal" />
-          <StatCard isDark={isDark} icon={TrendingUp} label="Tasa de Aprobación" value={`${stats.pass_rate}%`} sub={`${stats.passed} aprobadas`} color="bg-green-500/10 text-green-500" />
+          <StatCard isDark={isDark} icon={CheckCircle2} label="Aprobadas" value={stats.passed} sub={`${stats.pass_rate}% tasa`} color="bg-green-500/10 text-green-500" />
+          <StatCard isDark={isDark} icon={AlertCircle} label="Condicional" value={stats.conditional ?? 0} color="bg-yellow-500/10 text-yellow-500" />
           <StatCard isDark={isDark} icon={BadgeX} label="Rechazadas" value={stats.failed} color="bg-red-500/10 text-red-500" />
-          <StatCard isDark={isDark} icon={AlertTriangle} label="Hallazgos Críticos" value={stats.critical_findings} color="bg-orange-500/10 text-orange-500" />
         </div>
 
-        {/* Filters */}
-        <div className={cn("rounded-xl border p-4", isDark ? "bg-navy-dark border-white/8" : "bg-white border-slate-200 shadow-sm")}>
-          <div className="flex flex-wrap gap-3 items-center">
+        {/* Tabs + Table */}
+        <div className={cn("rounded-xl border overflow-hidden", isDark ? "bg-navy-dark border-white/8" : "bg-white border-slate-200 shadow-sm")}>
+
+          {/* Tab bar */}
+          <div className={cn("flex border-b", isDark ? "border-white/8" : "border-slate-100")}>
+            {QC_TABS.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              const count = tab.countKey ? (stats[tab.countKey] ?? 0) : null;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => { setActiveTab(tab.id); setSearch(''); setFilterSeverity(''); setDateFrom(''); setDateTo(''); }}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 px-3 py-3 text-sm font-semibold transition-all border-b-2",
+                    isActive
+                      ? cn(tab.activeBorder, tab.activeText, isDark ? "bg-white/5" : "bg-slate-50/80")
+                      : cn("border-transparent", tab.inactiveText(isDark), isDark ? "hover:bg-white/3" : "hover:bg-slate-50/60")
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {count !== null && (
+                    <span className={cn(
+                      "px-1.5 py-0.5 rounded-full text-[10px] font-bold min-w-[18px] text-center",
+                      isActive ? "bg-current/20" : "bg-current/10"
+                    )}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Filters */}
+          <div className={cn("px-4 py-3 border-b flex flex-wrap gap-3 items-center", isDark ? "border-white/5" : "border-slate-50")}>
             <div className="relative flex-1 min-w-[180px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
@@ -746,121 +818,138 @@ export default function QCDashboard() {
                 onChange={e => setSearch(e.target.value)}
               />
             </div>
-            <select className={inputCls} value={filterResult} onChange={e => setFilterResult(e.target.value)}>
-              <option value="">Todos los resultados</option>
-              {RESULTS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-            </select>
-            <select className={inputCls} value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}>
-              <option value="">Todas las severidades</option>
-              {SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-            <input type="date" className={inputCls} value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="Desde" />
-            <input type="date" className={inputCls} value={dateTo} onChange={e => setDateTo(e.target.value)} title="Hasta" />
+            {activeTab !== 'general' && (
+              <>
+                <select className={inputCls} value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}>
+                  <option value="">Todas las severidades</option>
+                  {SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+                <input type="date" className={inputCls} value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="Desde" />
+                <input type="date" className={inputCls} value={dateTo} onChange={e => setDateTo(e.target.value)} title="Hasta" />
+              </>
+            )}
             {hasFilters && (
               <button onClick={clearFilters} className={cn("flex items-center gap-1.5 px-3 h-9 rounded-lg text-sm font-semibold transition-colors", isDark ? "bg-white/8 text-white/60 hover:bg-white/12" : "bg-slate-100 text-slate-500 hover:bg-slate-200")}>
                 <X className="w-3.5 h-3.5" /> Limpiar
               </button>
             )}
           </div>
-        </div>
 
-        {/* Table */}
-        <div className={cn("rounded-xl border overflow-hidden", isDark ? "bg-navy-dark border-white/8" : "bg-white border-slate-200 shadow-sm")}>
+          {/* Table content */}
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="w-8 h-8 animate-spin text-royal" />
             </div>
-          ) : records.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <ShieldCheck className={cn("w-12 h-12", isDark ? "text-white/20" : "text-slate-300")} />
-              <p className={cn("text-sm font-medium", isDark ? "text-white/40" : "text-slate-400")}>
-                {hasFilters ? 'No hay registros que coincidan con los filtros' : 'No hay inspecciones registradas'}
-              </p>
-              {!hasFilters && (
-                <button onClick={() => { setEditRecord(null); setModalOpen(true); }} className="mt-2 px-4 py-2 bg-royal text-white rounded-lg text-sm font-bold hover:bg-royal/90 transition-colors">
-                  Registrar primera inspección
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
-                    {['Fecha', 'Orden', 'Cliente', 'Inspector', 'Tipo', 'Severidad', 'Resultado', 'Insp.', 'Rech.', 'Acciones'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {records.map(rec => (
-                    <tr key={rec.qc_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
-                      <td className={cn("px-4 py-3 font-mono text-xs whitespace-nowrap", isDark ? "text-white/60" : "text-slate-500")}>
-                        {rec.inspection_date || '—'}
-                      </td>
-                      <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
-                        {rec.order_number || '—'}
-                      </td>
-                      <td className={cn("px-4 py-3 max-w-[140px] truncate", isDark ? "text-white/80" : "text-slate-700")}>
-                        {rec.client || '—'}
-                      </td>
-                      <td className={cn("px-4 py-3 text-xs max-w-[120px] truncate", isDark ? "text-white/60" : "text-slate-500")}>
-                        {rec.inspector || '—'}
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        <span className={cn("px-2 py-0.5 rounded font-semibold", isDark ? "bg-white/8 text-white/70" : "bg-slate-100 text-slate-600")}>
-                          {FINDING_TYPES.find(f => f.value === rec.finding_type)?.label?.split(' / ')[0] || rec.finding_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <SeverityBadge value={rec.severity} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <ResultBadge value={rec.result} />
-                      </td>
-                      <td className={cn("px-4 py-3 text-center font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>
-                        {rec.quantity_inspected ?? '—'}
-                      </td>
-                      <td className={cn("px-4 py-3 text-center font-mono text-xs", rec.quantity_rejected > 0 ? "text-red-500 font-bold" : isDark ? "text-white/60" : "text-slate-500")}>
-                        {rec.quantity_rejected ?? '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => { setSelectedRecord(rec); setDetailModalOpen(true); }}
-                            className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
-                            title="Ver detalles"
-                          >
-                            <ImageIcon className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => { setEditRecord(rec); setModalOpen(true); }}
-                            className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
-                            title="Editar"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(rec.qc_id)}
-                            disabled={deleting === rec.qc_id}
-                            className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-red-500/20 text-white/30 hover:text-red-400" : "hover:bg-red-50 text-slate-300 hover:text-red-500")}
-                            title="Eliminar"
-                          >
-                            {deleting === rec.qc_id
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" />
-                            }
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className={cn("px-4 py-2 border-t text-[11px]", isDark ? "border-white/5 text-white/30" : "border-slate-100 text-slate-400")}>
-                {records.length} registro{records.length !== 1 ? 's' : ''}
+          ) : activeTab === 'general' ? (
+            unauditedOrders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <CheckCircle2 className={cn("w-12 h-12", isDark ? "text-green-500/30" : "text-green-300")} />
+                <p className={cn("text-sm font-medium", isDark ? "text-white/40" : "text-slate-400")}>
+                  {search ? 'No hay órdenes que coincidan' : 'Todas las órdenes han sido auditadas'}
+                </p>
               </div>
-            </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
+                      {['Orden', 'Cliente', 'Estatus', 'Cantidad', 'Fecha', 'Acción'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {unauditedOrders.map(order => (
+                      <tr key={order.order_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
+                        <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
+                        <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
+                        <td className="px-4 py-3">
+                          <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
+                            {order.status || '—'}
+                          </span>
+                        </td>
+                        <td className={cn("px-4 py-3 font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>{order.quantity || '—'}</td>
+                        <td className={cn("px-4 py-3 font-mono text-xs whitespace-nowrap", isDark ? "text-white/50" : "text-slate-400")}>
+                          {order.created_at ? order.created_at.split('T')[0] : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => openNewQC(order)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-royal/10 text-royal border border-royal/20 rounded-lg text-xs font-bold hover:bg-royal hover:text-white transition-all"
+                          >
+                            <Plus className="w-3 h-3" /> Crear QC
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className={cn("px-4 py-2 border-t text-[11px]", isDark ? "border-white/5 text-white/30" : "border-slate-100 text-slate-400")}>
+                  {unauditedOrders.length} orden{unauditedOrders.length !== 1 ? 'es' : ''} sin auditar
+                </div>
+              </div>
+            )
+          ) : (
+            records.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <ShieldCheck className={cn("w-12 h-12", isDark ? "text-white/20" : "text-slate-300")} />
+                <p className={cn("text-sm font-medium", isDark ? "text-white/40" : "text-slate-400")}>
+                  {hasFilters ? 'No hay registros que coincidan con los filtros' : 'No hay inspecciones en esta categoría'}
+                </p>
+                {!hasFilters && (
+                  <button onClick={() => openNewQC(null)} className="mt-2 px-4 py-2 bg-royal text-white rounded-lg text-sm font-bold hover:bg-royal/90 transition-colors">
+                    Registrar primera inspección
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
+                      {['Fecha', 'Orden', 'Cliente', 'Inspector', 'Tipo', 'Severidad', 'Resultado', 'Insp.', 'Rech.', 'Acciones'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {records.map(rec => (
+                      <tr key={rec.qc_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
+                        <td className={cn("px-4 py-3 font-mono text-xs whitespace-nowrap", isDark ? "text-white/60" : "text-slate-500")}>{rec.inspection_date || '—'}</td>
+                        <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{rec.order_number || '—'}</td>
+                        <td className={cn("px-4 py-3 max-w-[140px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{rec.client || '—'}</td>
+                        <td className={cn("px-4 py-3 text-xs max-w-[120px] truncate", isDark ? "text-white/60" : "text-slate-500")}>{rec.inspector || '—'}</td>
+                        <td className="px-4 py-3 text-xs">
+                          <span className={cn("px-2 py-0.5 rounded font-semibold", isDark ? "bg-white/8 text-white/70" : "bg-slate-100 text-slate-600")}>
+                            {FINDING_TYPES.find(f => f.value === rec.finding_type)?.label?.split(' / ')[0] || rec.finding_type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3"><SeverityBadge value={rec.severity} /></td>
+                        <td className="px-4 py-3"><ResultBadge value={rec.result} /></td>
+                        <td className={cn("px-4 py-3 text-center font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>{rec.quantity_inspected ?? '—'}</td>
+                        <td className={cn("px-4 py-3 text-center font-mono text-xs", rec.quantity_rejected > 0 ? "text-red-500 font-bold" : isDark ? "text-white/60" : "text-slate-500")}>{rec.quantity_rejected ?? '—'}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setSelectedRecord(rec); setDetailModalOpen(true); }} className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title="Ver detalles">
+                              <ImageIcon className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => { setEditRecord(rec); setPrefillOrder(null); setModalOpen(true); }} className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title="Editar">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleDelete(rec.qc_id)} disabled={deleting === rec.qc_id} className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-red-500/20 text-white/30 hover:text-red-400" : "hover:bg-red-50 text-slate-300 hover:text-red-500")} title="Eliminar">
+                              {deleting === rec.qc_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className={cn("px-4 py-2 border-t text-[11px]", isDark ? "border-white/5 text-white/30" : "border-slate-100 text-slate-400")}>
+                  {records.length} registro{records.length !== 1 ? 's' : ''}
+                </div>
+              </div>
+            )
           )}
         </div>
       </div>
@@ -868,9 +957,10 @@ export default function QCDashboard() {
       {/* Form Modal */}
       <QCFormModal
         open={modalOpen}
-        onClose={() => { setModalOpen(false); setEditRecord(null); }}
+        onClose={() => { setModalOpen(false); setEditRecord(null); setPrefillOrder(null); }}
         onSaved={handleSaved}
         editRecord={editRecord}
+        prefillOrder={prefillOrder}
         isDark={isDark}
       />
 
