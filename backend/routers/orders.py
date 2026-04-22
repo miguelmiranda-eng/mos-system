@@ -195,6 +195,38 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     await log_activity(user, "update_order", {
         "order_id": order_id, "order_number": existing.get("order_number"), "changed_fields": list(changed_data.keys())
     }, previous_data={"order_id": order_id, "fields": prev_values})
+    # Auto-create QC record when production_status changes to "NECESITA QC"
+    old_status = existing.get("production_status", "")
+    new_status = update_data.get("production_status", "")
+    if new_status == "NECESITA QC" and old_status != "NECESITA QC":
+        already_exists = await db.qc_records.find_one({"order_id": order_id, "auto_generated": True, "request_date": datetime.now(timezone.utc).date().isoformat()})
+        if not already_exists:
+            today = datetime.now(timezone.utc).date().isoformat()
+            qc_doc = {
+                "qc_id": f"qc_{__import__('uuid').uuid4().hex[:12]}",
+                "order_id": order_id,
+                "order_number": existing.get("order_number", ""),
+                "client": existing.get("client", ""),
+                "inspector": user.get("name", user.get("email", "")),
+                "inspector_id": user.get("user_id", ""),
+                "request_date": today,
+                "inspection_date": today,
+                "finding_type": "OTHER",
+                "severity": "MINOR",
+                "result": "PASS",
+                "quantity_inspected": 0,
+                "quantity_rejected": 0,
+                "findings": "",
+                "corrective_action": "",
+                "quantity": existing.get("quantity", ""),
+                "job_title_a": existing.get("job_title_a", ""),
+                "auto_generated": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.qc_records.insert_one(qc_doc)
+            await log_activity(user, "auto_create_qc", {"order_id": order_id, "order_number": existing.get("order_number"), "reason": "NECESITA QC"})
+
     executed_automations = []
     if new_board and old_board != new_board:
         executed_automations += await _run_automations("move", updated, user, {"from_board": old_board, "to_board": new_board})

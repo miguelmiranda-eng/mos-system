@@ -77,6 +77,7 @@ async def create_qc_record(request: Request):
             if not client:
                 client = order.get("client", "")
 
+    today = datetime.now(timezone.utc).date().isoformat()
     doc = {
         "qc_id": gen_id(),
         "order_number": body.get("order_number", "").strip(),
@@ -84,7 +85,8 @@ async def create_qc_record(request: Request):
         "client": client,
         "inspector": user.get("name", user.get("email", "")),
         "inspector_id": user.get("user_id", ""),
-        "inspection_date": body.get("inspection_date") or datetime.now(timezone.utc).date().isoformat(),
+        "request_date": body.get("request_date") or today,
+        "inspection_date": body.get("inspection_date") or today,
         "finding_type": body.get("finding_type", "OTHER"),
         "severity": body.get("severity", "MINOR"),
         "result": body.get("result", "PASS"),
@@ -125,8 +127,8 @@ async def update_qc_record(qc_id: str, request: Request):
         raise HTTPException(404, "QC record not found")
     allowed = [
         "finding_type", "severity", "result", "quantity_inspected",
-        "quantity_rejected", "findings", "corrective_action", "client", "inspection_date",
-        "quantity", "job_title_a",
+        "quantity_rejected", "findings", "corrective_action", "client",
+        "request_date", "inspection_date", "quantity", "job_title_a",
     ]
     update = {k: body[k] for k in allowed if k in body}
     update["updated_at"] = now_iso()

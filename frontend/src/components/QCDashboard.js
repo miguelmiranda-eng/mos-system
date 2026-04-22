@@ -37,7 +37,9 @@ const RESULTS = [
 ];
 
 const EMPTY_FORM = {
-  order_number: '', client: '', inspection_date: new Date().toISOString().split('T')[0],
+  order_number: '', client: '',
+  request_date: new Date().toISOString().split('T')[0],
+  inspection_date: new Date().toISOString().split('T')[0],
   finding_type: 'COSTURA', severity: 'MINOR', result: 'PASS',
   quantity_inspected: '', quantity_rejected: '', findings: '', corrective_action: '',
   quantity: '', job_title_a: '',
@@ -218,6 +220,7 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
       setForm({
         order_number: editRecord.order_number || '',
         client: editRecord.client || '',
+        request_date: editRecord.request_date || new Date().toISOString().split('T')[0],
         inspection_date: editRecord.inspection_date || new Date().toISOString().split('T')[0],
         finding_type: editRecord.finding_type || 'COSTURA',
         severity: editRecord.severity || 'MINOR',
@@ -226,9 +229,11 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
         quantity_rejected: editRecord.quantity_rejected ?? '',
         findings: editRecord.findings || '',
         corrective_action: editRecord.corrective_action || '',
+        quantity: editRecord.quantity || '',
+        job_title_a: editRecord.job_title_a || '',
       });
     } else {
-      setForm({ ...EMPTY_FORM, inspection_date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, request_date: new Date().toISOString().split('T')[0], inspection_date: new Date().toISOString().split('T')[0] });
     }
     setImagePreviews([]);
     setIsDragging(false);
@@ -431,8 +436,8 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
             </div>
           )}
 
-          {/* Row 1: Order + Client + Date */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Row 1: Order + Client */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Orden #</label>
               <div className="relative">
@@ -449,6 +454,14 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
             <div>
               <label className={labelCls}>Cliente</label>
               <input className={inputCls} value={form.client} onChange={e => set('client', e.target.value)} placeholder="Nombre del cliente" />
+            </div>
+          </div>
+
+          {/* Row 2: Fecha Creación + Fecha Inspección */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Fecha de Creación</label>
+              <input type="date" className={cn(inputCls, "bg-secondary/30")} value={form.request_date} readOnly />
             </div>
             <div>
               <label className={labelCls}>Fecha Inspección</label>
