@@ -203,6 +203,22 @@ const Dashboard = () => {
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
 
   const isAdmin = user?.role === 'admin';
+
+  const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete) => {
+    const lockedOrders = orders.filter(o => orderIds.includes(o.order_id) && o.locked_by_qc);
+    if (lockedOrders.length > 0) {
+      if (!isAdmin) {
+        toast.error(`🔒 ${lockedOrders.length} orden(es) bloqueada(s) por QC: ${lockedOrders.map(o => o.order_number).join(', ')}`);
+        return;
+      }
+      const nums = lockedOrders.map(o => o.order_number).join(', ');
+      const ok = window.confirm(`⚠️ ADMIN: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
+      if (!ok) return;
+    }
+    await handleBulkMove(orderIds, targetBoard);
+    if (onComplete) onComplete();
+  };
+
   const filters = boardFilters[currentBoard] || {};
 
   // Board permissions for non-admin users
@@ -720,7 +736,10 @@ const Dashboard = () => {
                 {isMaster ? (
                   <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                 ) : (
-                  <span className="font-bold text-xs tracking-tighter group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis block">{order.order_number}</span>
+                  <span className="font-bold text-xs tracking-tighter group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1">
+                    {order.locked_by_qc && <span title="Bloqueado por QC" className="text-red-500 flex-shrink-0">🔒</span>}
+                    {order.order_number}
+                  </span>
                 )}
               </td>
             );
@@ -1243,7 +1262,7 @@ const Dashboard = () => {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
                     {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => (
-                      <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
+                      <DropdownMenuItem key={board} onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]))} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
                         {board}
                       </DropdownMenuItem>
                     ))}
@@ -1257,7 +1276,7 @@ const Dashboard = () => {
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl">
                         {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
-                          <DropdownMenuItem key={board} onClick={() => { handleBulkMove(selectedOrders, board); setSelectedOrders([]); }} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
+                          <DropdownMenuItem key={board} onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]))} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
                             {board}
                           </DropdownMenuItem>
                         ))}

@@ -99,6 +99,15 @@ async def create_qc_record(request: Request):
     }
     await db.qc_records.insert_one(doc)
     doc.pop("_id", None)
+
+    # Lock order if FAIL, unlock if PASS or CONDITIONAL
+    if order_id:
+        locked = doc["result"] == "FAIL"
+        await db.orders.update_one(
+            {"order_id": order_id},
+            {"$set": {"locked_by_qc": locked, "updated_at": now_iso()}}
+        )
+
     await log_activity(user, "create_qc_record", {
         "qc_id": doc["qc_id"],
         "order_number": doc["order_number"],
@@ -123,6 +132,15 @@ async def update_qc_record(qc_id: str, request: Request):
     update["updated_at"] = now_iso()
     await db.qc_records.update_one({"qc_id": qc_id}, {"$set": update})
     updated = await db.qc_records.find_one({"qc_id": qc_id}, {"_id": 0})
+
+    # Sync lock status when result changes
+    if "result" in update and existing.get("order_id"):
+        locked = update["result"] == "FAIL"
+        await db.orders.update_one(
+            {"order_id": existing["order_id"]},
+            {"$set": {"locked_by_qc": locked, "updated_at": now_iso()}}
+        )
+
     await log_activity(user, "update_qc_record", {"qc_id": qc_id})
     return updated
 

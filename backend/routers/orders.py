@@ -223,6 +223,8 @@ async def move_order(order_id: str, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
+    if existing.get("locked_by_qc") and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="locked_by_qc")
     old_board = existing.get("board")
     await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -264,8 +266,15 @@ async def bulk_move_orders(request: Request):
     boards = await get_dynamic_boards()
     if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail="Invalid board")
-    original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1}).to_list(len(order_ids))
+    original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1, "order_number": 1, "locked_by_qc": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
+
+    # Block non-admins if any order is locked by QC
+    if user.get("role") != "admin":
+        locked = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("locked_by_qc")]
+        if locked:
+            raise HTTPException(status_code=403, detail=f"locked_by_qc:{','.join(locked)}")
+
     result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     await log_activity(user, "bulk_move_orders", {"order_count": len(order_ids), "target_board": target_board}, previous_data={"order_ids": order_ids, "original_boards": original_boards})
     affected_boards = list(set(original_boards.values())) + [target_board]
