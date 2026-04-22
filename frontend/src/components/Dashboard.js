@@ -64,6 +64,30 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const { t, lang, toggleLang } = useLang();
 
+  // Helper functions for rendering detail values safely
+  const renderDetailValue = (val) => {
+    if (val === null || val === undefined || val === '') return '—';
+    if (typeof val === 'boolean') return val ? 'SÍ' : 'NO';
+    // Let React render valid React elements (like links, spans, etc) directly
+    if (React.isValidElement(val)) return val;
+    if (typeof val === 'object') {
+        // Handle {url, desc} objects as clickable links
+        if (val.url && val.desc) {
+          return (
+            <a href={val.url} target="_blank" rel="noopener noreferrer"
+               style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: 700 }}>
+              {val.desc}
+            </a>
+          );
+        }
+        if (val.url) return <a href={val.url} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>{val.url}</a>;
+        if (val.desc || val.text || val.value || val.name) return String(val.desc || val.text || val.value || val.name);
+        try { return JSON.stringify(val); } catch { return '[Object]'; }
+    }
+    return val;
+  };
+
+
   // Board & filter state
   const [currentBoard, setCurrentBoard] = useState("SCHEDULING");
   const [boardFilters, setBoardFilters] = useState({});
@@ -125,6 +149,8 @@ const Dashboard = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [detailsOrder, setDetailsOrder] = useState(null);
+  const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
+  const [tempOrderNo, setTempOrderNo] = useState('');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   useEffect(() => {
@@ -1698,63 +1724,187 @@ const Dashboard = () => {
       <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
       {/* Enterprise Side-Drawer Detail View */}
       {detailsOrder && (
-        <aside className="w-[450px] border-l bg-card shadow-2xl animate-in slide-in-from-right duration-300 z-50 flex flex-col">
-          <div className="p-6 border-b flex items-center justify-between bg-muted/10">
-             <div>
-                <p className="text-[10px] font-bold text-royal uppercase tracking-[0.2em] mb-1">Detalles de Orden</p>
-                <h3 className="text-2xl font-bold tracking-tighter uppercase leading-none">{detailsOrder.order_number}</h3>
-             </div>
-             <button onClick={() => setDetailsOrder(null)} className="p-2 rounded hover:bg-muted/50 transition-colors">
-                <X className="w-5 h-5" />
-             </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
-             {/* Header Info */}
-             <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-1">
-                   <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Cliente</label>
-                   <p className="text-sm font-bold uppercase">{detailsOrder.client || '—'}</p>
-                </div>
-                <div className="space-y-1">
-                   <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Estado</label>
-                   <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-royal" />
-                      <p className="text-sm font-bold uppercase text-royal">{detailsOrder.production_status || 'Pendiente'}</p>
-                   </div>
-                </div>
-             </div>
+        <div className="enterprise-drawer" style={{
+          position: 'fixed', inset: '0 0 0 auto', width: '780px',
+          borderLeft: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: '-10px 0 60px rgba(0,0,0,0.6)',
+          display: 'flex', flexDirection: 'column', height: '100vh',
+          zIndex: 100, fontFamily: 'inherit',
+          animation: 'slideInFromRight 0.3s ease-out'
+        }}>
+          {/* Header */}
+          <div style={{
+            padding: '24px 28px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            backgroundColor: 'rgba(255,255,255,0.01)', flexShrink: 0
+          }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '10px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.25em', marginBottom: '6px', opacity: 0.9 }}>
+                Detalles de Orden
+              </p>
+              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px' }}>
+                {isAdmin && isEditingOrderNo ? (
+                  <input
+                    type="text"
+                    value={tempOrderNo}
+                    onChange={(e) => setTempOrderNo(e.target.value)}
+                    onBlur={() => {
+                      if (tempOrderNo !== detailsOrder.order_number) {
+                        handleCellUpdate(detailsOrder.order_id, 'order_number', tempOrderNo);
+                        setDetailsOrder({ ...detailsOrder, order_number: tempOrderNo });
+                      }
+                      setIsEditingOrderNo(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (tempOrderNo !== detailsOrder.order_number) {
+                          handleCellUpdate(detailsOrder.order_id, 'order_number', tempOrderNo);
+                          setDetailsOrder({ ...detailsOrder, order_number: tempOrderNo });
+                        }
+                        setIsEditingOrderNo(false);
+                      }
+                      if (e.key === 'Escape') setIsEditingOrderNo(false);
+                    }}
+                    autoFocus
+                    style={{
+                      fontSize: '28px', fontWeight: 900, textTransform: 'uppercase',
+                      backgroundColor: 'rgba(255,255,255,0.05)', color: '#ffffff',
+                      border: '1px solid #4169e1', borderRadius: '4px',
+                      padding: '2px 8px', outline: 'none', width: '200px',
+                      marginLeft: '-8px'
+                    }}
+                  />
+                ) : (
+                  <h3 
+                    onClick={() => {
+                      if (isAdmin) {
+                        setTempOrderNo(detailsOrder.order_number);
+                        setIsEditingOrderNo(true);
+                      }
+                    }}
+                    style={{ 
+                      fontSize: '28px', fontWeight: 900, letterSpacing: '-0.04em', 
+                      textTransform: 'uppercase', lineHeight: 1, color: '#ffffff', 
+                      margin: 0, cursor: isAdmin ? 'pointer' : 'default' 
+                    }}
+                    title={isAdmin ? "Click para editar número de orden" : ""}
+                  >
+                    {detailsOrder.order_number}
+                  </h3>
+                )}
 
-             <div className="h-px bg-border/40" />
-
-             {/* Job Description */}
-             <div className="space-y-2">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Instrucciones del Job</label>
-                <div className="p-4 bg-muted/30 rounded-sm border border-border/20">
-                   <p className="text-sm font-semibold leading-relaxed">{detailsOrder.job_title_a || 'Sin descripción detallada'}</p>
-                </div>
-             </div>
-
-             {/* Dynamic Fields */}
-             <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                {visibleColumns.slice(0, 20).map(col => (
-                   <div key={col.key} className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{col.label}</label>
-                      <div className="text-xs font-bold truncate">
-                        {renderDetailValue(detailsOrder[col.key])}
+                {(() => {
+                  const ps = productionSummary[detailsOrder.order_id];
+                  const totalProduced = ps ? ps.total_produced : 0;
+                  const qty = detailsOrder.quantity || 0;
+                  const remaining = Math.max(0, qty - totalProduced);
+                  const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
+                  if (qty <= 0) return null;
+                  const barColor = pct >= 100 ? '#22c55e' : pct >= 50 ? '#94a3b8' : '#ef4444';
+                  const pctColor = pct >= 100 ? '#4ade80' : pct >= 50 ? '#cbd5e1' : '#f87171';
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Progreso</span>
+                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>Faltan: {remaining}</span>
+                        <span style={{ fontSize: '11px', fontWeight: 900, color: pctColor }}>{pct.toFixed(0)}%</span>
                       </div>
-                   </div>
-                ))}
-             </div>
+                      <div style={{ width: '128px', height: '5px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', backgroundColor: barColor, transition: 'width 1s ease', borderRadius: '999px' }} />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+            <button
+              onClick={() => setDetailsOrder(null)}
+              style={{ padding: '8px', borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b', marginLeft: '16px' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#64748b'; }}
+            >
+              <X style={{ width: '22px', height: '22px' }} />
+            </button>
           </div>
-          <div className="p-6 border-t bg-muted/20 flex gap-3">
-             <button onClick={() => setCommentsOrder(detailsOrder)} className="flex-1 py-3 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all">
-                Abrir Mensajería
-             </button>
-             <button onClick={() => setDetailsOrder(null)} className="px-6 py-3 border border-border rounded-sm font-bold text-xs uppercase tracking-widest hover:bg-muted/50 transition-all">
-                Cerrar
-             </button>
+
+          {/* Body - Scrollable */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '32px 28px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
+            
+            {/* Cliente */}
+            <div>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
+              <p style={{ fontSize: '20px', fontWeight: 900, textTransform: 'uppercase', color: '#f1f5f9', margin: 0 }}>
+                {renderDetailValue(detailsOrder.client)}
+              </p>
+            </div>
+
+            {/* Separator */}
+            <div style={{ height: '1px', background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.06), transparent)' }} />
+
+            {/* Job Instructions */}
+            <div>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '10px' }}>Instrucciones del Job</p>
+              <div style={{ padding: '16px 18px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <p style={{ fontSize: '14px', fontWeight: 600, lineHeight: 1.6, color: '#cbd5e1', margin: 0 }}>
+                  {renderDetailValue(detailsOrder.job_title_a)}
+                </p>
+              </div>
+            </div>
+
+            {/* Estados */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                <div style={{ width: '3px', height: '14px', backgroundColor: '#4169e1', borderRadius: '2px', boxShadow: '0 0 8px rgba(65,105,225,0.5)' }} />
+                <p style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>Estados de la Orden</p>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px 20px' }}>
+                {columns
+                  .filter(col => ['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority', 'screens', 'betty_column'].includes(col.key))
+                  .map(col => (
+                    <div key={col.key}>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '5px' }}>{col.label}</p>
+                      <p style={{ fontSize: '12px', fontWeight: 800, color: '#e2e8f0', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {renderDetailValue(detailsOrder[col.key])}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            </div>
           </div>
-        </aside>
+
+          {/* Footer */}
+          <div style={{
+            padding: '20px 28px', borderTop: '1px solid rgba(255,255,255,0.06)',
+            backgroundColor: 'rgba(255,255,255,0.01)', display: 'flex', gap: '12px', flexShrink: 0
+          }}>
+            <button
+              onClick={() => setCommentsOrder(detailsOrder)}
+              style={{
+                flex: 1, padding: '14px', backgroundColor: '#4169e1', color: '#fff',
+                border: 'none', borderRadius: '10px', fontWeight: 900, fontSize: '11px',
+                textTransform: 'uppercase', letterSpacing: '0.15em', cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(65,105,225,0.35)', transition: 'all 0.2s'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#3557c9'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#4169e1'; e.currentTarget.style.transform = 'translateY(0)'; }}
+            >
+              Abrir Mensajería
+            </button>
+            <button
+              onClick={() => setDetailsOrder(null)}
+              style={{
+                padding: '14px 32px', backgroundColor: 'transparent', color: '#64748b',
+                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px',
+                fontWeight: 900, fontSize: '11px', textTransform: 'uppercase',
+                letterSpacing: '0.15em', cursor: 'pointer', transition: 'all 0.2s'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#fff'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#64748b'; }}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Command Palette */}

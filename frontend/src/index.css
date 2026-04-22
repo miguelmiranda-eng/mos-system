@@ -143,6 +143,58 @@ h1, h2, h3, h4, h5, h6 {
   background: hsl(var(--navy) / 0.35);
 }
 
+/* ─── Sticky Columns Core (Ultra Opacity) ────────────────────────────────── */
+
+/* Force absolute opaqueness and stacking priority */
+td.sticky, th.sticky { 
+  isolation: isolate !important; 
+  opacity: 1 !important;
+  position: sticky !important;
+  background-clip: padding-box !important;
+  z-index: 100 !important;
+  transform: none !important;
+  filter: none !important;
+}
+
+/* Light Mode: Base & State Colors (SOLID) */
+html:not(.dark) td.sticky, 
+html:not(.dark) th.sticky {
+  background-color: #ffffff !important;
+}
+
+/* Hover state in light mode */
+html:not(.dark) tr:hover td.sticky { 
+  background-color: #f8fafc !important; /* Slate 50 solid */
+}
+
+/* Selection / Search match in light mode */
+html:not(.dark) tr.bg-primary\/10 td.sticky,
+html:not(.dark) tr.selected td.sticky {
+  background-color: #eff6ff !important; /* Blue 50 solid */
+}
+
+/* Dark Mode: Base & State Colors (SOLID) */
+.dark td.sticky, 
+.dark th.sticky {
+  background-color: #0a0a0a !important;
+}
+
+/* Hover state in dark mode */
+.dark tr:hover td.sticky { 
+  background-color: #1a1a1a !important; 
+}
+
+/* Selection / Search match in dark mode */
+.dark tr.bg-primary\/10 td.sticky,
+.dark tr.selected td.sticky {
+  background-color: #1e293b !important; /* Slate 800 solid */
+}
+
+/* Header sticky layer above row sticky layer */
+th.sticky {
+  z-index: 110 !important;
+}
+
 /* Utilities */
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
@@ -213,7 +265,7 @@ html:not(.dark) table thead th {
 html:not(.dark) table tbody tr:nth-child(even) {
   background-color: hsl(224 60% 97%);
 }
-html:not(.dark) table tbody tr:hover td {
+html:not(.dark) table tbody tr:hover td:not(.sticky) {
   background-color: hsl(224 100% 56% / 0.05) !important;
 }
 
@@ -236,4 +288,16 @@ html:not(.dark) ::-webkit-scrollbar-thumb {
 }
 html:not(.dark) ::-webkit-scrollbar-thumb:hover {
   background: hsl(224 100% 56%);
+}
+
+/* ─── Enterprise Detail Drawer ─────────────────────────────────────────────── */
+.enterprise-drawer {
+  background-color: #0d1117 !important;
+  background: #0d1117 !important;
+  color: #e2e8f0 !important;
+}
+
+@keyframes slideInFromRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
 }

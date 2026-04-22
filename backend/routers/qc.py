@@ -70,7 +70,7 @@ async def create_qc_record(request: Request):
     if body.get("order_number"):
         order = await db.orders.find_one(
             {"order_number": body["order_number"].strip()},
-            {"_id": 0, "order_id": 1, "client": 1},
+            {"_id": 0, "order_id": 1, "client": 1, "quantity": 1, "job_title_a": 1},
         )
         if order:
             order_id = order.get("order_id", "")
@@ -92,6 +92,8 @@ async def create_qc_record(request: Request):
         "quantity_rejected": int(body.get("quantity_rejected") or 0),
         "findings": body.get("findings", "").strip(),
         "corrective_action": body.get("corrective_action", "").strip(),
+        "quantity": body.get("quantity") or (order.get("quantity") if order else ""),
+        "job_title_a": body.get("job_title_a") or (order.get("job_title_a") if order else ""),
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -115,6 +117,7 @@ async def update_qc_record(qc_id: str, request: Request):
     allowed = [
         "finding_type", "severity", "result", "quantity_inspected",
         "quantity_rejected", "findings", "corrective_action", "client", "inspection_date",
+        "quantity", "job_title_a",
     ]
     update = {k: body[k] for k in allowed if k in body}
     update["updated_at"] = now_iso()

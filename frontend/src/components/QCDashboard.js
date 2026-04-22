@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   ShieldCheck, Plus, X, Loader2, Search, RefreshCw,
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
-  ClipboardList, TrendingUp, AlertTriangle, BadgeX
+  ClipboardList, TrendingUp, AlertTriangle, BadgeX, Camera, Image as ImageIcon,
+  FileText, File as FileIcon, FileSpreadsheet, Link2
 } from 'lucide-react';
 import { API } from '../lib/constants';
 import { useTheme } from '../contexts/ThemeContext';
@@ -39,6 +40,7 @@ const EMPTY_FORM = {
   order_number: '', client: '', inspection_date: new Date().toISOString().split('T')[0],
   finding_type: 'COSTURA', severity: 'MINOR', result: 'PASS',
   quantity_inspected: '', quantity_rejected: '', findings: '', corrective_action: '',
+  quantity: '', job_title_a: '',
 };
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -80,12 +82,136 @@ function ResultBadge({ value }) {
   );
 }
 
+function renderRichContent(content, isDark) {
+  if (!content) return null;
+  const parts = content.split(/(\[img\].*?\[\/img\])/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('[img]')) {
+      const key = part.replace('[img]', '').replace('[/img]', '');
+      const src = (key.startsWith('http') || key.startsWith('/api/uploads/')) ? key : `${API}/uploads/${key}`;
+      return (
+        <div key={i} className="my-2 group relative inline-block">
+          <img 
+            src={src} 
+            alt="Evidencia" 
+            className="max-w-full max-h-48 rounded-lg border border-white/10 cursor-pointer hover:opacity-90 transition-opacity shadow-lg"
+            onClick={(e) => { e.stopPropagation(); window.open(src, '_blank'); }}
+          />
+        </div>
+      );
+    }
+    return <span key={i} className="whitespace-pre-wrap">{part}</span>;
+  });
+}
+
+function QCDetailModal({ open, onClose, record, isDark }) {
+  if (!open || !record) return null;
+  return (
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <div className={cn(
+        "relative w-full max-w-3xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col",
+        isDark ? "bg-[#0d1520] border-white/10" : "bg-white border-slate-200"
+      )}>
+        <div className={cn("flex items-center justify-between px-6 py-4 border-b", isDark ? "border-white/8" : "border-slate-100")}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-royal/10 flex items-center justify-center">
+              <ClipboardList className="w-5 h-5 text-royal" />
+            </div>
+            <div>
+              <h2 className={cn("font-bold text-base", isDark ? "text-white" : "text-navy")}>Detalles de Inspección</h2>
+              <p className={cn("text-[11px] uppercase tracking-wider font-bold", isDark ? "text-white/40" : "text-slate-400")}>
+                Orden {record.order_number} — {record.client}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-slate-100 text-slate-400")}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-8 overflow-y-auto max-h-[70vh] space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Fecha</p>
+              <p className="text-sm font-bold">{record.inspection_date}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Inspector</p>
+              <p className="text-sm font-bold">{record.inspector}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Resultado</p>
+              <ResultBadge value={record.result} />
+            </div>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Severidad</p>
+              <SeverityBadge value={record.severity} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Cantidad Total de la Orden (Qty)</p>
+              <p className="text-sm font-bold text-royal">{record.quantity || '—'}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5 overflow-hidden">
+              <p className="text-[10px] font-bold text-white/40 uppercase mb-1">Job Title / Printavo</p>
+              {(() => {
+                const val = record.job_title_a;
+                if (!val) return <p className="text-sm italic opacity-40">Sin enlace</p>;
+                const url = typeof val === 'object' ? val.url : val;
+                const desc = typeof val === 'object' ? val.desc : val;
+                if (!url?.startsWith('http')) return <p className="text-sm font-medium truncate">{desc}</p>;
+                return (
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-royal hover:underline flex items-center gap-1.5 truncate">
+                    <Link2 className="w-3.5 h-3.5" /> {desc}
+                  </a>
+                );
+              })()}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-royal mb-2">Hallazgos e Imágenes</h3>
+            <div className={cn("p-4 rounded-xl border", isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200")}>
+              <div className="text-sm leading-relaxed">
+                {renderRichContent(record.findings, isDark)}
+              </div>
+            </div>
+          </div>
+
+          {record.corrective_action && (
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-green-500 mb-2">Acción Correctiva</h3>
+              <div className={cn("p-4 rounded-xl border", isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200")}>
+                <p className="text-sm italic opacity-80">{record.corrective_action}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className={cn("px-6 py-4 border-t flex justify-end", isDark ? "border-white/8" : "border-slate-100")}>
+          <button onClick={onClose} className="px-6 py-2 bg-royal text-white rounded-xl font-bold text-sm shadow-lg shadow-royal/20 active:scale-95 transition-all">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 
 function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [resolvedOrderId, setResolvedOrderId] = useState(editRecord?.order_id || '');
+  const [imagePreviews, setImagePreviews] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = React.useRef(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   useEffect(() => {
     if (editRecord) {
@@ -104,7 +230,65 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
     } else {
       setForm({ ...EMPTY_FORM, inspection_date: new Date().toISOString().split('T')[0] });
     }
+    setImagePreviews([]);
+    setIsDragging(false);
+    setResolvedOrderId(editRecord?.order_id || '');
   }, [editRecord, open]);
+
+  const processFiles = (files) => {
+    const fileList = Array.from(files);
+    const imageFiles = fileList.filter(f => {
+      if (f.type && f.type.startsWith('image/')) return true;
+      const ext = (f.name || '').toLowerCase().split('.').pop();
+      return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'].includes(ext);
+    });
+
+    // We only support images for now to match the user's "same logic" request for evidence
+    imageFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawDataUrl = event.target.result;
+        if (file.size > 512 * 1024) {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let { width, height } = img;
+            const MAX_DIM = 1920;
+            if (width > MAX_DIM || height > MAX_DIM) {
+              const scale = MAX_DIM / Math.max(width, height);
+              width = Math.round(width * scale);
+              height = Math.round(height * scale);
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            const name = file.name ? file.name.replace(/\.[^.]+$/, '.jpg') : `qc_${Date.now()}.jpg`;
+            setImagePreviews(prev => [...prev, { data: dataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, isImage: true }]);
+          };
+          img.src = rawDataUrl;
+        } else {
+          const name = file.name || `qc_${Date.now()}.jpg`;
+          setImagePreviews(prev => [...prev, { data: rawDataUrl, name, id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, isImage: true }]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) processFiles(e.target.files);
+    setFileInputKey(prev => prev + 1);
+  };
+
+  const removeImage = (id) => setImagePreviews(prev => prev.filter(img => img.id !== id));
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); };
+  const handleDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setIsDragging(false);
+    if (e.dataTransfer.files?.length > 0) processFiles(e.dataTransfer.files);
+  };
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
@@ -118,10 +302,17 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
         const orders = data.orders || data;
         if (orders.length > 0) {
           const o = orders[0];
-          set('client', o.client || '');
+          setForm(f => ({ 
+            ...f, 
+            client: o.client || '', 
+            quantity: o.quantity || '', 
+            job_title_a: o.job_title_a || '' 
+          }));
+          setResolvedOrderId(o.order_id || '');
           toast.success(`Orden encontrada: ${o.client || ''}`);
         } else {
           toast.warning('Orden no encontrada');
+          setResolvedOrderId('');
         }
       }
     } catch { /* silent */ }
@@ -133,6 +324,35 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
     if (!form.findings.trim()) { toast.error('Escribe los hallazgos'); return; }
     setSaving(true);
     try {
+      let finalFindings = form.findings.trim();
+      
+      // Upload images if there's an order_id
+      if (imagePreviews.length > 0) {
+        if (!resolvedOrderId) {
+          toast.error("Se necesita una orden válida para subir imágenes");
+          setSaving(false); return;
+        }
+        
+        for (const img of imagePreviews) {
+          try {
+            const body = { image_data: img.data, filename: img.name };
+            const imgRes = await fetch(`${API}/orders/${resolvedOrderId}/images`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+              body: JSON.stringify(body)
+            });
+            if (imgRes.ok) {
+              const imgData = await imgRes.json();
+              const key = imgData.storage_key || imgData.url;
+              finalFindings = finalFindings ? `${finalFindings}\n[img]${key}[/img]` : `[img]${key}[/img]`;
+            } else {
+              toast.error(`Error subiendo ${img.name}`);
+            }
+          } catch {
+            toast.error(`Error de conexion subiendo ${img.name}`);
+          }
+        }
+      }
+
       const url = editRecord ? `${API}/qc/${editRecord.qc_id}` : `${API}/qc`;
       const method = editRecord ? 'PUT' : 'POST';
       const res = await fetch(url, {
@@ -140,6 +360,7 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          findings: finalFindings,
           quantity_inspected: Number(form.quantity_inspected) || 0,
           quantity_rejected: Number(form.quantity_rejected) || 0,
         }),
@@ -196,7 +417,20 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <form 
+          onSubmit={handleSubmit} 
+          className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragging && (
+            <div className="absolute inset-x-6 top-[72px] bottom-[80px] z-50 border-2 border-dashed border-royal rounded-xl bg-royal/5 flex flex-col items-center justify-center backdrop-blur-[2px] transition-all">
+              <Camera className="w-10 h-10 mb-2 text-royal animate-bounce" />
+              <p className="text-sm text-royal font-bold uppercase tracking-widest">Suelta las imágenes de evidencia aquí</p>
+            </div>
+          )}
+
           {/* Row 1: Order + Client + Date */}
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -219,6 +453,30 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
             <div>
               <label className={labelCls}>Fecha Inspección</label>
               <input type="date" className={inputCls} value={form.inspection_date} onChange={e => set('inspection_date', e.target.value)} />
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelCls}>Cantidad Total (Qty)</label>
+              <input className={cn(inputCls, "bg-secondary/30")} value={form.quantity} readOnly placeholder="—" />
+            </div>
+            <div className="col-span-2">
+              <label className={labelCls}>Job Title / Printavo</label>
+              <div className={cn(inputCls, "bg-secondary/30 flex items-center gap-2 truncate")}>
+                {(() => {
+                  const val = form.job_title_a;
+                  if (!val) return <span className="opacity-40 italic">Sin enlace</span>;
+                  const url = typeof val === 'object' ? val.url : val;
+                  const desc = typeof val === 'object' ? val.desc : val;
+                  if (!url?.startsWith('http')) return <span className="truncate">{desc}</span>;
+                  return (
+                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-royal hover:underline flex items-center gap-1 truncate font-semibold">
+                      <Link2 className="w-3 h-3" /> {desc}
+                    </a>
+                  );
+                })()}
+              </div>
             </div>
           </div>
 
@@ -276,7 +534,17 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
 
           {/* Row 5: Findings */}
           <div>
-            <label className={labelCls}>Descripción del Hallazgo <span className="text-red-500">*</span></label>
+            <div className="flex items-center justify-between mb-1">
+              <label className={labelCls}>Descripción del Hallazgo <span className="text-red-500">*</span></label>
+              <button 
+                type="button" 
+                onClick={() => fileInputRef.current?.click()}
+                className={cn("flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors", isDark ? "bg-white/10 text-white/70 hover:bg-white/20" : "bg-slate-100 text-slate-500 hover:bg-slate-200")}
+              >
+                <Camera className="w-3 h-3" /> Agregar Evidencia
+              </button>
+              <input key={fileInputKey} ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileUpload} className="hidden" />
+            </div>
             <textarea
               className={cn(inputCls, "resize-none")}
               rows={3}
@@ -285,6 +553,24 @@ function QCFormModal({ open, onClose, onSaved, editRecord, isDark }) {
               placeholder="Describe el defecto o hallazgo encontrado..."
             />
           </div>
+
+          {/* Image Previews */}
+          {imagePreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2 py-2">
+              {imagePreviews.map(img => (
+                <div key={img.id} className="relative group">
+                  <img src={img.data} alt="" className="w-20 h-20 object-cover rounded-lg border border-white/10" />
+                  <button 
+                    type="button"
+                    onClick={() => removeImage(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Row 6: Corrective action */}
           <div>
@@ -325,6 +611,8 @@ export default function QCDashboard() {
   const [stats, setStats] = useState({ total: 0, passed: 0, failed: 0, critical_findings: 0, pass_rate: 0 });
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
   const [editRecord, setEditRecord] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
@@ -526,6 +814,13 @@ export default function QCDashboard() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           <button
+                            onClick={() => { setSelectedRecord(rec); setDetailModalOpen(true); }}
+                            className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
+                            title="Ver detalles"
+                          >
+                            <ImageIcon className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => { setEditRecord(rec); setModalOpen(true); }}
                             className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
                             title="Editar"
@@ -563,6 +858,14 @@ export default function QCDashboard() {
         onClose={() => { setModalOpen(false); setEditRecord(null); }}
         onSaved={handleSaved}
         editRecord={editRecord}
+        isDark={isDark}
+      />
+
+      {/* Detail Modal */}
+      <QCDetailModal
+        open={detailModalOpen}
+        onClose={() => { setDetailModalOpen(false); setSelectedRecord(null); }}
+        record={selectedRecord}
         isDark={isDark}
       />
     </div>

@@ -13,11 +13,15 @@ router = APIRouter(prefix="/api/import")
 SIZES_MAP = {
     'XS': 'XS', 'S': 'S', 'M': 'M', 'L': 'L', 'XL': 'XL',
     'SM': 'S', 'MD': 'M', 'LG': 'L',
-    '2X': '2X', 'XXL': '2X', '2XL': '2X',
-    '3X': '3X', 'XXXL': '3X', '3XL': '3X',
-    '4X': '4X', '4XL': '4X',
-    '5X': '5X', '5XL': '5X'
+    '2X': '2X', 'XXL': '2X', '2XL': '2X', '2 XL': '2X',
+    '3X': '3X', 'XXXL': '3X', '3XL': '3X', '3 XL': '3X',
+    '4X': '4X', '4XL': '4X', '4 XL': '4X',
+    '5X': '5X', '5XL': '5X', '5 XL': '5X',
+    'YXS': 'YXS', 'YS': 'YS', 'YM': 'YM', 'YL': 'YL', 'YXL': 'YXL',
+    '2T': '2T', '3T': '3T', '4T': '4T', '5T': '5T'
 }
+
+SIZE_PATTERN = r"\b(XXXL|XXL|YXL|YXS|XL|SM|MD|LG|XS|YS|YM|YL|[2-7]\s?XL?|S|M|L|[2-5]T)\b[\s:-]+(\d+)"
 
 @router.post("/printavo")
 async def import_printavo(request: Request):
@@ -132,7 +136,7 @@ async def parse_printavo_html(html_content: str):
         if len(cells) < 2: continue
         
         row_text = row.get_text(separator=" ")
-        size_patterns = re.findall(r"\b(XS|S|M|L|XL|SM|MD|LG|[2-7]XL?)[\s:-]+(\d+)", row_text, re.I)
+        size_patterns = re.findall(SIZE_PATTERN, row_text, re.I)
         
         if size_patterns:
             style_name = ""
@@ -196,7 +200,7 @@ async def parse_printavo_html(html_content: str):
         return {"items": unique_items}
 
     # Fallback to the original logic if table extraction found nothing
-    if sizes_found := re.findall(r"\b(XS|S|M|L|XL|SM|MD|LG|[2-7]XL?)[\s:-]+(\d+)", text, re.I):
+    if sizes_found := re.findall(SIZE_PATTERN, text, re.I):
         mos_sizes = {}
         total = 0
         for sz, q in sizes_found:
@@ -238,7 +242,7 @@ async def parse_printavo_pdf(pdf_bytes: bytes):
         # Item extraction in PDF is trickier, we look for table headers
         items = []
         # Basic regex search for sizes/qty patterns
-        size_patterns = re.findall(r"\b(XS|S|M|L|XL|SM|MD|LG|[2-7]XL?)[\s:-]+(\d+)", text, re.I)
+        size_patterns = re.findall(SIZE_PATTERN, text, re.I)
         
         if size_patterns:
             mos_sizes = {}

@@ -72,24 +72,46 @@ export const NewOrderForm = ({
   };
 
   const applyImportedData = (item) => {
+    // 1. Prepare candidate data from the import result
+    const candidateData = {
+      order_number: item.order_number,
+      order_name: item.style, // Some users use order_name instead of style
+      client: (options.clients || []).find(c => item.client && item.client.toUpperCase().includes(c.toUpperCase())) || item.client,
+      branding: (options.brandings || []).find(b => item.branding && b.toUpperCase().includes(item.branding.toUpperCase())) || item.branding,
+      style: item.style,
+      color: item.color,
+      customer_po: item.customer_po,
+      store_po: item.store_po,
+      "store_po#": item.store_po,
+      "design_#": item["design_#"],
+      cancel_date: item.cancel_date,
+      due_date: item.due_date,
+      job_title_a: { url: printavoUrl, desc: item.job_title_desc || "Printavo WO" },
+      quantity: item.quantity,
+      notes: item.notes,
+      unit_price: item.unit_price
+    };
+
+    // 2. Filter: only apply keys that are explicitly in formFieldKeys
+    const filteredUpdate = {};
+    const fieldSet = new Set(formFieldKeys);
+
+    Object.entries(candidateData).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      
+      if (fieldSet.has(key)) {
+        if (key === 'notes') {
+          // Append notes if already exists
+          filteredUpdate[key] = formData.notes ? `${formData.notes}\n${value}` : value;
+        } else {
+          filteredUpdate[key] = value;
+        }
+      }
+    });
+
     setFormData(prev => ({
       ...prev,
-      order_number: item.order_number || prev.order_number,
-      order_name: item.style || prev.order_name,
-      client: (options.clients || []).find(c => item.client && item.client.toUpperCase().includes(c.toUpperCase())) || item.client || prev.client,
-      branding: (options.brandings || []).find(b => item.branding && b.toUpperCase().includes(item.branding.toUpperCase())) || item.branding || prev.branding,
-      style: item.style || prev.style,
-      color: item.color || prev.color,
-      customer_po: item.customer_po || prev.customer_po,
-      store_po: item.store_po || prev.store_po,
-      "store_po#": item.store_po || prev["store_po#"],
-      "design_#": item["design_#"] || prev["design_#"],
-      cancel_date: item.cancel_date || prev.cancel_date,
-      due_date: item.due_date || prev.due_date,
-      job_title_a: { url: printavoUrl, desc: item.job_title_desc || "Printavo WO" },
-      quantity: item.quantity || prev.quantity,
-      notes: (prev.notes ? prev.notes + "\n" : "") + (item.notes || ""),
-      ...(item.unit_price ? { unit_price: item.unit_price } : {})
+      ...filteredUpdate
     }));
     
     if (item.sizes) {
@@ -327,7 +349,7 @@ export const NewOrderForm = ({
                   <Zap className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Importación Mágica</h3>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Importación Externa</h3>
                   <p className="text-[10px] uppercase font-bold text-muted-foreground/60">Extrae datos desde Printavo (Enlace o PDF)</p>
                 </div>
               </div>
