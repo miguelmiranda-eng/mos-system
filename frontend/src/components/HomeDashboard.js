@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users, 
   Database, Boxes, Layers, Tags, UserSquare, ArrowLeft, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, Settings, BarChart3, ShieldCheck, Activity, Search, 
-  CheckCircle2, Clock, PlayCircle, FileCheck
+  CheckCircle2, Clock, PlayCircle, FileCheck, ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { API } from '../lib/constants';
@@ -20,34 +20,32 @@ const ICON_MAP = {
 const SECTIONS_DEFS = [
   {
     id: 'inventory',
-    title: 'Operaciones & WMS',
-    category: 'Logística de Planta',
+    title: 'Gestión de Inventario',
     items: [
-      { name: 'WMS Central', path: '/wms', desc: 'Gestión de almacén y ubicaciones.', icon: 'Warehouse' },
-      { name: 'Stock de Tintas', path: '/wms?tab=tintas', desc: 'Inventario de insumos químicos.', icon: 'Boxes' },
+      { name: 'WMS Central', path: '/wms', desc: 'Gestión completa de almacén y ubicaciones.', icon: 'Warehouse' },
+      { name: 'Stock de Tintas', path: '/wms?tab=tintas', desc: 'Control de inventario de insumos químicos.', icon: 'Boxes' },
       { name: 'Mantenimiento', path: '/wms?tab=logs', desc: 'Registro de movimientos y auditoría.', icon: 'Database' },
     ]
   },
   {
     id: 'config',
-    title: 'Administración del Sistema',
-    category: 'Configuración',
+    title: 'Configuraciones & Logs',
     items: [
-      { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de acciones.', icon: 'Activity' },
-      { name: 'Automatizaciones', path: '/automation-center', desc: 'Reglas inteligentes de flujo.', icon: 'Zap' },
-      { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos.', icon: 'Users' },
-      { name: 'Centro de Respaldos', path: '/backups', desc: 'Reportes PDF y respaldos JSON.', icon: 'ShieldCheck' },
+      { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de cambios y acciones.', icon: 'History' },
+      { name: 'Automatizaciones', path: '/automation-center', desc: 'Configuración de reglas inteligentes.', icon: 'Zap' },
+      { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos del equipo.', icon: 'Users' },
+      { name: 'Centro de Respaldos', path: '/backups', desc: 'Descarga reportes PDF o respaldos JSON.', icon: 'ShieldCheck' },
       { name: 'Gestor Formulario', action: 'manageFormFields', desc: 'Configura campos del modal.', icon: 'ClipboardList' },
       { name: 'Columnas Globales', action: 'manageColumns', desc: 'Configura visibilidad global.', icon: 'Columns' },
     ]
   },
   {
     id: 'catalogs',
-    title: 'Catálogos Maestros',
-    category: 'Base de Datos',
+    title: 'Catálogos del Sistema',
     items: [
-      { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Clientes, brandings y estados.', icon: 'Tags' },
-      { name: 'Operadores', path: '/operators-center', desc: 'Gestión de equipo de producción.', icon: 'UserSquare' },
+      { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Administra clientes, brandings y estados.', icon: 'Tags' },
+      { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para producción.', icon: 'UserSquare' },
+      { name: 'Dashboard Ejecutivo', path: '/ceo-dashboard', desc: 'Vista consolidada de KPIs de planta.', icon: 'TrendingUp', roles: ['admin', 'ceo'] },
     ]
   }
 ];
@@ -73,17 +71,16 @@ const HomeDashboard = () => {
     else if (item.path) navigate(item.path);
   };
 
-  const filteredSections = SECTIONS_DEFS
-    .filter(s => !s.roles || s.roles.includes(user?.role))
-    .map(s => ({
-      ...s,
-      items: s.items.filter(item => 
-        !search || 
+  const filteredSections = SECTIONS_DEFS.map(s => ({
+    ...s,
+    items: s.items.filter(item => {
+      const hasRole = !item.roles || item.roles.includes(user?.role);
+      const matchesSearch = !search || 
         item.name.toLowerCase().includes(search.toLowerCase()) || 
-        item.desc.toLowerCase().includes(search.toLowerCase())
-      )
-    }))
-    .filter(s => s.items.length > 0);
+        item.desc.toLowerCase().includes(search.toLowerCase());
+      return hasRole && matchesSearch;
+    })
+  })).filter(s => s.items.length > 0);
 
   const stats = [
     { label: 'SCHEDULING', value: counts['SCHEDULING'] || 0, icon: Clock, color: 'text-emerald-500', bg: 'bg-emerald-50' },
@@ -93,9 +90,9 @@ const HomeDashboard = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-barlow overflow-y-auto">
-      {/* EXECUTIVE HEADER */}
-      <header className="bg-white border-b border-slate-200 px-8 py-6 sticky top-0 z-30 shadow-sm">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-barlow overflow-y-auto pb-20">
+      {/* HEADER */}
+      <header className="bg-white border-b border-slate-200 px-8 py-6 mb-8 shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
            <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -103,13 +100,9 @@ const HomeDashboard = () => {
               </div>
               <div className="flex flex-col leading-none">
                 <h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900">
-                  EXECUTIVE <span className="text-emerald-500">INSIGHTS</span>
+                  MOS <span className="text-emerald-500">HOME</span>
                 </h1>
-                <div className="flex items-center gap-2 mt-1">
-                   <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">OPERATIONS</span>
-                   <div className="w-1 h-1 bg-slate-300 rounded-full" />
-                   <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">PROSPER MANUFACTURING</span>
-                </div>
+                <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-1">Industrial Intelligence</span>
               </div>
            </div>
 
@@ -118,140 +111,88 @@ const HomeDashboard = () => {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input 
                   type="text"
-                  placeholder="Buscar herramienta o módulo..."
-                  className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-12 pr-4 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-400"
+                  placeholder="Filtrar herramientas..."
+                  className="w-full bg-slate-100 border-none rounded-2xl py-2.5 pl-12 pr-4 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-400"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
               <button 
                 onClick={() => navigate('/dashboard')}
-                className="px-6 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-slate-900/10">
+                className="px-6 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg">
                 Volver al CRM
               </button>
            </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-8 space-y-10">
+      <main className="max-w-7xl mx-auto px-8 space-y-12">
         
-        {/* STATS ROW (Replicating the 4 boxes from the image) */}
+        {/* STATS ROW */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
            {stats.map((stat, idx) => (
-             <div key={idx} className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm hover:shadow-md transition-all group">
+             <div key={idx} className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
                 <div className="flex justify-between items-start mb-4">
-                   <div className={`p-3 ${stat.bg} rounded-2xl group-hover:scale-110 transition-transform`}>
+                   <div className={`p-3 ${stat.bg} rounded-2xl`}>
                       <stat.icon className={`w-6 h-6 ${stat.color}`} />
                    </div>
-                   <div className="text-[10px] font-black text-slate-300 uppercase tracking-widest">REAL TIME</div>
+                   <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest">LIVE</div>
                 </div>
                 <div className="flex flex-col">
-                   <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
+                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
                    <span className="text-4xl font-black text-slate-900 tracking-tighter">{stat.value.toLocaleString()}</span>
                 </div>
              </div>
            ))}
         </div>
 
-        {/* CONTENT GRID */}
+        {/* ORIGINAL GRID LAYOUT WITH EXECUTIVE STYLE */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-           {/* Main sections take 2 columns */}
-           <div className="lg:col-span-2 space-y-10">
-              {filteredSections.map(section => (
-                <div key={section.id} className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-sm overflow-hidden relative">
-                   <div className="absolute top-0 left-0 w-2 h-full bg-emerald-500/10" />
-                   
-                   <div className="flex items-center justify-between mb-8">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-2">{section.category}</span>
-                        <h2 className="text-2xl font-black uppercase tracking-tighter text-slate-900">{section.title}</h2>
-                      </div>
-                      <div className="px-4 py-1.5 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                        {section.items.length} HERRAMIENTAS
-                      </div>
-                   </div>
-
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {section.items.map((item, i) => {
-                        const ItemIcon = ICON_MAP[item.icon] || Factory;
-                        return (
-                          <div 
-                            key={i}
-                            onClick={() => handleCardClick(item)}
-                            className="group flex items-center gap-5 p-5 rounded-3xl hover:bg-emerald-50 border border-transparent hover:border-emerald-100 transition-all cursor-pointer"
-                          >
-                            <div className="w-12 h-12 bg-slate-50 group-hover:bg-white rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-200 transition-all">
-                               <ItemIcon className="w-6 h-6 text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                            </div>
-                            <div className="flex flex-col">
-                               <span className="text-sm font-black text-slate-800 uppercase tracking-wide group-hover:text-emerald-600 transition-colors">{item.name}</span>
-                               <span className="text-[10px] font-medium text-slate-400 line-clamp-1 italic">{item.desc}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                   </div>
+           {filteredSections.map(section => (
+             <div key={section.id} className="space-y-6">
+                <div className="flex items-center gap-3 ml-2">
+                   <div className="w-1.5 h-6 bg-emerald-500 rounded-full" />
+                   <h2 className="text-xl font-black uppercase tracking-tighter text-slate-900">{section.title}</h2>
                 </div>
-              ))}
-           </div>
 
-           {/* Side Actions / Quick Info */}
-           <div className="space-y-8">
-              <div className="bg-emerald-500 rounded-[2.5rem] p-10 text-white shadow-xl shadow-emerald-500/20 relative overflow-hidden group">
-                 <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000" />
-                 <TrendingUp className="w-12 h-12 mb-6 opacity-50" />
-                 <h2 className="text-2xl font-black uppercase tracking-tighter mb-4 leading-tight">
-                    Optimiza tu <br /> Flujo de Trabajo
-                 </h2>
-                 <p className="text-sm text-emerald-100 font-medium mb-8 leading-relaxed">
-                    Usa las herramientas de automatización para reducir tiempos de entrega.
-                 </p>
-                 <button 
-                   onClick={() => navigate('/dashboard')}
-                   className="w-full py-4 bg-white text-emerald-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-50 transition-all shadow-lg">
-                   Ver Dashboard Maestro
-                 </button>
-              </div>
+                <div className="space-y-4">
+                   {section.items.map((item, idx) => {
+                     const ItemIcon = ICON_MAP[item.icon] || Factory;
+                     return (
+                       <div 
+                         key={idx}
+                         onClick={() => handleCardClick(item)}
+                         className="group bg-white border border-slate-200 hover:border-emerald-500/30 rounded-[1.75rem] p-6 flex items-center gap-5 cursor-pointer transition-all duration-300 hover:shadow-[0_15px_35px_rgba(16,185,129,0.08)] hover:-translate-y-1"
+                       >
+                         <div className="w-12 h-12 bg-slate-50 group-hover:bg-emerald-50 rounded-xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-100 transition-all">
+                            <ItemIcon className="w-6 h-6 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                         </div>
+                         
+                         <div className="flex-1">
+                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide group-hover:text-emerald-600 transition-colors">{item.name}</h3>
+                            <p className="text-[10px] font-medium text-slate-400 leading-tight line-clamp-1 italic">{item.desc}</p>
+                         </div>
 
-              <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-sm">
-                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6">Estado del Sistema</h3>
-                 <div className="space-y-6">
-                    <div className="flex items-center justify-between">
-                       <span className="text-xs font-bold text-slate-600">Base de Datos</span>
-                       <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black text-emerald-500 uppercase">ONLINE</span>
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                         <div className="opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                            <ChevronRight className="w-4 h-4 text-emerald-500" />
+                         </div>
                        </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                       <span className="text-xs font-bold text-slate-600">Servidor de Fotos</span>
-                       <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black text-emerald-500 uppercase">ONLINE</span>
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                       </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                       <span className="text-xs font-bold text-slate-600">Sincronización</span>
-                       <span className="text-[10px] font-black text-slate-400 uppercase">A tiempo real</span>
-                    </div>
-                 </div>
-              </div>
-           </div>
+                     );
+                   })}
+                </div>
+             </div>
+           ))}
         </div>
       </main>
 
-      <footer className="max-w-7xl mx-auto p-12 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
-         <div className="flex items-center gap-4">
-            <Factory className="w-4 h-4" />
-            <span>Industrial OS v7.0</span>
-            <div className="w-1 h-1 bg-emerald-500 rounded-full" />
-            <span>Prosper Manufacturing</span>
+      <footer className="max-w-7xl mx-auto px-12 mt-16 border-t border-slate-200 pt-10 flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
+         <div className="flex items-center gap-3">
+            <Factory className="w-4 h-4 text-emerald-500/50" />
+            <span>Industrial OS</span>
+            <span>•</span>
+            <span>v7.2.1</span>
          </div>
-         <div className="flex items-center gap-6">
-            <span>Privacidad</span>
-            <span>Seguridad</span>
-            <span className="text-slate-900">© 2026</span>
-         </div>
+         <div>Prosper Manufacturing © 2026</div>
       </footer>
 
       <GlobalColumnManager isOpen={showColumnManager} onClose={() => setShowColumnManager(false)} />
