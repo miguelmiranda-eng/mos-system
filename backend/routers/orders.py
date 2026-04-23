@@ -5,7 +5,7 @@ import json
 from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, UPLOADS_DIR, logger
 from ws_manager import ws_manager
 from datetime import datetime, timezone
-import uuid, base64, os, io
+import uuid, base64, os, io, re
 import pandas as pd
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -620,6 +620,15 @@ async def export_orders_pdf(request: Request):
         textColor=colors.HexColor('#444444')
     )
 
+    caption_style = ParagraphStyle(
+        'Caption',
+        parent=styles['Italic'],
+        fontSize=7,
+        leading=8,
+        alignment=1, # Center
+        textColor=colors.grey
+    )
+
     elements = []
     
     # Add Logo/Header if exists? For now just text
@@ -627,6 +636,17 @@ async def export_orders_pdf(request: Request):
     elements.append(Paragraph(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
     elements.append(Paragraph(f"Por: {user.get('name')}", normal_style))
     elements.append(Spacer(1, 0.5 * inch))
+
+    def format_links(text):
+        if not text or not isinstance(text, str): return text
+        # Escape XML special chars first to prevent ReportLab crashes
+        text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+)'
+        def replace_url(match):
+            url = match.group(0)
+            href = url if url.startswith('http') else f'http://{url}'
+            return f'<font color="blue"><u><a href="{href}">{url}</a></u></font>'
+        return re.sub(url_pattern, replace_url, text)
 
     for idx, oid in enumerate(order_ids):
         order = await db.orders.find_one({"order_id": oid}, {"_id": 0})
@@ -638,18 +658,18 @@ async def export_orders_pdf(request: Request):
 
         elements.append(Paragraph(f"Orden: {order.get('order_number', 'N/A')}", h1_style))
         
-        # Summary Table
+        # Summary Table - Values wrapped in Paragraph for link support
         order_data = [
-            ["ID Interno", order.get("order_id", "")],
-            ["PO Cliente", order.get("customer_po", "")],
-            ["Store PO", order.get("store_po", "")],
-            ["Cliente", order.get("client", "")],
-            ["Branding", order.get("branding", "")],
-            ["Prioridad", order.get("priority", "")],
-            ["Cantidad", str(order.get("quantity", 0))],
-            ["Fecha Entrega", order.get("due_date", "")],
-            ["Estado Prod.", order.get("production_status", "")],
-            ["Tablero Actual", order.get("board", "")]
+            ["ID Interno", Paragraph(order.get("order_id", ""), normal_style)],
+            ["PO Cliente", Paragraph(order.get("customer_po", ""), normal_style)],
+            ["Store PO", Paragraph(order.get("store_po", ""), normal_style)],
+            ["Cliente", Paragraph(order.get("client", ""), normal_style)],
+            ["Branding", Paragraph(order.get("branding", ""), normal_style)],
+            ["Prioridad", Paragraph(order.get("priority", ""), normal_style)],
+            ["Cantidad", Paragraph(str(order.get("quantity", 0)), normal_style)],
+            ["Fecha Entrega", Paragraph(order.get("due_date", ""), normal_style)],
+            ["Estado Prod.", Paragraph(order.get("production_status", ""), normal_style)],
+            ["Tablero Actual", Paragraph(order.get("board", ""), normal_style)]
         ]
         
         # Add non-standard fields to the table
@@ -657,11 +677,12 @@ async def export_orders_pdf(request: Request):
             "order_id", "order_number", "customer_po", "store_po", "client", "branding", 
             "priority", "quantity", "due_date", "production_status", "board", "created_at", 
             "updated_at", "images", "links", "comments", "cancel_date", "_id", "sizes", "style",
-            "custom_fields" # Exclude purely technical field
+            "custom_fields"
         }
         for k, v in order.items():
             if k not in standard_keys and v is not None:
-                order_data.append([f"Custom: {k}", str(v)])
+                val_str = str(v)
+                order_data.append([f"Custom: {k}", Paragraph(format_links(val_str), normal_style)])
 
         t = Table(order_data, colWidths=[1.5 * inch, 4 * inch])
         t.setStyle(TableStyle([
@@ -672,9 +693,7 @@ async def export_orders_pdf(request: Request):
             ('PADDING', (0, 0), (-1, -1), 6),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 0.3 * inch))
-
-        # Comments
+        elements.append(Spacer(1, 0.3 * inch))        # Comments
         comments = await db.comments.find({"order_id": oid}, {"_id": 0}).sort("created_at", 1).to_list(100)
         if comments:
             elements.append(Paragraph("Comentarios", h2_style))
@@ -682,41 +701,54 @@ async def export_orders_pdf(request: Request):
                 ts = c.get("created_at", "")[:16].replace("T", " ")
                 author = c.get("user_name", "Usuario")
                 text = c.get("content", "")
-                elements.append(Paragraph(f"<b>{author}</b> ({ts}):", comment_style))
-                elements.append(Paragraph(text, ParagraphStyle('Content', parent=comment_style, leftIndent=30)))
-            elements.append(Spacer(1, 0.3 * inch))
+                # Compact: Author and text in one paragraph
+                elements.append(Paragraph(f"<b>{author}</b> <font color='grey' size='8'>({ts})</font>: {text}", comment_style))
+            elements.append(Spacer(1, 0.2 * inch))
 
-        # Images
+        # Images - Optimized to 2 per row
         image_docs = await db.file_uploads.find({"order_id": oid}, {"_id": 0}).to_list(100)
         if image_docs:
             elements.append(Paragraph("Imágenes Adjuntas", h2_style))
+            img_grid = []
+            current_row = []
+            
             for img_doc in image_docs:
                 try:
                     img_data = img_doc.get("data")
-                    if img_data:
-                        # Decode base64 to image
-                        img_bytes = base64.b64decode(img_data)
-                        img_io = io.BytesIO(img_bytes)
-                        # Create Image object
-                        img = Image(img_io)
-                        # Resize maintaining aspect ratio
-                        max_w, max_h = 5 * inch, 4 * inch
-                        iW, iH = img.imageWidth, img.imageHeight
-                        aspect = iH / float(iW)
-                        if iW > max_w:
-                            iW = max_w
-                            iH = iW * aspect
-                        if iH > max_h:
-                            iH = max_h
-                            iW = iH / aspect
-                        img.drawWidth = iW
-                        img.drawHeight = iH
-                        elements.append(img)
-                        elements.append(Paragraph(img_doc.get("filename", "imagen"), styles['Caption']))
-                        elements.append(Spacer(1, 0.2 * inch))
-                except Exception as e:
-                    logger.error(f"Error rendering image in PDF: {e}")
-                    elements.append(Paragraph(f"[Error cargando imagen: {img_doc.get('filename')}]", normal_style))
+                    if not img_data: continue
+                    
+                    img_bytes = base64.b64decode(img_data)
+                    img_io = io.BytesIO(img_bytes)
+                    img = Image(img_io)
+                    
+                    # Resize for 2nd column grid
+                    max_w = 2.6 * inch
+                    iW, iH = img.imageWidth, img.imageHeight
+                    aspect = iH / float(iW)
+                    img.drawWidth = max_w
+                    img.drawHeight = max_w * aspect
+                    
+                    # Wrap image and caption in a list for the table cell
+                    cell_content = [img, Paragraph(img_doc.get("filename", "imagen")[:30], caption_style)]
+                    current_row.append(cell_content)
+                    
+                    if len(current_row) == 2:
+                        img_grid.append(current_row)
+                        current_row = []
+                except: continue
+                
+            if current_row:
+                current_row.append("") # padding
+                img_grid.append(current_row)
+                
+            if img_grid:
+                img_table = Table(img_grid, colWidths=[2.8 * inch, 2.8 * inch])
+                img_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 12),
+                ]))
+                elements.append(img_table)
 
     doc.build(elements)
     output.seek(0)
