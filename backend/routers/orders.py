@@ -672,9 +672,7 @@ async def export_orders_pdf(request: Request):
             ('PADDING', (0, 0), (-1, -1), 6),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 0.3 * inch))
-
-        # Comments
+        elements.append(Spacer(1, 0.3 * inch))        # Comments
         comments = await db.comments.find({"order_id": oid}, {"_id": 0}).sort("created_at", 1).to_list(100)
         if comments:
             elements.append(Paragraph("Comentarios", h2_style))
@@ -682,41 +680,54 @@ async def export_orders_pdf(request: Request):
                 ts = c.get("created_at", "")[:16].replace("T", " ")
                 author = c.get("user_name", "Usuario")
                 text = c.get("content", "")
-                elements.append(Paragraph(f"<b>{author}</b> ({ts}):", comment_style))
-                elements.append(Paragraph(text, ParagraphStyle('Content', parent=comment_style, leftIndent=30)))
-            elements.append(Spacer(1, 0.3 * inch))
+                # Compact: Author and text in one paragraph
+                elements.append(Paragraph(f"<b>{author}</b> <font color='grey' size='8'>({ts})</font>: {text}", comment_style))
+            elements.append(Spacer(1, 0.2 * inch))
 
-        # Images
+        # Images - Optimized to 2 per row
         image_docs = await db.file_uploads.find({"order_id": oid}, {"_id": 0}).to_list(100)
         if image_docs:
             elements.append(Paragraph("Imágenes Adjuntas", h2_style))
+            img_grid = []
+            current_row = []
+            
             for img_doc in image_docs:
                 try:
                     img_data = img_doc.get("data")
-                    if img_data:
-                        # Decode base64 to image
-                        img_bytes = base64.b64decode(img_data)
-                        img_io = io.BytesIO(img_bytes)
-                        # Create Image object
-                        img = Image(img_io)
-                        # Resize maintaining aspect ratio
-                        max_w, max_h = 5 * inch, 4 * inch
-                        iW, iH = img.imageWidth, img.imageHeight
-                        aspect = iH / float(iW)
-                        if iW > max_w:
-                            iW = max_w
-                            iH = iW * aspect
-                        if iH > max_h:
-                            iH = max_h
-                            iW = iH / aspect
-                        img.drawWidth = iW
-                        img.drawHeight = iH
-                        elements.append(img)
-                        elements.append(Paragraph(img_doc.get("filename", "imagen"), styles['Caption']))
-                        elements.append(Spacer(1, 0.2 * inch))
-                except Exception as e:
-                    logger.error(f"Error rendering image in PDF: {e}")
-                    elements.append(Paragraph(f"[Error cargando imagen: {img_doc.get('filename')}]", normal_style))
+                    if not img_data: continue
+                    
+                    img_bytes = base64.b64decode(img_data)
+                    img_io = io.BytesIO(img_bytes)
+                    img = Image(img_io)
+                    
+                    # Resize for 2nd column grid
+                    max_w = 2.6 * inch
+                    iW, iH = img.imageWidth, img.imageHeight
+                    aspect = iH / float(iW)
+                    img.drawWidth = max_w
+                    img.drawHeight = max_w * aspect
+                    
+                    # Wrap image and caption in a list for the table cell
+                    cell_content = [img, Paragraph(img_doc.get("filename", "imagen")[:30], styles['Caption'])]
+                    current_row.append(cell_content)
+                    
+                    if len(current_row) == 2:
+                        img_grid.append(current_row)
+                        current_row = []
+                except: continue
+                
+            if current_row:
+                current_row.append("") # padding
+                img_grid.append(current_row)
+                
+            if img_grid:
+                img_table = Table(img_grid, colWidths=[2.8 * inch, 2.8 * inch])
+                img_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 12),
+                ]))
+                elements.append(img_table)
 
     doc.build(elements)
     output.seek(0)
