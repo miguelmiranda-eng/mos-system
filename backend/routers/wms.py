@@ -713,12 +713,12 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
                 inv_query = {
                     "$or": [{"style": {"$regex": f"^{style}$", "$options": "i"}}, {"sku": {"$regex": f"^{style}$", "$options": "i"}}],
                     "size": {"$regex": f"^{sz}$", "$options": "i"},
-                    "available": {"$gt": 0}
+                    "units_on_hand": {"$gt": 0}
                 }
                 if color:
                     inv_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
-                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "inv_location": 1, "available": 1, "total_boxes": 1, "customer": 1}).sort("available", -1).to_list(50)
-                locs = [{"location": r.get("inv_location", ""), "available": r.get("available", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("inv_location")]
+                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1}).sort("units_on_hand", -1).to_list(50)
+                locs = [{"location": r.get("location", ""), "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("location")]
                 size_locations[sz] = locs
 
     assigned_to = data.get("assigned_to", "").strip()
