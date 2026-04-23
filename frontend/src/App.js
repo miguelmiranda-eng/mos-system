@@ -600,6 +600,7 @@ import OperatorsCenter from "./components/OperatorsCenter";
 import CEODashboard from "./components/CEODashboard";
 import QCDashboard from "./components/QCDashboard";
 import InsightsDashboard from "./components/InsightsDashboard";
+import BackupCenter from "./components/BackupCenter";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -746,6 +747,11 @@ function AppRouter() {
       <Route path="/insights" element={
         <AdminRoute>
           <InsightsDashboard isAdmin={true} />
+        </AdminRoute>
+      } />
+      <Route path="/backups" element={
+        <AdminRoute>
+          <BackupCenter />
         </AdminRoute>
       } />
     </Routes>

@@ -37,6 +37,7 @@ const SECTIONS_DEFS = [
       { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de cambios y acciones.', icon: 'History' },
       { name: 'Automatizaciones', path: '/automation-center', desc: 'Configuración de reglas inteligentes.', icon: 'Zap' },
       { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos del equipo.', icon: 'Users' },
+      { name: 'Centro de Respaldos', path: '/backups', desc: 'Descarga reportes PDF con fotos o respaldos JSON completos.', icon: 'Database' },
       { name: 'Gestor de Formulario', action: 'manageFormFields', desc: 'Configura el orden y visibilidad de los campos en el modal de nueva orden.', icon: 'ClipboardList' },
     ]
   },
