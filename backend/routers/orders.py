@@ -620,6 +620,15 @@ async def export_orders_pdf(request: Request):
         textColor=colors.HexColor('#444444')
     )
 
+    caption_style = ParagraphStyle(
+        'Caption',
+        parent=styles['Italic'],
+        fontSize=7,
+        leading=8,
+        alignment=1, # Center
+        textColor=colors.grey
+    )
+
     elements = []
     
     # Add Logo/Header if exists? For now just text
@@ -708,7 +717,7 @@ async def export_orders_pdf(request: Request):
                     img.drawHeight = max_w * aspect
                     
                     # Wrap image and caption in a list for the table cell
-                    cell_content = [img, Paragraph(img_doc.get("filename", "imagen")[:30], styles['Caption'])]
+                    cell_content = [img, Paragraph(img_doc.get("filename", "imagen")[:30], caption_style)]
                     current_row.append(cell_content)
                     
                     if len(current_row) == 2:
