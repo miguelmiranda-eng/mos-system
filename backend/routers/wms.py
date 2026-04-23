@@ -400,10 +400,9 @@ async def locations_lookup(request: Request, style: str = "", color: str = ""):
         sz = r.get("size", "")
         if sz not in by_size:
             by_size[sz] = {"size": sz, "locations": [], "total_available": 0, "total_boxes": 0}
-        loc = r.get("location", "")
-        on_hand = r.get("units_on_hand", 0)
-        allocated = r.get("units_allocated", 0)
-        avail = on_hand - allocated
+        loc = r.get("inv_location", r.get("location", ""))
+        # El excel mapea la cantidad total a 'available' directamente
+        avail = r.get("available", 0)
         boxes = r.get("total_boxes", 0)
         if loc and avail > 0:
             by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", "")})
@@ -419,8 +418,11 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     """Return unique dropdown values from inventory, case-insensitive dedup, filtered by customer and cascading."""
     await require_auth(request)
     base = {}
-    if customer:
-        base["customer"] = {"$regex": f"^{customer}$", "$options": "i"}
+    # The user requested to see ALL items from the WMS excel (wms_inventory), 
+    # so we must NOT filter by customer, as it hides options if the order client name
+    # doesn't match the wms_inventory customer name exactly.
+    # if customer:
+    #     base["customer"] = {"$regex": f"^{customer}$", "$options": "i"}
 
     # Manufacturers: filter by customer only
     mfr_match = {k: v for k, v in base.items()}
@@ -431,34 +433,27 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
         {"$sort": {"_id": 1}}
     ]
 
-    # Styles: filter by customer + manufacturer (if given)
+    # Styles: no cascaded filters, show all
     style_match = {k: v for k, v in base.items()}
-    if manufacturer:
-        style_match["manufacturer"] = {"$regex": f"^{manufacturer}$", "$options": "i"}
     style_pipeline = [
         {"$match": style_match},
         {"$group": {"_id": {"$toLower": "$style"}, "val": {"$first": "$style"}}},
-        {"$match": {"_id": {"$ne": ""}}},
+        {"$match": {"_id": {"$nin": ["", None]}}},
         {"$sort": {"_id": 1}}
     ]
 
-    # Colors: filter by customer + style (if given)
+    # Colors: no cascaded filters, show all
     color_match = {k: v for k, v in base.items()}
-    if style:
-        color_match["$or"] = [
-            {"style": {"$regex": f"^{style}$", "$options": "i"}},
-            {"sku": {"$regex": f"^{style}$", "$options": "i"}}
-        ]
     color_pipeline = [
         {"$match": color_match},
         {"$group": {"_id": {"$toLower": "$color"}, "val": {"$first": "$color"}}},
-        {"$match": {"_id": {"$ne": ""}}},
+        {"$match": {"_id": {"$nin": ["", None]}}},
         {"$sort": {"_id": 1}}
     ]
 
-    mfrs = await db.wms_inventory.aggregate(mfr_pipeline).to_list(500)
-    styles = await db.wms_inventory.aggregate(style_pipeline).to_list(500)
-    colors = await db.wms_inventory.aggregate(color_pipeline).to_list(500)
+    mfrs = await db.wms_inventory.aggregate(mfr_pipeline).to_list(5000)
+    styles = await db.wms_inventory.aggregate(style_pipeline).to_list(5000)
+    colors = await db.wms_inventory.aggregate(color_pipeline).to_list(5000)
 
     # Customers list: Fetch directly from MOS Orders (client column)
     cust_pipeline = [
@@ -471,9 +466,9 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
 
     return {
         "customers": merged_customers,
-        "manufacturers": [m["val"] for m in mfrs],
-        "styles": [s["val"] for s in styles],
-        "colors": [c["val"] for c in colors]
+        "manufacturers": [m["val"] for m in mfrs if m and m.get("val")],
+        "styles": [s["val"] for s in styles if s and s.get("val")],
+        "colors": [c["val"] for c in colors if c and c.get("val")]
     }
 
 @router.get("/movements/summary")
@@ -902,8 +897,8 @@ async def list_pick_tickets(request: Request, status: str = ""):
                 "customer": vo.get("client") or vo.get("customer") or vo.get("branding") or "No Client",
                 "client": vo.get("client") or vo.get("customer") or vo.get("branding"),
                 "manufacturer": vo.get("manufacturer") or vo.get("branding"),
-                "style": vo.get("style"),
-                "color": vo.get("color"),
+                "style": "",
+                "color": "",
                 "quantity": vo.get("quantity") or 0,
                 "total_pick_qty": vo.get("quantity") or 0,
                 "status": "pending",

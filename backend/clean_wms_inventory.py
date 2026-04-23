@@ -59,6 +59,9 @@ def run_import():
     df['InvLocation'] = df['InvLocation'].astype(str).str.upper().str.strip()
     df['TotalUnits'] = pd.to_numeric(df['TotalUnits'], errors='coerce').fillna(0)
     
+    # Llenar todos los valores nulos con un texto vacío para evitar que pandas descarte filas durante el groupby
+    df = df.fillna('')
+    
     # Agrupar para unificar duplicados (Mismo cliente, estilo, color, talla, pais y locacion)
     print("Unificando registros duplicados...")
     grouped = df.groupby([

@@ -1079,9 +1079,12 @@ const PickingModule = () => {
     try {
       const params = new URLSearchParams({ style });
       if (color) params.set('color', color);
-      const data = await fetcher(`/inventory/locations-lookup?${params.toString()}`);
+      const url = `${API}/inventory/locations-lookup?${params.toString()}`;
+      const resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) { setSizeLocations({}); return; }
+      const data = await resp.json();
       setSizeLocations(data.sizes || {});
-    } catch { setSizeLocations({}); }
+    } catch(e) { setSizeLocations({}); }
   }, []);
 
   const updateSize = (size, val) => setForm(p => ({ ...p, sizes: { ...p.sizes, [size]: val } }));
@@ -1099,6 +1102,7 @@ const PickingModule = () => {
     });
     setSizeLocations(t.size_locations || {});
     if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
+    if (t.style) lookupLocations(t.style, t.color);
     setShowForm(true);
   };
 

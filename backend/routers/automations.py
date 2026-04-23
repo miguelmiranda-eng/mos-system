@@ -81,7 +81,9 @@ async def run_automations(trigger_type, order, user, context=None):
         try:
             # We use a localized import here if needed, or just call the DB directly to avoid complex router imports
             ticket_id = f"pick_{uuid.uuid4().hex[:12]}"
-            wms_style = order.get("style") or order.get("design_num") or order.get("design_#") or ""
+            # The user requested that style and color should ALWAYS be blank on automatically generated
+            # pick tickets, so the warehouse operators are forced to select them in the WMS module.
+            wms_style = ""
             
             total_qty = order.get("quantity") or 0
             
@@ -90,7 +92,7 @@ async def run_automations(trigger_type, order, user, context=None):
                 "order_number": order.get("order_number", ""),
                 "customer": order.get("client") or "Unknown",
                 "client": order.get("client") or "",
-                "color": order.get("color") or "",
+                "color": "",
                 "quantity": total_qty,
                 "style": wms_style,
                 "sizes": order.get("sizes") or {},
