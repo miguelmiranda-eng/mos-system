@@ -1,27 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Database, FileText, Download, ShieldCheck, ArrowLeft, 
   Search, Filter, CheckCircle2, Loader2, Archive, FileJson,
-  LayoutDashboard, Info
+  LayoutDashboard, Info, Upload, Trash2, RefreshCw, Eye
 } from 'lucide-react';
 import { API } from '../lib/constants';
 import { toast, Toaster } from 'sonner';
 
 const BackupCenter = () => {
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
+  
+  const [viewMode, setViewMode] = useState('system'); // 'system' or 'external'
   const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(null); // 'pdf' or 'json'
+  const [exporting, setExporting] = useState(null); // 'pdf', 'json', 'restore', 'delete'
+  
   const [orders, setOrders] = useState([]);
+  const [externalOrders, setExternalOrders] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
+  
   const [search, setSearch] = useState('');
   const [boardFilter, setBoardFilter] = useState('MASTER');
   const [boards, setBoards] = useState([]);
 
+  // Load system data
   useEffect(() => {
-    fetchBoards();
-    fetchOrders();
-  }, [boardFilter]);
+    if (viewMode === 'system') {
+      fetchBoards();
+      fetchOrders();
+    }
+  }, [boardFilter, viewMode]);
 
   const fetchBoards = async () => {
     try {
@@ -45,8 +54,35 @@ const BackupCenter = () => {
     finally { setLoading(false); }
   };
 
+  // --- External File Logic ---
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        if (data && data.orders) {
+          setExternalOrders(data.orders);
+          setViewMode('external');
+          setSelectedIds([]);
+          toast.success(`Se cargaron ${data.orders.length} órdenes del archivo externo`);
+        } else {
+          toast.error("El archivo no tiene el formato correcto de respaldo MOS");
+        }
+      } catch (err) {
+        toast.error("Error al leer el archivo JSON");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // --- Actions ---
   const handleSearch = (e) => {
-    if (e.key === 'Enter') fetchOrders();
+    if (e.key === 'Enter') {
+      if (viewMode === 'system') fetchOrders();
+    }
   };
 
   const toggleSelect = (id) => {
@@ -56,17 +92,25 @@ const BackupCenter = () => {
   };
 
   const selectAll = () => {
-    if (selectedIds.length === orders.length && orders.length > 0) setSelectedIds([]);
-    else setSelectedIds(orders.map(o => o.order_id));
+    const currentOrders = viewMode === 'system' ? orders : externalOrders;
+    if (selectedIds.length === currentOrders.length && currentOrders.length > 0) setSelectedIds([]);
+    else setSelectedIds(currentOrders.map(o => o.order_id));
   };
 
   const handleExportPDF = async () => {
     if (selectedIds.length === 0) {
-      toast.error("Selecciona al menos una orden para exportar");
+      toast.error("Selecciona al menos una orden");
       return;
     }
     setExporting('pdf');
     try {
+      // PDF only works for system orders currently
+      if (viewMode === 'external') {
+         toast.error("La exportación a PDF solo está disponible para órdenes en el sistema. Restáuralas primero si necesitas el reporte.");
+         setExporting(null);
+         return;
+      }
+
       const res = await fetch(`${API}/orders/export-pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,8 +124,6 @@ const BackupCenter = () => {
         link.download = data.filename;
         link.click();
         toast.success("PDF generado exitosamente");
-      } else {
-        toast.error("Error al generar PDF");
       }
     } catch (err) { toast.error("Error de conexión"); }
     finally { setExporting(null); }
@@ -89,7 +131,7 @@ const BackupCenter = () => {
 
   const handleExportJSON = async () => {
     if (selectedIds.length === 0) {
-      toast.error("Selecciona al menos una orden para exportar");
+      toast.error("Selecciona al menos una orden");
       return;
     }
     setExporting('json');
@@ -106,19 +148,69 @@ const BackupCenter = () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `backup_completo_${new Date().getTime()}.json`;
+        link.download = `backup_mos_${new Date().getTime()}.json`;
         link.click();
-        toast.success("Respaldo JSON generado exitosamente");
+        toast.success("Archivo llave (JSON) creado exitosamente");
       }
     } catch (err) { toast.error("Error de conexión"); }
     finally { setExporting(null); }
   };
 
+  const handleRestore = async () => {
+    if (selectedIds.length === 0) return;
+    setExporting('restore');
+    try {
+      const ordersToRestore = externalOrders.filter(o => selectedIds.includes(o.order_id));
+      const res = await fetch(`${API}/orders/import-complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ orders: ordersToRestore, update_existing: true })
+      });
+      if (res.ok) {
+        const stats = await res.json();
+        toast.success(`Restauración completa: ${stats.orders} nuevas, ${stats.updated_orders} actualizadas.`);
+        setViewMode('system');
+        fetchOrders();
+      }
+    } catch (err) { toast.error("Error al restaurar órdenes"); }
+    finally { setExporting(null); }
+  };
+
+  const handleDeleteFromSystem = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`¿Estás seguro de ELIMINAR PERMANENTEMENTE ${selectedIds.length} órdenes del sistema? Asegúrate de tener tu respaldo descargado primero.`)) return;
+    
+    setExporting('delete');
+    try {
+      let count = 0;
+      for (const id of selectedIds) {
+        const res = await fetch(`${API}/orders/${id}/permanent`, { 
+          method: 'DELETE',
+          credentials: 'include' 
+        });
+        if (res.ok) count++;
+      }
+      toast.success(`${count} órdenes eliminadas del sistema permanentemente.`);
+      fetchOrders();
+      setSelectedIds([]);
+    } catch (err) { toast.error("Error al eliminar órdenes"); }
+    finally { setExporting(null); }
+  };
+
   const inputCls = "w-full bg-slate-900/50 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm text-white outline-none focus:border-royal/50 focus:ring-1 focus:ring-royal/30 transition-all placeholder:text-white/20";
+
+  const displayedOrders = (viewMode === 'system' ? orders : externalOrders)
+    .filter(o => 
+      !search || 
+      o.order_number?.toLowerCase().includes(search.toLowerCase()) || 
+      o.client?.toLowerCase().includes(search.toLowerCase())
+    );
 
   return (
     <div className="min-h-screen bg-[#060b13] text-slate-200 p-6 md:p-10 font-barlow relative overflow-y-auto">
       <Toaster position="bottom-right" theme="dark" />
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
       
       {/* Background Decorative elements */}
       <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-royal/5 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none z-0"></div>
@@ -138,74 +230,107 @@ const BackupCenter = () => {
                    CENTRO DE <span className="text-royal">RESPALDOS</span>
                  </h1>
                  <p className="text-slate-400 font-medium text-sm flex items-center gap-2">
-                   <Info className="w-4 h-4 text-royal/60" /> Exportación de historial con comentarios y evidencia fotográfica.
+                   <ShieldCheck className="w-4 h-4 text-royal/60" /> Gestión de archivo muerto y restauración externa.
                  </p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={handleExportPDF}
-              disabled={exporting || selectedIds.length === 0}
-              className="px-6 py-3.5 bg-slate-800/50 hover:bg-slate-700/50 border border-white/10 rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2.5 transition-all disabled:opacity-20 shadow-xl">
-              {exporting === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-red-500" />}
-              Exportar PDF con Fotos
-            </button>
-            <button 
-              onClick={handleExportJSON}
-              disabled={exporting || selectedIds.length === 0}
-              className="px-8 py-3.5 bg-royal text-white rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2.5 shadow-[0_10px_30px_rgba(30,64,175,0.3)] hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20">
-              {exporting === 'json' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileJson className="w-4 h-4" />}
-              Respaldo JSON Completo
-            </button>
+          <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-white/5 rounded-2xl backdrop-blur-xl">
+             <button 
+                onClick={() => setViewMode('system')}
+                className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'system' ? 'bg-royal text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+                En Sistema
+             </button>
+             <button 
+                onClick={() => viewMode === 'external' ? setViewMode('system') : fileInputRef.current.click()}
+                className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'external' ? 'bg-royal text-white shadow-lg' : 'text-slate-500 hover:text-white flex items-center gap-2'}`}>
+                {viewMode === 'external' ? 'Vista Externa' : <><Upload className="w-3.5 h-3.5" /> Explorar USB</>}
+             </button>
           </div>
         </header>
 
         <div className="grid grid-cols-1 gap-6">
-          {/* Filters Panel */}
-          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-2xl p-5 flex flex-wrap gap-5 items-center shadow-2xl">
-            <div className="relative flex-1 min-w-[300px]">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input 
-                className={inputCls}
-                placeholder="Buscar por orden, cliente o PO..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={handleSearch}
-              />
-            </div>
-            
-            <div className="flex items-center gap-3 min-w-[240px]">
-              <Filter className="w-4 h-4 text-royal" />
-              <select 
-                className="flex-1 bg-slate-900/80 border border-white/10 rounded-xl py-3 px-4 text-sm text-white outline-none focus:border-royal/50 transition-all cursor-pointer"
-                value={boardFilter}
-                onChange={(e) => setBoardFilter(e.target.value)}
-              >
-                <option value="MASTER">Todos los tableros activos</option>
-                <option value="PAPELERA DE RECICLAJE">Papelera de Reciclaje</option>
-                {boards.map(b => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
+          {/* Action Bar */}
+          <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-6 shadow-2xl">
+            <div className="flex flex-wrap gap-3 items-center">
+              {viewMode === 'system' ? (
+                <>
+                  <button 
+                    onClick={handleExportPDF}
+                    disabled={exporting || selectedIds.length === 0}
+                    className="px-5 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
+                    {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
+                    Exportar PDF
+                  </button>
+                  <button 
+                    onClick={handleExportJSON}
+                    disabled={exporting || selectedIds.length === 0}
+                    className="px-5 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
+                    {exporting === 'json' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileJson className="w-3.5 h-3.5 text-royal" />}
+                    Crear Archivo Llave
+                  </button>
+                  <div className="w-px h-8 bg-white/5 mx-2"></div>
+                  <button 
+                    onClick={handleDeleteFromSystem}
+                    disabled={exporting || selectedIds.length === 0}
+                    className="px-5 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
+                    {exporting === 'delete' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    Borrar de MOS
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={handleRestore}
+                    disabled={exporting || selectedIds.length === 0}
+                    className="px-6 py-3 bg-royal text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg transition-all disabled:opacity-20">
+                    {exporting === 'restore' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Restaurar Seleccionadas
+                  </button>
+                  <button 
+                    onClick={() => {setExternalOrders([]); setViewMode('system');}}
+                    className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+                    Cerrar Archivo
+                  </button>
+                </>
+              )}
             </div>
 
-            <button 
-              onClick={selectAll}
-              className="px-5 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:text-royal">
-              {selectedIds.length === orders.length && orders.length > 0 ? 'Desmarcar Todo' : 'Seleccionar Todo'}
-            </button>
+            <div className="flex items-center gap-4 w-full md:w-auto">
+                <div className="relative flex-1 md:w-64">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <input 
+                    className={inputCls}
+                    placeholder="Filtrar en lista..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                {viewMode === 'system' && (
+                  <select 
+                    className="bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-[10px] font-black uppercase tracking-widest text-white outline-none focus:border-royal/50 transition-all cursor-pointer"
+                    value={boardFilter}
+                    onChange={(e) => setBoardFilter(e.target.value)}
+                  >
+                    <option value="MASTER">TODOS ACTIVOS</option>
+                    <option value="PAPELERA DE RECICLAJE">PAPELERA</option>
+                    {boards.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                )}
+                <button 
+                  onClick={selectAll}
+                  className="px-4 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+                  {selectedIds.length === displayedOrders.length && displayedOrders.length > 0 ? 'Nada' : 'Todo'}
+                </button>
+            </div>
           </div>
 
-          {/* Orders Table Container */}
+          {/* Data Table */}
           <div className="bg-slate-900/30 backdrop-blur-md border border-white/5 rounded-3xl overflow-hidden shadow-2xl min-h-[500px]">
             {loading ? (
-              <div className="flex flex-col items-center justify-center h-[500px] space-y-4">
-                <div className="relative">
-                  <div className="w-12 h-12 border-4 border-royal/20 rounded-full animate-spin border-t-royal"></div>
-                </div>
-                <p className="text-xs font-black uppercase tracking-[0.3em] text-royal animate-pulse">Consultando Base de Datos...</p>
+              <div className="flex flex-col items-center justify-center h-[500px]">
+                <Loader2 className="w-10 h-10 animate-spin text-royal" />
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -215,13 +340,13 @@ const BackupCenter = () => {
                       <th className="px-8 py-5 w-16"></th>
                       <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Orden</th>
                       <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Cliente</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Tablero Origen</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Estado Producción</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Fecha Creación</th>
+                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Detalles</th>
+                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">{viewMode === 'system' ? 'Tablero' : 'Estado en Archivo'}</th>
+                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {orders.map(order => {
+                    {displayedOrders.map(order => {
                       const isSelected = selectedIds.includes(order.order_id);
                       return (
                         <tr 
@@ -229,33 +354,34 @@ const BackupCenter = () => {
                           onClick={() => toggleSelect(order.order_id)}
                           className={`group transition-all cursor-pointer ${isSelected ? 'bg-royal/10' : 'hover:bg-white/[0.02]'}`}>
                           <td className="px-8 py-5">
-                            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all duration-300 ${isSelected ? 'bg-royal border-royal scale-110 shadow-[0_0_15px_rgba(30,64,175,0.4)]' : 'border-white/10 bg-black/40 group-hover:border-royal/50'}`}>
+                            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-royal border-royal' : 'border-white/10 bg-black/40'}`}>
                               {isSelected && <CheckCircle2 className="w-4 h-4 text-white" />}
                             </div>
                           </td>
                           <td className="px-6 py-5">
                             <div className="flex flex-col">
                               <span className="text-lg font-black text-white group-hover:text-royal transition-colors">{order.order_number}</span>
-                              <span className="text-[10px] text-slate-600 font-bold uppercase">{order.customer_po || 'Sin PO'}</span>
+                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{order.customer_po || 'Sin PO'}</span>
                             </div>
                           </td>
                           <td className="px-6 py-5">
                             <span className="text-sm font-bold text-slate-300 group-hover:text-white transition-colors">{order.client || '—'}</span>
                           </td>
                           <td className="px-6 py-5">
+                            <div className="flex gap-2">
+                               {order._comments?.length > 0 && <span className="px-2 py-0.5 bg-royal/20 text-royal text-[9px] font-bold rounded flex items-center gap-1"><Info className="w-3 h-3" /> {order._comments.length} Mensajes</span>}
+                               {order._image_files?.length > 0 && <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-500 text-[9px] font-bold rounded flex items-center gap-1"><Eye className="w-3 h-3" /> {order._image_files.length} Fotos</span>}
+                            </div>
+                          </td>
+                          <td className="px-6 py-5">
                             <span className="inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-slate-800 text-slate-400 border border-white/5">
-                              {order.board}
+                              {viewMode === 'system' ? order.board : (order.production_status || 'ARCHIVADO')}
                             </span>
                           </td>
                           <td className="px-6 py-5">
-                            <span className={`text-[10px] font-black uppercase tracking-widest ${order.production_status === 'CANCELLED' ? 'text-red-500' : 'text-royal'}`}>
-                              {order.production_status || 'PENDIENTE'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-5">
-                            <span className="text-xs font-mono text-slate-600">
-                              {order.created_at?.split('T')[0]}
-                            </span>
+                             <button className="p-2 hover:bg-white/5 rounded-lg transition-colors text-slate-600 hover:text-royal">
+                                <LayoutDashboard className="w-4 h-4" />
+                             </button>
                           </td>
                         </tr>
                       );
@@ -265,32 +391,31 @@ const BackupCenter = () => {
               </div>
             )}
             
-            {orders.length === 0 && !loading && (
+            {displayedOrders.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center py-32 text-slate-700">
                 <Archive className="w-20 h-20 mb-6 opacity-10" />
-                <h3 className="text-xl font-black uppercase tracking-widest opacity-20">Sin registros para respaldar</h3>
-                <p className="text-sm font-medium mt-2">Intenta cambiar el filtro de tableros o la búsqueda.</p>
+                <h3 className="text-xl font-black uppercase tracking-widest opacity-20">
+                   {viewMode === 'system' ? 'Sin registros en el sistema' : 'Sube un archivo de tu USB para explorar'}
+                </h3>
+                {viewMode === 'external' && (
+                  <button 
+                    onClick={() => fileInputRef.current.click()}
+                    className="mt-6 px-8 py-3 bg-royal text-white rounded-xl font-black uppercase tracking-widest shadow-xl">
+                    Seleccionar Archivo Llave
+                  </button>
+                )}
               </div>
             )}
           </div>
           
-          {/* Footer Stats */}
-          <div className="flex justify-between items-center px-4 py-2">
-             <div className="flex items-center gap-6">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">Total Encontrado</span>
-                  <span className="text-xl font-black text-white">{orders.length}</span>
-                </div>
-                <div className="w-px h-8 bg-white/10"></div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-royal">Seleccionadas</span>
-                  <span className="text-xl font-black text-white">{selectedIds.length}</span>
-                </div>
+          {/* Status Bar */}
+          <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-700 px-2">
+             <div className="flex items-center gap-4">
+                <span>Modo: <span className={viewMode === 'system' ? 'text-royal' : 'text-emerald-500'}>{viewMode === 'system' ? 'GESTIÓN INTERNA' : 'EXPLORADOR USB'}</span></span>
+                <span>•</span>
+                <span>{selectedIds.length} seleccionadas</span>
              </div>
-             
-             <div className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-700 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4" /> Encriptación AES-128 activa para exportación
-             </div>
+             {viewMode === 'external' && <span>Estas órdenes están en tu USB, no en el servidor.</span>}
           </div>
         </div>
       </div>
