@@ -233,22 +233,22 @@ const BackupCenter = () => {
                   <button 
                     onClick={handleExportPDF}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-6 py-3.5 bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 text-slate-700 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-30 shadow-sm">
+                    className="px-6 py-3.5 bg-white hover:bg-emerald-50 border-2 border-slate-100 hover:border-emerald-500/20 text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-50 disabled:grayscale-[0.5] shadow-sm">
                     {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-4 h-4 text-emerald-500" />}
                     PDF Resumen
                   </button>
                   <button 
                     onClick={handleExportJSON}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-6 py-3.5 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-30 shadow-lg shadow-slate-900/10">
+                    className="px-6 py-3.5 bg-slate-900 hover:bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-slate-900/20">
                     {exporting === 'json' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-emerald-400" />}
                     Descargar Respaldo JSON
                   </button>
-                  <div className="w-px h-10 bg-slate-200 mx-2 hidden md:block"></div>
+                  <div className="w-px h-10 bg-slate-100 mx-2 hidden md:block"></div>
                   <button 
                     onClick={handleDeleteFromSystem}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-6 py-3.5 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all hover:bg-red-500 hover:text-white disabled:opacity-20">
+                    className="px-6 py-3.5 bg-white hover:bg-red-500 hover:text-white border-2 border-red-50/50 hover:border-red-500 text-red-500 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 shadow-sm">
                     <Trash2 className="w-4 h-4" /> Eliminar de MOS
                   </button>
                 </>
