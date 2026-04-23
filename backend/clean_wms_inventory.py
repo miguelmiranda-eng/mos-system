@@ -72,10 +72,10 @@ def run_import():
         'Total Boxes': 'sum'
     }).reset_index()
     
-    # Renombrar para que coincidan con el backend (inv_location y available)
+    # Renombrar para que coincidan con el backend
     grouped = grouped.rename(columns={
-        'InvLocation': 'inv_location',
-        'TotalUnits': 'available',
+        'InvLocation': 'location',
+        'TotalUnits': 'units_on_hand',
         'Style': 'style',
         'Color': 'color',
         'Size': 'size',
@@ -86,12 +86,14 @@ def run_import():
         'Manufacturer': 'manufacturer',
         'Total Boxes': 'total_boxes'
     })
-    
+
     # Preparar para MongoDB
     records = grouped.to_dict('records')
     for r in records:
-        r['last_updated'] = pd.Timestamp.now()
-        r['status'] = 'available'
+        import uuid
+        r['inventory_id'] = f"inv_{uuid.uuid4().hex[:12]}"
+        r['units_allocated'] = 0
+        r['updated_at'] = pd.Timestamp.now().isoformat()
     
     print(f"Limpieza completada. Registros unificados: {len(records)}")
     

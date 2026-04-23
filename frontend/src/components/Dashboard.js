@@ -1545,14 +1545,14 @@ const Dashboard = () => {
           <div className="flex-1 overflow-auto px-6 pb-6">
             <div className="rounded-xl border border-border/50 overflow-x-auto bg-background/50 shadow-inner">
               <table className="w-full text-sm border-collapse">
-                <thead className="sticky top-0 bg-secondary/95 backdrop-blur-md z-20">
+                <thead className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
                   <tr className="border-b border-border/50">
-                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary/95 z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)]">{t('order')}</th>
+                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</th>
                     <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</th>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
                       <th key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</th>
                     ))}
-                    <th className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary/95 z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)]">Accion</th>
+                    <th className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1560,7 +1560,7 @@ const Dashboard = () => {
                     <tr key={order.order_id}
                       className="border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group"
                       data-testid={`search-result-${order.order_id}`}>
-                      <td className="py-3 px-4 sticky left-0 bg-background/95 z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors">
+                      <td className="py-3 px-4 sticky left-0 bg-card z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <EditableCell 
                           value={order.order_number} 
                           field="order_number" 
@@ -1595,7 +1595,7 @@ const Dashboard = () => {
                           />
                         </td>
                       ))}
-                      <td className="py-3 px-4 text-center sticky right-0 bg-background/95 z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors">
+                      <td className="py-3 px-4 text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <div className="flex items-center gap-1.5 justify-center">
                           <button
                             onClick={() => { setCommentsOrder(order); setSearchResults(null); }}

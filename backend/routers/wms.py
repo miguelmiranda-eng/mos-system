@@ -498,7 +498,7 @@ async def inventory_summary(request: Request, customer: str = ""):
     else:
         total_locations = await db.wms_locations.count_documents({"active": True})
         
-    low_stock_query = {"units_on_hand": {"$lte": 10}, "units_on_hand": {"$gt": 0}}
+    low_stock_query = {"units_on_hand": {"$lte": 10, "$gt": 0}}
     if customer:
         low_stock_query["customer"] = {"$regex": customer, "$options": "i"}
         

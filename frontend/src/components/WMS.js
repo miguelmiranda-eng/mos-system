@@ -610,13 +610,13 @@ const PutawayModule = () => {
 };
 
 // ==================== INVENTORY MODULE ====================
-const InventoryModule = () => {
+const InventoryModule = ({ initialCustomer = '' }) => {
   const { t } = useLang();
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [] });
   const [search, setSearch] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('');
+  const [customerFilter, setCustomerFilter] = useState(initialCustomer);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [importing, setImporting] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -629,7 +629,9 @@ const InventoryModule = () => {
     if (customerFilter) params.set('customer', customerFilter);
     if (categoryFilter) params.set('category', categoryFilter);
     fetcher(`/inventory?${params.toString()}`).then(setInventory).catch(() => {});
-    fetcher('/inventory/summary').then(setSummary).catch(() => {});
+    const summaryParams = new URLSearchParams();
+    if (customerFilter) summaryParams.set('customer', customerFilter);
+    fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(() => {});
   }, [search, customerFilter, categoryFilter]);
   useEffect(() => { load(); loadFilters(); }, [load, loadFilters]);
 
@@ -2534,16 +2536,19 @@ const AsnModule = () => {
 
 // ==================== MAIN WMS COMPONENT ====================
 
-// Wrapper so MODULE_COMPONENTS can receive props via the ActiveComponent pattern
+// Wrappers so MODULE_COMPONENTS can receive props via the ActiveComponent pattern
 let _wmsInventoryDashboardProps = {};
 const InventoryDashboardWrapper = () => <InventoryDashboard {..._wmsInventoryDashboardProps} />;
+
+let _wmsInventoryModuleProps = {};
+const InventoryModuleWrapper = () => <InventoryModule {..._wmsInventoryModuleProps} />;
 
 const MODULE_COMPONENTS = {
   directed: DirectedWorkModule,
   dashboard: InventoryDashboardWrapper,
   receiving: ReceivingModule,
   putaway: PutawayModule,
-  inventory: InventoryModule,
+  inventory: InventoryModuleWrapper,
   picking: PickingModule,
   finished: FinishedGoodsModule,
   movements: MovementsModule,
@@ -2575,6 +2580,7 @@ export default function WMS() {
   // Keep module wrapper props in sync with current user
   const associatedCustomer = currentUser?.associated_customer || '';
   _wmsInventoryDashboardProps = { customer: associatedCustomer, apiBase: API };
+  _wmsInventoryModuleProps = { initialCustomer: associatedCustomer };
 
   const MODULES = [
     { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
