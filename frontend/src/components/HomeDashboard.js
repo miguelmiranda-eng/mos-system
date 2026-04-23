@@ -127,23 +127,6 @@ const HomeDashboard = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-8 space-y-12">
-        
-        {/* STATS ROW */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-           {stats.map((stat, idx) => (
-             <div key={idx} className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
-                <div className="flex justify-between items-start mb-4">
-                   <div className={`p-3 ${stat.bg} rounded-2xl`}>
-                      <stat.icon className={`w-6 h-6 ${stat.color}`} />
-                   </div>
-                </div>
-                <div className="flex flex-col">
-                   <span className="text-4xl font-black text-slate-900 tracking-tighter">{stat.value.toLocaleString()}</span>
-                </div>
-             </div>
-           ))}
-        </div>
-
         {/* ORIGINAL GRID LAYOUT WITH EXECUTIVE STYLE */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
            {filteredSections.map(section => (
