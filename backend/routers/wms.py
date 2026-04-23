@@ -400,9 +400,8 @@ async def locations_lookup(request: Request, style: str = "", color: str = ""):
         sz = r.get("size", "")
         if sz not in by_size:
             by_size[sz] = {"size": sz, "locations": [], "total_available": 0, "total_boxes": 0}
-        loc = r.get("inv_location", r.get("location", ""))
-        # El excel mapea la cantidad total a 'available' directamente
-        avail = r.get("available", 0)
+        loc = r.get("location", r.get("inv_location", ""))
+        avail = r.get("units_on_hand", r.get("available", 0)) - r.get("units_allocated", 0)
         boxes = r.get("total_boxes", 0)
         if loc and avail > 0:
             by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", "")})
