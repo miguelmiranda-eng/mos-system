@@ -144,11 +144,22 @@ const BackupCenter = () => {
       });
       if (res.ok) {
         const data = await res.json();
+        
+        // Generar nombre descriptivo
+        let filenameBase = "backup_mos";
+        const selectedOrders = orders.filter(o => selectedIds.includes(o.order_id));
+        
+        if (selectedOrders.length === 1) {
+          filenameBase = `backup_ORDEN_${selectedOrders[0].order_number}`;
+        } else if (selectedOrders.length > 1) {
+          filenameBase = `backup_ORDEN_${selectedOrders[0].order_number}_y_${selectedOrders.length - 1}_mas`;
+        }
+
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `backup_mos_${new Date().getTime()}.json`;
+        link.download = `${filenameBase}_${new Date().getTime()}.json`;
         link.click();
         toast.success("Archivo llave (JSON) creado exitosamente");
       }
