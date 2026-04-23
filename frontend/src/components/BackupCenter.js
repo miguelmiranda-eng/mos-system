@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Database, FileText, Download, ShieldCheck, ArrowLeft, 
   Search, Filter, CheckCircle2, Loader2, Archive, FileJson,
-  LayoutDashboard, Info, Upload, Trash2, RefreshCw, Eye
+  LayoutDashboard, Info, Upload, Trash2, RefreshCw, Eye, ChevronRight
 } from 'lucide-react';
 import { API } from '../lib/constants';
 import { toast, Toaster } from 'sonner';
@@ -14,7 +14,7 @@ const BackupCenter = () => {
   
   const [viewMode, setViewMode] = useState('system'); // 'system' or 'external'
   const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(null); // 'pdf', 'json', 'restore', 'delete'
+  const [exporting, setExporting] = useState(null); 
   
   const [orders, setOrders] = useState([]);
   const [externalOrders, setExternalOrders] = useState([]);
@@ -24,7 +24,6 @@ const BackupCenter = () => {
   const [boardFilter, setBoardFilter] = useState('MASTER');
   const [boards, setBoards] = useState([]);
 
-  // Load system data
   useEffect(() => {
     if (viewMode === 'system') {
       fetchBoards();
@@ -54,7 +53,6 @@ const BackupCenter = () => {
     finally { setLoading(false); }
   };
 
-  // --- External File Logic ---
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -69,20 +67,13 @@ const BackupCenter = () => {
           setSelectedIds([]);
           toast.success(`Se cargaron ${data.orders.length} órdenes del archivo externo`);
         } else {
-          toast.error("El archivo no tiene el formato correcto de respaldo MOS");
+          toast.error("Formato de respaldo incorrecto");
         }
       } catch (err) {
         toast.error("Error al leer el archivo JSON");
       }
     };
     reader.readAsText(file);
-  };
-
-  // --- Actions ---
-  const handleSearch = (e) => {
-    if (e.key === 'Enter') {
-      if (viewMode === 'system') fetchOrders();
-    }
   };
 
   const toggleSelect = (id) => {
@@ -98,19 +89,13 @@ const BackupCenter = () => {
   };
 
   const handleExportPDF = async () => {
-    if (selectedIds.length === 0) {
-      toast.error("Selecciona al menos una orden");
-      return;
-    }
+    if (selectedIds.length === 0) return;
     setExporting('pdf');
     try {
-      // PDF only works for system orders currently
       if (viewMode === 'external') {
-         toast.error("La exportación a PDF solo está disponible para órdenes en el sistema. Restáuralas primero si necesitas el reporte.");
-         setExporting(null);
-         return;
+         toast.error("Restaura las órdenes primero para generar el PDF.");
+         setExporting(null); return;
       }
-
       const res = await fetch(`${API}/orders/export-pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -123,17 +108,14 @@ const BackupCenter = () => {
         link.href = `data:application/pdf;base64,${data.data}`;
         link.download = data.filename;
         link.click();
-        toast.success("PDF generado exitosamente");
+        toast.success("PDF generado");
       }
     } catch (err) { toast.error("Error de conexión"); }
     finally { setExporting(null); }
   };
 
   const handleExportJSON = async () => {
-    if (selectedIds.length === 0) {
-      toast.error("Selecciona al menos una orden");
-      return;
-    }
+    if (selectedIds.length === 0) return;
     setExporting('json');
     try {
       const res = await fetch(`${API}/orders/export-complete`, {
@@ -146,14 +128,13 @@ const BackupCenter = () => {
         const data = await res.json();
         const dateStr = new Date().toISOString().split('T')[0];
         const filename = `respaldo_mos_${dateStr}_${new Date().getTime()}`;
-
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
         link.download = `${filename}.json`;
         link.click();
-        toast.success("Archivo llave (JSON) creado exitosamente");
+        toast.success("Archivo llave creado");
       }
     } catch (err) { toast.error("Error de conexión"); }
     finally { setExporting(null); }
@@ -172,36 +153,28 @@ const BackupCenter = () => {
       });
       if (res.ok) {
         const stats = await res.json();
-        toast.success(`Restauración completa: ${stats.orders} nuevas, ${stats.updated_orders} actualizadas.`);
+        toast.success(`Restauración completa: ${stats.orders} nuevas.`);
         setViewMode('system');
         fetchOrders();
       }
-    } catch (err) { toast.error("Error al restaurar órdenes"); }
+    } catch (err) { toast.error("Error al restaurar"); }
     finally { setExporting(null); }
   };
 
   const handleDeleteFromSystem = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`¿Estás seguro de ELIMINAR PERMANENTEMENTE ${selectedIds.length} órdenes del sistema? Asegúrate de tener tu respaldo descargado primero.`)) return;
-    
+    if (!window.confirm(`¿ELIMINAR PERMANENTEMENTE ${selectedIds.length} órdenes?`)) return;
     setExporting('delete');
     try {
-      let count = 0;
       for (const id of selectedIds) {
-        const res = await fetch(`${API}/orders/${id}/permanent`, { 
-          method: 'DELETE',
-          credentials: 'include' 
-        });
-        if (res.ok) count++;
+        await fetch(`${API}/orders/${id}/permanent`, { method: 'DELETE', credentials: 'include' });
       }
-      toast.success(`${count} órdenes eliminadas del sistema permanentemente.`);
+      toast.success("Órdenes eliminadas");
       fetchOrders();
       setSelectedIds([]);
-    } catch (err) { toast.error("Error al eliminar órdenes"); }
+    } catch (err) { toast.error("Error al eliminar"); }
     finally { setExporting(null); }
   };
-
-  const inputCls = "w-full bg-slate-900/50 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm text-white outline-none focus:border-royal/50 focus:ring-1 focus:ring-royal/30 transition-all placeholder:text-white/20";
 
   const displayedOrders = (viewMode === 'system' ? orders : externalOrders)
     .filter(o => 
@@ -211,75 +184,72 @@ const BackupCenter = () => {
     );
 
   return (
-    <div className="min-h-screen bg-[#060b13] text-slate-200 p-6 md:p-10 font-barlow relative overflow-y-auto">
-      <Toaster position="bottom-right" theme="dark" />
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-barlow overflow-y-auto pb-20">
+      <Toaster position="bottom-right" />
       <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
       
-      {/* Background Decorative elements */}
-      <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-royal/5 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none z-0"></div>
-      
-      <div className="relative z-10 max-w-7xl mx-auto">
-        <header className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-4">
-            <button onClick={() => navigate('/home')} className="text-slate-500 hover:text-royal flex items-center text-xs font-bold uppercase tracking-widest transition-colors group">
-               <ArrowLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform" /> Volver al Home
-            </button>
-            <div className="flex items-center gap-5">
-              <div className="w-14 h-14 bg-royal/10 rounded-2xl flex items-center justify-center border border-royal/20 shadow-lg shadow-royal/5">
-                <Database className="w-7 h-7 text-royal" />
+      {/* HEADER EXECUTIVE */}
+      <header className="bg-white border-b border-slate-200 px-8 py-8 mb-10 shadow-sm sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+           <div className="flex items-center gap-6">
+              <button 
+                onClick={() => navigate('/home')} 
+                className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 transition-all border border-slate-200 group">
+                <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+              </button>
+              <div className="flex flex-col leading-none">
+                <h1 className="text-3xl font-black uppercase tracking-tighter text-slate-900">
+                  BACKUP <span className="text-emerald-500">CENTER</span>
+                </h1>
+                <div className="flex items-center gap-2 mt-2">
+                   <ShieldCheck className="w-4 h-4 text-emerald-500/60" />
+                   <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400">Security & Archive Management</span>
+                </div>
               </div>
-              <div>
-                 <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-                   CENTRO DE <span className="text-royal">RESPALDOS</span>
-                 </h1>
-                 <p className="text-slate-400 font-medium text-sm flex items-center gap-2">
-                   <ShieldCheck className="w-4 h-4 text-royal/60" /> Gestión de archivo muerto y restauración externa.
-                 </p>
-              </div>
-            </div>
-          </div>
+           </div>
 
-          <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-white/5 rounded-2xl backdrop-blur-xl">
-             <button 
-                onClick={() => setViewMode('system')}
-                className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'system' ? 'bg-royal text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
-                En Sistema
-             </button>
-             <button 
-                onClick={() => viewMode === 'external' ? setViewMode('system') : fileInputRef.current.click()}
-                className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'external' ? 'bg-royal text-white shadow-lg' : 'text-slate-500 hover:text-white flex items-center gap-2'}`}>
-                {viewMode === 'external' ? 'Vista Externa' : <><Upload className="w-3.5 h-3.5" /> Explorar USB</>}
-             </button>
-          </div>
-        </header>
+           <div className="flex items-center gap-3 p-1.5 bg-slate-100 border border-slate-200 rounded-[1.5rem]">
+              <button 
+                 onClick={() => setViewMode('system')}
+                 className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'system' ? 'bg-white text-emerald-600 shadow-md border border-emerald-100' : 'text-slate-500 hover:text-slate-800'}`}>
+                 Archivo del Sistema
+              </button>
+              <button 
+                 onClick={() => viewMode === 'external' ? setViewMode('system') : fileInputRef.current.click()}
+                 className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${viewMode === 'external' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}>
+                 {viewMode === 'external' ? 'Archivo Externo' : <><Upload className="w-3.5 h-3.5" /> Explorar USB</>}
+              </button>
+           </div>
+        </div>
+      </header>
 
-        <div className="grid grid-cols-1 gap-6">
-          {/* Action Bar */}
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-6 shadow-2xl">
+      <main className="max-w-7xl mx-auto px-8 space-y-8">
+        
+        {/* ACTION BAR CARD */}
+        <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm flex flex-col md:flex-row gap-6 items-center justify-between">
             <div className="flex flex-wrap gap-3 items-center">
               {viewMode === 'system' ? (
                 <>
                   <button 
                     onClick={handleExportPDF}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-5 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
-                    {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
-                    Exportar PDF
+                    className="px-6 py-3.5 bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 text-slate-700 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-30 shadow-sm">
+                    {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-4 h-4 text-emerald-500" />}
+                    PDF Resumen
                   </button>
                   <button 
                     onClick={handleExportJSON}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-5 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
-                    {exporting === 'json' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileJson className="w-3.5 h-3.5 text-royal" />}
-                    Crear Archivo Llave
+                    className="px-6 py-3.5 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-30 shadow-lg shadow-slate-900/10">
+                    {exporting === 'json' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-emerald-400" />}
+                    Descargar Respaldo JSON
                   </button>
-                  <div className="w-px h-8 bg-white/5 mx-2"></div>
+                  <div className="w-px h-10 bg-slate-200 mx-2 hidden md:block"></div>
                   <button 
                     onClick={handleDeleteFromSystem}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-5 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-20">
-                    {exporting === 'delete' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                    Borrar de MOS
+                    className="px-6 py-3.5 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all hover:bg-red-500 hover:text-white disabled:opacity-20">
+                    <Trash2 className="w-4 h-4" /> Eliminar de MOS
                   </button>
                 </>
               ) : (
@@ -287,13 +257,13 @@ const BackupCenter = () => {
                   <button 
                     onClick={handleRestore}
                     disabled={exporting || selectedIds.length === 0}
-                    className="px-6 py-3 bg-royal text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg transition-all disabled:opacity-20">
-                    {exporting === 'restore' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                    Restaurar Seleccionadas
+                    className="px-8 py-3.5 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-emerald-500/20 transition-all disabled:opacity-30">
+                    {exporting === 'restore' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Restaurar Selección
                   </button>
                   <button 
                     onClick={() => {setExternalOrders([]); setViewMode('system');}}
-                    className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+                    className="px-8 py-3.5 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-slate-50">
                     Cerrar Archivo
                   </button>
                 </>
@@ -301,127 +271,132 @@ const BackupCenter = () => {
             </div>
 
             <div className="flex items-center gap-4 w-full md:w-auto">
-                <div className="relative flex-1 md:w-64">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <div className="relative flex-1 md:w-72">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
                   <input 
-                    className={inputCls}
-                    placeholder="Filtrar en lista..."
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 pl-12 pr-4 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500/20 transition-all placeholder:text-slate-400 font-bold"
+                    placeholder="Filtrar por número u orden..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
                 {viewMode === 'system' && (
-                  <select 
-                    className="bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-[10px] font-black uppercase tracking-widest text-white outline-none focus:border-royal/50 transition-all cursor-pointer"
-                    value={boardFilter}
-                    onChange={(e) => setBoardFilter(e.target.value)}
-                  >
-                    <option value="MASTER">TODOS ACTIVOS</option>
-                    <option value="PAPELERA DE RECICLAJE">PAPELERA</option>
-                    {boards.map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
+                  <div className="relative">
+                    <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-emerald-500" />
+                    <select 
+                      className="bg-slate-50 border border-slate-100 rounded-2xl py-3 pl-10 pr-8 text-[10px] font-black uppercase tracking-widest text-slate-600 outline-none focus:border-emerald-500/20 transition-all cursor-pointer appearance-none"
+                      value={boardFilter}
+                      onChange={(e) => setBoardFilter(e.target.value)}
+                    >
+                      <option value="MASTER">TODOS ACTIVOS</option>
+                      <option value="PAPELERA DE RECICLAJE">PAPELERA</option>
+                      {boards.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </div>
                 )}
                 <button 
                   onClick={selectAll}
-                  className="px-4 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
-                  {selectedIds.length === displayedOrders.length && displayedOrders.length > 0 ? 'Nada' : 'Todo'}
+                  className="px-5 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-slate-50">
+                  {selectedIds.length === displayedOrders.length && displayedOrders.length > 0 ? 'Deseleccionar' : 'Seleccionar Todo'}
                 </button>
             </div>
-          </div>
-
-          {/* Data Table */}
-          <div className="bg-slate-900/30 backdrop-blur-md border border-white/5 rounded-3xl overflow-hidden shadow-2xl min-h-[500px]">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center h-[500px]">
-                <Loader2 className="w-10 h-10 animate-spin text-royal" />
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/5 bg-slate-800/20">
-                      <th className="px-8 py-5 w-16"></th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Orden</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Cliente</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Detalles</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">{viewMode === 'system' ? 'Tablero' : 'Estado en Archivo'}</th>
-                      <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {displayedOrders.map(order => {
-                      const isSelected = selectedIds.includes(order.order_id);
-                      return (
-                        <tr 
-                          key={order.order_id} 
-                          onClick={() => toggleSelect(order.order_id)}
-                          className={`group transition-all cursor-pointer ${isSelected ? 'bg-royal/10' : 'hover:bg-white/[0.02]'}`}>
-                          <td className="px-8 py-5">
-                            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-royal border-royal' : 'border-white/10 bg-black/40'}`}>
-                              {isSelected && <CheckCircle2 className="w-4 h-4 text-white" />}
-                            </div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <div className="flex flex-col">
-                              <span className="text-lg font-black text-white group-hover:text-royal transition-colors">{order.order_number}</span>
-                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{order.customer_po || 'Sin PO'}</span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <span className="text-sm font-bold text-slate-300 group-hover:text-white transition-colors">{order.client || '—'}</span>
-                          </td>
-                          <td className="px-6 py-5">
-                            <div className="flex gap-2">
-                               {order._comments?.length > 0 && <span className="px-2 py-0.5 bg-royal/20 text-royal text-[9px] font-bold rounded flex items-center gap-1"><Info className="w-3 h-3" /> {order._comments.length} Mensajes</span>}
-                               {order._image_files?.length > 0 && <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-500 text-[9px] font-bold rounded flex items-center gap-1"><Eye className="w-3 h-3" /> {order._image_files.length} Fotos</span>}
-                            </div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-slate-800 text-slate-400 border border-white/5">
-                              {viewMode === 'system' ? order.board : (order.production_status || 'ARCHIVADO')}
-                            </span>
-                          </td>
-                          <td className="px-6 py-5">
-                             <button className="p-2 hover:bg-white/5 rounded-lg transition-colors text-slate-600 hover:text-royal">
-                                <LayoutDashboard className="w-4 h-4" />
-                             </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            
-            {displayedOrders.length === 0 && !loading && (
-              <div className="flex flex-col items-center justify-center py-32 text-slate-700">
-                <Archive className="w-20 h-20 mb-6 opacity-10" />
-                <h3 className="text-xl font-black uppercase tracking-widest opacity-20">
-                   {viewMode === 'system' ? 'Sin registros en el sistema' : 'Sube un archivo de tu USB para explorar'}
-                </h3>
-                {viewMode === 'external' && (
-                  <button 
-                    onClick={() => fileInputRef.current.click()}
-                    className="mt-6 px-8 py-3 bg-royal text-white rounded-xl font-black uppercase tracking-widest shadow-xl">
-                    Seleccionar Archivo Llave
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          
-          {/* Status Bar */}
-          <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-700 px-2">
-             <div className="flex items-center gap-4">
-                <span>Modo: <span className={viewMode === 'system' ? 'text-royal' : 'text-emerald-500'}>{viewMode === 'system' ? 'GESTIÓN INTERNA' : 'EXPLORADOR USB'}</span></span>
-                <span>•</span>
-                <span>{selectedIds.length} seleccionadas</span>
-             </div>
-             {viewMode === 'external' && <span>Estas órdenes están en tu USB, no en el servidor.</span>}
-          </div>
         </div>
-      </div>
+
+        {/* DATA TABLE CARD */}
+        <div className="bg-white border border-slate-200 rounded-[2.5rem] overflow-hidden shadow-sm min-h-[600px]">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center h-[600px]">
+              <Loader2 className="w-12 h-12 animate-spin text-emerald-500" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50 border-b border-slate-100">
+                    <th className="px-10 py-6 w-20"></th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Orden / PO</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Cliente</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Contenido</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Tablero Origen</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {displayedOrders.map(order => {
+                    const isSelected = selectedIds.includes(order.order_id);
+                    return (
+                      <tr 
+                        key={order.order_id} 
+                        onClick={() => toggleSelect(order.order_id)}
+                        className={`group transition-all cursor-pointer ${isSelected ? 'bg-emerald-50/40' : 'hover:bg-slate-50/30'}`}>
+                        <td className="px-10 py-6">
+                          <div className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-emerald-500 border-emerald-500 shadow-lg shadow-emerald-500/20' : 'border-slate-200 bg-white'}`}>
+                            {isSelected && <CheckCircle2 className="w-4 h-4 text-white" />}
+                          </div>
+                        </td>
+                        <td className="px-6 py-6">
+                          <div className="flex flex-col">
+                            <span className="text-xl font-black text-slate-900 group-hover:text-emerald-600 transition-colors tracking-tighter">{order.order_number}</span>
+                            <span className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-1">{order.customer_po || 'SIN PO'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-6">
+                          <span className="text-sm font-bold text-slate-600 group-hover:text-slate-900 transition-colors uppercase">{order.client || '—'}</span>
+                        </td>
+                        <td className="px-6 py-6">
+                          <div className="flex gap-2">
+                             {order._comments?.length > 0 && <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-blue-100">{order._comments.length} Coments</span>}
+                             {order._image_files?.length > 0 && <span className="px-3 py-1 bg-emerald-50 text-emerald-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-emerald-100">{order._image_files.length} Fotos</span>}
+                          </div>
+                        </td>
+                        <td className="px-6 py-6">
+                          <span className="inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 border border-slate-200">
+                            {viewMode === 'system' ? order.board : (order.production_status || 'EXTERNO')}
+                          </span>
+                        </td>
+                        <td className="px-6 py-6">
+                           <div className="opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                              <ChevronRight className="w-5 h-5 text-emerald-500" />
+                           </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          
+          {displayedOrders.length === 0 && !loading && (
+            <div className="flex flex-col items-center justify-center py-40 text-slate-300">
+              <Archive className="w-24 h-24 mb-6 opacity-10" />
+              <h3 className="text-2xl font-black uppercase tracking-[0.3em] opacity-20">
+                 {viewMode === 'system' ? 'Sin registros' : 'Esperando archivo USB...'}
+              </h3>
+              {viewMode === 'external' && (
+                <button 
+                  onClick={() => fileInputRef.current.click()}
+                  className="mt-10 px-10 py-4 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-2xl shadow-emerald-500/30 hover:bg-emerald-600 transition-all">
+                  Cargar JSON de Respaldo
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        
+        {/* FOOTER STATUS */}
+        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.5em] text-slate-400 px-10">
+           <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                 <div className={`w-2 h-2 rounded-full ${viewMode === 'system' ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
+                 <span>MODO: {viewMode === 'system' ? 'INTERNO' : 'EXTERNO (USB)'}</span>
+              </div>
+              <div className="w-1 h-1 bg-slate-300 rounded-full" />
+              <span>{selectedIds.length} ÓRDENES SELECCIONADAS</span>
+           </div>
+           {viewMode === 'external' && <span className="text-emerald-600 italic">Explorando almacenamiento externo con éxito.</span>}
+        </div>
+      </main>
     </div>
   );
 };
