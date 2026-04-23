@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Factory, Warehouse, Zap, History, Users, 
   Database, Boxes, Layers, Tags, UserSquare, ArrowLeft, Columns, ClipboardList,
-  LayoutDashboard, TrendingUp, Settings, BarChart3, ShieldCheck, Activity, Search, ChevronRight
+  LayoutDashboard, TrendingUp, Settings, BarChart3, ShieldCheck, Activity, Search, 
+  CheckCircle2, Clock, PlayCircle, FileCheck
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { API } from '../lib/constants';
@@ -19,10 +20,8 @@ const ICON_MAP = {
 const SECTIONS_DEFS = [
   {
     id: 'inventory',
-    title: 'Operaciones de Planta',
-    category: 'Producción',
-    color: 'from-blue-500/10 to-indigo-500/5',
-    accent: 'bg-blue-500',
+    title: 'Operaciones & WMS',
+    category: 'Logística de Planta',
     items: [
       { name: 'WMS Central', path: '/wms', desc: 'Gestión de almacén y ubicaciones.', icon: 'Warehouse' },
       { name: 'Stock de Tintas', path: '/wms?tab=tintas', desc: 'Inventario de insumos químicos.', icon: 'Boxes' },
@@ -31,39 +30,24 @@ const SECTIONS_DEFS = [
   },
   {
     id: 'config',
-    title: 'Administración Global',
-    category: 'Sistema',
-    color: 'from-purple-500/10 to-royal/5',
-    accent: 'bg-royal',
+    title: 'Administración del Sistema',
+    category: 'Configuración',
     items: [
       { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de acciones.', icon: 'Activity' },
       { name: 'Automatizaciones', path: '/automation-center', desc: 'Reglas inteligentes de flujo.', icon: 'Zap' },
-      { name: 'Usuarios', path: '/users', desc: 'Permisos y accesos del equipo.', icon: 'Users' },
-      { name: 'Centro de Respaldos', path: '/backups', desc: 'PDFs y archivos llave JSON.', icon: 'ShieldCheck' },
+      { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos.', icon: 'Users' },
+      { name: 'Centro de Respaldos', path: '/backups', desc: 'Reportes PDF y respaldos JSON.', icon: 'ShieldCheck' },
       { name: 'Gestor Formulario', action: 'manageFormFields', desc: 'Configura campos del modal.', icon: 'ClipboardList' },
       { name: 'Columnas Globales', action: 'manageColumns', desc: 'Configura visibilidad global.', icon: 'Columns' },
     ]
   },
   {
     id: 'catalogs',
-    title: 'Base de Conocimiento',
-    category: 'Catálogos',
-    color: 'from-slate-500/10 to-slate-800/5',
-    accent: 'bg-slate-400',
+    title: 'Catálogos Maestros',
+    category: 'Base de Datos',
     items: [
-      { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Clientes y estados maestros.', icon: 'Tags' },
-      { name: 'Operadores', path: '/operators-center', desc: 'Equipo humano de producción.', icon: 'UserSquare' },
-    ]
-  },
-  {
-    id: 'insights',
-    title: 'Inteligencia de Datos',
-    category: 'Reportes',
-    color: 'from-emerald-500/10 to-teal-500/5',
-    accent: 'bg-emerald-500',
-    roles: ['admin', 'ceo'],
-    items: [
-      { name: 'CEO Dashboard', path: '/ceo-dashboard', desc: 'KPIs de alta gerencia.', icon: 'TrendingUp' },
+      { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Clientes, brandings y estados.', icon: 'Tags' },
+      { name: 'Operadores', path: '/operators-center', desc: 'Gestión de equipo de producción.', icon: 'UserSquare' },
     ]
   }
 ];
@@ -71,10 +55,17 @@ const SECTIONS_DEFS = [
 const HomeDashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [activeCategory, setActiveCategory] = useState('Todas');
+  const [counts, setCounts] = useState({});
   const [showColumnManager, setShowColumnManager] = useState(false);
   const [showFormFieldsManager, setShowFormFieldsManager] = useState(false);
   const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    fetch(`${API}/orders/board-counts`, { credentials: 'include' })
+      .then(res => res.ok ? res.json() : {})
+      .then(data => setCounts(data))
+      .catch(() => {});
+  }, []);
 
   const handleCardClick = (item) => {
     if (item.action === 'manageColumns') setShowColumnManager(true);
@@ -82,11 +73,8 @@ const HomeDashboard = () => {
     else if (item.path) navigate(item.path);
   };
 
-  const categories = ['Todas', ...new Set(SECTIONS_DEFS.map(s => s.category))];
-
   const filteredSections = SECTIONS_DEFS
     .filter(s => !s.roles || s.roles.includes(user?.role))
-    .filter(s => activeCategory === 'Todas' || s.category === activeCategory)
     .map(s => ({
       ...s,
       items: s.items.filter(item => 
@@ -97,126 +85,174 @@ const HomeDashboard = () => {
     }))
     .filter(s => s.items.length > 0);
 
+  const stats = [
+    { label: 'SCHEDULING', value: counts['SCHEDULING'] || 0, icon: Clock, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+    { label: 'ART READY', value: counts['ART READY'] || 0, icon: FileCheck, color: 'text-blue-500', bg: 'bg-blue-50' },
+    { label: 'PRODUCTION', value: counts['PRODUCTION'] || 0, icon: PlayCircle, color: 'text-orange-500', bg: 'bg-orange-50' },
+    { label: 'COMPLETED', value: counts['COMPLETED'] || 0, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-100' },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#080c14] text-slate-300 font-barlow flex overflow-hidden">
-      {/* SIDEBAR - GRADIENT LOOK */}
-      <aside className="w-72 bg-gradient-to-b from-[#0d1321] to-[#080c14] border-r border-white/5 flex flex-col z-20">
-        <div className="p-10">
-           <div className="flex items-center gap-4 mb-14">
-              <div className="w-12 h-12 bg-royal/10 rounded-2xl flex items-center justify-center border border-royal/20 shadow-[0_0_20px_rgba(30,64,175,0.2)]">
-                <Factory className="w-6 h-6 text-royal" />
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-barlow overflow-y-auto">
+      {/* EXECUTIVE HEADER */}
+      <header className="bg-white border-b border-slate-200 px-8 py-6 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+           <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                <Factory className="w-6 h-6 text-white" />
               </div>
-              <div className="flex flex-col">
-                <h1 className="text-2xl font-black uppercase tracking-tighter text-white">MOS <span className="font-light text-royal">HOME</span></h1>
-                <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-slate-500">Sistema Central</span>
-              </div>
-           </div>
-
-           <nav className="space-y-2">
-             {categories.map(cat => (
-               <button
-                 key={cat}
-                 onClick={() => setActiveCategory(cat)}
-                 className={`w-full flex items-center justify-between px-5 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-500 ${activeCategory === cat ? 'bg-royal/10 text-white border border-royal/20 shadow-lg' : 'text-slate-600 hover:text-slate-300 hover:bg-white/5'}`}
-               >
-                 {cat}
-                 {activeCategory === cat && <div className="w-1.5 h-1.5 bg-royal rounded-full shadow-[0_0_10px_#1e40af]" />}
-               </button>
-             ))}
-           </nav>
-        </div>
-
-        <div className="mt-auto p-8">
-           <button 
-             onClick={() => navigate('/dashboard')}
-             className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">
-             <ArrowLeft className="w-4 h-4 text-slate-500" /> Volver al CRM
-           </button>
-        </div>
-      </aside>
-
-      {/* CONTENT AREA */}
-      <main className="flex-1 flex flex-col relative overflow-y-auto">
-        {/* Soft Background Glows */}
-        <div className="absolute top-0 right-0 w-[1000px] h-[1000px] bg-royal/5 blur-[180px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-purple-500/5 blur-[150px] rounded-full translate-y-1/2 -translate-x-1/2 pointer-events-none" />
-        
-        {/* HEADER - CLEAN & MINIMAL */}
-        <header className="sticky top-0 z-30 px-12 py-8 flex items-center justify-between bg-[#080c14]/40 backdrop-blur-xl border-b border-white/5">
-           <div className="relative w-80">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
-              <input 
-                type="text"
-                placeholder="Buscar en el panel..."
-                className="w-full bg-white/5 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-xs text-white outline-none focus:border-royal/30 focus:bg-white/10 transition-all placeholder:text-slate-700"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-           </div>
-
-           <div className="flex items-center gap-6">
-              <div className="flex flex-col text-right">
-                 <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Estación de Trabajo</span>
-                 <span className="text-sm font-bold text-white uppercase tracking-tighter">{user?.name}</span>
-              </div>
-              <div className="w-10 h-10 bg-royal/20 rounded-full border border-royal/30 flex items-center justify-center text-royal font-black text-xs">
-                {user?.name?.[0]}
-              </div>
-           </div>
-        </header>
-
-        {/* TOOL GRID - HARMONIZED */}
-        <div className="p-12 space-y-16 pb-32">
-           {filteredSections.map(section => (
-             <div key={section.id} className="space-y-8 animate-fadeIn">
-                <div className="flex items-center gap-6">
-                   <h2 className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-700">{section.title}</h2>
-                   <div className="h-[1px] bg-gradient-to-r from-slate-800 to-transparent flex-1" />
+              <div className="flex flex-col leading-none">
+                <h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900">
+                  EXECUTIVE <span className="text-emerald-500">INSIGHTS</span>
+                </h1>
+                <div className="flex items-center gap-2 mt-1">
+                   <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">OPERATIONS</span>
+                   <div className="w-1 h-1 bg-slate-300 rounded-full" />
+                   <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">PROSPER MANUFACTURING</span>
                 </div>
+              </div>
+           </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                   {section.items.map((item, idx) => {
-                     const ItemIcon = ICON_MAP[item.icon] || Factory;
-                     return (
-                       <div 
-                         key={idx}
-                         onClick={() => handleCardClick(item)}
-                         className={`group relative bg-gradient-to-br ${section.color} backdrop-blur-sm border border-white/5 hover:border-white/10 rounded-[2rem] p-7 flex items-center gap-6 cursor-pointer transition-all duration-500 hover:shadow-[0_20px_50px_rgba(0,0,0,0.3)] hover:-translate-y-1.5 overflow-hidden`}
-                       >
-                         {/* Ambient Glow */}
-                         <div className={`absolute -right-4 -top-4 w-24 h-24 ${section.accent} opacity-0 group-hover:opacity-10 blur-3xl transition-opacity duration-500`} />
-                         
-                         <div className="w-16 h-16 bg-white/5 group-hover:bg-white/10 rounded-[1.25rem] flex items-center justify-center border border-white/5 transition-all duration-500 group-hover:scale-110 shadow-inner">
-                           <ItemIcon className="w-7 h-7 text-slate-400 group-hover:text-white transition-colors duration-500" />
-                         </div>
+           <div className="flex items-center gap-4">
+              <div className="relative w-64 md:w-80">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input 
+                  type="text"
+                  placeholder="Buscar herramienta o módulo..."
+                  className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-12 pr-4 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-400"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <button 
+                onClick={() => navigate('/dashboard')}
+                className="px-6 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-slate-900/10">
+                Volver al CRM
+              </button>
+           </div>
+        </div>
+      </header>
 
-                         <div className="flex-1 space-y-1">
-                            <h3 className="text-md font-black text-slate-200 uppercase tracking-wide group-hover:text-white transition-colors">{item.name}</h3>
-                            <p className="text-[11px] font-medium text-slate-500 leading-tight line-clamp-1 italic">{item.desc}</p>
-                         </div>
-
-                         <div className="opacity-0 group-hover:opacity-100 transition-all duration-500 -translate-x-4 group-hover:translate-x-0">
-                            <ChevronRight className="w-5 h-5 text-royal" />
-                         </div>
-                       </div>
-                     );
-                   })}
+      <main className="max-w-7xl mx-auto p-8 space-y-10">
+        
+        {/* STATS ROW (Replicating the 4 boxes from the image) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+           {stats.map((stat, idx) => (
+             <div key={idx} className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm hover:shadow-md transition-all group">
+                <div className="flex justify-between items-start mb-4">
+                   <div className={`p-3 ${stat.bg} rounded-2xl group-hover:scale-110 transition-transform`}>
+                      <stat.icon className={`w-6 h-6 ${stat.color}`} />
+                   </div>
+                   <div className="text-[10px] font-black text-slate-300 uppercase tracking-widest">REAL TIME</div>
+                </div>
+                <div className="flex flex-col">
+                   <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
+                   <span className="text-4xl font-black text-slate-900 tracking-tighter">{stat.value.toLocaleString()}</span>
                 </div>
              </div>
            ))}
         </div>
 
-        <footer className="mt-auto p-12 border-t border-white/5 flex justify-between items-center text-[9px] font-bold text-slate-700 uppercase tracking-[0.4em]">
-           <div className="flex items-center gap-6">
-              <span>MOS CORE v6.5</span>
-              <div className="w-1 h-1 bg-royal rounded-full" />
-              <span>Prosper Industrial Intelligence</span>
+        {/* CONTENT GRID */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+           {/* Main sections take 2 columns */}
+           <div className="lg:col-span-2 space-y-10">
+              {filteredSections.map(section => (
+                <div key={section.id} className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-sm overflow-hidden relative">
+                   <div className="absolute top-0 left-0 w-2 h-full bg-emerald-500/10" />
+                   
+                   <div className="flex items-center justify-between mb-8">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-2">{section.category}</span>
+                        <h2 className="text-2xl font-black uppercase tracking-tighter text-slate-900">{section.title}</h2>
+                      </div>
+                      <div className="px-4 py-1.5 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                        {section.items.length} HERRAMIENTAS
+                      </div>
+                   </div>
+
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {section.items.map((item, i) => {
+                        const ItemIcon = ICON_MAP[item.icon] || Factory;
+                        return (
+                          <div 
+                            key={i}
+                            onClick={() => handleCardClick(item)}
+                            className="group flex items-center gap-5 p-5 rounded-3xl hover:bg-emerald-50 border border-transparent hover:border-emerald-100 transition-all cursor-pointer"
+                          >
+                            <div className="w-12 h-12 bg-slate-50 group-hover:bg-white rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-200 transition-all">
+                               <ItemIcon className="w-6 h-6 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                            </div>
+                            <div className="flex flex-col">
+                               <span className="text-sm font-black text-slate-800 uppercase tracking-wide group-hover:text-emerald-600 transition-colors">{item.name}</span>
+                               <span className="text-[10px] font-medium text-slate-400 line-clamp-1 italic">{item.desc}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                   </div>
+                </div>
+              ))}
            </div>
-           <div className="flex items-center gap-2">
-              <ShieldCheck className="w-3 h-3 text-emerald-500/50" /> Secure Terminal Session
+
+           {/* Side Actions / Quick Info */}
+           <div className="space-y-8">
+              <div className="bg-emerald-500 rounded-[2.5rem] p-10 text-white shadow-xl shadow-emerald-500/20 relative overflow-hidden group">
+                 <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000" />
+                 <TrendingUp className="w-12 h-12 mb-6 opacity-50" />
+                 <h2 className="text-2xl font-black uppercase tracking-tighter mb-4 leading-tight">
+                    Optimiza tu <br /> Flujo de Trabajo
+                 </h2>
+                 <p className="text-sm text-emerald-100 font-medium mb-8 leading-relaxed">
+                    Usa las herramientas de automatización para reducir tiempos de entrega.
+                 </p>
+                 <button 
+                   onClick={() => navigate('/dashboard')}
+                   className="w-full py-4 bg-white text-emerald-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-50 transition-all shadow-lg">
+                   Ver Dashboard Maestro
+                 </button>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-sm">
+                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6">Estado del Sistema</h3>
+                 <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                       <span className="text-xs font-bold text-slate-600">Base de Datos</span>
+                       <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-emerald-500 uppercase">ONLINE</span>
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                       </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                       <span className="text-xs font-bold text-slate-600">Servidor de Fotos</span>
+                       <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-emerald-500 uppercase">ONLINE</span>
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                       </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                       <span className="text-xs font-bold text-slate-600">Sincronización</span>
+                       <span className="text-[10px] font-black text-slate-400 uppercase">A tiempo real</span>
+                    </div>
+                 </div>
+              </div>
            </div>
-        </footer>
+        </div>
       </main>
+
+      <footer className="max-w-7xl mx-auto p-12 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
+         <div className="flex items-center gap-4">
+            <Factory className="w-4 h-4" />
+            <span>Industrial OS v7.0</span>
+            <div className="w-1 h-1 bg-emerald-500 rounded-full" />
+            <span>Prosper Manufacturing</span>
+         </div>
+         <div className="flex items-center gap-6">
+            <span>Privacidad</span>
+            <span>Seguridad</span>
+            <span className="text-slate-900">© 2026</span>
+         </div>
+      </footer>
 
       <GlobalColumnManager isOpen={showColumnManager} onClose={() => setShowColumnManager(false)} />
       <FormFieldsManagerModal isOpen={showFormFieldsManager} onClose={() => setShowFormFieldsManager(false)} />
