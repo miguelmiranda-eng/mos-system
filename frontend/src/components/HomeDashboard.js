@@ -138,7 +138,6 @@ const HomeDashboard = () => {
                    </div>
                 </div>
                 <div className="flex flex-col">
-                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
                    <span className="text-4xl font-black text-slate-900 tracking-tighter">{stat.value.toLocaleString()}</span>
                 </div>
              </div>
