@@ -136,7 +136,6 @@ const HomeDashboard = () => {
                    <div className={`p-3 ${stat.bg} rounded-2xl`}>
                       <stat.icon className={`w-6 h-6 ${stat.color}`} />
                    </div>
-                   <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest">LIVE</div>
                 </div>
                 <div className="flex flex-col">
                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
