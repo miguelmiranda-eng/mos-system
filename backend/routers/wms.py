@@ -707,6 +707,9 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     if total_qty == 0 and data.get("quantity"):
          total_qty = int(data.get("quantity"))
 
+    style = data.get("style", "").strip()
+    color = data.get("color", "").strip()
+    
     # Auto-lookup locations for each size from inventory
     size_locations = {}
     if style:
@@ -718,9 +721,8 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
                     "size": {"$regex": f"^{sz}$", "$options": "i"},
                     "available": {"$gt": 0}
                 }
-                color = data.get("color", "").strip()
                 if color:
-                    inv_query["color"] = {"$regex": f"^{color}$", "$options": "i"}
+                    inv_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
                 inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "inv_location": 1, "available": 1, "total_boxes": 1, "customer": 1}).sort("available", -1).to_list(50)
                 locs = [{"location": r.get("inv_location", ""), "available": r.get("available", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("inv_location")]
                 size_locations[sz] = locs
@@ -1022,6 +1024,25 @@ async def save_pick_progress(ticket_id: str, request: Request):
     }
     if is_complete:
         update["completed_at"] = now_iso()
+        # DISCOUNT INVENTORY logic
+        try:
+            # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
+            for sz, data in picked_sizes.items():
+                if isinstance(data, dict) and "details" in data:
+                    for loc, qty in data["details"].items():
+                        if qty > 0:
+                            # Subtract from wms_inventory
+                            await db.wms_inventory.update_one(
+                                {
+                                    "style": {"$regex": f"^{re.escape(ticket.get('style', '').strip())}$", "$options": "i"},
+                                    "size": {"$regex": f"^{re.escape(sz.strip())}$", "$options": "i"},
+                                    "color": {"$regex": f"^{re.escape(ticket.get('color', '').strip())}$", "$options": "i"} if ticket.get("color") else {"$exists": True},
+                                    "inv_location": loc
+                                },
+                                {"$inc": {"available": -qty}}
+                            )
+        except Exception as e:
+            print(f"Error discounting inventory: {e}")
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
     await log_movement(user, "pick_progress", {

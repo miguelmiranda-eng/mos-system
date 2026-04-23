@@ -69,33 +69,36 @@ def run_import():
         'Total Boxes': 'sum'
     }).reset_index()
     
+    # Renombrar para que coincidan con el backend (inv_location y available)
+    grouped = grouped.rename(columns={
+        'InvLocation': 'inv_location',
+        'TotalUnits': 'available',
+        'Style': 'style',
+        'Color': 'color',
+        'Size': 'size',
+        'CustomerID': 'customer',
+        'CountryofOrigin': 'country_of_origin',
+        'Description': 'description',
+        'Category': 'category',
+        'Manufacturer': 'manufacturer',
+        'Total Boxes': 'total_boxes'
+    })
+    
     # Preparar para MongoDB
     records = grouped.to_dict('records')
     for r in records:
         r['last_updated'] = pd.Timestamp.now()
         r['status'] = 'available'
     
-    print(f"Limpieza completada. Registros originales: {len(df)} -> Unificados: {len(records)}")
+    print(f"Limpieza completada. Registros unificados: {len(records)}")
     
-    # Limpiar colección actual si se desea (o solo insertar)
-    # inventory_col.delete_many({}) 
+    # Limpiar colección actual y recargar con nombres correctos
+    db['wms_inventory'].drop()
     
-    print("Insertando en MongoDB...")
+    print("Insertando en wms_inventory con nombres correctos...")
     if records:
-        # Usar update_one con upsert para no duplicar si se corre varias veces
-        for r in records:
-            inventory_col.update_one(
-                {
-                    'CustomerID': r['CustomerID'],
-                    'Style': r['Style'],
-                    'Color': r['Color'],
-                    'Size': r['Size'],
-                    'InvLocation': r['InvLocation']
-                },
-                {'$set': r},
-                upsert=True
-            )
-        print("¡Carga exitosa!")
+        db['wms_inventory'].insert_many(records)
+        print("¡Carga exitosa con nombres estandarizados!")
     else:
         print("No hay registros para cargar.")
 

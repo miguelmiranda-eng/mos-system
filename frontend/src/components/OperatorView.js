@@ -63,18 +63,32 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
   const sizeLocs = ticket.size_locations || {};
   const activeSizes = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0);
 
-  const updatePicked = (sz, val) => {
-    const max = parseInt(sizes[sz]) || 0;
-    const numVal = Math.max(0, Math.min(parseInt(val) || 0, max));
-    setPickedSizes(p => ({ ...p, [sz]: numVal }));
-  };
+  const updatePicked = (sz, loc, val) => {
+    const locData = sizeLocs[sz]?.locations || sizeLocs[sz] || [];
+    const targetLoc = locData.find(l => l.location === loc);
+    if (!targetLoc) return;
 
-  const markSizeFull = (sz) => {
-    setPickedSizes(p => ({ ...p, [sz]: parseInt(sizes[sz]) || 0 }));
+    const max = targetLoc.available;
+    const numVal = Math.max(0, Math.min(parseInt(val) || 0, max));
+    
+    setPickedSizes(p => {
+      const currentSizeData = p[sz] || { total: 0, details: {} };
+      const newDetails = { ...currentSizeData.details, [loc]: numVal };
+      const newTotal = Object.values(newDetails).reduce((a, b) => a + b, 0);
+      
+      // Prevent exceeding required amount across all locations for this size
+      const required = parseInt(sizes[sz]) || 0;
+      if (newTotal > required) {
+        toast.error(`No puedes surtir más de lo requerido (${required})`);
+        return p;
+      }
+
+      return { ...p, [sz]: { total: newTotal, details: newDetails } };
+    });
   };
 
   const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
-  const totalPicked = activeSizes.reduce((s, sz) => s + (parseInt(pickedSizes[sz]) || 0), 0);
+  const totalPicked = activeSizes.reduce((s, sz) => s + (parseInt(pickedSizes[sz]?.total) || 0), 0);
   const isComplete = totalPicked >= totalRequired && totalRequired > 0;
 
   return (
@@ -116,7 +130,8 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
       <div className="space-y-2">
         {activeSizes.map(sz => {
           const required = parseInt(sizes[sz]) || 0;
-          const picked = parseInt(pickedSizes[sz]) || 0;
+          const sizeData = pickedSizes[sz] || { total: 0, details: {} };
+          const picked = sizeData.total;
           const locs = sizeLocs[sz]?.locations || sizeLocs[sz] || [];
           const locsArr = Array.isArray(locs) ? locs : [];
           const isDone = picked >= required;
@@ -136,46 +151,63 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
                     <span className="text-lg font-bold">{sz}</span>
                     <span className="text-sm text-muted-foreground">Requerido: {required}</span>
                   </div>
-                  {locsArr.length > 0 && !isExpanded && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {locsArr.slice(0, 2).map((l, i) => (
-                        <span key={i} className="text-xs font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                          <MapPin className="w-3 h-3 inline mr-0.5" />{l.location}
-                        </span>
-                      ))}
-                      {locsArr.length > 2 && <span className="text-xs text-muted-foreground">+{locsArr.length - 2}</span>}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {Object.entries(sizeData.details).map(([loc, q]) => q > 0 && (
+                      <span key={loc} className="text-[10px] font-mono bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded border border-green-500/30">
+                        {loc}: <strong>{q}</strong>
+                      </span>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <input
-                    type="number" min="0" max={required} value={picked || ''}
-                    onChange={e => updatePicked(sz, e.target.value)}
-                    onClick={e => e.stopPropagation()}
-                    className="w-20 px-2 py-2 bg-background border border-border rounded text-center text-lg font-mono font-bold"
-                    data-testid={`operator-pick-input-${sz}`}
-                  />
-                  <button onClick={e => { e.stopPropagation(); markSizeFull(sz); }}
-                    className={`px-3 py-2 rounded text-xs font-bold ${isDone ? 'bg-green-600 text-white' : 'bg-secondary text-foreground hover:bg-primary hover:text-primary-foreground'}`}
-                    data-testid={`operator-pick-full-${sz}`}
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
+                  <div className="w-20 px-2 py-2 bg-secondary/30 border border-border rounded text-center text-lg font-mono font-bold">
+                    {picked}
+                  </div>
                   {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                 </div>
               </div>
+              
               {isExpanded && locsArr.length > 0 && (
-                <div className="px-3 pb-3 border-t border-border/50 pt-2">
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold mb-2">
-                    <MapPin className="w-3 h-3 inline mr-1" />Ubicaciones
+                <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-secondary/10">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground font-black">
+                      <MapPin className="w-3 h-3 inline mr-1" />Desglose por Ubicación
+                    </div>
+                    <span className="text-[10px] text-muted-foreground italic">Ingresa cuánto sacaste de cada estante</span>
                   </div>
-                  <div className="space-y-1">
-                    {locsArr.map((l, i) => (
-                      <div key={i} className="flex items-center justify-between px-3 py-2 bg-secondary/50 rounded text-sm">
-                        <span className="font-mono font-bold text-primary">{l.location}</span>
-                        <span className="text-muted-foreground">Disponible: <strong className="text-green-400">{l.available}</strong></span>
-                      </div>
-                    ))}
+                  <div className="space-y-2">
+                    {locsArr.map((l, i) => {
+                      const currentLocPicked = sizeData.details[l.location] || 0;
+                      return (
+                        <div key={i} className="flex items-center justify-between px-3 py-2 bg-background border border-border/50 rounded-xl hover:border-primary/40 transition-all group">
+                          <div className="flex flex-col">
+                            <span className="font-mono font-black text-primary text-sm">{l.location}</span>
+                            <span className="text-[10px] text-muted-foreground">Disponible: <strong className="text-green-500">{l.available}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="number" min="0" max={l.available}
+                              value={currentLocPicked || ''}
+                              onChange={(e) => updatePicked(sz, l.location, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              placeholder="0"
+                              className="w-16 px-2 py-1 bg-secondary/30 border border-border rounded text-center text-sm font-bold"
+                            />
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const needed = required - picked + currentLocPicked;
+                                const toPick = Math.min(needed, l.available);
+                                updatePicked(sz, l.location, toPick);
+                              }}
+                              className="px-2 py-1 bg-primary text-white text-[10px] font-black uppercase rounded hover:bg-primary/80 transition-all"
+                            >
+                              MAX
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
