@@ -774,6 +774,7 @@ const InventoryModule = ({ initialCustomer = '' }) => {
                 <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_col_sz')}</th>
                 <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('description')}</th>
                 <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
+                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('country_of_origin')}</th>
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
@@ -792,7 +793,7 @@ const InventoryModule = ({ initialCustomer = '' }) => {
                 ).map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-secondary/30">
-                      <td colSpan="9" className="p-3">
+                      <td colSpan="10" className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
                           <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
@@ -814,6 +815,7 @@ const InventoryModule = ({ initialCustomer = '' }) => {
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
                           {inv.inv_location || '-'}
                         </td>
+                        <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
                         <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
@@ -839,6 +841,7 @@ const InventoryModule = ({ initialCustomer = '' }) => {
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
                       {inv.inv_location || '-'}
                     </td>
+                    <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
                     <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
@@ -1090,7 +1093,8 @@ const PickingModule = () => {
   }, []);
 
   const updateSize = (size, val) => setForm(p => ({ ...p, sizes: { ...p.sizes, [size]: val } }));
-  const getTotalAvail = (sz) => (sizeLocations[sz]?.locations || []).reduce((sum, loc) => sum + (loc.available || 0), 0);
+  const getSizeLocs = (sz) => sizeLocations[sz]?.locations || (Array.isArray(sizeLocations[sz]) ? sizeLocations[sz] : []);
+  const getTotalAvail = (sz) => getSizeLocs(sz).reduce((sum, loc) => sum + (loc.available || 0), 0);
   const totalPick = Object.values(form.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
 
   const openEdit = (t) => {
@@ -1176,7 +1180,12 @@ const PickingModule = () => {
     const totalQty = SIZES_ORDER.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
     const gridRows = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0).map(sz => {
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
-      const locStr = locs.map(l => `${l.location} (${l.available})`).join(', ') || '-';
+      const locStr = locs.map(l => {
+        let s = `${l.location} (${l.available})`;
+        if (l.country_of_origin) s += ` [${l.country_of_origin}]`;
+        if (l.percentage !== undefined) s += ` ${l.percentage}%`;
+        return s;
+      }).join(', ') || '-';
       return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${sizes[sz]}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
     pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0"><svg id="barcode"></svg></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${ticket.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script><script>try{JsBarcode("#barcode","${ticket.ticket_id}",{width:1.5,height:35,displayValue:false,margin:0})}catch(e){}setTimeout(function(){window.print()},500);<\/script></body></html>`);
@@ -1490,8 +1499,19 @@ const PickingModule = () => {
                     <td className="p-1 text-center font-bold">{sz}</td>
                     <td className="p-1"><input type="number" min="0" value={form.sizes[sz]} onChange={e => updateSize(sz, e.target.value)} placeholder="0" className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono text-foreground" data-testid={`pick-size-${sz}`} /></td>
                     <td className="p-1">
-                      {(sizeLocations[sz]?.locations || []).length > 0 ? (
-                        <div className="flex flex-wrap gap-1">{(sizeLocations[sz]?.locations || []).slice(0, 4).map((l, i) => <span key={i} className="text-xs font-mono bg-primary/15 text-primary px-1.5 py-0.5 rounded" title={`${l.available} units`}>{l.location} ({l.available})</span>)}{(sizeLocations[sz]?.locations || []).length > 4 && <span className="text-xs text-muted-foreground">+{(sizeLocations[sz]?.locations || []).length - 4}</span>}</div>
+                      {getSizeLocs(sz).length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {getSizeLocs(sz).slice(0, 4).map((l, i) => (
+                            <span key={i} className="inline-flex flex-col bg-primary/15 px-1.5 py-0.5 rounded text-[10px] font-mono" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
+                              <span className="text-primary font-bold">{l.location} <span className="text-emerald-400">({l.available})</span></span>
+                              <span className="flex items-center gap-1 opacity-70">
+                                {l.country_of_origin && <span className="text-muted-foreground uppercase">{l.country_of_origin}</span>}
+                                {l.percentage !== undefined && <span className="text-yellow-400 font-bold">{l.percentage}%</span>}
+                              </span>
+                            </span>
+                          ))}
+                          {getSizeLocs(sz).length > 4 && <span className="text-xs text-muted-foreground">+{getSizeLocs(sz).length - 4}</span>}
+                        </div>
                       ) : (<span className="text-xs text-muted-foreground">{form.style ? t('wms_no_loc') : '-'}</span>)}
                     </td>
                     <td className="p-1 text-right font-mono text-xs text-green-400">{getTotalAvail(sz) > 0 ? getTotalAvail(sz).toLocaleString() : '-'}</td>

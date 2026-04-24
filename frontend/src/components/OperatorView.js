@@ -167,50 +167,80 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
                 </div>
               </div>
               
-              {isExpanded && locsArr.length > 0 && (
-                <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-secondary/10">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-xs uppercase tracking-wider text-muted-foreground font-black">
-                      <MapPin className="w-3 h-3 inline mr-1" />Desglose por Ubicación
+              {isExpanded && locsArr.length > 0 && (() => {
+                // Group locations by country_of_origin
+                const grouped = locsArr.reduce((acc, loc) => {
+                  const key = (loc.country_of_origin || '').trim() || 'Sin origen';
+                  if (!acc[key]) acc[key] = [];
+                  acc[key].push(loc);
+                  return acc;
+                }, {});
+                const groupKeys = Object.keys(grouped).sort((a, b) => {
+                  if (a === 'Sin origen') return 1;
+                  if (b === 'Sin origen') return -1;
+                  return a.localeCompare(b);
+                });
+
+                return (
+                  <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-secondary/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground font-black">
+                        <MapPin className="w-3 h-3 inline mr-1" />Desglose por Ubicación
+                      </div>
+                      <span className="text-[10px] text-muted-foreground italic">Ingresa cuánto sacaste de cada estante</span>
                     </div>
-                    <span className="text-[10px] text-muted-foreground italic">Ingresa cuánto sacaste de cada estante</span>
-                  </div>
-                  <div className="space-y-2">
-                    {locsArr.map((l, i) => {
-                      const currentLocPicked = sizeData.details[l.location] || 0;
-                      return (
-                        <div key={i} className="flex items-center justify-between px-3 py-2 bg-background border border-border/50 rounded-xl hover:border-primary/40 transition-all group">
-                          <div className="flex flex-col">
-                            <span className="font-mono font-black text-primary text-sm">{l.location}</span>
-                            <span className="text-[10px] text-muted-foreground">Disponible: <strong className="text-green-500">{l.available}</strong></span>
+                    <div className="space-y-3">
+                      {groupKeys.map(origin => (
+                        <div key={origin}>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 font-mono">{origin}</span>
+                            <div className="flex-1 h-px bg-border/50" />
+                            <span className="text-[10px] text-muted-foreground/50">{grouped[origin].length} ubic.</span>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <input 
-                              type="number" min="0" max={l.available}
-                              value={currentLocPicked || ''}
-                              onChange={(e) => updatePicked(sz, l.location, e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              placeholder="0"
-                              className="w-16 px-2 py-1 bg-secondary/30 border border-border rounded text-center text-sm font-bold"
-                            />
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const needed = required - picked + currentLocPicked;
-                                const toPick = Math.min(needed, l.available);
-                                updatePicked(sz, l.location, toPick);
-                              }}
-                              className="px-2 py-1 bg-primary text-white text-[10px] font-black uppercase rounded hover:bg-primary/80 transition-all"
-                            >
-                              MAX
-                            </button>
+                          <div className="space-y-2">
+                            {grouped[origin].map((l, i) => {
+                              const currentLocPicked = sizeData.details[l.location] || 0;
+                              return (
+                                <div key={i} className="flex items-center justify-between px-3 py-2 bg-background border border-border/50 rounded-xl hover:border-primary/40 transition-all group">
+                                  <div className="flex flex-col">
+                                    <span className="font-mono font-black text-primary text-sm">{l.location}</span>
+                                    <span className="text-[10px] text-muted-foreground">Disponible: <strong className="text-green-500">{l.available}</strong></span>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      {l.customer && <span className="text-[10px] text-blue-400/80 font-mono truncate max-w-[120px]">{l.customer}</span>}
+                                      {l.percentage !== undefined && <span className="text-[10px] text-yellow-400 font-black">{l.percentage}%</span>}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <input
+                                      type="number" min="0" max={l.available}
+                                      value={currentLocPicked || ''}
+                                      onChange={(e) => updatePicked(sz, l.location, e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      placeholder="0"
+                                      className="w-16 px-2 py-1 bg-secondary/30 border border-border rounded text-center text-sm font-bold"
+                                    />
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const needed = required - picked + currentLocPicked;
+                                        const toPick = Math.min(needed, l.available);
+                                        updatePicked(sz, l.location, toPick);
+                                      }}
+                                      className="px-2 py-1 bg-primary text-white text-[10px] font-black uppercase rounded hover:bg-primary/80 transition-all"
+                                    >
+                                      MAX
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           );
         })}

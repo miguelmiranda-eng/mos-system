@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from datetime import datetime, timezone, timedelta
-import uuid, io, json, logging
+import uuid, io, json, logging, re
 
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
@@ -357,6 +357,7 @@ async def get_inventory(request: Request, sku: str = "", color: str = "", size: 
             "location": 1,
             "total_boxes": 1,
             "last_updated": 1,
+            "country_of_origin": 1,
             "on_hand": "$units_on_hand",
             "allocated": "$units_allocated",
             "available": {"$subtract": ["$units_on_hand", "$units_allocated"]},
@@ -404,12 +405,15 @@ async def locations_lookup(request: Request, style: str = "", color: str = ""):
         avail = r.get("units_on_hand", r.get("available", 0)) - r.get("units_allocated", 0)
         boxes = r.get("total_boxes", 0)
         if loc and avail > 0:
-            by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", "")})
+            by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", ""), "country_of_origin": r.get("country_of_origin", "")})
         by_size[sz]["total_available"] += avail
         by_size[sz]["total_boxes"] += boxes
-    # Sort locations within each size by available desc
+    # Sort locations within each size by available desc, then add percentage
     for sz in by_size:
         by_size[sz]["locations"].sort(key=lambda x: -x["available"])
+        total_avail = by_size[sz]["total_available"]
+        for loc_entry in by_size[sz]["locations"]:
+            loc_entry["percentage"] = round((loc_entry["available"] / total_avail) * 100) if total_avail > 0 else 0
     return {"style": style, "color": color, "sizes": by_size}
 
 @router.get("/inventory/options")
@@ -717,9 +721,13 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
                 }
                 if color:
                     inv_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
-                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1}).sort("units_on_hand", -1).to_list(50)
-                locs = [{"location": r.get("location", ""), "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0), "boxes": r.get("total_boxes", 0)} for r in inv_records if r.get("location")]
-                size_locations[sz] = locs
+                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}).sort("units_on_hand", -1).to_list(50)
+                locs = [{"location": r.get("location", ""), "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0), "boxes": r.get("total_boxes", 0), "country_of_origin": r.get("country_of_origin", "")} for r in inv_records if r.get("location")]
+                locs = [l for l in locs if l["available"] > 0]
+                total_sz_avail = sum(l["available"] for l in locs)
+                for l in locs:
+                    l["percentage"] = round((l["available"] / total_sz_avail) * 100) if total_sz_avail > 0 else 0
+                size_locations[sz] = {"locations": locs, "total_available": total_sz_avail}
 
     assigned_to = data.get("assigned_to", "").strip()
     assigned_to_name = data.get("assigned_to_name", "").strip()
@@ -1150,11 +1158,15 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
         for sz, qty in new_sizes.items():
             if int(qty) <= 0: continue
             inv_items = await db.wms_inventory.find(
-                {"style": {"$regex": f"^{new_style}$", "$options": "i"}, "color": {"$regex": f"^{new_color}$", "$options": "i"}, "size": sz},
-                {"_id": 0, "inv_location": 1, "available": 1}
-            ).to_list(50)
-            locs = [{"location": it["inv_location"], "available": it.get("available", 0)} for it in inv_items if it.get("inv_location")]
-            size_locations[sz] = {"locations": locs, "total_available": sum(l["available"] for l in locs)}
+                {"style": {"$regex": f"^{re.escape(new_style)}$", "$options": "i"}, "color": {"$regex": f"^{re.escape(new_color)}$", "$options": "i"}, "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"}},
+                {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "country_of_origin": 1}
+            ).sort("units_on_hand", -1).to_list(50)
+            locs = [{"location": it.get("location", ""), "available": it.get("units_on_hand", 0) - it.get("units_allocated", 0), "boxes": it.get("total_boxes", 0), "country_of_origin": it.get("country_of_origin", "")} for it in inv_items if it.get("location")]
+            locs = [l for l in locs if l["available"] > 0]
+            total_sz_avail = sum(l["available"] for l in locs)
+            for l in locs:
+                l["percentage"] = round((l["available"] / total_sz_avail) * 100) if total_sz_avail > 0 else 0
+            size_locations[sz] = {"locations": locs, "total_available": total_sz_avail}
         update["size_locations"] = size_locations
 
     update["updated_at"] = now_iso()
