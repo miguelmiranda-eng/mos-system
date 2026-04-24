@@ -736,7 +736,7 @@ const Dashboard = () => {
                 {isMaster ? (
                   <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                 ) : (
-                  <span className="font-bold text-xs tracking-tighter group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1">
+                  <span className="font-bold text-sm tracking-tighter group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1">
                     {order.locked_by_qc && <span title="Bloqueado por QC" className="text-red-500 flex-shrink-0">🔒</span>}
                     {order.order_number}
                   </span>
@@ -751,7 +751,7 @@ const Dashboard = () => {
             const width = isOrderNum ? 120 : (columnWidths[col.key] || col.width);
             return (
               <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
-                {isOrderNum ? <span className={`font-mono font-medium truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
+                {isOrderNum ? <span className={`font-mono font-medium text-sm truncate block ${isSearchMatch ? 'text-primary font-bold' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
                   <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                 )}
               </td>
