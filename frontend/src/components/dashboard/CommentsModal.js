@@ -431,13 +431,13 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
       <DialogPortal>
         <DialogOverlay className="backdrop-blur-sm bg-black/20 z-[190]" />
         <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[200] w-full max-w-[95vw] md:max-w-4xl max-h-[90vh] translate-x-[-50%] translate-y-[-50%] bg-card border border-border overflow-hidden flex flex-col shadow-lg sm:rounded-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95" data-testid="comments-modal">
-        <DialogHeader>
+        <DialogHeader className="flex flex-row items-center justify-between">
           <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3">
             <MessageSquare className="w-5 h-5" /> {t('comments')} - {order.order_number}
-            <button onClick={handleClose} className="ml-auto p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground" aria-label="Cerrar">
-              <X className="w-5 h-5" />
-            </button>
           </DialogTitle>
+          <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground flex-shrink-0" aria-label="Cerrar">
+            <X className="w-5 h-5" />
+          </button>
         </DialogHeader>
 
         {/* Links Section */}
