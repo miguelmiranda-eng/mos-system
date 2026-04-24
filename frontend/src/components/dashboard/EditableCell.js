@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { Edit2, ExternalLink } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "../ui/select";
 import { getStatusColor, evaluateFormula } from "../../lib/constants";
 import { ColoredBadge } from "./ColoredBadge";
+import SearchableSelect from "../SearchableSelect";
 
 export const EditableCell = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false, className = "" }) => {
   const { t } = useLang();
@@ -106,71 +106,19 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
   if (isEditing) {
     if (options && options.length > 0) {
       return (
-        <Select 
-          value={editValue || 'none'} 
-          open={true}
-          onOpenChange={(open) => {
-            if (!open) setIsEditing(false);
-          }}
-          onValueChange={(v) => {
-            const newVal = v === 'none' ? '' : v;
-            setEditValue(newVal);
-            onUpdate(orderId, field, newVal);
-            setIsEditing(false);
-          }}
-        >
-          <SelectTrigger ref={inputRef} className="h-8 bg-secondary border-primary text-sm min-w-[120px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border z-[300] max-h-[300px]">
-            <SelectItem value="none" className="text-muted-foreground italic font-medium tracking-tight">- Ninguno -</SelectItem>
-            <SelectSeparator className="opacity-50" />
-            
-            {(() => {
-              if (!groupConfig || !groupConfig.label_to_group) {
-                return options.map(opt => (
-                  <SelectItem key={opt} value={opt} className="font-black tracking-tight">
-                    <div className="flex items-center gap-2">
-                      {getStatusColor(opt) && <span className="w-3 h-3 rounded shadow-sm border border-white/10" style={{ backgroundColor: getStatusColor(opt).bg }}></span>}
-                      {opt}
-                    </div>
-                  </SelectItem>
-                ));
-              }
-
-              const grouped = {};
-              options.forEach(opt => {
-                const g = groupConfig.label_to_group[opt] || "SIN GRUPO";
-                if (!grouped[g]) grouped[g] = [];
-                grouped[g].push(opt);
-              });
-
-              const groupNames = Object.keys(grouped).sort((a, b) => {
-                if (a === "SIN GRUPO") return 1;
-                if (b === "SIN GRUPO") return -1;
-                return a.localeCompare(b);
-              });
-
-              return groupNames.map(gn => (
-                <SelectGroup key={gn}>
-                  <div className="flex items-center gap-2 px-2 py-1.5 pointer-events-none">
-                    <div className="w-1 h-3 rounded-full" style={{ backgroundColor: groupConfig.group_colors[gn] || "#666" }} />
-                    <SelectLabel className="text-[10px] font-black uppercase tracking-[0.15em] text-muted-foreground/80">{gn}</SelectLabel>
-                  </div>
-                  {grouped[gn].map(opt => (
-                    <SelectItem key={opt} value={opt} className="font-black tracking-tight ml-2">
-                      <div className="flex items-center gap-2.5">
-                        {getStatusColor(opt) && <span className="w-3 h-3 rounded shadow-sm border border-white/10" style={{ backgroundColor: getStatusColor(opt).bg }}></span>}
-                        {opt}
-                      </div>
-                    </SelectItem>
-                  ))}
-                  <SelectSeparator className="opacity-30 my-1" />
-                </SelectGroup>
-              ));
-            })()}
-          </SelectContent>
-        </Select>
+        <div className="min-w-[150px]">
+          <SearchableSelect 
+            options={options}
+            value={editValue}
+            onChange={(v) => {
+              setEditValue(v);
+              onUpdate(orderId, field, v);
+              setIsEditing(false);
+            }}
+            placeholder="- Seleccionar -"
+            allowCreate={true}
+          />
+        </div>
       );
     }
     if (type === "date") {
