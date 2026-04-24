@@ -434,6 +434,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
         <DialogHeader>
           <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3">
             <MessageSquare className="w-5 h-5" /> {t('comments')} - {order.order_number}
+            <button onClick={handleClose} className="ml-auto p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+              <X className="w-5 h-5" />
+            </button>
           </DialogTitle>
         </DialogHeader>
 
