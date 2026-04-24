@@ -170,7 +170,7 @@ export const NewOrderForm = ({
             <SelectTrigger className="bg-secondary border-border h-9">
               <SelectValue placeholder="Seleccionar" />
             </SelectTrigger>
-            <SelectContent className="bg-popover border-border z-[600] max-h-[250px]">
+            <SelectContent className="bg-popover border-border z-[1000] max-h-[250px]">
               <SelectItem value="none" className="text-muted-foreground italic tracking-tight">- Seleccionar -</SelectItem>
               <SelectSeparator className="opacity-50" />
               {(() => {
