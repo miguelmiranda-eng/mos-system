@@ -90,7 +90,10 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         <DialogOverlay className="backdrop-blur-sm bg-black/20" />
         <DialogPrimitive.Content
           className="fixed left-[50%] top-[50%] z-[901] max-w-[95vw] md:max-w-4xl w-full translate-x-[-50%] translate-y-[-50%] bg-card border border-border h-[90vh] p-0 flex flex-col shadow-2xl transition-all duration-300 sm:rounded-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
-          onInteractOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => {
+            if (e.target?.closest?.('[data-radix-popper-content-wrapper]')) return;
+            e.preventDefault();
+          }}
           onEscapeKeyDown={(e) => e.preventDefault()}
         >
         <NewOrderForm
