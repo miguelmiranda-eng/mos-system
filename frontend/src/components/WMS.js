@@ -13,6 +13,7 @@ import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useAuth } from "../App";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const AUTH_API = `${process.env.REACT_APP_BACKEND_URL}/api/auth`;
@@ -1982,6 +1983,8 @@ const MovementsModule = () => {
 // ==================== CYCLE COUNT MODULE ====================
 const CycleCountModule = () => {
   const { t } = useLang();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
@@ -2134,10 +2137,12 @@ const CycleCountModule = () => {
                       <div className="text-sm font-mono font-bold">{line.style}</div>
                       <div className="text-xs text-muted-foreground">{line.color} / {line.size}</div>
                     </div>
-                    <div className="text-center w-20">
-                      <div className="text-xs text-muted-foreground">{t('wms_cc_system')}</div>
-                      <div className="text-sm font-bold">{line.system_qty}</div>
-                    </div>
+                    {isAdmin && (
+                      <div className="text-center w-20">
+                        <div className="text-xs text-muted-foreground">{t('wms_cc_system')}</div>
+                        <div className="text-sm font-bold">{line.system_qty}</div>
+                      </div>
+                    )}
                     <div className="w-24">
                       <div className="text-xs text-muted-foreground">{t('wms_cc_count')}</div>
                       <input type="number" min="0" value={line.counted_qty ?? ''} onChange={e => handleInputChange(line.line_id, e.target.value)}
@@ -2145,13 +2150,15 @@ const CycleCountModule = () => {
                         disabled={selectedCount.status === 'approved'}
                         data-testid={`cc-input-${line.line_id}`} />
                     </div>
-                    <div className="w-16 text-center">
-                      {line.counted && (
-                        <span className={`text-sm font-bold ${line.discrepancy === 0 ? 'text-green-400' : line.discrepancy > 0 ? 'text-blue-400' : 'text-red-400'}`}>
-                          {line.discrepancy > 0 ? '+' : ''}{line.discrepancy}
-                        </span>
-                      )}
-                    </div>
+                    {isAdmin && (
+                      <div className="w-16 text-center">
+                        {line.counted && (
+                          <span className={`text-sm font-bold ${line.discrepancy === 0 ? 'text-green-400' : line.discrepancy > 0 ? 'text-blue-400' : 'text-red-400'}`}>
+                            {line.discrepancy > 0 ? '+' : ''}{line.discrepancy}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
