@@ -123,7 +123,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
           <div className="grid grid-cols-3 gap-3">
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('quantity_produced')}</label><input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} min="1" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-quantity-input" /></div>
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('machine')}</label>
-              <Select value={machine} onValueChange={setMachine}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-machine-select"><SelectValue placeholder="Maquina" /></SelectTrigger><SelectContent className="bg-popover border-border z-[300]">{MACHINES.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+              <Select value={machine} onValueChange={setMachine}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-machine-select"><SelectValue placeholder="Maquina" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{MACHINES.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
             </div>
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Setup</label><input type="number" value={setup} onChange={(e) => setSetup(e.target.value)} min="0" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-setup-input" /></div>
           </div>
@@ -131,16 +131,16 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
           <div className="grid grid-cols-3 gap-3">
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Operador</label>
               {operatorsList.length > 0 ? (
-                <Select value={operator} onValueChange={setOperator}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-operator-select"><SelectValue placeholder="Seleccionar operador" /></SelectTrigger><SelectContent className="bg-popover border-border z-[300]">{operatorsList.map(op => <SelectItem key={op.operator_id} value={op.name}>{op.name}</SelectItem>)}</SelectContent></Select>
+                <Select value={operator} onValueChange={setOperator}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-operator-select"><SelectValue placeholder="Seleccionar operador" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{operatorsList.map(op => <SelectItem key={op.operator_id} value={op.name}>{op.name}</SelectItem>)}</SelectContent></Select>
               ) : (
                 <input type="text" value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Nombre operador" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-operator-input" />
               )}
             </div>
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Turno</label>
-              <Select value={shift} onValueChange={setShift}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-shift-select"><SelectValue placeholder="Turno" /></SelectTrigger><SelectContent className="bg-popover border-border z-[300]">{SHIFTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
+              <Select value={shift} onValueChange={setShift}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-shift-select"><SelectValue placeholder="Turno" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{SHIFTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
             </div>
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Tipo Diseno</label>
-              <Select value={designType} onValueChange={setDesignType}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-design-select"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent className="bg-popover border-border z-[300]">{DESIGN_TYPES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent></Select>
+              <Select value={designType} onValueChange={setDesignType}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-design-select"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{DESIGN_TYPES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent></Select>
             </div>
           </div>
           {/* Row 3: supervisor, stop_cause */}

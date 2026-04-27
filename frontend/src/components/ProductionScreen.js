@@ -124,7 +124,7 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
           <div className="grid grid-cols-6 gap-2">
             <Select value={preset} onValueChange={setPreset}>
               <SelectTrigger className="h-8 text-xs bg-secondary border-border" data-testid="preset-select"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border z-[300]">{PRESETS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}</SelectContent>
+              <SelectContent className="bg-popover border-border z-[1001]">{PRESETS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}</SelectContent>
             </Select>
             {preset === 'custom' && <>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" data-testid="date-from" />
@@ -132,7 +132,7 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
             </>}
             <Select value={filterMachine || 'all'} onValueChange={v => setFilterMachine(v === 'all' ? '' : v)}>
               <SelectTrigger className="h-8 text-xs bg-secondary border-border" data-testid="filter-machine"><SelectValue placeholder="Maquina" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border z-[300]"><SelectItem value="all">Todas</SelectItem>{(data?.filters?.machines || []).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+              <SelectContent className="bg-popover border-border z-[1001]"><SelectItem value="all">Todas</SelectItem>{(data?.filters?.machines || []).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
             </Select>
             <input type="text" value={filterOperator} onChange={e => setFilterOperator(e.target.value)} placeholder="Operador" className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" data-testid="filter-operator" />
             <input type="text" value={filterOrder} onChange={e => setFilterOrder(e.target.value)} placeholder="Orden" className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" data-testid="filter-order" />
@@ -223,7 +223,7 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
             <input type="date" value={reportDate} onChange={e => setReportDate(e.target.value)} className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" placeholder="Fecha" data-testid="report-date" />
             <Select value={reportShift || 'all'} onValueChange={v => setReportShift(v === 'all' ? '' : v)}>
               <SelectTrigger className="h-8 text-xs bg-secondary border-border" data-testid="report-shift"><SelectValue placeholder="Turno" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border z-[300]"><SelectItem value="all">Todos los turnos</SelectItem><SelectItem value="TURNO 1">TURNO 1</SelectItem><SelectItem value="TURNO 2">TURNO 2</SelectItem><SelectItem value="TURNO 3">TURNO 3</SelectItem></SelectContent>
+              <SelectContent className="bg-popover border-border z-[1001]"><SelectItem value="all">Todos los turnos</SelectItem><SelectItem value="TURNO 1">TURNO 1</SelectItem><SelectItem value="TURNO 2">TURNO 2</SelectItem><SelectItem value="TURNO 3">TURNO 3</SelectItem></SelectContent>
             </Select>
             <input type="text" value={reportSupervisor} onChange={e => setReportSupervisor(e.target.value)} placeholder="Supervisor" className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" data-testid="report-supervisor" />
             <button onClick={() => generateReport('excel')} disabled={reportLoading} className="h-8 px-3 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1" data-testid="report-excel-btn">
