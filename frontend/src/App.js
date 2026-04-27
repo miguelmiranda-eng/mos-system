@@ -143,6 +143,8 @@ const AuthCallback = () => {
               await new Promise(r => setTimeout(r, 100));
               if (userData.role === 'ceo') {
                 navigate('/ceo-dashboard', { replace: true });
+              } else if (userData.role === 'operator' || userData.role === 'picker') {
+                navigate('/operator', { replace: true });
               } else {
                 navigate('/dashboard', { replace: true });
               }
@@ -206,6 +208,9 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
+      } else if ((user.role === 'operator' || user.role === 'picker') && 
+                 !['/operator', '/wms'].includes(window.location.pathname)) {
+        navigate('/operator', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);
@@ -321,11 +326,11 @@ const LandingPage = () => {
   useEffect(() => {
     if (user) {
       if (user.role === 'operator' || user.role === 'picker') {
-        navigate('/operator');
+        navigate('/operator', { replace: true });
       } else if (user.role === 'ceo') {
-        navigate('/ceo-dashboard');
+        navigate('/ceo-dashboard', { replace: true });
       } else {
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       }
     }
   }, [user, navigate]);
@@ -343,9 +348,11 @@ const LandingPage = () => {
         const userData = await res.json();
         setUser(userData);
         if (userData.role === 'ceo') {
-          navigate('/ceo-dashboard');
+          navigate('/ceo-dashboard', { replace: true });
+        } else if (userData.role === 'operator' || userData.role === 'picker') {
+          navigate('/operator', { replace: true });
         } else {
-          navigate('/dashboard');
+          navigate('/dashboard', { replace: true });
         }
       } else {
         const err = await res.json().catch(() => ({}));
