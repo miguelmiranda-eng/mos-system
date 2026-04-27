@@ -39,6 +39,7 @@ from routers.reports import router as reports_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
+from routers.v1_insights import router as v1_insights_router
 
 
 app.include_router(auth_router)
@@ -53,6 +54,7 @@ app.include_router(reports_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
+app.include_router(v1_insights_router)
 
 
 # Auto-restore database on startup

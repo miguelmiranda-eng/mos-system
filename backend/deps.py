@@ -127,8 +127,20 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
-    role: str = "user"
+    role: str = "user" # user, admin, ceo, yamil, angel
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ProductionInsight(BaseModel):
+    date: str # YYYY-MM-DD
+    customer: str
+    total_units: int
+    total_amount: float
+    avg_price_per_unit: float
+    is_corrected: bool = False
+    source: str = "printavo" # printavo, manual_excel
+    week: int
+    month: int
+    year: int
 
 class OrderCreate(BaseModel):
     order_number: Optional[str] = None
@@ -309,6 +321,12 @@ async def require_ceo(request: Request) -> Dict:
     user = await require_auth(request)
     if user.get("role") not in ["admin", "ceo"]:
         raise HTTPException(status_code=403, detail="CEO or Admin access required")
+    return user
+
+async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
+    user = await require_auth(request)
+    if user.get("role") not in allowed_roles and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail=f"Access denied for role: {user.get('role')}")
     return user
 
 async def log_activity(user: Dict, action: str, details: Dict = None, previous_data: Dict = None):
