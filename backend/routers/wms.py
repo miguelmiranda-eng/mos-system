@@ -312,7 +312,7 @@ async def _update_inventory_enhanced(sku, color, size, qty, operation, customer=
             await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
 
             # WMS 2.0 Cycle Count Trigger
-            new_hand = inv.get("on_hand", 0) - qty
+            new_hand = inv.get("units_on_hand", 0) - qty
             if new_hand < 50:
                 existing_cc = await db.wms_tasks.find_one({"task_type": "cycle_count", "context.sku": sku, "status": "pending"})
                 if not existing_cc:
@@ -454,9 +454,17 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
         {"$sort": {"_id": 1}}
     ]
 
+    # Locations: show all unique locations
+    loc_pipeline = [
+        {"$group": {"_id": {"$toLower": "$location"}, "val": {"$first": "$location"}}},
+        {"$match": {"_id": {"$nin": ["", None]}}},
+        {"$sort": {"_id": 1}}
+    ]
+
     mfrs = await db.wms_inventory.aggregate(mfr_pipeline).to_list(5000)
     styles = await db.wms_inventory.aggregate(style_pipeline).to_list(5000)
     colors = await db.wms_inventory.aggregate(color_pipeline).to_list(5000)
+    locs = await db.wms_inventory.aggregate(loc_pipeline).to_list(5000)
 
     # Customers list: Fetch directly from MOS Orders (client column)
     cust_pipeline = [
@@ -471,7 +479,8 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
         "customers": merged_customers,
         "manufacturers": [m["val"] for m in mfrs if m and m.get("val")],
         "styles": [s["val"] for s in styles if s and s.get("val")],
-        "colors": [c["val"] for c in colors if c and c.get("val")]
+        "colors": [c["val"] for c in colors if c and c.get("val")],
+        "locations": [l["val"] for l in locs if l and l.get("val")]
     }
 
 @router.get("/movements/summary")
@@ -1449,11 +1458,11 @@ async def export_inventory(request: Request):
         ws.write(row, 4, inv.get("description", ""))
         ws.write(row, 5, inv.get("category", ""))
         ws.write(row, 6, inv.get("manufacturer", ""))
-        ws.write(row, 7, inv.get("inv_location", ""))
+        ws.write(row, 7, inv.get("location", ""))
         ws.write(row, 8, inv.get("total_boxes", 0))
-        ws.write(row, 9, inv.get("on_hand", 0))
-        ws.write(row, 10, inv.get("allocated", 0))
-        ws.write(row, 11, inv.get("available", 0))
+        ws.write(row, 9, inv.get("units_on_hand", 0))
+        ws.write(row, 10, inv.get("units_allocated", 0))
+        ws.write(row, 11, inv.get("units_on_hand", 0) - inv.get("units_allocated", 0))
         ws.write(row, 12, inv.get("country_of_origin", ""))
         ws.write(row, 13, inv.get("fabric_content", ""))
         ws.write(row, 14, "YES" if inv.get("is_bpo") else "NO")
@@ -1741,7 +1750,7 @@ async def create_cycle_count(request: Request):
     # Build query to get inventory items for this count
     query = {}
     if location_filter:
-        query["inv_location"] = {"$regex": location_filter, "$options": "i"}
+        query["location"] = {"$regex": location_filter, "$options": "i"}
     if customer_filter:
         query["customer"] = {"$regex": f"^{customer_filter}$", "$options": "i"}
     if style_filter:
@@ -1760,9 +1769,9 @@ async def create_cycle_count(request: Request):
             "style": item.get("style", ""),
             "color": item.get("color", ""),
             "size": item.get("size", ""),
-            "inv_location": item.get("inv_location", ""),
+            "inv_location": item.get("location", ""),
             "sku": item.get("sku", ""),
-            "system_qty": item.get("on_hand", 0),
+            "system_qty": item.get("units_on_hand", 0),
             "counted_qty": None,
             "discrepancy": None,
             "counted": False
@@ -1868,8 +1877,8 @@ async def approve_cycle_count(count_id: str, request: Request):
         if line.get("discrepancy") and line["discrepancy"] != 0:
             # Adjust inventory
             await db.wms_inventory.update_one(
-                {"style": line["style"], "color": line["color"], "size": line["size"], "inv_location": line["inv_location"]},
-                {"$set": {"on_hand": line["counted_qty"], "available": line["counted_qty"] - (line.get("allocated", 0) or 0)}}
+                {"style": line["style"], "color": line["color"], "size": line["size"], "location": line["inv_location"]},
+                {"$set": {"units_on_hand": line["counted_qty"]}}
             )
             adjustments += 1
 

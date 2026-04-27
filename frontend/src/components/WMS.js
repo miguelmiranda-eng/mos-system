@@ -1988,14 +1988,18 @@ const CycleCountModule = () => {
   const [operators, setOperators] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [options, setOptions] = useState({ customers: [], styles: [] });
+  const [options, setOptions] = useState({ customers: [], styles: [], locations: [] });
   const [form, setForm] = useState({ name: '', location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(() => {}); }, []);
   useEffect(() => {
     load();
     fetcher('/operators').then(setOperators).catch(() => {});
-    fetcher('/inventory/options?').then(d => setOptions({ customers: d.customers || [], styles: d.styles || [] })).catch(() => {});
+    fetcher('/inventory/options?').then(d => setOptions({ 
+      customers: d.customers || [], 
+      styles: d.styles || [],
+      locations: d.locations || []
+    })).catch(() => {});
   }, [load]);
 
   const toggleNewForm = () => setShowForm(!showForm);
@@ -2205,7 +2209,13 @@ const CycleCountModule = () => {
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{t('wms_cc_loc_filter')}</label>
-              <input placeholder="Ej: RP10" value={form.location_filter} onChange={e => setForm(p => ({ ...p, location_filter: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="cc-loc" />
+              <SearchableSelect 
+                options={options.locations} 
+                value={form.location_filter} 
+                onChange={val => setForm(p => ({ ...p, location_filter: val }))} 
+                placeholder="Ej: RP10" 
+                testId="cc-loc" 
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{t('client')}</label>
