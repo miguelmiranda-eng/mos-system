@@ -90,7 +90,10 @@ async def update_user_role(user_id: str, request: Request):
     if associated_customer is not None:
         update_data["associated_customer"] = associated_customer
         
-    result = await db.users.update_one({"email": user_id}, {"$set": update_data})
+    result = await db.users.update_one(
+        {"$or": [{"user_id": user_id}, {"email": user_id}]}, 
+        {"$set": update_data}
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role, "associated_customer": associated_customer})
@@ -101,7 +104,7 @@ async def delete_user(user_id: str, request: Request):
     user = await require_admin(request)
     if user_id in ADMIN_EMAILS:
         raise HTTPException(status_code=400, detail="No se puede eliminar al administrador principal")
-    result = await db.users.delete_one({"email": user_id})
+    result = await db.users.delete_one({"$or": [{"user_id": user_id}, {"email": user_id}]})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     await log_activity(user, "delete_user", {"email": user_id})
