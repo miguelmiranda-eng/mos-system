@@ -182,13 +182,31 @@ const UserManagementCenter = () => {
   };
 
   const handleRoleChange = async (userId, newRole, customer = '') => {
+    if (!window.confirm(`¿Cambiar el rol a ${newRole}?`)) {
+        fetchUsers();
+        return;
+    }
+    
+    setLoading(true);
     try {
       const res = await fetch(`${API}/users/${userId}/role`, { 
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', 
-        body: JSON.stringify({ role: newRole, associated_customer: customer }) 
+        body: JSON.stringify({ role: newRole, associated_customer: customer || undefined }) 
       });
-      if (res.ok) { toast.success('Rol actualizado'); fetchUsers(); }
-    } catch { toast.error('Error actualizando rol'); }
+      if (res.ok) { 
+        toast.success('Rol actualizado con éxito'); 
+        setTimeout(fetchUsers, 500); 
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al actualizar rol');
+        fetchUsers();
+      }
+    } catch (err) { 
+      toast.error('Error de conexión al actualizar rol'); 
+      fetchUsers();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRemoveUser = async (userId) => {
