@@ -82,6 +82,14 @@ async def startup_restore():
     if stats:
         logging.getLogger(__name__).info(f"Database restored from seed: {stats}")
 
+    # Run database optimization and cleanup
+    try:
+        from optimize_db import main as run_optimization
+        await run_optimization()
+        logging.info("Database optimization and cleanup completed on startup.")
+    except Exception as e:
+        logging.error(f"Error during startup optimization: {e}")
+
 # Admin backup endpoint
 from fastapi import Request
 from deps import require_admin
