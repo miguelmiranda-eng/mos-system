@@ -76,7 +76,7 @@ async def optimize():
 
     try:
         from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         result = await db.notifications.delete_many({"created_at": {"$lt": cutoff}})
         if result.deleted_count > 0:
             print(f"Cleaned up {result.deleted_count} old notifications")
