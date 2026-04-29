@@ -3,7 +3,7 @@ from fastapi import HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 import os, uuid, logging
@@ -274,6 +274,81 @@ class ProductionLogCreate(BaseModel):
     design_type: Optional[str] = ""
     stop_cause: Optional[str] = ""
     supervisor: Optional[str] = ""
+
+class InvoiceItem(BaseModel):
+    category: Optional[str] = "Screen Printing"
+    item_number: Optional[str] = ""
+    color: Optional[str] = ""
+    description: Optional[str] = ""
+    quantity: Optional[int] = 0
+    price: Optional[float] = 0.0
+    amount: Optional[float] = 0.0
+    sizes: Optional[Dict[str, Any]] = Field(default_factory=lambda: {
+        "XS": 0, "S": 0, "M": 0, "L": 0, "XL": 0, "2X": 0, "3X": 0, "4X": 0, "5X": 0
+    })
+
+class InvoiceModel(BaseModel):
+    invoice_id: Optional[str] = None
+    order_number: Optional[str] = None
+    type: Optional[str] = "quote"
+    status: Optional[str] = "draft"
+    client: Optional[str] = ""
+    client_email: Optional[str] = None
+    customer_po: Optional[str] = ""
+    dates: Optional[Dict[str, Any]] = Field(default_factory=lambda: {
+        "created": datetime.now(timezone.utc).date().isoformat(),
+        "due": (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
+    })
+    terms: str = "Net 7"
+    amounts: Dict[str, float] = {"subtotal": 0, "tax": 0, "total": 0}
+    billing_address: Dict[str, Any] = {}
+    shipping_address: Dict[str, Any] = {}
+    items: List[InvoiceItem] = []
+    
+    # Production Fusion Fields (MOS) - COMPLETOS
+    store_po: Optional[str] = ""
+    design_num: Optional[str] = ""
+    job_title_a: Optional[Any] = {"url": "", "desc": ""}
+    cancel_date: Optional[str] = ""
+    sample: Optional[str] = ""
+    style: Optional[str] = ""
+    branding: Optional[str] = ""
+    priority: Optional[str] = "PRIORITY 2"
+    blank_source: Optional[str] = ""
+    blank_status: Optional[str] = "PENDIENTE"
+    production_status: Optional[str] = "EN ESPERA"
+    artwork_status: Optional[str] = "NEW"
+    color: Optional[str] = ""
+    
+    production_notes: Optional[str] = "ART LINKS ONLY. FOR ART DEPARTAMENT ONLY. NO ADDITIONAL NOTES."
+    art_links: List[str] = []
+    seps: Optional[str] = ""
+    customer_notes: Optional[str] = ""
+    attachments: List[Dict[str, str]] = []
+    payment: Dict[str, Any] = {
+        "status": "pending",
+        "stripe_payment_intent_id": None,
+        "fees": 0.0,
+        "paid": 0.0,
+        "outstanding": 0.0
+    }
+    approval_status: str = "pending"
+    linked_work_orders: List[str] = []
+    created_at: Optional[Any] = None
+    updated_at: Optional[Any] = None
+
+class WorkOrderModel(BaseModel):
+    work_order_id: str
+    source_invoice_id: str
+    production_status: str = "artwork_pending" # artwork_pending | artwork_approved | production | quality_check | completed
+    art_links: List[str] = []
+    production_notes: Optional[str] = None
+    packing_details: Dict[str, str] = {"bags": "individual", "labels": "hanging", "boxes": "master"}
+    assigned_operator: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    completion_date: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # ==================== AUTH HELPERS ====================
 

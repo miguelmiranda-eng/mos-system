@@ -20,6 +20,7 @@ app.add_middleware(
     allow_origins=[
         "https://mosdatabase-frontend.k9pirj.easypanel.host",
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:5173"
     ] + [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
     allow_methods=["*"],
@@ -40,6 +41,8 @@ from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
 from routers.v1_insights import router as v1_insights_router
+from routers.invoices import router as invoices_router
+from routers.work_orders import router as work_orders_router
 
 
 app.include_router(auth_router)
@@ -55,6 +58,8 @@ app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
 app.include_router(v1_insights_router)
+app.include_router(invoices_router)
+app.include_router(work_orders_router)
 
 
 # Auto-restore database on startup

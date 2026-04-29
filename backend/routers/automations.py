@@ -54,66 +54,42 @@ async def delete_automation(automation_id: str, request: Request):
 
 # ==================== AUTOMATION ENGINE ====================
 
-async def run_automations(trigger_type, order, user, context=None):
+async def run_automations(trigger_type, target_obj, user, context=None, obj_type="order"):
     context = context or {}
     executed = []
     automations = await db.automations.find({"trigger_type": trigger_type, "is_active": True}, {"_id": 0}).to_list(100)
-    if not order:
-        logger.warning(f"run_automations called with None order for trigger {trigger_type}")
+    
+    if not target_obj:
+        logger.warning(f"run_automations called with None object for trigger {trigger_type}")
         return executed
 
-    order_board = order.get("board", "")
     for automation in automations:
         try:
-            # Filter by boards if specified
-            auto_boards = automation.get("boards") or []
-            if auto_boards and order_board not in auto_boards:
-                continue
-            if check_conditions(automation["trigger_conditions"], order, context):
-                await execute_action(automation["action_type"], automation["action_params"], order)
-                executed.append({"name": automation["name"], "action": automation["action_type"], "params": automation["action_params"]})
-                await log_activity(user, "automation_triggered", {"automation_id": automation["automation_id"], "automation_name": automation["name"], "order_id": order.get("order_id")})
+            # Filter by boards if specified (only for orders)
+            if obj_type == "order":
+                auto_boards = automation.get("boards") or []
+                order_board = target_obj.get("board", "")
+                if auto_boards and order_board not in auto_boards:
+                    continue
+            
+            if check_conditions(automation["trigger_conditions"], target_obj, context):
+                await execute_action(automation["action_type"], automation["action_params"], target_obj, user)
+                executed.append({
+                    "name": automation["name"], 
+                    "action": automation["action_type"], 
+                    "params": automation["action_params"]
+                })
+                
+                # Log trigger
+                obj_id = target_obj.get("order_id") or target_obj.get("invoice_id")
+                await log_activity(user, "automation_triggered", {
+                    "automation_id": automation["automation_id"], 
+                    "automation_name": automation["name"], 
+                    "target_id": obj_id,
+                    "target_type": obj_type
+                })
         except Exception as e:
-            logger.error(f"Automation error: {e}")
-            
-    # --- HARDCODED WMS AUTOMATION ---
-    if trigger_type == "create":
-        try:
-            # We use a localized import here if needed, or just call the DB directly to avoid complex router imports
-            ticket_id = f"pick_{uuid.uuid4().hex[:12]}"
-            # The user requested that style and color should ALWAYS be blank on automatically generated
-            # pick tickets, so the warehouse operators are forced to select them in the WMS module.
-            wms_style = ""
-            
-            total_qty = order.get("quantity") or 0
-            
-            ticket_doc = {
-                "ticket_id": ticket_id,
-                "order_number": order.get("order_number", ""),
-                "customer": order.get("client") or "Unknown",
-                "client": order.get("client") or "",
-                "color": "",
-                "quantity": total_qty,
-                "style": wms_style,
-                "sizes": order.get("sizes") or {},
-                "size_locations": {},
-                "total_pick_qty": total_qty,
-                "status": "pending",
-                "board_category": order.get("board", "UNSET"),
-                "blank_status": order.get("blank_status", ""),
-                "picking_status": "unassigned",
-                "assigned_to": None,
-                "assigned_to_name": None,
-                "assigned_at": None,
-                "picked_sizes": {},
-                "created_by": user.get("user_id"),
-                "created_by_name": user.get("name", "Sistema"),
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }
-            await db.wms_pick_tickets.insert_one(ticket_doc)
-            logger.info(f"Automatic Pick Ticket created: {ticket_id} for order {order.get('order_number')}")
-        except Exception as e:
-            logger.error(f"Error in hardcoded WMS automation: {e}")
+            logger.error(f"Automation error in {automation.get('name')}: {e}")
             
     return executed
 
@@ -165,20 +141,33 @@ def _values_match(actual, expected):
     # String comparison (case-insensitive)
     return str(actual).strip().lower() == str(expected).strip().lower()
 
-async def execute_action(action_type, params, order):
+async def execute_action(action_type, params, target_obj, user=None):
     if action_type == "send_email":
-        await send_automation_email(params, order)
+        await send_automation_email(params, target_obj)
     elif action_type == "move_board":
         target_board = params.get("target_board")
-        if target_board:
-            await db.orders.update_one({"order_id": order["order_id"]}, {"$set": {"board": target_board}})
+        if target_board and "order_id" in target_obj:
+            await db.orders.update_one({"order_id": target_obj["order_id"]}, {"$set": {"board": target_board}})
     elif action_type == "assign_field":
         field = params.get("field")
         value = params.get("value")
         if field and value:
-            await db.orders.update_one({"order_id": order["order_id"]}, {"$set": {field: value}})
+            # Determine collection
+            collection = db.orders if "order_id" in target_obj else db.invoices
+            id_key = "order_id" if "order_id" in target_obj else "invoice_id"
+            await collection.update_one({id_key: target_obj[id_key]}, {"$set": {field: value}})
     elif action_type == "notify_slack":
-        await send_slack_notification(params, order)
+        await send_slack_notification(params, target_obj)
+    elif action_type == "create_work_order":
+        await trigger_create_work_order(target_obj, user)
+
+async def trigger_create_work_order(invoice, user):
+    """Action to create a work order from an invoice."""
+    try:
+        from routers.invoices import generate_work_order_from_invoice
+        await generate_work_order_from_invoice(invoice, user)
+    except Exception as e:
+        logger.error(f"Failed to execute create_work_order action: {e}")
 
 async def send_automation_email(params, order):
     if not resend.api_key:

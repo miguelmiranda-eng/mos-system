@@ -38,6 +38,30 @@ async def optimize():
     except Exception as e:
         print(f"Error creating index: {e}")
 
+    try:
+        await db.orders.create_index("order_id")
+        print("Created index on 'orders.order_id'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
+    try:
+        await db.production_logs.create_index("created_at")
+        print("Created index on 'production_logs.created_at'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+        
+    try:
+        await db.production_logs.create_index("order_id")
+        print("Created index on 'production_logs.order_id'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
+    try:
+        await db.production_logs.create_index("machine")
+        print("Created index on 'production_logs.machine'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
     print("Optimization finished.")
 
 if __name__ == "__main__":
