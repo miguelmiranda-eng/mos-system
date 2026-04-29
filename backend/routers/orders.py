@@ -26,20 +26,9 @@ def _merge_custom_fields(order: dict):
 
 # Helper to create notifications for all users except the actor
 async def _notify_all(actor, notif_type, message, order_id=None, order_number=None):
-    all_users = await db.users.find({}, {"_id": 0, "user_id": 1}).to_list(200)
-    actor_id = actor.get("user_id", actor.get("email"))
-    docs = []
-    for u in all_users:
-        uid = u.get("user_id")
-        if uid and uid != actor_id:
-            docs.append({
-                "notification_id": f"notif_{uuid.uuid4().hex[:12]}", "user_id": uid,
-                "type": notif_type, "message": message,
-                "order_id": order_id, "order_number": order_number,
-                "read": False, "created_at": datetime.now(timezone.utc).isoformat()
-            })
-    if docs:
-        await db.notifications.insert_many(docs)
+    # System disabled general notifications as per user request
+    # Only mentions are allowed now (handled in specific routes)
+    return
 
 # Lazy import to avoid circular - automations engine is in its own file
 async def _run_automations(trigger_type, order, user, context=None):
@@ -494,18 +483,6 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
                 "sender_picture": user.get("picture"),
                 "read": False, "created_at": datetime.now(timezone.utc).isoformat()
             })
-    else:
-        for u in all_users:
-            uid = u.get("user_id", u.get("email"))
-            if uid != current_user_id:
-                notif_docs.append({
-                    "notification_id": f"notif_{uuid.uuid4().hex[:12]}", "user_id": uid, "type": "comment",
-                    "message": f"{user['name']} comento en orden {order.get('order_number', order_id)}",
-                    "order_id": order_id, "order_number": order.get("order_number"),
-                    "sender_name": user.get("name"),
-                    "sender_picture": user.get("picture"),
-                    "read": False, "created_at": datetime.now(timezone.utc).isoformat()
-                })
     if notif_docs:
         await db.notifications.insert_many(notif_docs)
     

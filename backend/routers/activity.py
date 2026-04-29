@@ -20,7 +20,7 @@ async def get_notifications(request: Request, limit: int = 50):
 async def mark_notifications_read(request: Request):
     user = await require_auth(request)
     user_id = user.get("user_id", user.get("email"))
-    await db.notifications.update_many({"user_id": user_id, "read": False, "type": {"$ne": "mention"}}, {"$set": {"read": True}})
+    await db.notifications.update_many({"user_id": user_id, "read": False}, {"$set": {"read": True}})
     return {"message": "All notifications marked as read"}
 
 @router.put("/notifications/{notification_id}/read")

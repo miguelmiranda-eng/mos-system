@@ -45,6 +45,24 @@ async def optimize():
         print(f"Error creating index: {e}")
 
     try:
+        await db.orders.create_index([("created_at", -1)])
+        print("Created index on 'orders.created_at'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
+    try:
+        await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+        print("Created index on 'notifications.user_id_created_at'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
+    try:
+        await db.activity_logs.create_index([("timestamp", -1)])
+        print("Created index on 'activity_logs.timestamp'")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+
+    try:
         await db.production_logs.create_index("created_at")
         print("Created index on 'production_logs.created_at'")
     except Exception as e:
@@ -57,10 +75,13 @@ async def optimize():
         print(f"Error creating index: {e}")
 
     try:
-        await db.production_logs.create_index("machine")
-        print("Created index on 'production_logs.machine'")
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+        result = await db.notifications.delete_many({"created_at": {"$lt": cutoff}})
+        if result.deleted_count > 0:
+            print(f"Cleaned up {result.deleted_count} old notifications")
     except Exception as e:
-        print(f"Error creating index: {e}")
+        print(f"Error during cleanup: {e}")
 
     print("Optimization finished.")
 

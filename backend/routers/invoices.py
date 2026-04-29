@@ -348,19 +348,34 @@ async def update_invoice(invoice_id: str, request: Request):
     await ws_manager.broadcast("invoice_change", {"action": "update", "invoice_id": invoice_id})
     
     # Sincronizar cambios con MOS orders si existe la lógica para update
-    # En este caso, sólo necesitamos actualizar en invoices
-    
-    updated = await db.invoices.find_one({"invoice_id": invoice_id}, {"_id": 0})
-    return updated
+    if wo_id := data.get("mos_work_order_id"):
+        from .work_orders import update_mos_order
+        await update_mos_order(wo_id, data)
+        
+    updated_invoice = await db.invoices.find_one({"invoice_id": invoice_id})
+    if updated_invoice and "_id" in updated_invoice:
+        updated_invoice["_id"] = str(updated_invoice["_id"])
+    return updated_invoice
 
 @router.delete("/{invoice_id}")
 async def delete_invoice(invoice_id: str, request: Request):
-    user = await require_admin(request)
-    existing = await db.invoices.find_one({"invoice_id": invoice_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Invoice not found")
+    user = await require_auth(request)
     
-    await db.invoices.delete_one({"invoice_id": invoice_id})
+    # Check if invoice exists
+    invoice = await db.invoices.find_one({"invoice_id": invoice_id})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+        
+    result = await db.invoices.delete_one({"invoice_id": invoice_id})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=400, detail="Failed to delete invoice")
+        
+    # Remove from MOS work orders if it exists
+    wo_id = invoice.get("mos_work_order_id")
+    if wo_id:
+        await db.mos_orders.delete_one({"order_id": wo_id})
+        
     await log_activity(user, "delete_invoice", {"invoice_id": invoice_id})
     await ws_manager.broadcast("invoice_change", {"action": "delete", "invoice_id": invoice_id})
     
