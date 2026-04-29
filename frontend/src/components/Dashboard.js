@@ -922,7 +922,7 @@ const Dashboard = () => {
               {showNotifications && (
                 <div data-testid="notifications-dropdown" className={cn("absolute top-12 right-0 w-80 md:w-96 border rounded-sm shadow-2xl z-[500] animate-in slide-in-from-top-2 overflow-hidden", isDark ? "bg-card border-white/10" : "bg-white border-border")}>
                   <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/20">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Notificaciones</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Menciones</span>
                     {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{unreadCount} Nuevas</span>}
                   </div>
                   <ScrollArea className="max-h-[350px]">

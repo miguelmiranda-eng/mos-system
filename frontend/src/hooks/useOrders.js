@@ -198,8 +198,8 @@ export const useOrders = (currentBoard, boardFilters) => {
     try { 
       await fetch(`${API}/notifications/read`, { method: 'PUT', credentials: 'include' }); 
       setNotifications(prev => {
-        const next = prev.map(n => n.type !== 'mention' ? { ...n, read: true } : n);
-        setUnreadCount(next.filter(n => !n.read).length);
+        const next = prev.map(n => ({ ...n, read: true }));
+        setUnreadCount(0);
         return next;
       });
     } catch { /* silent */ }
@@ -259,10 +259,13 @@ export const useOrders = (currentBoard, boardFilters) => {
   useEffect(() => { fetchOptions(); }, [fetchOptions]);
   useEffect(() => { fetchAllOrders(); }, [fetchAllOrders]);
   useEffect(() => { fetchProductionSummary(); }, [fetchProductionSummary]);
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
-  useEffect(() => { fetchBoards(); }, [fetchBoards]);
-  useEffect(() => { fetchGroups(); }, [fetchGroups]);
-  useEffect(() => { const interval = setInterval(fetchNotifications, 30000); return () => clearInterval(interval); }, [fetchNotifications]);
+  useEffect(() => { 
+    fetchNotifications();
+    fetchBoards();
+    fetchGroups();
+    const interval = setInterval(fetchNotifications, 60000); 
+    return () => clearInterval(interval); 
+  }, [fetchNotifications, fetchBoards, fetchGroups]);
 
   // ==================== REAL-TIME WEBSOCKET ====================
   const wsRef = useRef(null);
