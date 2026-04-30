@@ -215,9 +215,7 @@ async def get_gantt_data(request: Request, start_date: str = None, end_date: str
     total_pieces_system = sum(o.get("quantity", 0) for o in all_orders)
     return {"bars": completed_bars, "pending": pending_orders, "total_pieces_system": total_pieces_system}
 
-@router.get("/capacity-plan")
-async def get_capacity_plan(request: Request):
-    await require_auth(request)
+async def _compute_capacity_plan():
     # Get all active orders with their boards
     all_orders = await db.orders.find({"board": {"$ne": "PAPELERA DE RECICLAJE"}}, {"_id": 0, "order_id": 1, "quantity": 1, "board": 1, "order_number": 1, "client": 1, "priority": 1}).to_list(10000)
     orders_map = {o["order_id"]: o for o in all_orders}
@@ -292,6 +290,25 @@ async def get_capacity_plan(request: Request):
         "in_production": in_production_total
     }
 
+@router.get("/capacity-plan")
+async def get_capacity_plan(request: Request):
+    await require_auth(request)
+    cache_key = "capacity_plan"
+    
+    cached = get_cached(cache_key)
+    if cached is not None: return cached
+
+    if cache_key not in _cache_locks:
+        _cache_locks[cache_key] = asyncio.Lock()
+        
+    async with _cache_locks[cache_key]:
+        cached = get_cached(cache_key)
+        if cached is not None: return cached
+        
+        result = await _compute_capacity_plan()
+        set_cache(cache_key, result)
+        return result
+
 # ==================== PRODUCTION ANALYTICS ====================
 
 def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
@@ -334,14 +351,7 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
         if date_q: query["created_at"] = date_q
     return query
 
-@router.get("/production-analytics")
-async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
-    await require_auth(request)
-    
-    # Cache key based on all filters
-    cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
-    cached = get_cached(cache_key)
-    if cached: return cached
+async def _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number):
 
     query = _get_preset_query(preset, date_from, date_to)
     if machine: query["machine"] = machine
@@ -536,8 +546,26 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         "logs": result.get("recent_logs", [])
     }
     
-    set_cache(cache_key, response_data)
     return response_data
+
+@router.get("/production-analytics")
+async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
+    await require_auth(request)
+    
+    cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
+    cached = get_cached(cache_key)
+    if cached is not None: return cached
+
+    if cache_key not in _cache_locks:
+        _cache_locks[cache_key] = asyncio.Lock()
+        
+    async with _cache_locks[cache_key]:
+        cached = get_cached(cache_key)
+        if cached is not None: return cached
+        
+        result = await _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number)
+        set_cache(cache_key, result)
+        return result
 
 @router.post("/production-report")
 async def generate_production_report(request: Request):

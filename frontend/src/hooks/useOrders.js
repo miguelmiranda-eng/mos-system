@@ -353,13 +353,16 @@ export const useOrders = (currentBoard, boardFilters) => {
           if (msg.type === 'order_change' || msg.type === 'production_update') {
             // Debounce server fetches to prevent flooding during bursts of updates
             if (updateDebounceTimer.current) clearTimeout(updateDebounceTimer.current);
+            // Add a random Jitter between 1000ms and 4000ms to prevent Thundering Herds
+            // when multiple iPads/clients receive the same WebSocket broadcast.
+            const jitter = 1000 + Math.random() * 3000;
             updateDebounceTimer.current = setTimeout(() => {
               fetchProdRef.current();
               if (msg.type === 'order_change') {
                 fetchOrdersRef.current(true);
                 if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
               }
-            }, 1000); // 1 second debounce
+            }, jitter);
           }
           // Detect session expired message from server
           if (msg.type === 'error' && msg.code === 401) {
