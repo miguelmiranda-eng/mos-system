@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://mosdatabase-backend.k9pirj.easypanel.host';
 export const API = `${BACKEND_URL}/api`;
 
 export const BOARDS = [
