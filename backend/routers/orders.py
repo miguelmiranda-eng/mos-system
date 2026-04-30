@@ -72,7 +72,10 @@ async def get_orders(request: Request, board: str = None, search: str = None):
         query = {}
         if board == "MASTER":
             # Exclude trash AND ghost orders (null/missing board) using an indexable query
-            query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None], "$exists": True}
+            # We use $in with dynamic boards because $nin causes a full collection scan
+            from deps import get_dynamic_boards
+            active_boards = await get_dynamic_boards()
+            query["board"] = {"$in": active_boards}
         elif board:
             query["board"] = board
         if search:
@@ -84,7 +87,10 @@ async def get_orders(request: Request, board: str = None, search: str = None):
                 {"branding": {"$regex": search, "$options": "i"}},
                 {"notes": {"$regex": search, "$options": "i"}}
             ]
-        orders_raw = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
+        # These are fetched individually when opening the order details.
+        projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
+        orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(1000)
         
         # Safety loop to avoid serialization/merging crashes
         cleaned_orders = []
