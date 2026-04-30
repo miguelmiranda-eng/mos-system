@@ -153,6 +153,21 @@ const Dashboard = () => {
   const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
   const [tempOrderNo, setTempOrderNo] = useState('');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [displayLimit, setDisplayLimit] = useState(100);
+
+  // Progressive rendering: Load 100 initially, then 200 more every 3 seconds
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [currentBoard]);
+
+  useEffect(() => {
+    if (orders.length > displayLimit) {
+      const timer = setTimeout(() => {
+        setDisplayLimit(prev => prev + 200);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders.length, displayLimit]);
 
   useEffect(() => {
     if (!highlightedOrderId) return;
@@ -705,6 +720,7 @@ const Dashboard = () => {
   };
 
   const renderTableRows = () => {
+    const visibleOrders = orders.slice(0, displayLimit);
     const renderOrderRow = (order) => {
       const sq = searchQuery.toLowerCase();
       const getVal = (v) => {
@@ -777,7 +793,7 @@ const Dashboard = () => {
       );
     };
 
-    if (!groupByDate) return orders.map(renderOrderRow);
+    if (!groupByDate) return visibleOrders.map(renderOrderRow);
     const groups = {};
     const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
     const groupLabelMap = {
@@ -786,7 +802,7 @@ const Dashboard = () => {
       priority: lang === 'es' ? 'Prioridad' : 'Priority',
     };
     const noValueLabel = isDateField ? (lang === 'es' ? 'Sin fecha' : 'No date') : (lang === 'es' ? 'Sin asignar' : 'None');
-    orders.forEach(o => {
+    visibleOrders.forEach(o => {
       const raw = o[groupByDate];
       const groupKey = isDateField
         ? (raw ? new Date(raw).toLocaleDateString() : noValueLabel)
