@@ -54,8 +54,19 @@ async def get_orders(request: Request, board: str = None, search: str = None):
             {"branding": {"$regex": search, "$options": "i"}},
             {"notes": {"$regex": search, "$options": "i"}}
         ]
-    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return [_merge_custom_fields(order) for order in orders]
+    orders_raw = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    # Safety loop to avoid serialization/merging crashes
+    cleaned_orders = []
+    for order in orders_raw:
+        try:
+            merged = _merge_custom_fields(order)
+            cleaned_orders.append(merged)
+        except Exception as e:
+            logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
+            cleaned_orders.append(order)
+            
+    return cleaned_orders
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):

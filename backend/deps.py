@@ -286,6 +286,7 @@ class InvoiceItem(BaseModel):
     sizes: Optional[Dict[str, Any]] = Field(default_factory=lambda: {
         "XS": 0, "S": 0, "M": 0, "L": 0, "XL": 0, "2X": 0, "3X": 0, "4X": 0, "5X": 0
     })
+    model_config = {"extra": "allow"}
 
 class InvoiceModel(BaseModel):
     invoice_id: Optional[str] = None
@@ -336,6 +337,7 @@ class InvoiceModel(BaseModel):
     linked_work_orders: List[str] = []
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
+    model_config = {"extra": "allow"}
 
 class WorkOrderModel(BaseModel):
     work_order_id: str
@@ -349,6 +351,7 @@ class WorkOrderModel(BaseModel):
     completion_date: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_config = {"extra": "allow"}
 
 # ==================== AUTH HELPERS ====================
 

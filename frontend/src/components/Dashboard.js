@@ -133,6 +133,7 @@ const Dashboard = () => {
   const [activeViewName, setActiveViewName] = useState(null);
   const activeViewIdRef = useRef(null);
   const viewApplyingRef = useRef(false);
+  const skipSaveRef = useRef(false); // Prevents saving layout immediately after loading it
   const [trashOrders, setTrashOrders] = useState([]);
   const [trashLoading, setTrashLoading] = useState(false);
   const [groupByDate, setGroupByDate] = useState(null);
@@ -312,8 +313,14 @@ const Dashboard = () => {
         if (res.ok) {
           const data = await res.json();
           if (data.board) {
-            if (data.column_order?.length) setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: data.column_order }));
-            if (data.hidden_columns?.length) setHiddenColumns(prev => ({ ...prev, [currentBoard]: data.hidden_columns }));
+            if (data.column_order?.length) {
+              skipSaveRef.current = true;
+              setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: data.column_order }));
+            }
+            if (data.hidden_columns?.length) {
+              skipSaveRef.current = true;
+              setHiddenColumns(prev => ({ ...prev, [currentBoard]: data.hidden_columns }));
+            }
             layoutLoaded.current[currentBoard] = true;
           }
         }
@@ -327,6 +334,10 @@ const Dashboard = () => {
   const layoutInitRef = useRef(false);
   useEffect(() => {
     if (!layoutLoaded.current[currentBoard] && !layoutInitRef.current) { layoutInitRef.current = true; return; }
+    if (skipSaveRef.current) {
+      skipSaveRef.current = false;
+      return;
+    }
     if (layoutSaveRef.current) clearTimeout(layoutSaveRef.current);
     layoutSaveRef.current = setTimeout(() => {
       fetch(`${API}/config/board-layout/${currentBoard}`, {

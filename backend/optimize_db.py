@@ -4,7 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from pathlib import Path
 
-async def optimize():
+async def main():
     load_dotenv(Path(__file__).parent / '.env')
     mongo_url = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URL')
     if not mongo_url:
@@ -80,10 +80,28 @@ async def optimize():
         result = await db.notifications.delete_many({"created_at": {"$lt": cutoff}})
         if result.deleted_count > 0:
             print(f"Cleaned up {result.deleted_count} old notifications")
+
+        # Cleanup old activity logs (keep 30 days)
+        log_cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        log_result = await db.activity_logs.delete_many({"timestamp": {"$lt": log_cutoff}})
+        if log_result.deleted_count > 0:
+            print(f"Cleaned up {log_result.deleted_count} old activity logs")
+
+        # Cleanup expired sessions (keep 30 days)
+        session_cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        session_result = await db.user_sessions.delete_many({"expires_at": {"$lt": session_cutoff}})
+        if session_result.deleted_count > 0:
+            print(f"Cleaned up {session_result.deleted_count} expired sessions")
+
+        # Cleanup password resets (keep 7 days)
+        reset_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        reset_result = await db.password_resets.delete_many({"expires_at": {"$lt": reset_cutoff}})
+        if reset_result.deleted_count > 0:
+            print(f"Cleaned up {reset_result.deleted_count} old password resets")
     except Exception as e:
         print(f"Error during cleanup: {e}")
 
     print("Optimization finished.")
 
 if __name__ == "__main__":
-    asyncio.run(optimize())
+    asyncio.run(main())

@@ -155,6 +155,8 @@ async def create_invoice(invoice_data: InvoiceModel, request: Request):
         await ws_manager.broadcast("invoice_change", {"action": "create", "invoice_id": doc["invoice_id"]})
         await ws_manager.broadcast("work_order_change", {"action": "create", "work_order_id": wo_id})
         
+        # Remove MongoDB _id to avoid serialization error
+        doc.pop("_id", None)
         return doc
     except Exception as e:
         # CAJA NEGRA: Escribir el error real en un archivo para que yo pueda leerlo

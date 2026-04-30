@@ -12,6 +12,8 @@ const HARDCODED_DEFAULTS = [
   'production_status', 'notes'
 ];
 
+import { LoadingOverlay } from "./LoadingOverlay";
+
 export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig, columns = [] }) => {
   const { t } = useLang();
   const [loading, setLoading] = useState(false);
@@ -96,6 +98,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
           }}
           onEscapeKeyDown={(e) => e.preventDefault()}
         >
+        <LoadingOverlay isLoading={loading} message={t('processing')} />
         <NewOrderForm
           formFieldKeys={formFieldKeys}
           options={options}
@@ -114,4 +117,5 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
     </Dialog>
   );
 };
+
 

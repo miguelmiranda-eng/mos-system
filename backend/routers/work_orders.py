@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api/work-orders")
 
 @router.get("")
 async def get_work_orders(request: Request, status: str = None, operator_id: str = None, search: str = None):
+    print(f"DEBUG: GET /api/work-orders search={search}")
     await require_auth(request)
     query = {}
     if status:
@@ -34,8 +35,17 @@ async def get_work_order(work_order_id: str, request: Request):
     return wo
 
 @router.post("")
-async def create_work_order(wo_data: WorkOrderModel, request: Request):
+async def create_work_order(wo_data_raw: dict, request: Request):
+    print(f"DEBUG: POST /api/work-orders raw_data={wo_data_raw}")
     user = await require_auth(request)
+    
+    # Manual validation for debugging
+    from deps import WorkOrderModel
+    try:
+        wo_data = WorkOrderModel(**wo_data_raw)
+    except Exception as e:
+        print(f"DEBUG: Validation failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Validation failed: {str(e)}")
     
     if not wo_data.work_order_id or wo_data.work_order_id == "string":
         wo_data.work_order_id = f"WO-{uuid.uuid4().hex[:8].upper()}"
@@ -49,12 +59,17 @@ async def create_work_order(wo_data: WorkOrderModel, request: Request):
     doc["updated_at"] = datetime.now(timezone.utc).isoformat()
     
     await db.work_orders.insert_one(doc)
+    # insert_one mutates doc by adding _id (ObjectId) — remove it before returning
+    doc.pop("_id", None)
     
-    # Update linked invoice
-    await db.invoices.update_one(
-        {"invoice_id": wo_data.source_invoice_id},
-        {"$push": {"linked_work_orders": wo_data.work_order_id}}
-    )
+    # Update linked invoice (best-effort, don't crash if invoice not found)
+    try:
+        await db.invoices.update_one(
+            {"invoice_id": wo_data.source_invoice_id},
+            {"$push": {"linked_work_orders": wo_data.work_order_id}}
+        )
+    except Exception:
+        pass
     
     await log_activity(user, "create_work_order", {"work_order_id": doc["work_order_id"], "invoice_id": doc["source_invoice_id"]})
     await ws_manager.broadcast("work_order_change", {"action": "create", "work_order_id": doc["work_order_id"]})

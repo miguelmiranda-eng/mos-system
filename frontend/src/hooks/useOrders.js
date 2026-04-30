@@ -263,7 +263,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     fetchNotifications();
     fetchBoards();
     fetchGroups();
-    const interval = setInterval(fetchNotifications, 60000); 
+    const interval = setInterval(fetchNotifications, 300000); // Poll notifications every 5 minutes
     return () => clearInterval(interval); 
   }, [fetchNotifications, fetchBoards, fetchGroups]);
 
@@ -281,6 +281,8 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   const sessionExpiredRef = useRef(false);
 
+  const updateDebounceTimer = useRef(null);
+
   const connectWs = useCallback(() => {
     if (sessionExpiredRef.current) return; // Don't reconnect if session expired
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
@@ -290,11 +292,15 @@ export const useOrders = (currentBoard, boardFilters) => {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'order_change' || msg.type === 'production_update') {
-            fetchProdRef.current();
-          }
-          if (msg.type === 'order_change') {
-            fetchOrdersRef.current(true);
-            if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
+            // Debounce server fetches to prevent flooding during bursts of updates
+            if (updateDebounceTimer.current) clearTimeout(updateDebounceTimer.current);
+            updateDebounceTimer.current = setTimeout(() => {
+              fetchProdRef.current();
+              if (msg.type === 'order_change') {
+                fetchOrdersRef.current(true);
+                if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
+              }
+            }, 1000); // 1 second debounce
           }
           // Detect session expired message from server
           if (msg.type === 'error' && msg.code === 401) {
@@ -334,6 +340,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   const handleCellUpdate = async (orderId, field, value) => {
     setOrders(prev => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o));
     selfUpdateRef.current = true;
+    setOperationLoading(true);
     try {
       const res = await fetch(`${API}/orders/${orderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ [field]: value }) });
       if (res.ok) {
@@ -346,6 +353,7 @@ export const useOrders = (currentBoard, boardFilters) => {
         }
       } else { toast.error(t('update_err')); fetchOrders(); }
     } catch { toast.error(t('update_err')); fetchOrders(); }
+    finally { setOperationLoading(false); }
   };
 
   const handleBulkMove = async (selectedOrders, targetBoard) => {

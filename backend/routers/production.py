@@ -3,13 +3,42 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, EmailRequest, MACHINES, logger
 from ws_manager import ws_manager
 from datetime import datetime, timezone
-import uuid, os, asyncio
+import uuid, os, asyncio, time
 import resend
 
 router = APIRouter(prefix="/api")
 
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+
+# ==================== CACHING SYSTEM ====================
+# Simple in-memory cache to reduce CPU load on heavy aggregations
+_cache = {}
+_CACHE_TTL = 300 # 5 minutes
+
+def get_cached(key: str):
+    now = time.time()
+    if key in _cache:
+        entry = _cache[key]
+        if now - entry['timestamp'] < _CACHE_TTL:
+            return entry['data']
+        else:
+            del _cache[key]
+    return None
+
+def set_cache(key: str, data: Any):
+    _cache[key] = {
+        'data': data,
+        'timestamp': time.time()
+    }
+
+def invalidate_cache(prefix: str = None):
+    if prefix:
+        keys_to_del = [k for k in _cache.keys() if k.startswith(prefix)]
+        for k in keys_to_del:
+            del _cache[k]
+    else:
+        _cache.clear()
 
 # ==================== OPERATORS CRUD ====================
 
@@ -107,6 +136,7 @@ async def create_production_log(log: ProductionLogCreate, request: Request):
         logger.error(f"Error logging production activity: {e}")
 
     await ws_manager.broadcast("production_update", {"order_id": log.order_id})
+    invalidate_cache("prod_") # Invalidate production-related caches
     return {k: v for k, v in log_doc.items() if k != "_id"}
 
 @router.get("/production-logs/{order_id}")
@@ -119,9 +149,15 @@ async def get_production_logs(order_id: str, request: Request):
 @router.get("/production-summary")
 async def get_production_summary(request: Request):
     await require_auth(request)
+    cache_key = "prod_summary"
+    cached = get_cached(cache_key)
+    if cached: return cached
+
     pipeline = [{"$group": {"_id": "$order_id", "total_produced": {"$sum": "$quantity_produced"}, "log_count": {"$sum": 1}}}]
     results = await db.production_logs.aggregate(pipeline).to_list(10000)
     summary = {r["_id"]: {"total_produced": r["total_produced"], "log_count": r["log_count"]} for r in results}
+    
+    set_cache(cache_key, summary)
     return summary
 
 @router.delete("/production-logs/{log_id}")
@@ -300,99 +336,182 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
 @router.get("/production-analytics")
 async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
     await require_auth(request)
+    
+    # Cache key based on all filters
+    cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
+    cached = get_cached(cache_key)
+    if cached: return cached
+
     query = _get_preset_query(preset, date_from, date_to)
     if machine: query["machine"] = machine
     if operator: query["operator"] = {"$regex": operator, "$options": "i"}
     if client: query["client"] = {"$regex": client, "$options": "i"}
     if order_number: query["order_number"] = {"$regex": order_number, "$options": "i"}
-    logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", -1).to_list(50000)
-    # Get target qty for orders
-    order_ids = list(set(l.get("order_id") for l in logs if l.get("order_id")))
-    orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "quantity": 1}).to_list(10000)
-    order_qty_map = {o["order_id"]: o.get("quantity", 0) for o in orders}
-    # Metrics
-    total_produced = sum(l.get("quantity_produced", 0) for l in logs)
-    total_target = sum(order_qty_map.get(l.get("order_id"), 0) for l in logs)
-    # Metrics: only count positive setups for the average calculation
-    setup_logs = [l.get("setup", 0) for l in logs if l.get("setup", 0) > 0]
-    avg_setup = sum(setup_logs) / max(len(setup_logs), 1)
-    # By machine
-    by_machine = {}
-    for l in logs:
-        m = l.get("machine", "?")
-        if m not in by_machine: by_machine[m] = {"produced": 0, "setup_total": 0, "count": 0}
-        by_machine[m]["produced"] += l.get("quantity_produced", 0)
-        by_machine[m]["setup_total"] += l.get("setup", 0)
-        by_machine[m]["count"] += 1
-    machines_data = [{"machine": k, "produced": v["produced"], "avg_setup": int(round(v["setup_total"] / max(len([l for l in logs if l.get("machine") == k and l.get("setup", 0) > 0]), 1))), "count": v["count"]} for k, v in sorted(by_machine.items())]
-    # By operator
-    by_operator = {}
-    for l in logs:
-        op = l.get("operator") or l.get("user_name", "?")
-        if op not in by_operator: by_operator[op] = {"produced": 0, "count": 0}
-        by_operator[op]["produced"] += l.get("quantity_produced", 0)
-        by_operator[op]["count"] += 1
-    operators_data = [{"operator": k, "produced": v["produced"], "count": v["count"]} for k, v in sorted(by_operator.items(), key=lambda x: x[1]["produced"], reverse=True)]
-    # By shift
-    by_shift = {}
-    for l in logs:
-        sh = l.get("shift") or "Sin turno"
-        if sh not in by_shift: by_shift[sh] = {"produced": 0, "count": 0}
-        by_shift[sh]["produced"] += l.get("quantity_produced", 0)
-        by_shift[sh]["count"] += 1
-    shifts_data = [{"shift": k, "produced": v["produced"], "count": v["count"]} for k, v in by_shift.items()]
-    # By client
-    by_client = {}
-    for l in logs:
-        cl = l.get("client") or "Sin cliente"
-        if cl not in by_client: by_client[cl] = {"produced": 0, "count": 0}
-        by_client[cl]["produced"] += l.get("quantity_produced", 0)
-        by_client[cl]["count"] += 1
-    clients_data = [{"client": k, "produced": v["produced"], "count": v["count"]} for k, v in sorted(by_client.items(), key=lambda x: x[1]["produced"], reverse=True)]
-    # By PO (order_number)
-    by_po = {}
-    for l in logs:
-        po = l.get("order_number") or "?"
-        if po not in by_po: by_po[po] = {"produced": 0, "target": order_qty_map.get(l.get("order_id"), 0), "count": 0}
-        by_po[po]["produced"] += l.get("quantity_produced", 0)
-        by_po[po]["count"] += 1
-    po_data = [{"order_number": k, "produced": v["produced"], "target": v["target"], "count": v["count"]} for k, v in sorted(by_po.items(), key=lambda x: x[1]["produced"], reverse=True)]
-    # Trend analysis (granularity based on period)
-    by_period = {}
-    # Determine granularity: hour for today, day for others
+    
+    # Use aggregation for heavy lifting
+    pipeline = [
+        {"$match": query},
+        {"$facet": {
+            "metrics": [
+                {"$group": {
+                    "_id": None,
+                    "total_produced": {"$sum": "$quantity_produced"},
+                    "total_logs": {"$sum": 1},
+                    "avg_setup": {"$avg": {"$cond": [{"$gt": ["$setup", 0]}, "$setup", None]}}
+                }}
+            ],
+            "by_machine": [
+                {"$group": {
+                    "_id": "$machine",
+                    "produced": {"$sum": "$quantity_produced"},
+                    "setup_sum": {"$sum": "$setup"},
+                    "setup_count": {"$sum": {"$cond": [{"$gt": ["$setup", 0]}, 1, 0]}},
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"_id": 1}}
+            ],
+            "by_operator": [
+                {"$group": {
+                    "_id": "$operator",
+                    "produced": {"$sum": "$quantity_produced"},
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"produced": -1}},
+                {"$limit": 50}
+            ],
+            "by_shift": [
+                {"$group": {
+                    "_id": "$shift",
+                    "produced": {"$sum": "$quantity_produced"},
+                    "count": {"$sum": 1}
+                }}
+            ],
+            "by_client": [
+                {"$group": {
+                    "_id": "$client",
+                    "produced": {"$sum": "$quantity_produced"},
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"produced": -1}},
+                {"$limit": 50}
+            ],
+            "by_po": [
+                {"$group": {
+                    "_id": {"order_id": "$order_id", "order_number": "$order_number"},
+                    "produced": {"$sum": "$quantity_produced"},
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"produced": -1}},
+                {"$limit": 100}
+            ],
+            "recent_logs": [
+                {"$sort": {"created_at": -1}},
+                {"$limit": 100},
+                {"$project": {"_id": 0}}
+            ]
+        }}
+    ]
+    
+    agg_results = await db.production_logs.aggregate(pipeline).to_list(1)
+    result = agg_results[0] if agg_results else {}
+    
+    metrics = result.get("metrics", [{}])[0] if result.get("metrics") else {}
+    total_produced = metrics.get("total_produced", 0)
+    avg_setup = metrics.get("avg_setup", 0) or 0
+    total_logs = metrics.get("total_logs", 0)
+    
+    # Process group data
+    machines_data = [
+        {
+            "machine": m["_id"] or "?", 
+            "produced": m["produced"], 
+            "avg_setup": int(round(m["setup_sum"] / max(m["setup_count"], 1))), 
+            "count": m["count"]
+        } for m in result.get("by_machine", [])
+    ]
+    
+    operators_data = [
+        {"operator": o["_id"] or "?", "produced": o["produced"], "count": o["count"]} 
+        for o in result.get("by_operator", [])
+    ]
+    
+    shifts_data = [
+        {"shift": s["_id"] or "Sin turno", "produced": s["produced"], "count": s["count"]} 
+        for s in result.get("by_shift", [])
+    ]
+    
+    clients_data = [
+        {"client": c["_id"] or "Sin cliente", "produced": c["produced"], "count": c["count"]} 
+        for c in result.get("by_client", [])
+    ]
+    
+    # Get all unique order_ids in this period to calculate total_target correctly
+    # We do a separate aggregation for this to avoid fetching all logs
+    target_pipeline = [
+        {"$match": query},
+        {"$group": {"_id": "$order_id"}},
+        {"$lookup": {
+            "from": "orders",
+            "localField": "_id",
+            "foreignField": "order_id",
+            "as": "order_info"
+        }},
+        {"$unwind": "$order_info"},
+        {"$group": {
+            "_id": None,
+            "total_target": {"$sum": "$order_info.quantity"}
+        }}
+    ]
+    target_agg = await db.production_logs.aggregate(target_pipeline).to_list(1)
+    total_target = target_agg[0].get("total_target", 0) if target_agg else 0
+    total_remaining = max(total_target - total_produced, 0)
+
+    # Get target qty for the TOP POs for the table display
+    order_ids_top = [po["_id"]["order_id"] for po in result.get("by_po", []) if po["_id"].get("order_id")]
+    orders_top = await db.orders.find({"order_id": {"$in": order_ids_top}}, {"_id": 0, "order_id": 1, "quantity": 1}).to_list(1000)
+    order_qty_map = {o["order_id"]: o.get("quantity", 0) for o in orders_top}
+    
+    po_data = [
+        {
+            "order_number": po["_id"].get("order_number") or "?", 
+            "produced": po["produced"], 
+            "target": order_qty_map.get(po["_id"].get("order_id"), 0), 
+            "count": po["count"]
+        } for po in result.get("by_po", [])
+    ]
+
+    # Trend analysis granularity
     granularity = "hour" if preset == 'today' else "day"
-    # For custom ranges, if < 36 hours use hour, else use day
     if preset == 'custom' and date_from and date_to:
         from datetime import date
         d1 = date.fromisoformat(date_from)
         d2 = date.fromisoformat(date_to)
         if (d2 - d1).days <= 1: granularity = "hour"
         else: granularity = "day"
+    
+    # Separate aggregation for trend to keep it clean (or we could have added it to facet)
+    substr_len = 13 if granularity == "hour" else 10
+    trend_pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, substr_len]},
+            "produced": {"$sum": "$quantity_produced"}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    trend_results = await db.production_logs.aggregate(trend_pipeline).to_list(1000)
+    trend_data = [{"label": r["_id"], "produced": r["produced"]} for r in trend_results]
 
-    for l in logs:
-        try:
-            ts = l.get("created_at", "")
-            if granularity == "hour":
-                k = ts[:13] # YYYY-MM-DDTHH
-            else:
-                k = ts[:10] # YYYY-MM-DD
-            if k not in by_period: by_period[k] = 0
-            by_period[k] += l.get("quantity_produced", 0)
-        except: pass
-    trend_data = [{"label": k, "produced": v} for k, v in sorted(by_period.items())]
-    # Distinct values for filter dropdowns
-    distinct_machines = sorted(set(l.get("machine", "") for l in logs if l.get("machine")))
-    distinct_operators = sorted(set((l.get("operator") or l.get("user_name", "")) for l in logs))
-    distinct_clients = sorted(set(l.get("client", "") for l in logs if l.get("client")))
+    # Distinct filters
+    distinct_machines = sorted([m["machine"] for m in machines_data if m["machine"] != "?"])
+    distinct_operators = sorted([o["operator"] for o in operators_data if o["operator"] != "?"])
+    distinct_clients = sorted([c["client"] for c in clients_data if c["client"] != "Sin cliente"])
 
-    # Remaining pieces: total_target - total_produced
-    total_remaining = max(total_target - total_produced, 0)
-
-    # By production_status: group ALL active orders by production_status, sum quantity
+    # Production status summary
     all_active_orders = await db.orders.find(
         {"board": {"$nin": ["PAPELERA DE RECICLAJE", "COMPLETOS"]}},
         {"_id": 0, "production_status": 1, "quantity": 1}
-    ).to_list(50000)
+    ).to_list(10000)
     by_prod_status = {}
     for o in all_active_orders:
         ps = o.get("production_status") or "Sin estado"
@@ -403,18 +522,21 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         by_prod_status[ps]["quantity"] += qty
     prod_status_data = [{"status": k, "count": v["count"], "quantity": v["quantity"]} for k, v in sorted(by_prod_status.items(), key=lambda x: x[1]["quantity"], reverse=True)]
 
-    return {
+    response_data = {
         "total_produced": total_produced, "total_target": total_target,
         "total_remaining": total_remaining,
         "efficiency": round(total_produced / max(total_target, 1) * 100, 1),
-        "avg_setup": int(round(avg_setup)), "total_logs": len(logs),
+        "avg_setup": int(round(avg_setup)), "total_logs": total_logs,
         "by_machine": machines_data, "by_operator": operators_data,
         "by_shift": shifts_data, "by_client": clients_data,
         "by_po": po_data, "trend_data": trend_data, "granularity": granularity,
         "by_production_status": prod_status_data,
         "filters": {"machines": distinct_machines, "operators": distinct_operators, "clients": distinct_clients},
-        "logs": logs[:200]
+        "logs": result.get("recent_logs", [])
     }
+    
+    set_cache(cache_key, response_data)
+    return response_data
 
 @router.post("/production-report")
 async def generate_production_report(request: Request):

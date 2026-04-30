@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pathlib import Path
@@ -26,6 +26,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logging.info(f"PROXY_CHECK: Incoming {request.method} {request.url}")
+    try:
+        response = await call_next(request)
+        logging.info(f"PROXY_CHECK: Outgoing {request.method} {request.url} status={response.status_code}")
+        return response
+    except Exception as e:
+        logging.error(f"PROXY_CHECK: CRASH during {request.method} {request.url}: {str(e)}")
+        raise e
 
 # Import and register routers
 from routers.auth import router as auth_router
@@ -132,6 +143,23 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception:
         ws_manager.disconnect(websocket)
 
+# Global error handler to catch and log 500s
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    from fastapi.responses import JSONResponse
+    error_msg = f"Error: {str(exc)}\n{traceback.format_exc()}"
+    logging.error(f"Global error: {error_msg}")
+    try:
+        with open("create_error.txt", "w") as f:
+            f.write(error_msg)
+    except Exception as e:
+        logging.error(f"Failed to write create_error.txt: {e}")
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal Server Error", "detail": str(exc)}
+    )
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     from deps import client
@@ -146,7 +174,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "server:app", 
         host="0.0.0.0", 
-        port=8000, 
+        port=8001, 
         reload=True, 
         reload_dirs=[backend_dir],
         reload_includes=["*.py", "*.json"],
