@@ -240,27 +240,27 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
         <div className={`rounded-lg border ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white border-gray-200'}`} data-testid="logs-table">
           <div className="p-3 border-b border-border"><span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Ultimos registros ({data?.logs?.length || 0})</span></div>
           <div className="max-h-64 overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-card z-10"><tr className="border-b border-border">
+            <div role="table" className="w-full text-xs" style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1.2fr) 80px 120px 100px 120px 80px 100px 60px 50px 100px" }}>
+              <div role="rowgroup" className="sticky top-0 bg-card z-10" style={{ display: "contents" }}><div role="row" className="border-b border-border" style={{ display: "contents" }}>
                 {['Fecha', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Diseno', 'Cant.', 'Setup', 'Parada'].map(h => (
-                  <th key={h} className="text-left py-1.5 px-2 text-[9px] uppercase text-muted-foreground font-bold">{h}</th>
+                  <div role="columnheader" key={h} className="text-left py-1.5 px-2 text-[9px] uppercase text-muted-foreground font-bold border-b border-border bg-card">{h}</div>
                 ))}
-              </tr></thead>
-              <tbody>{(data?.logs || []).slice(0, 100).map((l, i) => (
-                <tr key={l.log_id || i} className="border-b border-border/30 hover:bg-secondary/20">
-                  <td className="py-1 px-2 text-muted-foreground">{(l.created_at || '').slice(0, 16).replace('T', ' ')}</td>
-                  <td className="py-1 px-2 font-mono text-primary">{l.order_number}</td>
-                  <td className="py-1 px-2">{(l.client || '').substring(0, 15)}</td>
-                  <td className="py-1 px-2"><span className="px-1 py-0.5 bg-primary/15 text-primary rounded text-[9px] font-bold">{l.machine}</span></td>
-                  <td className="py-1 px-2">{l.operator || l.user_name}</td>
-                  <td className="py-1 px-2 text-muted-foreground">{l.shift || '-'}</td>
-                  <td className="py-1 px-2 text-muted-foreground">{l.design_type || '-'}</td>
-                  <td className="py-1 px-2 font-mono font-bold text-right">{l.quantity_produced}</td>
-                  <td className="py-1 px-2 text-right text-muted-foreground">{l.setup || 0}</td>
-                  <td className="py-1 px-2 text-muted-foreground">{(l.stop_cause || '').substring(0, 15) || '-'}</td>
-                </tr>
-              ))}</tbody>
-            </table>
+              </div></div>
+              <div role="rowgroup" style={{ display: "contents" }}>{(data?.logs || []).slice(0, 100).map((l, i) => (
+                <div role="row" key={l.log_id || i} className="border-b border-border/30 hover:bg-secondary/20" style={{ display: "contents" }}>
+                  <div role="cell" className="py-1 px-2 text-muted-foreground">{(l.created_at || '').slice(0, 16).replace('T', ' ')}</div>
+                  <div role="cell" className="py-1 px-2 font-mono text-primary">{l.order_number}</div>
+                  <div role="cell" className="py-1 px-2">{(l.client || '').substring(0, 15)}</div>
+                  <div role="cell" className="py-1 px-2"><span className="px-1 py-0.5 bg-primary/15 text-primary rounded text-[9px] font-bold">{l.machine}</span></div>
+                  <div role="cell" className="py-1 px-2">{l.operator || l.user_name}</div>
+                  <div role="cell" className="py-1 px-2 text-muted-foreground">{l.shift || '-'}</div>
+                  <div role="cell" className="py-1 px-2 text-muted-foreground">{l.design_type || '-'}</div>
+                  <div role="cell" className="py-1 px-2 font-mono font-bold text-right">{l.quantity_produced}</div>
+                  <div role="cell" className="py-1 px-2 text-right text-muted-foreground">{l.setup || 0}</div>
+                  <div role="cell" className="py-1 px-2 text-muted-foreground">{(l.stop_cause || '').substring(0, 15) || '-'}</div>
+                </div>
+              ))}</div>
+            </div>
           </div>
         </div>
       </div>
