@@ -789,7 +789,7 @@ const renderOrderRow = (order) => {
           })()}
           {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
             const isOrderNum = col.key === 'order_number';
-            const width = isOrderNum ? 160 : (columnWidths[col.key] || col.width);
+            const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
             return (
               <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-b border-border/5 transition-all ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width, minWidth: width, maxWidth: 'none' }}>
                 {isOrderNum ? <span className={`font-mono font-black text-xl truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
@@ -1359,7 +1359,7 @@ const renderOrderRow = (order) => {
             readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
               blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
-                  <div role="table" className="text-sm" style={{ display: 'grid', gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`, minWidth: '100%', width: '100%' }}>
+                  <div role="table" className="text-sm" style={{ display: 'grid', gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map(col => `${col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width)}px`).join(' ')} minmax(180px, 1fr)`, minWidth: '100%', width: '100%' }}>
                     
                         <div className={`py-4 px-2 sticky left-0 top-0 z-30 border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
                         <div className={`py-4 px-1 sticky left-[48px] top-0 z-30 border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
@@ -1429,7 +1429,7 @@ const renderOrderRow = (order) => {
                         {/* Columns 4+: Draggable Scrollable Content (with buffer on first) */}
                         {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
                           const isOrderNum = col.key === 'order_number';
-                          const width = isOrderNum ? 160 : (columnWidths[col.key] || col.width);
+                          const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
                           const filterVal = filters[col.key];
                           const isSelect = col.type === 'select' || col.type === 'status' || (col.optionKey && options[col.optionKey]);
                           const isDate = col.type === 'date';
