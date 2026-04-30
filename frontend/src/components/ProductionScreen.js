@@ -191,23 +191,23 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
               </button>
             ))}
           </div>
-          <div className="p-4 h-80" data-testid="chart-container">
+          <div className="px-4 pb-4 pt-2" data-testid="chart-container">
             {loading ? <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div> :
               chartData[activeChart]?.length > 0 ? (
                 activeChart === 'hourly' ? (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <ResponsiveContainer width="100%" height={280} minWidth={0}>
                     <LineChart data={chartData.hourly}><CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#eee'} /><XAxis dataKey="name" tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><YAxis tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><Tooltip contentStyle={{ background: isDark ? '#1a1a2e' : '#fff', border: '1px solid #333', borderRadius: 8 }} /><Line type="monotone" dataKey="produced" stroke="#8b5cf6" strokeWidth={2} dot={{ fill: '#8b5cf6' }} /></LineChart>
                   </ResponsiveContainer>
                 ) : activeChart === 'shift' ? (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <ResponsiveContainer width="100%" height={280} minWidth={0}>
                     <PieChart><Pie data={chartData.shift} dataKey="produced" nameKey="name" cx="50%" cy="50%" outerRadius={100} label={({ name, produced }) => `${name}: ${produced}`}>{chartData.shift.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip /><Legend /></PieChart>
                   </ResponsiveContainer>
                 ) : activeChart === 'po' ? (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <ResponsiveContainer width="100%" height={280} minWidth={0}>
                     <BarChart data={chartData.po} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#eee'} /><XAxis type="number" tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 9, fill: isDark ? '#999' : '#666' }} /><Tooltip contentStyle={{ background: isDark ? '#1a1a2e' : '#fff', border: '1px solid #333', borderRadius: 8 }} /><Bar dataKey="produced" fill="#8b5cf6" radius={[0, 4, 4, 0]} /><Bar dataKey="target" fill="#333" radius={[0, 4, 4, 0]} opacity={0.3} /></BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <ResponsiveContainer width="100%" height={280} minWidth={0}>
                     <BarChart data={chartData[activeChart]}><CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#eee'} /><XAxis dataKey="name" tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><YAxis tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><Tooltip contentStyle={{ background: isDark ? '#1a1a2e' : '#fff', border: '1px solid #333', borderRadius: 8 }} />{activeChart === 'setup' ? <Bar dataKey="setup" fill="#f59e0b" radius={[4, 4, 0, 0]} /> : <Bar dataKey="produced" fill="#8b5cf6" radius={[4, 4, 0, 0]} />}{activeChart === 'machine' && <Bar dataKey="setup" fill="#f59e0b" radius={[4, 4, 0, 0]} />}</BarChart>
                   </ResponsiveContainer>
                 )
