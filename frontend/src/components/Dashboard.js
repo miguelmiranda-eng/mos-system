@@ -754,13 +754,17 @@ const renderOrderRow = (order) => {
           ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') 
           : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
 
+      const isHighlighted = highlightedOrderId === order.order_id;
       return (
         <React.Fragment key={order.order_id}>
-          <div style={{display:'none'}} data-order-id={order.order_id} data-testid={`order-row-${order.order_id}`} />
-          <div className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : 'border-l-[4px] border-l-transparent'} ${rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+          <div
+            data-order-id={order.order_id}
+            data-testid={`order-row-${order.order_id}`}
+            className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+            style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
             <input type="checkbox" checked={isSelected} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
           </div>
-          <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+          <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
             <div className="flex flex-col gap-1 items-center">
               <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
               {isAdmin && (
@@ -771,7 +775,7 @@ const renderOrderRow = (order) => {
           {(() => {
             const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
             return (
-              <div className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer ${rowBgClass}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }} onClick={() => setDetailsOrder(order)}>
+              <div className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }} onClick={() => setDetailsOrder(order)}>
                 {isMaster ? (
                   <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                 ) : (
@@ -787,7 +791,7 @@ const renderOrderRow = (order) => {
             const isOrderNum = col.key === 'order_number';
             const width = isOrderNum ? 160 : (columnWidths[col.key] || col.width);
             return (
-              <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-b border-border/5 transition-all ${rowBgClass}`} style={{ width, minWidth: width, maxWidth: 'none' }}>
+              <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-b border-border/5 transition-all ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width, minWidth: width, maxWidth: 'none' }}>
                 {isOrderNum ? <span className={`font-mono font-black text-xl truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
                   <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                 )}
@@ -797,7 +801,7 @@ const renderOrderRow = (order) => {
           {(() => {
             const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
             return (
-              <div className={`py-3 px-3 border-b border-border/5 ${rowBgClass}`} style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>
+              <div className={`py-3 px-3 border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>
                 {qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold text-foreground/80">{remaining}</span><span className={`font-mono font-bold ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}
               </div>
             );
@@ -1566,7 +1570,7 @@ const renderOrderRow = (order) => {
 
       {/* Search Results Modal */}
       <Dialog open={!!searchResults} onOpenChange={() => setSearchResults(null)}>
-        <DialogContent className="max-w-6xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
+        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[92vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
               <Search className="w-6 h-6 text-primary" /> Resultados de busqueda <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
@@ -1576,56 +1580,55 @@ const renderOrderRow = (order) => {
             <div className="rounded-xl border border-border/50 overflow-x-auto bg-background/50 shadow-inner">
               <div role="table" className="w-full text-sm border-collapse">
                 <div className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
-                  <div role="row" className="border-b border-border/50">
-                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</div>
-                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</div>
+                  <div role="row" className="flex border-b border-border/50">
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-30 border-r border-border/40 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</div>
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[200px] border-r border-border/40">Tablero</div>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
-                      <div role="cell" key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</div>
+                      <div role="cell" key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-r border-border/40" style={{ minWidth: col.width || 150 }}>{col.label}</div>
                     ))}
-                    <div role="cell" className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</div>
+                    <div role="cell" className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[80px] sticky right-0 bg-secondary z-30 border-l border-border/40 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</div>
                   </div>
                 </div>
                 <div>
                   {searchResults?.map(order => (
-                    <div role="row" className="flex border-b border-border/50 hover:bg-secondary/30" key={order.order_id}
-                      className="border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group"
+                    <div role="row" className="flex border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group" key={order.order_id}
                       data-testid={`search-result-${order.order_id}`}>
-                      <div role="cell" className="py-3 px-4 sticky left-0 bg-card z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
-                        <EditableCell 
-                          value={order.order_number} 
-                          field="order_number" 
-                          orderId={order.order_id} 
-                          onUpdate={(id, f, v) => { 
-                            handleCellUpdate(id, f, v); 
-                            setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o)); 
-                          }} 
-                          type="text" 
+                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-10 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
+                        <EditableCell
+                          value={order.order_number}
+                          field="order_number"
+                          orderId={order.order_id}
+                          onUpdate={(id, f, v) => {
+                            handleCellUpdate(id, f, v);
+                            setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o));
+                          }}
+                          type="text"
                           isDark={isDark}
                           className="font-mono font-bold text-primary text-base"
                         />
                       </div>
-                      <div role="cell" className="py-3 px-4 border-l border-border/5">
+                      <div role="cell" className="py-3 px-4 min-w-[200px] border-r border-border/30">
                         <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                       </div>
                       {columns.filter(c => c.key !== 'order_number').map(col => (
-                        <div role="cell" key={col.key} className="py-3 px-4 border-l border-border/5">
-                          <EditableCell 
-                            value={order[col.key]} 
-                            field={col.key} 
-                            orderId={order.order_id} 
-                            options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} 
-                            onUpdate={(id, f, v) => { 
-                              handleCellUpdate(id, f, v); 
-                              setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o)); 
-                            }} 
-                            type={col.type} 
-                            isDark={isDark} 
-                            allOrders={searchResults} 
+                        <div role="cell" key={col.key} className="py-3 px-4 border-r border-border/30" style={{ minWidth: col.width || 150 }}>
+                          <EditableCell
+                            value={order[col.key]}
+                            field={col.key}
+                            orderId={order.order_id}
+                            options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null}
+                            onUpdate={(id, f, v) => {
+                              handleCellUpdate(id, f, v);
+                              setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o));
+                            }}
+                            type={col.type}
+                            isDark={isDark}
+                            allOrders={searchResults}
                             columns={columns}
                           />
                         </div>
                       ))}
-                      <div role="cell" className="py-3 px-4 text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
+                      <div role="cell" className="py-3 px-4 min-w-[80px] text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 border-l border-border/30 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <div className="flex items-center gap-1.5 justify-center">
                           <button
                             onClick={() => { setCommentsOrder(order); setSearchResults(null); }}
