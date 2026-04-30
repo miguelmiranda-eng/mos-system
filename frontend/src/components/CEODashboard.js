@@ -393,7 +393,7 @@ const CEODashboard = () => {
             </div>
             
             <div className="h-[420px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <AreaChart data={trendChartData}>
                   <defs>
                     <linearGradient id="colorProd" x1="0" y1="0" x2="0" y2="1">
@@ -499,7 +499,7 @@ const CEODashboard = () => {
               </div>
             </div>
             <div className="h-[320px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={data?.by_client.slice(0, 7)}>
                   <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#ffffff05" : "#00000005"} vertical={false} />
                   <XAxis 
@@ -553,7 +553,7 @@ const CEODashboard = () => {
               </div>
             </div>
             <div className="h-[320px] w-full mt-4 flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <PieChart>
                   <Pie
                     data={data?.by_shift}

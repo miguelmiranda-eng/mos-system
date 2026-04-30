@@ -251,7 +251,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
                 <BarChart3 className="w-4 h-4" /> {t('pieces_by_board')}
               </h3>
               {piecesByBoardData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={300} minWidth={0}>
                   <BarChart data={piecesByBoardData} margin={{ left: 10, right: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                     <XAxis dataKey="name" stroke="#888" tick={{ fontSize: 10, angle: -30, textAnchor: 'end' }} height={80} />
@@ -269,7 +269,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
                 <BarChart3 className="w-4 h-4" /> {t('pieces_by_status')}
               </h3>
               {piecesByProductionData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={300} minWidth={0}>
                   <BarChart data={piecesByProductionData} layout="vertical" margin={{ left: 160, right: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                     <XAxis type="number" stroke="#888" />
@@ -290,7 +290,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
               <BarChart3 className="w-4 h-4" /> {t('production_status')}
             </h3>
             {productionData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={300} minWidth={0}>
                 <BarChart data={productionData} layout="vertical" margin={{ left: 160, right: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                   <XAxis type="number" stroke="#888" />
@@ -311,7 +311,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
                 <PieIcon className="w-4 h-4" /> {t('priority_dist')}
               </h3>
               {priorityData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={280} minWidth={0}>
                   <PieChart>
                     <Pie data={priorityData} cx="50%" cy="50%" outerRadius={100} dataKey="value" label={renderPieLabel} labelLine={false}>
                       {priorityData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
@@ -328,7 +328,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
                 <PieIcon className="w-4 h-4" /> {t('orders_by_board')}
               </h3>
               {boardData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={280} minWidth={0}>
                   <PieChart>
                     <Pie data={boardData} cx="50%" cy="50%" outerRadius={100} dataKey="value" label={renderPieLabel} labelLine={false}>
                       {boardData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
@@ -347,7 +347,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
               <BarChart3 className="w-4 h-4" /> {t('top_clients')}
             </h3>
             {clientData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={300} minWidth={0}>
                 <BarChart data={clientData} margin={{ left: 10, right: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                   <XAxis dataKey="name" stroke="#888" tick={{ fontSize: 10, angle: -30, textAnchor: 'end' }} height={80} />
@@ -366,7 +366,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
             <div className="bg-secondary/30 border border-border rounded-lg p-4">
               <h3 className="font-barlow font-bold text-base uppercase tracking-wide mb-4">{t('artwork_status_label')}</h3>
               {artworkData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={250} minWidth={0}>
                   <BarChart data={artworkData} layout="vertical" margin={{ left: 140, right: 20 }}>
                     <XAxis type="number" stroke="#888" />
                     <YAxis type="category" dataKey="name" stroke="#888" tick={{ fontSize: 11 }} width={135} />
@@ -381,7 +381,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
             <div className="bg-secondary/30 border border-border rounded-lg p-4">
               <h3 className="font-barlow font-bold text-base uppercase tracking-wide mb-4">{t('blank_status_label')}</h3>
               {blankData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={250} minWidth={0}>
                   <BarChart data={blankData} layout="vertical" margin={{ left: 140, right: 20 }}>
                     <XAxis type="number" stroke="#888" />
                     <YAxis type="category" dataKey="name" stroke="#888" tick={{ fontSize: 11 }} width={135} />
