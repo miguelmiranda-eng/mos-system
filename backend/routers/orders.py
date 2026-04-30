@@ -12,8 +12,26 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
+import time
+import asyncio
 
 router = APIRouter(prefix="/api/orders")
+
+# ==================== CACHE SYSTEM FOR ORDERS ====================
+_orders_cache = {}
+_orders_cache_locks = {}
+
+def get_orders_cached(key: str):
+    # No TTL needed because we invalidate explicitly on every broadcast
+    return _orders_cache.get(key)
+
+# Intercept ws_manager.broadcast to invalidate cache on any system update
+original_broadcast = ws_manager.broadcast
+async def patched_broadcast(*args, **kwargs):
+    _orders_cache.clear()
+    return await original_broadcast(*args, **kwargs)
+ws_manager.broadcast = patched_broadcast
+# =================================================================
 
 
 def _merge_custom_fields(order: dict):
@@ -38,34 +56,48 @@ async def _run_automations(trigger_type, order, user, context=None):
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None):
     await require_auth(request)
-    query = {}
-    if board == "MASTER":
-        # Exclude trash AND ghost orders (null/missing board) using an indexable query
-        query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None], "$exists": True}
-    elif board:
-        query["board"] = board
-    if search:
-        query["$or"] = [
-            {"order_number": {"$regex": search, "$options": "i"}},
-            {"store_po": {"$regex": search, "$options": "i"}},
-            {"customer_po": {"$regex": search, "$options": "i"}},
-            {"client": {"$regex": search, "$options": "i"}},
-            {"branding": {"$regex": search, "$options": "i"}},
-            {"notes": {"$regex": search, "$options": "i"}}
-        ]
-    orders_raw = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
-    # Safety loop to avoid serialization/merging crashes
-    cleaned_orders = []
-    for order in orders_raw:
-        try:
-            merged = _merge_custom_fields(order)
-            cleaned_orders.append(merged)
-        except Exception as e:
-            logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
-            cleaned_orders.append(order)
-            
-    return cleaned_orders
+    # Cache stampede protection
+    cache_key = f"orders_{board}_{search}"
+    cached = get_orders_cached(cache_key)
+    if cached is not None: return cached
+
+    if cache_key not in _orders_cache_locks:
+        _orders_cache_locks[cache_key] = asyncio.Lock()
+        
+    async with _orders_cache_locks[cache_key]:
+        cached = get_orders_cached(cache_key)
+        if cached is not None: return cached
+
+        query = {}
+        if board == "MASTER":
+            # Exclude trash AND ghost orders (null/missing board) using an indexable query
+            query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None], "$exists": True}
+        elif board:
+            query["board"] = board
+        if search:
+            query["$or"] = [
+                {"order_number": {"$regex": search, "$options": "i"}},
+                {"store_po": {"$regex": search, "$options": "i"}},
+                {"customer_po": {"$regex": search, "$options": "i"}},
+                {"client": {"$regex": search, "$options": "i"}},
+                {"branding": {"$regex": search, "$options": "i"}},
+                {"notes": {"$regex": search, "$options": "i"}}
+            ]
+        orders_raw = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        
+        # Safety loop to avoid serialization/merging crashes
+        cleaned_orders = []
+        for order in orders_raw:
+            try:
+                merged = _merge_custom_fields(order)
+                cleaned_orders.append(merged)
+            except Exception as e:
+                logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
+                cleaned_orders.append(order)
+                
+        _orders_cache[cache_key] = cleaned_orders
+        return cleaned_orders
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
