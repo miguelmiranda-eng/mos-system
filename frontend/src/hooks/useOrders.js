@@ -12,6 +12,10 @@ const WS_URL = (() => {
 const reqCache = new Map();
 const reqPromises = new Map();
 
+// Persistent memory for board data to make switching instant
+const boardDataCache = {};
+const lastFetchedTime = {};
+
 export const apiFetch = async (url, options = {}) => {
   const isGet = !options.method || options.method === 'GET';
   
@@ -120,7 +124,23 @@ export const useOrders = (currentBoard, boardFilters) => {
     localStorage.setItem('mos_column_widths', JSON.stringify(columnWidths));
   }, [columnWidths]);
 
-  const fetchOrders = useCallback(async (silent = false) => {
+  const fetchOrders = useCallback(async (silent = false, forceRefresh = false) => {
+    // Stale-while-revalidate logic:
+    const cacheKey = currentBoard + JSON.stringify(boardFilters[currentBoard] || {});
+    const hasCache = boardDataCache[cacheKey];
+    const now = Date.now();
+    const isStale = !lastFetchedTime[cacheKey] || (now - lastFetchedTime[cacheKey] > 30000); // 30s stale
+
+    if (hasCache && !forceRefresh) {
+      setOrders(hasCache);
+      setUnfilteredOrders(hasCache);
+      if (!isStale) {
+        setLoading(false);
+        return;
+      }
+      silent = true; // Update in background
+    }
+
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -129,6 +149,11 @@ export const useOrders = (currentBoard, boardFilters) => {
       if (res.ok) {
         let data = await res.json();
         data = data.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
+        
+        // Save to cache before filtering locally
+        boardDataCache[cacheKey] = data;
+        lastFetchedTime[cacheKey] = now;
+        
         setUnfilteredOrders(data);
         const EMPTY_FILTER = '\u2014Ninguno\u2014';
         const currentFilters = boardFilters[currentBoard] || {};
@@ -363,7 +388,7 @@ export const useOrders = (currentBoard, boardFilters) => {
             updateDebounceTimer.current = setTimeout(() => {
               fetchProdRef.current();
               if (msg.type === 'order_change') {
-                fetchOrdersRef.current(true);
+                fetchOrdersRef.current(true, true); // Silent but forced refresh
                 if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
               }
             }, jitter);
@@ -408,6 +433,8 @@ export const useOrders = (currentBoard, boardFilters) => {
     selfUpdateRef.current = true;
     setOperationLoading(true);
     try {
+      // Clear cache to ensure next fetch gets fresh data after mutation
+      delete boardDataCache[currentBoard + JSON.stringify(boardFilters[currentBoard] || {})];
       const res = await fetch(`${API}/orders/${orderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ [field]: value }) });
       if (res.ok) {
         const data = await res.json();
