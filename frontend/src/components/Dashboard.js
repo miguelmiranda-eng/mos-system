@@ -92,6 +92,11 @@ const Dashboard = () => {
   const [currentBoard, setCurrentBoard] = useState("SCHEDULING");
   const [boardFilters, setBoardFilters] = useState({});
   const [selectedOrders, setSelectedOrders] = useState([]);
+
+  const handleSelectAll = () => setSelectedOrders(orders.map(o => o.order_id));
+  const handleDeselectAll = () => setSelectedOrders([]);
+  const toggleOrderSelection = (id) => setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
   const [openFilter, setOpenFilter] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -391,20 +396,16 @@ const Dashboard = () => {
   }, [dynamicBoards]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch BLANKS + READY TO SCHEDULE orders for views in SCHEDULING
-  useEffect(() => {
-    if (currentBoard !== 'SCHEDULING') return;
-    const fetchExtra = async () => {
-      try {
-        const [bRes, rRes] = await Promise.all([
-          apiFetch(`${API}/orders?board=BLANKS`, { credentials: 'include' }),
-          apiFetch(`${API}/orders?board=READY TO SCHEDULED`, { credentials: 'include' })
-        ]);
-        if (bRes.ok) setBlanksOrders(await bRes.json());
-        if (rRes.ok) setReadyOrders(await rRes.json());
-      } catch { }
-    };
-    fetchExtra();
-  }, [currentBoard]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fetchExtra = useCallback(async () => {
+    try {
+      const [bRes, rRes] = await Promise.all([
+        apiFetch(`${API}/orders?board=BLANKS`, { credentials: 'include' }),
+        apiFetch(`${API}/orders?board=READY TO SCHEDULED`, { credentials: 'include' })
+      ]);
+      if (bRes.ok) setBlanksOrders(await bRes.json());
+      if (rRes.ok) setReadyOrders(await rRes.json());
+    } catch { }
+  }, [apiFetch, API]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Visible columns
   const visibleColumns = (() => {
@@ -419,7 +420,9 @@ const Dashboard = () => {
   const fetchSavedViews = useCallback(async () => {
     try { const res = await fetch(`${API}/config/saved-views`, { credentials: 'include' }); if (res.ok) { const data = await res.json(); const grouped = {}; data.forEach(v => { if (!grouped[v.board]) grouped[v.board] = []; grouped[v.board].push(v); }); setSavedViews(grouped); } } catch { /* silent */ }
   }, []);
-  useState(() => { fetchSavedViews(); });
+  useEffect(() => {
+    fetchSavedViews();
+  }, [fetchSavedViews]);
 
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
@@ -494,11 +497,6 @@ const Dashboard = () => {
   const currentBoardViews = savedViews[currentBoard] || [];
   const pinnedViews = currentBoardViews.filter(v => v.pinned);
   const unpinnedViews = currentBoardViews.filter(v => !v.pinned);
-
-  // Selection
-  const handleSelectAll = () => setSelectedOrders(orders.map(o => o.order_id));
-  const handleDeselectAll = () => setSelectedOrders([]);
-  const toggleOrderSelection = (orderId) => { setSelectedOrders(prev => prev.includes(orderId) ? prev.filter(id => id !== orderId) : [...prev, orderId]); };
 
   // Column drag
   const handleColumnDragStart = (colKey) => setDraggedCol(colKey);
@@ -720,9 +718,19 @@ const Dashboard = () => {
     return [...opts, EMPTY_FILTER];
   };
 
-  const renderTableRows = () => {
-    const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
-    const renderOrderRow = (order) => {
+
+
+  
+  // Top-level hooks for data fetching
+  
+  
+  
+
+  // Initial data loading
+  useEffect(() => { fetchBoards(); }, [fetchBoards]);
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  useEffect(() => { if (currentBoard === 'SCHEDULING') fetchExtra(); }, [currentBoard, fetchExtra]);
+const renderOrderRow = (order) => {
       const sq = searchQuery.toLowerCase();
       const getVal = (v) => {
         if (!v) return "";
@@ -739,28 +747,31 @@ const Dashboard = () => {
         getVal(order.branding).includes(sq) ||
         getVal(order.notes).includes(sq)
       );
+      const isSelected = selectedOrders.includes(order.order_id);
+      const rowBgClass = isSearchMatch 
+        ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') 
+        : isSelected 
+          ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') 
+          : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
+
       return (
-        <tr key={order.order_id} data-order-id={order.order_id} data-testid={`order-row-${order.order_id}`} className={`border-b group relative z-10 transition-all duration-300 ${isDark ? 'bg-background border-border/20 hover:bg-secondary/40' : 'bg-white border-gray-100 hover:bg-primary/5'} ${selectedOrders.includes(order.order_id) ? (isDark ? '!bg-primary/10 border-l-[4px] border-l-primary' : '!bg-primary/5 border-l-[4px] border-l-primary shadow-sm') : 'border-l-[4px] border-l-transparent'} ${isSearchMatch ? '!bg-primary/10 ring-1 ring-inset ring-primary/40' : ''} ${highlightedOrderId === order.order_id ? 'order-row-flash' : ''}`}>
-          <td className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-border/5 ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-            <input type="checkbox" checked={selectedOrders.includes(order.order_id)} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
-          </td>
-          <td className={`py-4 px-1 sticky left-[48px] z-20 transition-colors border-r border-border/5 ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+        <React.Fragment key={order.order_id}>
+          <div style={{display:'none'}} data-order-id={order.order_id} data-testid={`order-row-${order.order_id}`} />
+          <div className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : 'border-l-[4px] border-l-transparent'} ${rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+            <input type="checkbox" checked={isSelected} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
+          </div>
+          <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
             <div className="flex flex-col gap-1 items-center">
               <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
               {isAdmin && (
                 <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
               )}
             </div>
-          </td>
-          
-          {/* Fixed Column 3 Data */}
+          </div>
           {(() => {
             const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
             return (
-              <td className={`py-4 px-3 sticky left-[96px] z-20 transition-colors border-r border-border/10 cursor-pointer ${isSearchMatch ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') : selectedOrders.includes(order.order_id) ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50')}`} 
-                  style={{ width: 160, minWidth: 160, maxWidth: 160 }}
-                  onClick={() => setDetailsOrder(order)}
-              >
+              <div className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer ${rowBgClass}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }} onClick={() => setDetailsOrder(order)}>
                 {isMaster ? (
                   <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
                 ) : (
@@ -769,31 +780,35 @@ const Dashboard = () => {
                     {order.order_number}
                   </span>
                 )}
-              </td>
+              </div>
             );
           })()}
-
-          {/* Draggable Column Data */}
           {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
             const isOrderNum = col.key === 'order_number';
             const width = isOrderNum ? 160 : (columnWidths[col.key] || col.width);
             return (
-              <td key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-border/5 transition-all`} style={{ width: width, minWidth: width, maxWidth: 'none' }}>
+              <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-b border-border/5 transition-all ${rowBgClass}`} style={{ width, minWidth: width, maxWidth: 'none' }}>
                 {isOrderNum ? <span className={`font-mono font-black text-xl truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
                   <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
                 )}
-              </td>
+              </div>
             );
           })}
           {(() => {
-            const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0; return (
-              <td className="py-3 px-3" style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>{qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold text-foreground/80">{remaining}</span><span className={`font-mono font-bold ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}</td>
+            const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
+            return (
+              <div className={`py-3 px-3 border-b border-border/5 ${rowBgClass}`} style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>
+                {qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold text-foreground/80">{remaining}</span><span className={`font-mono font-bold ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}
+              </div>
             );
           })()}
-        </tr>
+        </React.Fragment>
       );
     };
 
+
+  const renderTableBody = () => {
+    const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
     if (!groupByDate) return visibleOrders.map(renderOrderRow);
     const groups = {};
     const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
@@ -805,9 +820,7 @@ const Dashboard = () => {
     const noValueLabel = isDateField ? (lang === 'es' ? 'Sin fecha' : 'No date') : (lang === 'es' ? 'Sin asignar' : 'None');
     visibleOrders.forEach(o => {
       const raw = o[groupByDate];
-      const groupKey = isDateField
-        ? (raw ? new Date(raw).toLocaleDateString() : noValueLabel)
-        : (raw || noValueLabel);
+      const groupKey = isDateField ? (raw ? new Date(raw).toLocaleDateString() : noValueLabel) : (raw || noValueLabel);
       if (!groups[groupKey]) groups[groupKey] = [];
       groups[groupKey].push(o);
     });
@@ -818,24 +831,18 @@ const Dashboard = () => {
       if (isDateField) { const da = new Date(a), db = new Date(b); return da - db; }
       return a.localeCompare(b);
     });
-    
     return sortedEntries.map(([dateKey, groupOrders]) => {
       const isCollapsed = !!collapsedGroups[dateKey];
       return (
         <React.Fragment key={dateKey}>
-          <tr data-testid={`date-group-${dateKey}`}>
-            <td colSpan={colSpan} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`}>
-              <button
-                onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))}
-                className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-primary/20' : 'text-blue-700 hover:bg-blue-100'}`}
-              >
-                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
-                <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
-                {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
-                <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
-              </button>
-            </td>
-          </tr>
+          <div style={{gridColumn:'1 / -1'}} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`} data-testid={`date-group-${dateKey}`}>
+            <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-primary/20' : 'text-blue-700 hover:bg-blue-100'}`}>
+              <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
+              <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
+              {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
+              <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
+            </button>
+          </div>
           {!isCollapsed && groupOrders.map(renderOrderRow)}
         </React.Fragment>
       );
@@ -1348,17 +1355,16 @@ const Dashboard = () => {
             readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
               blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
-                  <table className="text-sm border-collapse" style={{ minWidth: '100%' }}>
-                    <thead className={`sticky top-0 z-30 transition-all duration-500 shadow-sm ${currentBoard === 'EJEMPLOS' ? 'ring-1 ring-zinc-500/50 shadow-[0_0_25px_-5px_rgba(161,161,170,0.3)]' : ''}`}>
-                      <tr className={`${isDark ? 'bg-[hsl(220,30%,9%)]/95 border-b border-border/60' : 'bg-gray-50/95 border-b border-gray-200'} backdrop-blur-xl transition-colors duration-300 ${currentBoard === 'EJEMPLOS' ? (isDark ? 'bg-zinc-900/30 text-zinc-300' : 'bg-zinc-50 text-zinc-900') : ''}`}>
-                        <th className={`py-4 px-2 sticky left-0 z-30 border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></th>
-                        <th className={`py-4 px-1 sticky left-[48px] z-30 border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></th>
+                  <div role="table" className="text-sm" style={{ display: 'grid', gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`, minWidth: '100%', width: '100%' }}>
+                    
+                        <div className={`py-4 px-2 sticky left-0 top-0 z-30 border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                        <div className={`py-4 px-1 sticky left-[48px] top-0 z-30 border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
                         
                         {/* Column 3: Permanent Identifier (Board for Master, Order for others) */}
                         {(() => {
                           const isReflection = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
                           return (
-                            <th className={`py-4 px-3 sticky left-[96px] z-30 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80 border-b border-border/60' : 'bg-gray-50 text-gray-400 border-b border-gray-200'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                            <div className={`py-4 px-3 sticky left-[96px] top-0 z-30 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
                                 <Popover open={openFilter === (isReflection ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? (isReflection ? '_board' : 'order_number') : null)}>
@@ -1412,7 +1418,7 @@ const Dashboard = () => {
                                   </PopoverContent>
                                 </Popover>
                               </div>
-                            </th>
+                            </div>
                           );
                         })()}
 
@@ -1425,7 +1431,7 @@ const Dashboard = () => {
                           const isDate = col.type === 'date';
 
                           return (
-                            <th key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-border/5 shadow-sm ${isDark ? 'text-zinc-500/80' : 'text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                            <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                                   {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
@@ -1498,16 +1504,12 @@ const Dashboard = () => {
                                 </div>
                                 <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
                               </div>
-                            </th>
+                            </div>
                           );
                         })}
-                        <th className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase ${isDark ? 'text-zinc-500/80' : 'text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {renderTableRows()}
-                    </tbody>
-                  </table>
+                        <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
+                    {renderTableBody()}
+                  </div>
                   {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
                 </>
               )}
@@ -1533,24 +1535,24 @@ const Dashboard = () => {
           <div className="flex-1 overflow-y-auto py-4">
             {trashLoading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> :
               trashOrders.length > 0 ? (
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-card"><tr className="border-b border-border"><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('order')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('client')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('priority')}</th><th className="text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('date_time')}</th><th className="text-right py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('actions')}</th></tr></thead>
-                  <tbody>{trashOrders.map(order => (
-                    <tr key={order.order_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`trash-order-${order.order_id}`}>
-                      <td className="py-2 px-3 font-mono text-foreground">{order.order_number}</td>
-                      <td className="py-2 px-3 text-foreground">{order.client || '-'}</td>
-                      <td className="py-2 px-3"><ColoredBadge value={order.priority} isDark={isDark} /></td>
-                      <td className="py-2 px-3 text-muted-foreground text-xs font-mono">{order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</td>
-                      <td className="py-2 px-3 text-right"><div className="flex items-center justify-end gap-1">
+                <div role="table" className="w-full text-sm">
+                  <div className="sticky top-0 bg-card"><div role="row" className="flex border-b border-border bg-card sticky top-0"><div role="cell" className="flex-[1.5] text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('order')}</div><div role="cell" className="flex-[2] text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('client')}</div><div role="cell" className="flex-1 text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('priority')}</div><div role="cell" className="flex-1 text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('date_time')}</div><div role="cell" className="text-right py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('actions')}</div></div></div>
+                  <div>{trashOrders.map(order => (
+                    <div role="row" className="flex border-b border-border/50 hover:bg-secondary/30" key={order.order_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`trash-order-${order.order_id}`}>
+                      <div role="cell" className="flex-[1.5] py-2 px-3 font-mono text-foreground">{order.order_number}</div>
+                      <div role="cell" className="flex-[2] py-2 px-3 text-foreground">{order.client || '-'}</div>
+                      <div role="cell" className="flex-1 py-2 px-3"><ColoredBadge value={order.priority} isDark={isDark} /></div>
+                      <div role="cell" className="py-2 px-3 text-muted-foreground text-xs font-mono">{order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</div>
+                      <div role="cell" className="flex-1 py-2 px-3 text-right"><div className="flex items-center justify-end gap-1">
                         <Select onValueChange={(board) => handleRestoreFromTrash([order.order_id], board)}>
                           <SelectTrigger className="w-36 h-7 text-xs bg-secondary border-border" data-testid={`restore-select-${order.order_id}`}><SelectValue placeholder={t('restore')} /></SelectTrigger>
                           <SelectContent className="bg-popover border-border z-[300]">{activeBoards.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent>
                         </Select>
                         <button onClick={() => handlePermanentDelete([order.order_id])} className="p-1.5 rounded hover:bg-destructive/20 transition-colors" title={t('permanent_delete')} data-testid={`permanent-delete-${order.order_id}`}><X className="w-4 h-4 text-destructive" /></button>
-                      </div></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
+                      </div></div>
+                    </div>
+                  ))}</div>
+                </div>
               ) : <p className="text-center text-muted-foreground py-8">{t('no_trash')}</p>}
           </div>
           {trashOrders.length > 0 && (
@@ -1572,23 +1574,23 @@ const Dashboard = () => {
           </DialogHeader>
           <div className="flex-1 overflow-auto px-6 pb-6">
             <div className="rounded-xl border border-border/50 overflow-x-auto bg-background/50 shadow-inner">
-              <table className="w-full text-sm border-collapse">
-                <thead className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
-                  <tr className="border-b border-border/50">
-                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</th>
-                    <th className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</th>
+              <div role="table" className="w-full text-sm border-collapse">
+                <div className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
+                  <div role="row" className="border-b border-border/50">
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-30 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</div>
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[140px] border-l border-border/10">Tablero</div>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
-                      <th key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</th>
+                      <div role="cell" key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10" style={{ minWidth: col.width || 150 }}>{col.label}</div>
                     ))}
-                    <th className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</th>
-                  </tr>
-                </thead>
-                <tbody>
+                    <div role="cell" className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-l border-border/10 min-w-[80px] sticky right-0 bg-secondary z-30 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</div>
+                  </div>
+                </div>
+                <div>
                   {searchResults?.map(order => (
-                    <tr key={order.order_id}
+                    <div role="row" className="flex border-b border-border/50 hover:bg-secondary/30" key={order.order_id}
                       className="border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group"
                       data-testid={`search-result-${order.order_id}`}>
-                      <td className="py-3 px-4 sticky left-0 bg-card z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
+                      <div role="cell" className="py-3 px-4 sticky left-0 bg-card z-10 group-hover:bg-primary/10 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <EditableCell 
                           value={order.order_number} 
                           field="order_number" 
@@ -1601,12 +1603,12 @@ const Dashboard = () => {
                           isDark={isDark}
                           className="font-mono font-bold text-primary text-base"
                         />
-                      </td>
-                      <td className="py-3 px-4 border-l border-border/5">
+                      </div>
+                      <div role="cell" className="py-3 px-4 border-l border-border/5">
                         <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
-                      </td>
+                      </div>
                       {columns.filter(c => c.key !== 'order_number').map(col => (
-                        <td key={col.key} className="py-3 px-4 border-l border-border/5">
+                        <div role="cell" key={col.key} className="py-3 px-4 border-l border-border/5">
                           <EditableCell 
                             value={order[col.key]} 
                             field={col.key} 
@@ -1621,9 +1623,9 @@ const Dashboard = () => {
                             allOrders={searchResults} 
                             columns={columns}
                           />
-                        </td>
+                        </div>
                       ))}
-                      <td className="py-3 px-4 text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
+                      <div role="cell" className="py-3 px-4 text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <div className="flex items-center gap-1.5 justify-center">
                           <button
                             onClick={() => { setCommentsOrder(order); setSearchResults(null); }}
@@ -1640,11 +1642,11 @@ const Dashboard = () => {
                             <ExternalLink className="w-4 h-4" />
                           </button>
                         </div>
-                      </td>
-                    </tr>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </div>
             </div>
           </div>
         </DialogContent>

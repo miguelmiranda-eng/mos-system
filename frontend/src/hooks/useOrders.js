@@ -491,7 +491,7 @@ export const useOrders = (currentBoard, boardFilters) => {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         credentials: 'include', 
-        body: JSON.stringify({ order_ids: orderIds, target_board: targetBoard }) 
+        body: JSON.stringify({ order_ids: orderIds, board: targetBoard })
       });
 
       if (res.ok) {
