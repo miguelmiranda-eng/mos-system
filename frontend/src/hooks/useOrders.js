@@ -429,45 +429,83 @@ export const useOrders = (currentBoard, boardFilters) => {
   }, [saveColumnsConfig, removedDefaults]);
 
   const handleCellUpdate = async (orderId, field, value) => {
-    setOrders(prev => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o));
-    selfUpdateRef.current = true;
-    setOperationLoading(true);
+    // Optimistic update: update local state immediately
+    const updateFn = (prev) => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o);
+    setOrders(updateFn);
+    setUnfilteredOrders(updateFn);
+
     try {
-      // Clear cache to ensure next fetch gets fresh data after mutation
+      // Clear cache for this board to ensure next background fetch is fresh
       delete boardDataCache[currentBoard + JSON.stringify(boardFilters[currentBoard] || {})];
-      const res = await fetch(`${API}/orders/${orderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ [field]: value }) });
+      
+      const res = await fetch(`${API}/orders/${orderId}`, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' }, 
+        credentials: 'include', 
+        body: JSON.stringify({ [field]: value }) 
+      });
+
       if (res.ok) {
         const data = await res.json();
         const automations = data._automations_executed || [];
+        
+        // If automations triggered, we DO need a full refresh to show side-effects
         if (automations.length > 0) {
           const names = automations.map(a => a.name).join(', ');
-          setAutomationRunning(true); setAutomationMessage(`Automatizacion: ${names}`);
-          setTimeout(async () => { selfUpdateRef.current = true; await fetchOrders(); setAutomationRunning(false); setAutomationMessage(''); toast.success(`Automatizacion ejecutada: ${names}`, { duration: 3000 }); }, 600);
+          setAutomationRunning(true); 
+          setAutomationMessage(`Automatización: ${names}`);
+          setTimeout(async () => { 
+            await fetchOrders(true, true); 
+            setAutomationRunning(false); 
+            setAutomationMessage(''); 
+            toast.success(`Automatización ejecutada: ${names}`, { duration: 3000 }); 
+          }, 600);
+        } else {
+          // No automations? Just update the single order with server's confirmed data
+          const finalUpdate = (prev) => prev.map(o => o.order_id === orderId ? data : o);
+          setOrders(finalUpdate);
+          setUnfilteredOrders(finalUpdate);
+          
+          // If the board changed, we need to refresh the current view as the order might disappear
+          if (field === 'board') fetchOrders(true, true);
         }
-      } else { toast.error(t('update_err')); fetchOrders(); }
-    } catch { toast.error(t('update_err')); fetchOrders(); }
-    finally { setOperationLoading(false); }
+      } else { 
+        toast.error(t('update_err')); 
+        fetchOrders(true, true); // Rollback/Sync
+      }
+    } catch { 
+      toast.error(t('update_err')); 
+      fetchOrders(true, true); // Rollback/Sync
+    }
   };
 
-  const handleBulkMove = async (selectedOrders, targetBoard) => {
-    if (selectedOrders.length === 0) return;
-    safeSetOperationLoading(true);
-    selfUpdateRef.current = true;
+  const handleBulkMove = async (orderIds, targetBoard) => {
+    if (!orderIds || orderIds.length === 0) return;
+    
+    // Optimistic update: remove moved orders from current view
+    setOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
+    setUnfilteredOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
+
     try {
-      const res = await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: selectedOrders, board: targetBoard }) });
+      const res = await fetch(`${API}/orders/bulk-move`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        credentials: 'include', 
+        body: JSON.stringify({ order_ids: orderIds, target_board: targetBoard }) 
+      });
+
       if (res.ok) {
-        toast.success(`${selectedOrders.length} ${t('orders')} → ${targetBoard}`);
-        fetchOrders();
+        toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
+        fetchOrders(true, true); // Background refresh to sync
         fetchAllOrders();
       } else {
         const err = await res.json();
         toast.error(err.detail || t('move_err'));
-        fetchOrders();
+        fetchOrders(true, true);
       }
     } catch {
       toast.error(t('move_err'));
-    } finally {
-      safeSetOperationLoading(false);
+      fetchOrders(true, true);
     }
   };
 
