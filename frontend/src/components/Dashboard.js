@@ -57,7 +57,7 @@ import CommandPalette from "./dashboard/CommandPalette";
 // Shared constants and hooks
 import { cn } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API } from "../lib/constants";
-import { useOrders } from "../hooks/useOrders";
+import { useOrders, apiFetch } from "../hooks/useOrders";
 
 const Dashboard = () => {
   const { user, logout } = useAuth();
@@ -380,8 +380,8 @@ const Dashboard = () => {
     const fetchExtra = async () => {
       try {
         const [bRes, rRes] = await Promise.all([
-          fetch(`${API}/orders?board=BLANKS`, { credentials: 'include' }),
-          fetch(`${API}/orders?board=READY TO SCHEDULED`, { credentials: 'include' })
+          apiFetch(`${API}/orders?board=BLANKS`, { credentials: 'include' }),
+          apiFetch(`${API}/orders?board=READY TO SCHEDULED`, { credentials: 'include' })
         ]);
         if (bRes.ok) setBlanksOrders(await bRes.json());
         if (rRes.ok) setReadyOrders(await rRes.json());
@@ -548,7 +548,7 @@ const Dashboard = () => {
   const fetchTrashOrders = async () => {
     setTrashLoading(true);
     try { 
-      const res = await fetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' }); 
+      const res = await apiFetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' }); 
       if (res.ok) {
         const data = await res.json();
         setTrashOrders(data);
@@ -559,7 +559,7 @@ const Dashboard = () => {
 
   const fetchTrashCount = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/orders/board-counts`, { credentials: 'include' });
+      const res = await apiFetch(`${API}/orders/board-counts`, { credentials: 'include' });
       if (res.ok) {
         const counts = await res.json();
         setTrashCount(counts["PAPELERA DE RECICLAJE"] || 0);

@@ -8,15 +8,74 @@ const WS_URL = (() => {
   return base.replace(/^http/, 'ws') + '/api/ws';
 })();
 
-// Global 401 interceptor — redirects to login when session expires
-const apiFetch = async (url, options = {}) => {
+// Simple local cache to prevent frontend request flooding
+const reqCache = new Map();
+const reqPromises = new Map();
+
+export const apiFetch = async (url, options = {}) => {
+  const isGet = !options.method || options.method === 'GET';
+  
+  if (isGet) {
+    const cacheKey = url;
+    const now = Date.now();
+    
+    // 1. Check TTL cache (5 seconds)
+    if (reqCache.has(cacheKey)) {
+      const { data, timestamp } = reqCache.get(cacheKey);
+      if (now - timestamp < 5000) {
+        return data.clone();
+      } else {
+        reqCache.delete(cacheKey);
+      }
+    }
+    
+    // 2. Check if request is already in-flight (Promise deduplication)
+    if (reqPromises.has(cacheKey)) {
+      const res = await reqPromises.get(cacheKey);
+      return res.clone();
+    }
+    
+    // 3. Make the actual request
+    const fetchPromise = fetch(url, { credentials: 'include', ...options });
+    reqPromises.set(cacheKey, fetchPromise);
+    
+    try {
+      const res = await fetchPromise;
+      if (res.status === 401) {
+        console.warn('[apiFetch] 401 detected — session expired');
+        localStorage.removeItem('mos_user');
+        window.location.href = '/';
+        throw new Error('SESSION_EXPIRED');
+      }
+      
+      if (res.ok) {
+        reqCache.set(cacheKey, { data: res.clone(), timestamp: Date.now() });
+      }
+      return res;
+    } finally {
+      reqPromises.delete(cacheKey);
+    }
+  }
+
+  // Non-GET requests (mutations) bypass cache completely
   const res = await fetch(url, { credentials: 'include', ...options });
   if (res.status === 401) {
-    console.warn('[apiFetch] 401 detected — session expired, redirecting to login');
+    console.warn('[apiFetch] 401 detected — session expired');
     localStorage.removeItem('mos_user');
     window.location.href = '/';
     throw new Error('SESSION_EXPIRED');
   }
+  
+  // Clear related caches on mutation
+  if (!isGet) {
+    const urlStr = url.toString();
+    if (urlStr.includes('/orders')) {
+      for (const key of reqCache.keys()) {
+        if (key.includes('/orders')) reqCache.delete(key);
+      }
+    }
+  }
+  
   return res;
 };
 
