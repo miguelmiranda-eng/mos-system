@@ -6,8 +6,8 @@ import { Loader2, Plus, Trash2, ClipboardList, Factory, Search, CheckCircle2 } f
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import { API } from "../lib/constants";
+
 const MACHINES = Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`);
 const SHIFTS = ['TURNO 1', 'TURNO 2', 'TURNO 3'];
 const DESIGN_TYPES = ['FRENTE', 'ESPALDA', 'MANGA'];
@@ -46,6 +46,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
 
   useEffect(() => {
     if (!orderSearch.trim()) { setMatchedOrder(null); setLogs([]); setTotalProduced(0); return; }
+    if (!orders || !Array.isArray(orders)) return;
     const found = orders.find(o => o.order_number && String(o.order_number).trim().toLowerCase() === orderSearch.trim().toLowerCase() && o.board !== 'PAPELERA DE RECICLAJE');
     setMatchedOrder(found || null);
   }, [orderSearch, orders]);

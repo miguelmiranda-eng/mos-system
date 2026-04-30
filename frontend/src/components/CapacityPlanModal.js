@@ -4,8 +4,7 @@ import { Loader2, TrendingUp, AlertTriangle, CheckCircle2, Minus, Clock, Package
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import { API } from "../lib/constants";
 
 const STATUS_CONFIG = {
   idle:   { color: 'bg-gray-500',   text: 'text-gray-400',   labelKey: 'status_idle',       icon: Minus },
