@@ -153,21 +153,6 @@ const Dashboard = () => {
   const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
   const [tempOrderNo, setTempOrderNo] = useState('');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [displayLimit, setDisplayLimit] = useState(100);
-
-  // Progressive rendering: Load 100 initially, then 200 more every 3 seconds
-  useEffect(() => {
-    setDisplayLimit(100);
-  }, [currentBoard]);
-
-  useEffect(() => {
-    if (orders.length > displayLimit) {
-      const timer = setTimeout(() => {
-        setDisplayLimit(prev => prev + 200);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [orders.length, displayLimit]);
 
   useEffect(() => {
     if (!highlightedOrderId) return;
@@ -214,6 +199,22 @@ const Dashboard = () => {
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
     groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
+
+  const [displayLimit, setDisplayLimit] = useState(100);
+
+  // Progressive rendering: Load 100 initially, then 200 more every 3 seconds
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [currentBoard]);
+
+  useEffect(() => {
+    if (orders && Array.isArray(orders) && orders.length > displayLimit) {
+      const timer = setTimeout(() => {
+        setDisplayLimit(prev => prev + 200);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders, displayLimit]);
 
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
@@ -720,7 +721,7 @@ const Dashboard = () => {
   };
 
   const renderTableRows = () => {
-    const visibleOrders = orders.slice(0, displayLimit);
+    const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
     const renderOrderRow = (order) => {
       const sq = searchQuery.toLowerCase();
       const getVal = (v) => {
