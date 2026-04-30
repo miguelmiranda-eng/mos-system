@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 import logging
+from ws_manager import ws_manager
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -21,7 +22,10 @@ app.add_middleware(
         "https://mosdatabase-frontend.k9pirj.easypanel.host",
         "http://localhost:3000",
         "http://localhost:3001",
-        "http://localhost:5173"
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:5173"
     ] + [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,6 +41,31 @@ async def log_requests(request: Request, call_next):
     except Exception as e:
         logging.error(f"PROXY_CHECK: CRASH during {request.method} {request.url}: {str(e)}")
         raise e
+
+@app.websocket("/api/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+# Global exception handler — ensures CORS headers are present even on 500s
+from fastapi import Request as _Request
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: _Request, exc: Exception):
+    error_detail = traceback.format_exc()
+    logging.error(f"UNHANDLED 500 on {request.method} {request.url}:\n{error_detail}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "type": type(exc).__name__},
+    )
 
 # Import and register routers
 from routers.auth import router as auth_router
@@ -55,7 +84,6 @@ from routers.v1_insights import router as v1_insights_router
 from routers.invoices import router as invoices_router
 from routers.work_orders import router as work_orders_router
 
-
 app.include_router(auth_router)
 app.include_router(orders_router)
 app.include_router(config_router)
@@ -72,7 +100,6 @@ app.include_router(v1_insights_router)
 app.include_router(invoices_router)
 app.include_router(work_orders_router)
 
-
 # Auto-restore database on startup
 @app.on_event("startup")
 async def startup_restore():
@@ -86,7 +113,6 @@ async def startup_restore():
         logging.info("Database connection verified.")
     except Exception as e:
         logging.error(f"Could not connect to database: {e}. The server may be unstable.")
-        # We continue as the app might still work for some routes, but this is a critical warning
 
     from db_backup import restore_database
     stats = await restore_database(db)
@@ -99,86 +125,4 @@ async def startup_restore():
         await run_optimization()
         logging.info("Database optimization and cleanup completed on startup.")
     except Exception as e:
-        logging.error(f"Error during startup optimization: {e}")
-
-# Admin backup endpoint
-from fastapi import Request
-from deps import require_admin
-
-@app.post("/api/admin/backup")
-async def admin_backup(request: Request):
-    await require_admin(request)
-    from deps import db
-    from db_backup import backup_database
-    stats = await backup_database(db)
-    return {"message": "Backup completado", "stats": stats}
-
-@app.delete("/api/admin/clear-data")
-async def admin_clear_data(request: Request):
-    """Wipe all operational data (orders, comments, images, notifications,
-    activity_logs) while preserving users, sessions, and config."""
-    await require_admin(request)
-    from deps import db
-    collections_to_clear = [
-        "orders", "comments", "file_uploads",
-        "notifications", "activity_logs"
-    ]
-    stats = {}
-    for col in collections_to_clear:
-        result = await db[col].delete_many({})
-        stats[col] = result.deleted_count
-    return {"message": "Datos borrados correctamente", "stats": stats}
-
-# WebSocket endpoint
-from ws_manager import ws_manager
-
-@app.websocket("/api/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await ws_manager.connect(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
-    except Exception:
-        ws_manager.disconnect(websocket)
-
-# Global error handler to catch and log 500s
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    import traceback
-    from fastapi.responses import JSONResponse
-    error_msg = f"Error: {str(exc)}\n{traceback.format_exc()}"
-    logging.error(f"Global error: {error_msg}")
-    try:
-        with open("create_error.txt", "w") as f:
-            f.write(error_msg)
-    except Exception as e:
-        logging.error(f"Failed to write create_error.txt: {e}")
-    return JSONResponse(
-        status_code=500,
-        content={"message": "Internal Server Error", "detail": str(exc)}
-    )
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    from deps import client
-    client.close()
-if __name__ == "__main__":
-    import uvicorn
-    # Use standard asyncio loop and websockets implementation for Windows robustness
-    # Watch only root and routers to avoid unnecessary reloads from uploads or scripts
-    backend_dir = str(ROOT_DIR)
-    routers_dir = str(ROOT_DIR / "routers")
-    
-    uvicorn.run(
-        "server:app", 
-        host="0.0.0.0", 
-        port=8001, 
-        reload=True, 
-        reload_dirs=[backend_dir],
-        reload_includes=["*.py", "*.json"],
-        reload_excludes=["uploads/*", "scripts/*", "venv/*", "**/__pycache__/*"],
-        loop="asyncio", 
-        ws="websockets"
-    )
+        logging.error(f"Optimization error: {e}")

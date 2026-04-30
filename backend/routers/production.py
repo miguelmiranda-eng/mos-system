@@ -15,6 +15,7 @@ SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 # ==================== CACHING SYSTEM ====================
 # Simple in-memory cache to reduce CPU load on heavy aggregations
 _cache = {}
+_cache_locks = {}
 _CACHE_TTL = 300 # 5 minutes
 
 def get_cached(key: str):
@@ -304,8 +305,13 @@ async def get_capacity_plan(request: Request):
     async with _cache_locks[cache_key]:
         cached = get_cached(cache_key)
         if cached is not None: return cached
-        
-        result = await _compute_capacity_plan()
+
+        try:
+            result = await _compute_capacity_plan()
+        except Exception as e:
+            import traceback
+            logger.error(f"capacity-plan crash: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Error computing capacity plan: {str(e)}")
         set_cache(cache_key, result)
         return result
 
@@ -551,19 +557,24 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
 @router.get("/production-analytics")
 async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
     await require_auth(request)
-    
+
     cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
     cached = get_cached(cache_key)
     if cached is not None: return cached
 
     if cache_key not in _cache_locks:
         _cache_locks[cache_key] = asyncio.Lock()
-        
+
     async with _cache_locks[cache_key]:
         cached = get_cached(cache_key)
         if cached is not None: return cached
-        
-        result = await _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number)
+
+        try:
+            result = await _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number)
+        except Exception as e:
+            import traceback
+            logger.error(f"production-analytics crash: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Error computing analytics: {str(e)}")
         set_cache(cache_key, result)
         return result
 
