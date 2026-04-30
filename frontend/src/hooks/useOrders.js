@@ -354,8 +354,12 @@ export const useOrders = (currentBoard, boardFilters) => {
             // Debounce server fetches to prevent flooding during bursts of updates
             if (updateDebounceTimer.current) clearTimeout(updateDebounceTimer.current);
             // Add a random Jitter between 1000ms and 4000ms to prevent Thundering Herds
-            // when multiple iPads/clients receive the same WebSocket broadcast.
-            const jitter = 1000 + Math.random() * 3000;
+            // If this exact client made the change, fetch instantly (100ms) for snappy UI
+            let jitter = 1000 + Math.random() * 3000;
+            if (selfUpdateRef.current) {
+              jitter = 50;
+              selfUpdateRef.current = false; // Reset flag after consuming
+            }
             updateDebounceTimer.current = setTimeout(() => {
               fetchProdRef.current();
               if (msg.type === 'order_change') {
