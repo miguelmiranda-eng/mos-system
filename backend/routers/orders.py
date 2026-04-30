@@ -40,9 +40,8 @@ async def get_orders(request: Request, board: str = None, search: str = None):
     await require_auth(request)
     query = {}
     if board == "MASTER":
-        # Exclude trash AND ghost orders (null/missing board) from MASTER view
-        query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None]}
-        query["$expr"] = {"$ne": [{"$type": "$board"}, "missing"]}
+        # Exclude trash AND ghost orders (null/missing board) using an indexable query
+        query["board"] = {"$nin": ["PAPELERA DE RECICLAJE", None], "$exists": True}
     elif board:
         query["board"] = board
     if search:
