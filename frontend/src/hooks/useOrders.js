@@ -481,30 +481,39 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   const handleBulkMove = async (orderIds, targetBoard) => {
     if (!orderIds || orderIds.length === 0) return;
-    
+
     // Optimistic update: remove moved orders from current view
     setOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
     setUnfilteredOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
 
+    // Signal WebSocket handler that THIS client made the change → 50ms refresh instead of 1-4s jitter
+    selfUpdateRef.current = true;
+
+    // Invalidate target board cache so navigating there always fetches fresh data
+    delete boardDataCache[targetBoard + JSON.stringify(boardFilters[targetBoard] || {})];
+    delete lastFetchedTime[targetBoard + JSON.stringify(boardFilters[targetBoard] || {})];
+
     try {
-      const res = await fetch(`${API}/orders/bulk-move`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        credentials: 'include', 
+      const res = await fetch(`${API}/orders/bulk-move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ order_ids: orderIds, board: targetBoard })
       });
 
       if (res.ok) {
         toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
-        fetchOrders(true, true); // Background refresh to sync
+        fetchOrders(true, true);
         fetchAllOrders();
       } else {
         const err = await res.json();
         toast.error(err.detail || t('move_err'));
+        selfUpdateRef.current = false;
         fetchOrders(true, true);
       }
     } catch {
       toast.error(t('move_err'));
+      selfUpdateRef.current = false;
       fetchOrders(true, true);
     }
   };
