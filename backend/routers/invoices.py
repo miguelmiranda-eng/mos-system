@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Response
+import os
+import shutil
+import uuid
 from typing import List, Optional
 from deps import db, require_auth, require_admin, log_activity, InvoiceModel, InvoiceItem, WorkOrderModel, logger
 from ws_manager import ws_manager
@@ -14,6 +17,29 @@ SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'billing@prosper-mfg.com')
 PUBLIC_URL = os.environ.get('BACKEND_PUBLIC_URL', 'http://localhost:3000')
 
 router = APIRouter(prefix="/api/invoices")
+
+# Rutas de archivos
+UPLOAD_DIR = "uploads/invoices"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@router.post("/upload")
+async def upload_invoice_file(file: UploadFile = File(...)):
+    try:
+        # Generar un nombre único para evitar colisiones
+        file_ext = os.path.splitext(file.filename)[1]
+        unique_name = f"{uuid.uuid4().hex}{file_ext}"
+        file_path = os.path.join(UPLOAD_DIR, unique_name)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Devolver la URL relativa
+        # Usamos /api/invoices/static/ para que el router lo maneje o sea servido externamente
+        return {"url": f"/api/invoices/static/{unique_name}", "name": file.filename}
+    except Exception as e:
+        logger.error(f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
 
 async def send_invoice_notification(invoice: dict, user_email: str, subject_prefix: str = "New Document"):
     if not resend.api_key:

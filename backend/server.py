@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from starlette.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pathlib import Path
 import os
@@ -30,6 +31,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Servir archivos estáticos de facturas
+UPLOAD_DIR = "uploads/invoices"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/api/invoices/static", StaticFiles(directory=UPLOAD_DIR), name="invoices_static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
