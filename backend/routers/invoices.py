@@ -53,9 +53,16 @@ async def send_invoice_notification(invoice: dict, user_email: str, subject_pref
         logger.error(f"Failed to send invoice notification: {e}")
 
 @router.get("")
-async def get_invoices(request: Request, status: str = None, type: str = None, search: str = None):
+async def get_invoices(request: Request, status: str = None, type: str = None, search: str = None, show_deleted: bool = False):
     await require_auth(request)
     query = {}
+    
+    # Filter by deleted status
+    if not show_deleted:
+        query["is_deleted"] = {"$ne": True}
+    else:
+        query["is_deleted"] = True
+
     if status:
         query["status"] = status
     if type:
@@ -68,7 +75,15 @@ async def get_invoices(request: Request, status: str = None, type: str = None, s
             {"customer_po": {"$regex": search, "$options": "i"}}
         ]
     
-    invoices = await db.invoices.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    # Optimization: Do not return heavy attachments in the list view
+    projection = {
+        "_id": 0,
+        "attachments": 0,
+        "production_attachments": 0,
+        "items.attachments": 0
+    }
+    
+    invoices = await db.invoices.find(query, projection).sort("created_at", -1).to_list(1000)
     return invoices
 
 @router.get("/{invoice_id}")
@@ -181,13 +196,26 @@ async def sync_invoice_to_mos_order(invoice: dict, user: dict):
             qty = item.get("quantity", 0)
             total_qty += qty
             item_sizes = item.get("sizes", {})
-            for sz, count in item_sizes.items():
-                merged_sizes[sz] = merged_sizes.get(sz, 0) + count
+            if isinstance(item_sizes, dict):
+                for sz, count in item_sizes.items():
+                    try:
+                        val = int(count) if count is not None and str(count).strip() else 0
+                        merged_sizes[sz] = merged_sizes.get(sz, 0) + val
+                    except (ValueError, TypeError):
+                        continue
         
-        # Prioritize Job Title A from the invoice if it has a URL or is a non-empty string
+        # Extract style and color from items if missing at top level
+        items = invoice.get("items", [])
+        first_item = items[0] if items else {}
+        
+        # Style logic: use global style, or first item's item_number
+        style_value = invoice.get("style") or first_item.get("item_number")
+        # Color logic: use global color, or first item's color
+        color_value = invoice.get("color") or first_item.get("color")
+
+        # Job Title A Logic: Prioritize Job Title A from the invoice
         inv_jta = invoice.get("job_title_a")
         jta_value = public_link
-        
         if isinstance(inv_jta, dict) and inv_jta.get("url"):
             jta_value = inv_jta["url"]
         elif isinstance(inv_jta, str) and inv_jta:
@@ -204,7 +232,8 @@ async def sync_invoice_to_mos_order(invoice: dict, user: dict):
             "cancel_date": invoice.get("cancel_date"),
             "sample": invoice.get("sample"),
             "client": invoice.get("client"),
-            "style": invoice.get("style"),
+            "style": style_value,
+            "color": color_value,
             "branding": invoice.get("branding"),
             "priority": invoice.get("priority") or "PRIORITY 2",
             "blank_status": invoice.get("blank_status") or "PENDIENTE",
@@ -229,39 +258,35 @@ async def sync_invoice_to_mos_order(invoice: dict, user: dict):
         }
         
         # Art links transformation
-        if invoice.get("art_links"):
-            mos_order["links"] = [{"url": link, "desc": "Art File"} for link in invoice.get("art_links") if link]
+        art_links = invoice.get("art_links")
+        if art_links:
+            if isinstance(art_links, str):
+                # Split by newline and filter out empty lines
+                links_list = [l.strip() for l in art_links.split('\n') if l.strip()]
+                mos_order["links"] = [{"url": l, "desc": "Art File/Note"} for l in links_list]
+            elif isinstance(art_links, list):
+                mos_order["links"] = [{"url": link, "desc": "Art File"} for link in art_links if link]
 
-        await db.orders.insert_one(mos_order)
-        logger.info(f"MOS Order synced: {mos_order['order_number']} from Invoice {invoice['invoice_id']}")
+        await db.orders.update_one(
+            {"invoice_ref": invoice.get("invoice_id")},
+            {"$set": mos_order},
+            upsert=True
+        )
+        logger.info(f"MOS Order synced/updated: {mos_order['order_number']} from Invoice {invoice['invoice_id']}")
         
         # Broadcast to MOS dashboard
         await ws_manager.broadcast("order_change", {"action": "create", "order_id": mos_order["order_id"]})
         
     except Exception as e:
+        with open("sync_error.txt", "a") as f:
+            f.write(f"\n[{datetime.now().isoformat()}] SYNC ERROR: {str(e)}\n")
+            import traceback
+            f.write(traceback.format_exc())
         logger.error(f"Failed to sync Invoice to MOS Order: {e}")
-
-@router.put("/{invoice_id}")
-async def update_invoice(invoice_id: str, invoice_data: dict, request: Request):
-    user = await require_auth(request)
-    existing = await db.invoices.find_one({"invoice_id": invoice_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    
-    invoice_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    
-    await db.invoices.update_one({"invoice_id": invoice_id}, {"$set": invoice_data})
-    
-    await log_activity(user, "update_invoice", {"invoice_id": invoice_id})
-    await ws_manager.broadcast("invoice_change", {"action": "update", "invoice_id": invoice_id})
-    
-    updated = await db.invoices.find_one({"invoice_id": invoice_id}, {"_id": 0})
-    return updated
 
 @router.post("/{invoice_id}/approve")
 async def approve_invoice(invoice_id: str, request: Request):
-    # This might be public or require a specific token/customer access
-    # For now, let's allow it but log it
+    user = await require_auth(request)
     existing = await db.invoices.find_one({"invoice_id": invoice_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -271,7 +296,7 @@ async def approve_invoice(invoice_id: str, request: Request):
     
     update = {
         "approval_status": "approved",
-        "status": "sent", # Keep as sent or move to confirmed?
+        "status": "sent",
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -283,8 +308,8 @@ async def approve_invoice(invoice_id: str, request: Request):
         "work_order_id": wo_id,
         "source_invoice_id": invoice_id,
         "production_status": "artwork_pending",
-        "art_links": [],
-        "production_notes": f"Auto-generated from Invoice {invoice_id}",
+        "art_links": existing.get("art_links", []),
+        "production_notes": existing.get("production_notes", f"Auto-generated from Invoice {invoice_id}"),
         "packing_details": {"bags": "individual", "labels": "hanging", "boxes": "master"},
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
@@ -296,6 +321,7 @@ async def approve_invoice(invoice_id: str, request: Request):
         {"$push": {"linked_work_orders": wo_id}}
     )
     
+    await log_activity(user, "approve_invoice", {"invoice_id": invoice_id})
     await ws_manager.broadcast("invoice_change", {"action": "approve", "invoice_id": invoice_id})
     await ws_manager.broadcast("work_order_change", {"action": "create", "work_order_id": wo_id})
     
@@ -346,14 +372,34 @@ async def update_invoice(invoice_id: str, request: Request):
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Invoice not found")
         
+    # SYNC TO MOS: Update the linked order in the 'orders' collection
+    # We update common fields that might have changed
+    mos_update = {}
+    sync_fields = [
+        "customer_po", "store_po", "design_num", "client", "style", "branding", 
+        "priority", "blank_status", "production_status", "artwork_status", 
+        "color", "production_notes", "sample", "cancel_date"
+    ]
+    
+    for field in sync_fields:
+        if field in data:
+            mos_update[field] = data[field]
+            if field == "design_num":
+                mos_update["design_#"] = data[field]
+    
+    # Also update due_date if dates.due changed
+    if "dates" in data and isinstance(data["dates"], dict) and "due" in data["dates"]:
+        mos_update["due_date"] = data["dates"]["due"]
+
+    if mos_update:
+        mos_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.orders.update_many({"invoice_ref": invoice_id}, {"$set": mos_update})
+        # Broadcast to MOS dashboard
+        await ws_manager.broadcast("order_change", {"action": "update", "invoice_ref": invoice_id})
+
     await log_activity(user, "update_invoice", {"invoice_id": invoice_id})
     await ws_manager.broadcast("invoice_change", {"action": "update", "invoice_id": invoice_id})
     
-    # Sincronizar cambios con MOS orders si existe la lógica para update
-    if wo_id := data.get("mos_work_order_id"):
-        from .work_orders import update_mos_order
-        await update_mos_order(wo_id, data)
-        
     updated_invoice = await db.invoices.find_one({"invoice_id": invoice_id})
     if updated_invoice and "_id" in updated_invoice:
         updated_invoice["_id"] = str(updated_invoice["_id"])
@@ -368,17 +414,81 @@ async def delete_invoice(invoice_id: str, request: Request):
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
         
-    result = await db.invoices.delete_one({"invoice_id": invoice_id})
+    # If it's already in the trash, perform a PERMANENT delete (Hard Delete)
+    if invoice.get("is_deleted"):
+        # 1. Hard delete the invoice
+        await db.invoices.delete_one({"invoice_id": invoice_id})
+        
+        # 2. Hard delete linked MOS orders
+        await db.orders.delete_many({"invoice_ref": invoice_id})
+        
+        # 3. Hard delete linked Work Orders
+        await db.work_orders.delete_many({"source_invoice_id": invoice_id})
+        
+        await log_activity(user, "permanent_delete_invoice", {"invoice_id": invoice_id})
+        return {"message": "Invoice and linked records permanently deleted"}
+
+    # If it's NOT in the trash, perform a SOFT delete (Move to Trash)
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.invoices.update_one(
+        {"invoice_id": invoice_id},
+        {"$set": {
+            "is_deleted": True,
+            "deleted_at": now,
+            "status": "cancelled"
+        }}
+    )
     
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=400, detail="Failed to delete invoice")
+    if result.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Failed to mark invoice as deleted")
         
-    # Remove from MOS work orders if it exists
-    wo_id = invoice.get("mos_work_order_id")
-    if wo_id:
-        await db.mos_orders.delete_one({"order_id": wo_id})
-        
-    await log_activity(user, "delete_invoice", {"invoice_id": invoice_id})
+    # CASCADE TO MOS: Move linked orders to Trash instead of permanent deletion
+    order_result = await db.orders.update_many(
+        {"invoice_ref": invoice_id},
+        {"$set": {
+            "board": "PAPELERA DE RECICLAJE",
+            "deleted_at": now,
+            "updated_at": now
+        }}
+    )
+    
+    await db.work_orders.update_many(
+        {"source_invoice_id": invoice_id},
+        {"$set": {"is_deleted": True, "status": "cancelled"}}
+    )
+    
+    await log_activity(user, "delete_invoice", {"invoice_id": invoice_id, "client": invoice.get("client")})
+    
     await ws_manager.broadcast("invoice_change", {"action": "delete", "invoice_id": invoice_id})
+    await ws_manager.broadcast("order_change", {"action": "delete", "invoice_ref": invoice_id})
+    await ws_manager.broadcast("work_order_change", {"action": "delete", "source_invoice_id": invoice_id})
     
-    return {"message": "Invoice deleted"}
+    return {"message": "Invoice and linked orders moved to trash"}
+
+@router.post("/{invoice_id}/restore")
+async def restore_invoice(invoice_id: str, request: Request):
+    user = await require_auth(request)
+    
+    # 1. Restore the invoice
+    result = await db.invoices.update_one(
+        {"invoice_id": invoice_id},
+        {"$set": {"is_deleted": False, "status": "sent"}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+        
+    # 2. Restore linked MOS orders
+    await db.orders.update_many(
+        {"invoice_ref": invoice_id},
+        {"$set": {"board": "SCHEDULING"}}
+    )
+    
+    # 3. Restore work orders
+    await db.work_orders.update_many(
+        {"source_invoice_id": invoice_id},
+        {"$set": {"is_deleted": False}}
+    )
+    
+    await log_activity(user, "restore_invoice", {"invoice_id": invoice_id})
+    return {"message": "Invoice and linked orders restored"}

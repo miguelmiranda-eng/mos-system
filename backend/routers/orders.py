@@ -318,20 +318,61 @@ async def delete_order(order_id: str, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
-    await db.orders.update_one({"order_id": order_id}, {"$set": {"board": "PAPELERA DE RECICLAJE", "updated_at": datetime.now(timezone.utc).isoformat()}})
+    
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"order_id": order_id}, 
+        {"$set": {
+            "board": "PAPELERA DE RECICLAJE", 
+            "deleted_at": now,
+            "updated_at": now
+        }}
+    )
+    
     await log_activity(user, "delete_order", {"order_id": order_id, "order_number": existing.get("order_number")}, previous_data={"order_id": order_id, "fields": {"board": existing.get("board")}})
-    await ws_manager.broadcast("order_change", {"action": "delete", "boards": [existing.get("board")]})
-    return {"message": "Order moved to trash"}
+    await ws_manager.broadcast("order_change", {"action": "delete", "boards": [existing.get("board"), "PAPELERA DE RECICLAJE"]})
+    return {"message": "Order moved to trash", "deleted_at": now}
 
 @router.delete("/{order_id}/permanent")
 async def permanent_delete_order(order_id: str, request: Request):
     user = await require_auth(request)
-    existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    
+    # Debug log to see what ID we are receiving
+    logger.info(f"Attempting permanent delete for order: {order_id}")
+    
+    # Robust lookup: check both order_id and _id if necessary
+    existing = await db.orders.find_one({
+        "$or": [
+            {"order_id": order_id},
+            {"id": order_id},
+            {"order_number": order_id}
+        ]
+    }, {"_id": 0})
+    
     if not existing:
+        logger.error(f"Permanent delete failed: Order {order_id} not found in DB")
         raise HTTPException(status_code=404, detail="Order not found")
+        
+    # Get invoice reference before deleting
+    invoice_ref = existing.get("invoice_ref")
+    
+    # 1. Delete the order
     await db.orders.delete_one({"order_id": order_id})
+    
+    # 2. CASCADE DELETE: Remove the linked invoice if it exists
+    if invoice_ref:
+        inv_result = await db.invoices.delete_one({"invoice_id": invoice_ref})
+        if inv_result.deleted_count > 0:
+            logger.info(f"Cascade delete: Invoice {invoice_ref} removed because order {order_id} was permanently deleted")
+            await ws_manager.broadcast("invoice_change", {"action": "delete", "invoice_id": invoice_ref})
+
+    # 3. CASCADE DELETE: Remove linked Work Orders
+    wo_result = await db.work_orders.delete_many({"source_invoice_id": invoice_ref} if invoice_ref else {"order_id": order_id})
+    if wo_result.deleted_count > 0:
+        await ws_manager.broadcast("work_order_change", {"action": "delete", "order_id": order_id})
+
     await log_activity(user, "permanent_delete_order", {"order_id": order_id, "order_number": existing.get("order_number")})
-    return {"message": "Order permanently deleted"}
+    return {"message": "Order and linked invoice deleted permanently"}
 
 @router.post("/bulk-move")
 async def bulk_move_orders(request: Request):

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from typing import List, Optional
-from deps import db, require_auth, require_admin, log_activity, WorkOrderModel, logger
+from deps import db, require_auth, log_activity, WorkOrderModel
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid
@@ -114,7 +114,7 @@ async def assign_work_order(work_order_id: str, request: Request):
 
 @router.delete("/{work_order_id}")
 async def delete_work_order(work_order_id: str, request: Request):
-    user = await require_admin(request)
+    user = await require_auth(request)
     existing = await db.work_orders.find_one({"work_order_id": work_order_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Work Order not found")

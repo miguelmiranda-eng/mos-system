@@ -589,9 +589,27 @@ const Dashboard = () => {
     try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) }); toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`); fetchTrashOrders(); fetchOrders(); } catch { toast.error(t('restore_err')); } finally { setOperationLoading(false); }
   };
   const handlePermanentDelete = async (orderIds) => {
-    if (!window.confirm(t('permanent_delete') + ` ${orderIds.length}?`)) return;
+    if (!window.confirm(`${t('permanent_delete')} ${orderIds.length} ${t('orders')}?`)) return;
     setOperationLoading(true);
-    try { for (const oid of orderIds) { await fetch(`${API}/orders/${oid}/permanent`, { method: 'DELETE', credentials: 'include' }); } toast.success(`${orderIds.length} ${t('orders')} ${t('delete').toLowerCase()}`); fetchTrashOrders(); } catch { toast.error(t('perm_del_err')); } finally { setOperationLoading(false); }
+    try { 
+      for (const oid of orderIds) { 
+        const res = await apiFetch(`${API}/orders/${oid}/permanent`, { 
+          method: 'DELETE', 
+          credentials: 'include' 
+        }); 
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || 'Error en el servidor');
+        }
+      } 
+      toast.success(`${orderIds.length} ${t('orders')} eliminadas permanentemente`); 
+      fetchTrashOrders(); 
+      fetchTrashCount();
+    } catch (err) { 
+      toast.error(`${t('perm_del_err')}: ${err.message}`); 
+    } finally { 
+      setOperationLoading(false); 
+    }
   };
 
   // Export
@@ -1540,20 +1558,41 @@ const renderOrderRow = (order) => {
             {trashLoading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> :
               trashOrders.length > 0 ? (
                 <div role="table" className="w-full text-sm">
-                  <div className="sticky top-0 bg-card"><div role="row" className="flex border-b border-border bg-card sticky top-0"><div role="cell" className="flex-[1.5] text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('order')}</div><div role="cell" className="flex-[2] text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('client')}</div><div role="cell" className="flex-1 text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('priority')}</div><div role="cell" className="flex-1 text-left py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('date_time')}</div><div role="cell" className="text-right py-2 px-3 font-roboto uppercase text-xs text-muted-foreground tracking-widest">{t('actions')}</div></div></div>
+                  <div className="sticky top-0 bg-card z-30">
+                    <div role="row" className="flex items-center border-b border-border bg-card px-3 py-2">
+                      <div role="cell" className="w-[120px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('order')}</div>
+                      <div role="cell" className="flex-1 text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('client')}</div>
+                      <div role="cell" className="w-[100px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('priority')}</div>
+                      <div role="cell" className="w-[100px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">Restante</div>
+                      <div role="cell" className="w-[180px] text-right font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('actions')}</div>
+                    </div>
+                  </div>
                   <div>{trashOrders.map(order => (
-                    <div role="row" className="flex border-b border-border/50 hover:bg-secondary/30" key={order.order_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`trash-order-${order.order_id}`}>
-                      <div role="cell" className="flex-[1.5] py-2 px-3 font-mono text-foreground">{order.order_number}</div>
-                      <div role="cell" className="flex-[2] py-2 px-3 text-foreground">{order.client || '-'}</div>
-                      <div role="cell" className="flex-1 py-2 px-3"><ColoredBadge value={order.priority} isDark={isDark} /></div>
-                      <div role="cell" className="py-2 px-3 text-muted-foreground text-xs font-mono">{order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</div>
-                      <div role="cell" className="flex-1 py-2 px-3 text-right"><div className="flex items-center justify-end gap-1">
+                    <div role="row" className="flex items-center border-b border-border/50 hover:bg-secondary/30 px-3 py-2" key={order.order_id} data-testid={`trash-order-${order.order_id}`}>
+                      <div role="cell" className="w-[120px] font-mono text-foreground font-bold text-xs">{order.order_number}</div>
+                      <div role="cell" className="flex-1 text-foreground text-xs truncate pr-4">{order.client || '-'}</div>
+                      <div role="cell" className="w-[100px]"><ColoredBadge value={order.priority} isDark={isDark} /></div>
+                      <div role="cell" className="w-[100px] text-muted-foreground text-[10px] font-mono">
+                        {(() => {
+                          if (!order.deleted_at && !order.updated_at) return '-';
+                          const delDate = new Date(order.deleted_at || order.updated_at);
+                          const expiryDate = new Date(delDate.getTime() + (7 * 24 * 60 * 60 * 1000));
+                          const now = new Date();
+                          const diffMs = expiryDate - now;
+                          const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+                          if (diffDays <= 0) return <span className="text-destructive font-bold uppercase">Expirado</span>;
+                          return <span className={diffDays <= 2 ? "text-orange-500 font-bold" : ""}>{diffDays} días</span>;
+                        })()}
+                      </div>
+                      <div role="cell" className="w-[180px] flex items-center justify-end gap-2">
                         <Select onValueChange={(board) => handleRestoreFromTrash([order.order_id], board)}>
-                          <SelectTrigger className="w-36 h-7 text-xs bg-secondary border-border" data-testid={`restore-select-${order.order_id}`}><SelectValue placeholder={t('restore')} /></SelectTrigger>
-                          <SelectContent className="bg-popover border-border z-[300]">{activeBoards.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent>
+                          <SelectTrigger className="w-32 h-8 text-[10px] bg-secondary border-border" data-testid={`restore-select-${order.order_id}`}><SelectValue placeholder={t('restore')} /></SelectTrigger>
+                          <SelectContent className="bg-popover border-border z-[300]">{activeBoards.map(b => <SelectItem key={b} value={b} className="text-[10px]">{b}</SelectItem>)}</SelectContent>
                         </Select>
-                        <button onClick={() => handlePermanentDelete([order.order_id])} className="p-1.5 rounded hover:bg-destructive/20 transition-colors" title={t('permanent_delete')} data-testid={`permanent-delete-${order.order_id}`}><X className="w-4 h-4 text-destructive" /></button>
-                      </div></div>
+                        <button onClick={() => handlePermanentDelete([order.order_id])} className="p-1.5 rounded hover:bg-destructive/20 transition-colors group" title={t('permanent_delete')} data-testid={`permanent-delete-${order.order_id}`}>
+                          <X className="w-4 h-4 text-muted-foreground group-hover:text-destructive" />
+                        </button>
+                      </div>
                     </div>
                   ))}</div>
                 </div>
