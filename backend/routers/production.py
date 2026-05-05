@@ -425,6 +425,20 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
                 {"$sort": {"created_at": -1}},
                 {"$limit": 100},
                 {"$project": {"_id": 0}}
+            ],
+            "by_day": [
+                {"$group": {
+                    "_id": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": {"$dateFromString": {"dateString": "$created_at"}},
+                            "timezone": "-07:00"
+                        }
+                    },
+                    "produced": {"$sum": "$quantity_produced"}
+                }},
+                {"$sort": {"_id": 1}},
+                {"$limit": 90}
             ]
         }}
     ]
@@ -506,12 +520,18 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         if (d2 - d1).days <= 1: granularity = "hour"
         else: granularity = "day"
     
-    # Separate aggregation for trend to keep it clean (or we could have added it to facet)
-    substr_len = 13 if granularity == "hour" else 10
+    # Separate aggregation for trend to keep it clean
+    fmt = "%Y-%m-%dT%H" if granularity == "hour" else "%Y-%m-%d"
     trend_pipeline = [
         {"$match": query},
         {"$group": {
-            "_id": {"$substr": ["$created_at", 0, substr_len]},
+            "_id": {
+                "$dateToString": {
+                    "format": fmt,
+                    "date": {"$dateFromString": {"dateString": "$created_at"}},
+                    "timezone": "-07:00"
+                }
+            },
             "produced": {"$sum": "$quantity_produced"}
         }},
         {"$sort": {"_id": 1}}
@@ -539,6 +559,11 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         by_prod_status[ps]["quantity"] += qty
     prod_status_data = [{"status": k, "count": v["count"], "quantity": v["quantity"]} for k, v in sorted(by_prod_status.items(), key=lambda x: x[1]["quantity"], reverse=True)]
 
+    by_day_data = [
+        {"date": d["_id"], "produced": d["produced"]} 
+        for d in result.get("by_day", [])
+    ]
+
     response_data = {
         "total_produced": total_produced, "total_target": total_target,
         "total_remaining": total_remaining,
@@ -546,7 +571,7 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         "avg_setup": int(round(avg_setup)), "total_logs": total_logs,
         "by_machine": machines_data, "by_operator": operators_data,
         "by_shift": shifts_data, "by_client": clients_data,
-        "by_po": po_data, "trend_data": trend_data, "granularity": granularity,
+        "by_po": po_data, "by_day": by_day_data, "trend_data": trend_data, "granularity": granularity,
         "by_production_status": prod_status_data,
         "filters": {"machines": distinct_machines, "operators": distinct_operators, "clients": distinct_clients},
         "logs": result.get("recent_logs", [])

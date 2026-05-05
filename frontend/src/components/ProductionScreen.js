@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLang } from "../contexts/LanguageContext";
-import { X, Loader2, Download, FileText, Filter, RefreshCw, Factory, TrendingUp, Clock, Users, BarChart3, Target, Package, ListChecks } from "lucide-react";
+import { X, Loader2, Download, FileText, Filter, RefreshCw, Factory, TrendingUp, Clock, Users, BarChart3, Target, Package, ListChecks, Calendar } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from "recharts";
@@ -90,7 +90,8 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
     client: (data?.by_client || []).slice(0, 10).map(c => ({ name: (c.client || '?').substring(0, 12), produced: c.produced })),
     po: (data?.by_po || []).slice(0, 12).map(p => ({ name: p.order_number || '?', produced: p.produced, target: p.target })),
     hourly: (data?.hourly_trend || []).map(h => ({ name: h.hour.slice(11, 16) || h.hour.slice(5), produced: h.produced })),
-    setup: (data?.by_machine || []).map(m => ({ name: m.machine.replace('MAQUINA', 'M'), setup: m.avg_setup }))
+    setup: (data?.by_machine || []).map(m => ({ name: m.machine.replace('MAQUINA', 'M'), setup: m.avg_setup })),
+    daily: (data?.by_day || []).map(d => ({ name: d.date, produced: d.produced }))
   };
 
   const charts = [
@@ -99,6 +100,7 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
     { key: 'shift', label: 'Por Turno', icon: Clock },
     { key: 'client', label: 'Por Cliente', icon: BarChart3 },
     { key: 'po', label: 'Por PO', icon: Target },
+    { key: 'daily', label: 'Por Dia', icon: Calendar },
     { key: 'hourly', label: 'Tendencia Horaria', icon: TrendingUp },
     { key: 'setup', label: 'Setup por Maquina', icon: Clock }
   ];
@@ -205,6 +207,16 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
                 ) : activeChart === 'po' ? (
                   <ResponsiveContainer width="100%" height={280} minWidth={0}>
                     <BarChart data={chartData.po} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#eee'} /><XAxis type="number" tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} /><YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 9, fill: isDark ? '#999' : '#666' }} /><Tooltip contentStyle={{ background: isDark ? '#1a1a2e' : '#fff', border: '1px solid #333', borderRadius: 8 }} /><Bar dataKey="produced" fill="#8b5cf6" radius={[0, 4, 4, 0]} /><Bar dataKey="target" fill="#333" radius={[0, 4, 4, 0]} opacity={0.3} /></BarChart>
+                  </ResponsiveContainer>
+                ) : activeChart === 'daily' ? (
+                  <ResponsiveContainer width="100%" height={280} minWidth={0}>
+                    <BarChart data={chartData.daily}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#333' : '#eee'} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} />
+                      <YAxis tick={{ fontSize: 10, fill: isDark ? '#999' : '#666' }} />
+                      <Tooltip contentStyle={{ background: isDark ? '#1a1a2e' : '#fff', border: '1px solid #333', borderRadius: 8 }} />
+                      <Bar dataKey="produced" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
                   </ResponsiveContainer>
                 ) : (
                   <ResponsiveContainer width="100%" height={280} minWidth={0}>
