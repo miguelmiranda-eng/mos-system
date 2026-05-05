@@ -21,6 +21,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_origins=[
         "https://mosdatabase-frontend.k9pirj.easypanel.host",
+        "https://ceo-dashboard-git-main-mirandatm.vercel.app",
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
