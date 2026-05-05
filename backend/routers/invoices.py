@@ -211,9 +211,8 @@ async def create_invoice(invoice_data: InvoiceModel, request: Request):
 async def sync_invoice_to_mos_order(invoice: dict, user: dict):
     """Fuses Invoice data with MOS Order structure and saves it to the 'orders' collection."""
     try:
-        # URL base del dashboard para producción (configurable vía env)
-        base_url = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
-        public_link = f"{base_url}/public/production/{invoice['invoice_id']}"
+        # Usamos rutas relativas para que funcione tanto en Vercel como en Localhost
+        public_link = f"/public/production/{invoice['invoice_id']}"
         
         # Calculate total quantity and sizes across all items
         total_qty = 0
