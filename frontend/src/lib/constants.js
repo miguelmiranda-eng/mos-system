@@ -1,5 +1,6 @@
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://mosdatabase-backend.k9pirj.easypanel.host';
 export const API = `${BACKEND_URL}/api`;
+export const DASHBOARD_URL = 'https://ceo-dashboard-git-main-mirandatm.vercel.app';
 
 export const BOARDS = [
   "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EDI", "EJEMPLOS", "COMPLETOS",
@@ -264,8 +265,17 @@ export const formatDetails = (action, details, actionLabels) => {
 export const normalizePublicUrl = (url) => {
   if (!url) return "";
   if (typeof url !== 'string') return url;
+  
+  // 1. Limpiar localhost
+  let cleanUrl = url;
   if (url.includes('localhost:3000')) {
-    return url.replace(/https?:\/\/localhost:3000/, '');
+    cleanUrl = url.replace(/https?:\/\/localhost:3000/, '');
   }
-  return url;
+
+  // 2. Si es una ruta relativa (empieza con /), ponerle el dominio de Vercel
+  if (cleanUrl.startsWith('/')) {
+    return `${DASHBOARD_URL}${cleanUrl}`;
+  }
+
+  return cleanUrl;
 };
