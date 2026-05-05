@@ -257,3 +257,15 @@ export const formatDetails = (action, details, actionLabels) => {
     default: return Object.values(details).filter(v => typeof v === 'string').join(', ').slice(0, 60);
   }
 };
+
+/**
+ * Strips localhost:3000 from legacy links to make them relative/dynamic.
+ */
+export const normalizePublicUrl = (url) => {
+  if (!url) return "";
+  if (typeof url !== 'string') return url;
+  if (url.includes('localhost:3000')) {
+    return url.replace(/https?:\/\/localhost:3000/, '');
+  }
+  return url;
+};

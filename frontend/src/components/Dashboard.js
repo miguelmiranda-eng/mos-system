@@ -56,7 +56,7 @@ import CommandPalette from "./dashboard/CommandPalette";
 
 // Shared constants and hooks
 import { cn } from "../lib/utils";
-import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API } from "../lib/constants";
+import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API, normalizePublicUrl } from "../lib/constants";
 import { useOrders, apiFetch } from "../hooks/useOrders";
 
 const Dashboard = () => {
@@ -74,13 +74,13 @@ const Dashboard = () => {
         // Handle {url, desc} objects as clickable links
         if (val.url && val.desc) {
           return (
-            <a href={val.url} target="_blank" rel="noopener noreferrer"
+            <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer"
                style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: 700 }}>
               {val.desc}
             </a>
           );
         }
-        if (val.url) return <a href={val.url} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>{val.url}</a>;
+        if (val.url) return <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>{normalizePublicUrl(val.url)}</a>;
         if (val.desc || val.text || val.value || val.name) return String(val.desc || val.text || val.value || val.name);
         try { return JSON.stringify(val); } catch { return '[Object]'; }
     }

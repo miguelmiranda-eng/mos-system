@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { Edit2, ExternalLink } from "lucide-react";
-import { getStatusColor, evaluateFormula } from "../../lib/constants";
+import { getStatusColor, evaluateFormula, normalizePublicUrl } from "../../lib/constants";
 import { ColoredBadge } from "./ColoredBadge";
 import SearchableSelect from "../SearchableSelect";
 
@@ -43,8 +43,8 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
     if (type === 'link_desc') {
       const p = parseLinkDesc(value);
       if (!p.url && !p.desc) return <span className="text-muted-foreground text-sm">—</span>;
-      const label = p.desc || p.url.replace(/^https?:\/\//, '').split('/')[0] || '—';
-      if (p.url) return <a href={p.url.startsWith('http') ? p.url : `https://${p.url}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm truncate block px-1" onClick={(e) => e.stopPropagation()}>{label}</a>;
+      const label = p.desc || normalizePublicUrl(p.url).replace(/^https?:\/\//, '').split('/')[0] || '—';
+      if (p.url) return <a href={normalizePublicUrl(p.url).startsWith('http') ? normalizePublicUrl(p.url) : `https://${normalizePublicUrl(p.url)}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm truncate block px-1" onClick={(e) => e.stopPropagation()}>{label}</a>;
       return <span className="text-sm text-foreground/70 px-1 truncate block">{label}</span>;
     }
     if (options && options.length > 0) {
@@ -79,11 +79,11 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
     }
     const p = parseLinkDesc(value);
     if (p.url || p.desc) {
-      const label = p.desc || p.url.replace(/^https?:\/\//, '').split('/')[0] || '—';
+      const label = p.desc || normalizePublicUrl(p.url).replace(/^https?:\/\//, '').split('/')[0] || '—';
       return (
         <div className="min-h-[32px] flex items-center gap-1 px-1 group">
           {p.url ? (
-            <a href={p.url.startsWith('http') ? p.url : `https://${p.url}`} target="_blank" rel="noopener noreferrer"
+            <a href={normalizePublicUrl(p.url).startsWith('http') ? normalizePublicUrl(p.url) : `https://${normalizePublicUrl(p.url)}`} target="_blank" rel="noopener noreferrer"
               className="text-primary hover:underline text-sm truncate flex-1" onClick={(e) => e.stopPropagation()} data-testid={`link-cell-${field}`}>{label}</a>
           ) : (
             <span className="text-sm text-foreground truncate flex-1">{label}</span>
@@ -172,13 +172,14 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
   }
 
   if (type === 'link' && value) {
+    const cleanUrl = normalizePublicUrl(value);
     return (
       <div className="flex items-center gap-1 min-h-[32px] px-1">
-        <a href={value.startsWith('http') ? value : `https://${value}`} target="_blank" rel="noopener noreferrer"
-          className="text-primary hover:underline text-sm truncate max-w-[150px]" title={value}
+        <a href={cleanUrl.startsWith('http') ? cleanUrl : `https://${cleanUrl}`} target="_blank" rel="noopener noreferrer"
+          className="text-primary hover:underline text-sm truncate max-w-[150px]" title={cleanUrl}
           onClick={(e) => e.stopPropagation()} data-testid={`link-cell-${field}`}>
           <ExternalLink className="w-3.5 h-3.5 inline mr-1" />
-          {value.replace(/^https?:\/\//, '').split('/')[0]}
+          {cleanUrl.replace(/^https?:\/\//, '').split('/')[0]}
         </a>
         <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
           className="p-0.5 hover:bg-secondary rounded opacity-0 group-hover:opacity-100" title={t('edit_link')}>
