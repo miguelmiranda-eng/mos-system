@@ -37,7 +37,8 @@ const AutomationCenter = () => {
     'client': 'clients', 
     'priority': 'priorities',
     'sample': 'samples',
-    'screens': 'screens'
+    'screens': 'screens',
+    'board': 'boards'
   };
   
   const [automations, setAutomations] = useState([]);
@@ -282,13 +283,13 @@ const AutomationCenter = () => {
               multiple
               value={currentAuto.boards || []}
               onChange={e => {
-                const options = [...e.target.options];
-                const selected = options.filter(o => o.selected).map(o => o.value);
+                const opts = [...e.target.options];
+                const selected = opts.filter(o => o.selected).map(o => o.value);
                 setCurrentAuto({...currentAuto, boards: selected});
               }}
               className="w-full bg-secondary/50 border border-border p-3 rounded-xl text-foreground text-sm min-h-[100px]"
             >
-              {BOARDS.map(b => (
+              {(options.boards || BOARDS).map(b => (
                 <option key={b} value={b}>{b}</option>
               ))}
             </select>
@@ -337,7 +338,7 @@ const AutomationCenter = () => {
                     className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                   >
                      <option value="">-- Seleccionar --</option>
-                     {BOARDS.map(b => <option key={b} value={b}>{b}</option>)}
+                     {(options.boards || BOARDS).map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
               )}

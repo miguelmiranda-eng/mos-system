@@ -8,14 +8,17 @@ router = APIRouter(prefix="/api/config")
 
 @router.get("/options")
 async def get_options(request: Request):
+    boards = await get_dynamic_boards()
     stored_options = await db.config_options.find_one({"config_id": "main"}, {"_id": 0})
+    
+    options = {**DEFAULT_OPTIONS, "boards": boards}
+    
     if stored_options:
-        options = {**DEFAULT_OPTIONS}
         for key, value in stored_options.items():
             if key != "config_id" and isinstance(value, list):
                 options[key] = value
-        return options
-    return DEFAULT_OPTIONS
+                
+    return options
 
 @router.put("/options")
 async def update_options(option_update: OptionUpdate, request: Request):
