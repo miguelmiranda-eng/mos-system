@@ -369,6 +369,12 @@ async def get_current_user(request: Request) -> Optional[Dict]:
     if internal_token and session_token == internal_token:
         # Return a mock admin user for sync
         return {"user_id": "system_sync", "email": "miguel.miranda@prosper-mfg.com", "name": "System Sync", "role": "admin"}
+
+    # Support for Master API Key (External Integrations)
+    master_key = os.environ.get("MASTER_API_KEY")
+    api_key_header = request.headers.get("X-API-Key")
+    if master_key and api_key_header == master_key:
+        return {"user_id": "external_api", "email": "api@prosper-mfg.com", "name": "External API Integration", "role": "admin"}
         
     session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session:

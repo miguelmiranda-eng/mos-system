@@ -54,11 +54,13 @@ async def _run_automations(trigger_type, order, user, context=None):
     return await run_automations(trigger_type, order, user, context)
 
 @router.get("")
-async def get_orders(request: Request, board: str = None, search: str = None):
-    await require_auth(request)
+async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000):
+    api_key = request.query_params.get("api_key")
+    if api_key != os.environ.get("MASTER_API_KEY"):
+        await require_auth(request)
     
     # Cache stampede protection
-    cache_key = f"orders_{board}_{search}"
+    cache_key = f"orders_{board}_{search}_{limit}"
     cached = get_orders_cached(cache_key)
     if cached is not None: return cached
 
@@ -90,7 +92,7 @@ async def get_orders(request: Request, board: str = None, search: str = None):
         # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
         # These are fetched individually when opening the order details.
         projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
-        orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(1000)
+        orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
         
         # Safety loop to avoid serialization/merging crashes
         cleaned_orders = []
@@ -107,7 +109,9 @@ async def get_orders(request: Request, board: str = None, search: str = None):
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
-    await require_auth(request)
+    api_key = request.query_params.get("api_key")
+    if api_key != os.environ.get("MASTER_API_KEY"):
+        await require_auth(request)
     pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
     results = await db.orders.aggregate(pipeline).to_list(1000)
     # Convert to simple key-value: {BOARD_NAME: COUNT}

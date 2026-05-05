@@ -149,17 +149,51 @@ async def get_production_logs(order_id: str, request: Request):
     return {"logs": logs, "total_produced": total_produced}
 
 @router.get("/production-summary")
-async def get_production_summary(request: Request):
-    await require_auth(request)
+async def get_production_summary(request: Request, date_from: str = None, date_to: str = None):
+    api_key = request.query_params.get("api_key")
+    if api_key != os.environ.get("MASTER_API_KEY"):
+        await require_auth(request)
     cache_key = "prod_summary"
     cached = get_cached(cache_key)
-    if cached: return cached
+    if cached and not date_from and not date_to: return cached
 
-    pipeline = [{"$group": {"_id": "$order_id", "total_produced": {"$sum": "$quantity_produced"}, "log_count": {"$sum": 1}}}]
+    query = {}
+    if date_from or date_to:
+        from datetime import datetime, timezone, timedelta
+        UTC_OFFSET = 7  # hours behind UTC (Arizona MST = UTC-7)
+        dt_query = {}
+        if date_from:
+            # Local midnight (00:00 local) = 07:00 UTC same day
+            dt_start = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                hour=0, minute=0, second=0, tzinfo=timezone.utc
+            ) + timedelta(hours=UTC_OFFSET)
+            dt_query["$gte"] = dt_start.isoformat()
+        if date_to:
+            # Local end of day (23:59:59 local) = next day 06:59:59 UTC
+            dt_end = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            ) + timedelta(hours=UTC_OFFSET)
+            dt_query["$lte"] = dt_end.isoformat()
+        query["created_at"] = dt_query
+
+    pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": "$order_number", 
+            "total_produced": {"$sum": "$quantity_produced"}, 
+            "log_count": {"$sum": 1},
+            "last_date": {"$max": "$created_at"}
+        }}
+    ]
     results = await db.production_logs.aggregate(pipeline).to_list(10000)
-    summary = {r["_id"]: {"total_produced": r["total_produced"], "log_count": r["log_count"]} for r in results}
+    summary = {r["_id"]: {
+        "total_produced": r["total_produced"], 
+        "log_count": r["log_count"],
+        "last_date": r["last_date"]
+    } for r in results if r["_id"]}
     
-    set_cache(cache_key, summary)
+    if not date_from and not date_to:
+        set_cache(cache_key, summary)
     return summary
 
 @router.delete("/production-logs/{log_id}")
@@ -293,7 +327,9 @@ async def _compute_capacity_plan():
 
 @router.get("/capacity-plan")
 async def get_capacity_plan(request: Request):
-    await require_auth(request)
+    api_key = request.query_params.get("api_key")
+    if api_key != os.environ.get("MASTER_API_KEY"):
+        await require_auth(request)
     cache_key = "capacity_plan"
     
     cached = get_cached(cache_key)
@@ -428,13 +464,7 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
             ],
             "by_day": [
                 {"$group": {
-                    "_id": {
-                        "$dateToString": {
-                            "format": "%Y-%m-%d",
-                            "date": {"$dateFromString": {"dateString": "$created_at"}},
-                            "timezone": "-07:00"
-                        }
-                    },
+                    "_id": {"$substr": ["$created_at", 0, 10]},
                     "produced": {"$sum": "$quantity_produced"}
                 }},
                 {"$sort": {"_id": 1}},
@@ -521,17 +551,11 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         else: granularity = "day"
     
     # Separate aggregation for trend to keep it clean
-    fmt = "%Y-%m-%dT%H" if granularity == "hour" else "%Y-%m-%d"
+    substr_len = 13 if granularity == "hour" else 10
     trend_pipeline = [
         {"$match": query},
         {"$group": {
-            "_id": {
-                "$dateToString": {
-                    "format": fmt,
-                    "date": {"$dateFromString": {"dateString": "$created_at"}},
-                    "timezone": "-07:00"
-                }
-            },
+            "_id": {"$substr": ["$created_at", 0, substr_len]},
             "produced": {"$sum": "$quantity_produced"}
         }},
         {"$sort": {"_id": 1}}
@@ -581,7 +605,10 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
 
 @router.get("/production-analytics")
 async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
-    await require_auth(request)
+    api_key = request.query_params.get("api_key")
+    if api_key != os.environ.get("MASTER_API_KEY"):
+        await require_auth(request)
+    
 
     cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
     cached = get_cached(cache_key)
