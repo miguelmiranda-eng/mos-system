@@ -354,29 +354,22 @@ async def get_capacity_plan(request: Request):
 # ==================== PRODUCTION ANALYTICS ====================
 
 def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
-    from datetime import timedelta
+    from datetime import timedelta, datetime, timezone
     now = datetime.now(timezone.utc)
+    UTC_OFFSET = 7  # hours behind UTC (Arizona MST = UTC-7)
     query = {}
+    
     if preset:
         if preset == 'today':
-            TZ_OFFSET = 7  # UTC-7 (Mountain Time)
-            DAY_START_HOUR = 7
-            DAY_END_HOUR = 19  # daily cycle ends at 19:00 local
-            local_now = now - timedelta(hours=TZ_OFFSET)
-            local_start = local_now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
-            if local_now.hour < DAY_START_HOUR:
-                local_start -= timedelta(days=1)
-            utc_start = local_start + timedelta(hours=TZ_OFFSET)
-            if local_now.hour >= DAY_END_HOUR:
-                # After 19:00 local — cap query at end of day so next-day logs aren't included
-                local_end = local_now.replace(hour=DAY_END_HOUR, minute=0, second=0, microsecond=0)
-                utc_end = local_end + timedelta(hours=TZ_OFFSET)
-                query["created_at"] = {"$gte": utc_start.isoformat(), "$lte": utc_end.isoformat()}
-            else:
-                query["created_at"] = {"$gte": utc_start.isoformat()}
+            local_now = now - timedelta(hours=UTC_OFFSET)
+            local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            utc_start = local_start + timedelta(hours=UTC_OFFSET)
+            query["created_at"] = {"$gte": utc_start.isoformat()}
         elif preset == 'yesterday':
-            start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            local_now = now - timedelta(hours=UTC_OFFSET)
+            local_yesterday = local_now - timedelta(days=1)
+            start = local_yesterday.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=UTC_OFFSET)
+            end = local_now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=UTC_OFFSET)
             query["created_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
         elif preset == 'week':
             start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -388,9 +381,18 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
     # Fallback to date_from/date_to if query is still empty or forced
     if not query.get("created_at") and (date_from or date_to):
         date_q = {}
-        if date_from: date_q["$gte"] = date_from + "T00:00:00"
-        if date_to: date_q["$lte"] = date_to + "T23:59:59"
-        if date_q: query["created_at"] = date_q
+        if date_from:
+            dt_start = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                hour=0, minute=0, second=0, tzinfo=timezone.utc
+            ) + timedelta(hours=UTC_OFFSET)
+            date_q["$gte"] = dt_start.isoformat()
+        if date_to:
+            dt_end = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            ) + timedelta(hours=UTC_OFFSET)
+            date_q["$lte"] = dt_end.isoformat()
+        if date_q:
+            query["created_at"] = date_q
     return query
 
 async def _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number):
