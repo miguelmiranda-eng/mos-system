@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/work-orders")
 async def get_work_orders(request: Request, status: str = None, operator_id: str = None, search: str = None):
     print(f"DEBUG: GET /api/work-orders search={search}")
     await require_auth(request)
-    query = {}
+    query = {"is_deleted": {"$ne": True}}
     if status:
         query["production_status"] = status
     if operator_id:

@@ -148,7 +148,7 @@ async def execute_action(action_type, params, target_obj, user=None):
         target_board = params.get("target_board")
         if target_board and "order_id" in target_obj:
             await db.orders.update_one({"order_id": target_obj["order_id"]}, {"$set": {"board": target_board}})
-    elif action_type == "assign_field":
+    elif action_type == "assign_field" or action_type == "change_status":
         field = params.get("field")
         value = params.get("value")
         if field and value:

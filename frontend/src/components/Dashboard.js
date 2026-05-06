@@ -616,7 +616,7 @@ const Dashboard = () => {
   const handleExportExcel = () => {
     try {
       const selectedIds = selectedOrders.map(String);
-      const ordersToExport = allOrders.filter(o => selectedIds.includes(String(o.order_id)));
+      const ordersToExport = orders.filter(o => selectedIds.includes(String(o.order_id)));
       
       if (ordersToExport.length === 0) {
         toast.error(t('select_export'));

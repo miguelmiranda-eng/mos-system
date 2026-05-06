@@ -16,6 +16,7 @@ const TRIGGER_LABELS = {
 
 const ACTION_LABELS = {
   move_board: 'Mover Tablero',
+  change_status: 'Cambio de Estado',
   send_email: 'Enviar Email',
   assign_field: 'Asignar Campo',
   notify_slack: 'Notificar Slack'
@@ -68,14 +69,21 @@ const AutomationCenter = () => {
       if (conds.watch_value === 'not_empty') return `Si ${conds.watch_field} es asignado`;
       return `Si ${conds.watch_field} = ${conds.watch_value}`;
     }
-    const keys = Object.keys(conds).filter(k => k !== 'watch_field' && k !== 'watch_value');
-    if (keys.length > 0) return keys.map(k => `${k} = ${conds[k]}`).join(' y ');
+    const keys = Object.keys(conds).filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k]);
+    if (keys.length > 0) {
+      return keys.map(k => {
+        if (k === 'to_board') return `Si entra a tablero: ${conds[k]}`;
+        if (k === 'from_board') return `Si sale de tablero: ${conds[k]}`;
+        return `${k} = ${conds[k]}`;
+      }).join(' y ');
+    }
     return 'Al ejecutarse el disparador';
   };
 
   const getActionParamString = (type, params) => {
     if (!params) return '';
     if (type === 'move_board') return `A tablero: ${params.target_board || '?'}`;
+    if (type === 'change_status') return `Cambiar ${params.field || '?'} a: ${params.value || '?'}`;
     if (type === 'send_email') return `A: ${params.to_email || '?'}`;
     if (type === 'assign_field') return `${params.field || '?'} = ${params.value || '?'}`;
     if (type === 'notify_slack') return `Mensaje a Slack`;
@@ -278,6 +286,26 @@ const AutomationCenter = () => {
               </div>
             )}
 
+            {currentAuto.trigger_type === 'move' && (
+              <div className="p-4 border border-yellow-500/20 bg-yellow-500/5 rounded-xl space-y-4">
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Condición del Movimiento</label>
+                <div>
+                  <span className="text-xs text-muted-foreground mb-1 block">Tablero Destino</span>
+                  <select 
+                    value={currentAuto.trigger_conditions.to_board || ''}
+                    onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, to_board: e.target.value}})}
+                    className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                  >
+                    <option value="">-- Cualquier tablero --</option>
+                    {(options.boards || BOARDS).map(b => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-muted-foreground mt-1">La regla se activará cuando la orden entre a este tablero.</p>
+                </div>
+              </div>
+            )}
+
             <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest pt-4">Tableros que aplican (Opcional)</label>
             <select 
               multiple
@@ -340,6 +368,45 @@ const AutomationCenter = () => {
                      <option value="">-- Seleccionar --</option>
                      {(options.boards || BOARDS).map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
+                </div>
+              )}
+
+              {currentAuto.action_type === 'change_status' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Columna de Estado</span>
+                    <select 
+                      value={currentAuto.action_params.field || ''}
+                      onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, field: e.target.value, value: ''}})}
+                      className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                    >
+                      <option value="">-- Seleccionar --</option>
+                      {['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority'].map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Nuevo Estado</span>
+                    {currentAuto.action_params.field && options[OPTIONS_MAPPING[currentAuto.action_params.field]] ? (
+                      <select 
+                        value={currentAuto.action_params.value || ''}
+                        onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})}
+                        className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                      >
+                        <option value="">-- Seleccionar --</option>
+                        {options[OPTIONS_MAPPING[currentAuto.action_params.field]].map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input 
+                        type="text" 
+                        value={currentAuto.action_params.value || ''}
+                        onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})}
+                        className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                        placeholder="Valor manual"
+                      />
+                    )}
+                  </div>
                 </div>
               )}
               

@@ -502,8 +502,22 @@ export const useOrders = (currentBoard, boardFilters) => {
       });
 
       if (res.ok) {
-        toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
-        fetchOrders(true, true);
+        const data = await res.json();
+        const automations = data._automations_executed || [];
+        if (automations.length > 0) {
+          const names = [...new Set(automations.map(a => a.name))].join(', ');
+          setAutomationRunning(true);
+          setAutomationMessage(`Automatización: ${names}`);
+          setTimeout(async () => {
+            await fetchOrders(true, true);
+            setAutomationRunning(false);
+            setAutomationMessage('');
+            toast.success(`Automatización ejecutada: ${names}`, { duration: 3000 });
+          }, 600);
+        } else {
+          toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
+          fetchOrders(true, true);
+        }
         fetchAllOrders();
       } else {
         const err = await res.json();

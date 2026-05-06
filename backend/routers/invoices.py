@@ -445,7 +445,7 @@ async def delete_invoice(invoice_id: str, request: Request):
         await db.invoices.delete_one({"invoice_id": invoice_id})
         
         # 2. Hard delete linked MOS orders
-        await db.orders.delete_many({"invoice_ref": invoice_id})
+        await db.orders.delete_many({"$or": [{"invoice_ref": invoice_id}, {"order_number": invoice_id}]})
         
         # 3. Hard delete linked Work Orders
         await db.work_orders.delete_many({"source_invoice_id": invoice_id})
@@ -469,7 +469,7 @@ async def delete_invoice(invoice_id: str, request: Request):
         
     # CASCADE TO MOS: Move linked orders to Trash instead of permanent deletion
     order_result = await db.orders.update_many(
-        {"invoice_ref": invoice_id},
+        {"$or": [{"invoice_ref": invoice_id}, {"order_number": invoice_id}]},
         {"$set": {
             "board": "PAPELERA DE RECICLAJE",
             "deleted_at": now,
@@ -505,7 +505,7 @@ async def restore_invoice(invoice_id: str, request: Request):
         
     # 2. Restore linked MOS orders
     await db.orders.update_many(
-        {"invoice_ref": invoice_id},
+        {"$or": [{"invoice_ref": invoice_id}, {"order_number": invoice_id}]},
         {"$set": {"board": "SCHEDULING"}}
     )
     

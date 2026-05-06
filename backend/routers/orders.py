@@ -311,10 +311,11 @@ async def move_order(order_id: str, request: Request):
     await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await log_activity(user, "move_order", {"order_id": order_id, "order_number": existing.get("order_number"), "from_board": old_board, "to_board": target_board}, previous_data={"order_id": order_id, "fields": {"board": old_board}})
-    await _run_automations("move", updated, user, {"from_board": old_board, "to_board": target_board})
+    executed_automations = await _run_automations("move", updated, user, {"from_board": old_board, "to_board": target_board})
+    final_order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await _notify_all(user, "move", f"{user['name']} movio orden {existing.get('order_number', order_id)} de {old_board} a {target_board}", order_id, existing.get("order_number"))
     await ws_manager.broadcast("order_change", {"action": "move", "boards": [old_board, target_board]})
-    return _merge_custom_fields(updated)
+    return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
 @router.delete("/{order_id}")
 async def delete_order(order_id: str, request: Request):
@@ -400,10 +401,18 @@ async def bulk_move_orders(request: Request):
 
     result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     await log_activity(user, "bulk_move_orders", {"order_count": len(order_ids), "target_board": target_board}, previous_data={"order_ids": order_ids, "original_boards": original_boards})
+    
+    executed_automations = []
+    updated_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0}).to_list(len(order_ids))
+    for order in updated_orders:
+        old_board = original_boards.get(order["order_id"])
+        autos = await _run_automations("move", order, user, {"from_board": old_board, "to_board": target_board})
+        executed_automations.extend(autos)
+
     affected_boards = list(set(original_boards.values())) + [target_board]
     await _notify_all(user, "move", f"{user['name']} movio {len(order_ids)} ordenes a {target_board}", None, None)
     await ws_manager.broadcast("order_change", {"action": "bulk_move", "boards": affected_boards})
-    return {"modified_count": result.modified_count}
+    return {"modified_count": result.modified_count, "_automations_executed": executed_automations}
 
 @router.post("/export")
 async def export_orders(request: Request):
