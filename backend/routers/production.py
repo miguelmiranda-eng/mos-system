@@ -1,6 +1,6 @@
 """Production logs, gantt data, capacity plan, email routes."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, EmailRequest, MACHINES, logger
+from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, os, asyncio, time
@@ -151,7 +151,7 @@ async def get_production_logs(order_id: str, request: Request):
 @router.get("/production-summary")
 async def get_production_summary(request: Request, date_from: str = None, date_to: str = None):
     api_key = request.query_params.get("api_key")
-    if api_key != os.environ.get("MASTER_API_KEY"):
+    if api_key != MASTER_API_KEY:
         await require_auth(request)
     cache_key = "prod_summary"
     cached = get_cached(cache_key)
@@ -328,7 +328,7 @@ async def _compute_capacity_plan():
 @router.get("/capacity-plan")
 async def get_capacity_plan(request: Request):
     api_key = request.query_params.get("api_key")
-    if api_key != os.environ.get("MASTER_API_KEY"):
+    if api_key != MASTER_API_KEY:
         await require_auth(request)
     cache_key = "capacity_plan"
     
@@ -606,7 +606,7 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
 @router.get("/production-analytics")
 async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
     api_key = request.query_params.get("api_key")
-    if api_key != os.environ.get("MASTER_API_KEY"):
+    if api_key != MASTER_API_KEY:
         await require_auth(request)
     
 

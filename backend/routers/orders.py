@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, UPLOADS_DIR, logger
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, UPLOADS_DIR, logger, MASTER_API_KEY
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -56,7 +56,7 @@ async def _run_automations(trigger_type, order, user, context=None):
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000):
     api_key = request.query_params.get("api_key")
-    if api_key != os.environ.get("MASTER_API_KEY"):
+    if api_key != MASTER_API_KEY:
         await require_auth(request)
     
     # Cache stampede protection
@@ -110,7 +110,7 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
     api_key = request.query_params.get("api_key")
-    if api_key != os.environ.get("MASTER_API_KEY"):
+    if api_key != MASTER_API_KEY:
         await require_auth(request)
     pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
     results = await db.orders.aggregate(pipeline).to_list(1000)
