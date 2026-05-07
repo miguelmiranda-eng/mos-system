@@ -140,7 +140,14 @@ test_report.*
 
 # Research and Scratch
 scratch/
+backend/scratch/
 test_reports/
 load_test_results.txt
 test_result.md
 auth_testing.md
+
+# Application Data
+backend/uploads/
+backend/seed_data/*.xlsx
+backend/*.xlsx
+backend/caja_negra.json

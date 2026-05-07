@@ -99,6 +99,13 @@ const Dashboard = () => {
 
   const [openFilter, setOpenFilter] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Theme from shared context (synced with CEODashboard and WMS)
   const { theme, toggleTheme } = useTheme();
@@ -749,85 +756,127 @@ const Dashboard = () => {
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => { if (currentBoard === 'SCHEDULING') fetchExtra(); }, [currentBoard, fetchExtra]);
-const renderOrderRow = (order) => {
-      const sq = searchQuery.toLowerCase();
-      const getVal = (v) => {
-        if (!v) return "";
-        if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
-        return String(v).trim().toLowerCase();
-      };
-      const isSearchMatch = searchQuery && (
-        getVal(order.order_number).includes(sq) ||
-        getVal(order.client).includes(sq) ||
-        getVal(order.store_po).includes(sq) ||
-        getVal(order.customer_po).includes(sq) ||
-        getVal(order.job_title_a).includes(sq) ||
-        getVal(order.job_title_b).includes(sq) ||
-        getVal(order.branding).includes(sq) ||
-        getVal(order.notes).includes(sq)
-      );
-      const isSelected = selectedOrders.includes(order.order_id);
-      const rowBgClass = isSearchMatch 
-        ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') 
-        : isSelected 
-          ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') 
-          : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
+  const renderOrderRow = useCallback((order) => {
+    const sq = debouncedSearchQuery.toLowerCase();
+    const getVal = (v) => {
+      if (!v) return "";
+      if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
+      return String(v).trim().toLowerCase();
+    };
+    
+    const isSearchMatch = debouncedSearchQuery && (
+      getVal(order.order_number).includes(sq) ||
+      getVal(order.client).includes(sq) ||
+      getVal(order.store_po).includes(sq) ||
+      getVal(order.customer_po).includes(sq) ||
+      getVal(order.job_title_a).includes(sq) ||
+      getVal(order.job_title_b).includes(sq) ||
+      getVal(order.branding).includes(sq) ||
+      getVal(order.notes).includes(sq)
+    );
 
-      const isHighlighted = highlightedOrderId === order.order_id;
-      return (
-        <React.Fragment key={order.order_id}>
-          <div
-            data-order-id={order.order_id}
-            data-testid={`order-row-${order.order_id}`}
-            className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
-            style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-            <input type="checkbox" checked={isSelected} onChange={() => toggleOrderSelection(order.order_id)} className="w-4 h-4 rounded border-border transition-all" />
+    const isSelected = selectedOrders.includes(order.order_id);
+    const rowBgClass = isSearchMatch 
+      ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') 
+      : isSelected 
+        ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') 
+        : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
+
+    const isHighlighted = highlightedOrderId === order.order_id;
+    const canEditBoard = currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS';
+
+    return (
+      <React.Fragment key={order.order_id}>
+        {/* Selection Checkbox */}
+        <div
+          data-order-id={order.order_id}
+          className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+          <input 
+            type="checkbox" 
+            checked={isSelected} 
+            onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }} 
+            className="w-4 h-4 rounded border-border accent-primary cursor-pointer" 
+          />
+        </div>
+
+        {/* Quick Actions */}
+        <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+          <div className="flex flex-col gap-1 items-center">
+            <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary relative" title={t('comments')}>
+              <MessageSquare className="w-3 h-3" />
+              {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
+            </button>
+            {isAdmin && (
+              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
+            )}
           </div>
-          <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-            <div className="flex flex-col gap-1 items-center">
-              <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title={t('comments')}><MessageSquare className="w-3 h-3" /></button>
-              {isAdmin && (
-                <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
+        </div>
+
+        {/* Order Number / Board (Sticky) */}
+        <div 
+          className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} 
+          style={{ width: 160, minWidth: 160, maxWidth: 160 }} 
+          onClick={() => setDetailsOrder(order)}
+        >
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className={`font-black text-xl tracking-tighter truncate ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
+                {order.order_number}
+              </span>
+              {order.priority === 'RUSH' && <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500 animate-pulse flex-shrink-0" />}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
+                <span className="px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter flex-shrink-0 text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                  {order.board}
+                </span>
               )}
+              <span className="text-[10px] font-bold text-muted-foreground/60 truncate uppercase tracking-widest">
+                {order.client?.substring(0, 15)}
+              </span>
             </div>
           </div>
-          {(() => {
-            const isMaster = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
-            return (
-              <div className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }} onClick={() => setDetailsOrder(order)}>
-                {isMaster ? (
-                  <span className="px-2.5 py-1 rounded-sm text-[10px] font-bold uppercase tracking-tighter" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
-                ) : (
-                  <span className="font-black text-xl tracking-tight group-hover:text-royal transition-colors whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1">
-                    {order.locked_by_qc && <span title="Bloqueado por QC" className="text-red-500 flex-shrink-0">🔒</span>}
-                    {order.order_number}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
-          {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
-            const isOrderNum = col.key === 'order_number';
-            const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
-            return (
-              <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-9 pr-3' : 'px-3'} border-r border-b border-border/5 transition-all ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width, minWidth: width, maxWidth: 'none' }}>
-                {isOrderNum ? <span className={`font-mono font-black text-xl truncate block ${isSearchMatch ? 'text-primary' : ''}`} title={order[col.key]}>{isSearchMatch ? <mark className="bg-yellow-300/60 text-foreground px-0.5 rounded">{order[col.key]}</mark> : order[col.key]}</span> : (
-                  <EditableCell value={order[col.key]} field={col.key} orderId={order.order_id} options={col.optionKey ? (options[col.optionKey] || col.statusOptions?.map(s => s.value)) : null} groupConfig={groupConfig} onUpdate={handleCellUpdate} type={col.type} isDark={isDark} allOrders={orders} columns={columns} readOnly={!canEditBoard} />
-                )}
-              </div>
-            );
-          })}
-          {(() => {
-            const ps = productionSummary[order.order_id]; const totalProduced = ps ? ps.total_produced : 0; const qty = order.quantity || 0; const remaining = Math.max(0, qty - totalProduced); const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
-            return (
-              <div className={`py-3 px-3 border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ minWidth: 180 }} data-testid={`restante-${order.order_id}`}>
-                {qty > 0 ? (<div className="space-y-1.5"><div className="flex justify-between text-[11px]"><span className="font-mono font-bold text-foreground/80">{remaining}</span><span className={`font-mono font-bold ${pct >= 100 ? 'text-green-500' : pct >= 50 ? 'text-zinc-500' : 'text-muted-foreground'}`}>{pct.toFixed(0)}%</span></div><div className="w-full h-1.5 bg-secondary/50 rounded-full overflow-hidden border border-border/10 shadow-inner"><div className={`h-full rounded-full transition-all duration-1000 ${pct >= 100 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : pct >= 50 ? 'bg-zinc-500 shadow-[0_0_8px_rgba(161,161,170,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>) : <span className="text-xs text-muted-foreground/50">—</span>}
-              </div>
-            );
-          })()}
-        </React.Fragment>
-      );
-    };
+        </div>
+
+        {/* Visible Columns */}
+        {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col) => {
+          const val = order[col.key];
+          const width = col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width);
+          return (
+            <div 
+              key={col.key} 
+              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`} 
+              style={{ width: width, minWidth: width, maxWidth: 'none' }}
+            >
+              <EditableCell
+                order={order}
+                field={col.key}
+                value={val}
+                type={col.type}
+                options={col.optionKey ? options[col.optionKey] : []}
+                onUpdate={handleCellUpdate}
+                canEdit={canEditBoard}
+                isDark={isDark}
+              />
+            </div>
+          );
+        })}
+
+        {/* Action Buttons */}
+        <div className={`py-4 px-4 border-b border-border/5 flex items-center gap-2 ${rowBgClass}`} style={{ minWidth: 180 }}>
+          <button onClick={() => setDetailsOrder(order)} className="p-2 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group/btn" title={t('details')}><Eye className="w-4 h-4 group-hover/btn:scale-110" /></button>
+          <button onClick={() => setCommentsOrder(order)} className="p-2 rounded-lg bg-secondary/50 hover:bg-royal/20 text-muted-foreground hover:text-royal transition-all group/btn relative" title={t('comments')}>
+            <MessageSquare className="w-4 h-4 group-hover/btn:scale-110" />
+            {order._comments_count > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-royal text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-background">{order._comments_count}</span>}
+          </button>
+          {isAdmin && (
+            <button onClick={() => handleBulkMove([order.order_id], 'PAPELERA DE RECICLAJE')} className="p-2 rounded-lg bg-secondary/50 hover:bg-red-500/20 text-muted-foreground hover:text-red-500 transition-all group/btn" title={t('trash')}><Trash2 className="w-4 h-4 group-hover/btn:scale-110" /></button>
+          )}
+        </div>
+      </React.Fragment>
+    );
+  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove]);
 
 
   const renderTableBody = () => {

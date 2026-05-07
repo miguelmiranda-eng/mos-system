@@ -8,12 +8,16 @@ import google.generativeai as genai
 
 router = APIRouter(prefix="/api/insights")
 
-ENCRYPTION_KEY = os.environ.get("MOS_ENCRYPTION_KEY")
-if ENCRYPTION_KEY:
-    cipher_suite = Fernet(ENCRYPTION_KEY.encode())
-else:
-    cipher_suite = None
-    logger.warning("No MOS_ENCRYPTION_KEY found in environment variables.")
+def get_cipher_suite():
+    key = os.environ.get("MOS_ENCRYPTION_KEY")
+    if not key:
+        logger.error("MOS_ENCRYPTION_KEY not found in environment.")
+        return None
+    try:
+        return Fernet(key.encode())
+    except Exception as e:
+        logger.error(f"Invalid MOS_ENCRYPTION_KEY: {e}")
+        return None
 
 class ConfigUpdate(BaseModel):
     gemini_api_key: str
@@ -32,24 +36,29 @@ async def get_insights_config(request: Request):
 async def update_insights_config(body: ConfigUpdate, request: Request):
     """Securely store the Gemini API key."""
     await require_admin(request)
-    if not cipher_suite:
-        raise HTTPException(status_code=500, detail="El sistema no tiene configurada una clave de encriptación.")
+    cipher = get_cipher_suite()
+    if not cipher:
+        raise HTTPException(status_code=500, detail="El sistema no tiene configurada una clave de encriptación válida (MOS_ENCRYPTION_KEY).")
     
     if not body.gemini_api_key.strip():
         raise HTTPException(status_code=400, detail="La clave API no puede estar vacía.")
 
-    encrypted_key = cipher_suite.encrypt(body.gemini_api_key.strip().encode()).decode()
-    
-    await db.insights_config.update_one(
-        {"config_id": "main"},
-        {"$set": {
-            "config_id": "main",
-            "encrypted_gemini_key": encrypted_key,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }},
-        upsert=True
-    )
-    return {"message": "Configuración guardada exitosamente."}
+    try:
+        encrypted_key = cipher.encrypt(body.gemini_api_key.strip().encode()).decode()
+        
+        await db.insights_config.update_one(
+            {"config_id": "main"},
+            {"$set": {
+                "config_id": "main",
+                "encrypted_gemini_key": encrypted_key,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+        return {"message": "Configuración guardada exitosamente."}
+    except Exception as e:
+        logger.error(f"Error encrypting API key: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al encriptar la clave: {str(e)}")
 
 @router.post("/analyze")
 async def get_insights_analysis(request: Request):
@@ -60,18 +69,18 @@ async def get_insights_analysis(request: Request):
     if not config or not config.get("encrypted_gemini_key"):
         raise HTTPException(status_code=400, detail="El módulo Insights no está configurado. Faltan las credenciales.")
     
-    if not cipher_suite:
-        raise HTTPException(status_code=500, detail="Error de encriptación interno.")
+    cipher = get_cipher_suite()
+    if not cipher:
+        raise HTTPException(status_code=500, detail="Error de encriptación interno. Verifique MOS_ENCRYPTION_KEY.")
 
     # 1. Decrypt Key
     try:
-        api_key = cipher_suite.decrypt(config["encrypted_gemini_key"].encode()).decode()
+        api_key = cipher.decrypt(config["encrypted_gemini_key"].encode()).decode()
     except Exception as e:
         logger.error(f"Error decrypting API key: {e}")
-        raise HTTPException(status_code=500, detail="No se pudo desencriptar la clave API. Reconfigúrela.")
+        raise HTTPException(status_code=500, detail="No se pudo desencriptar la clave API. Reconfigúrela en la configuración.")
     
     # 2. Gather Data for Context
-    # We will gather high-level stats: user counts, active users, order counts
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         
@@ -87,10 +96,9 @@ async def get_insights_analysis(request: Request):
         board_stats = await db.orders.aggregate(pipeline).to_list(100)
         boards_summary = {item["_id"]: item["count"] for item in board_stats}
         
-        # Recent activity count (last 7 days approx)
+        # Recent activity count
         activity_count = await db.activity_logs.count_documents({})
         
-        # Provide a snapshot string for the AI
         data_snapshot = f"""
         Users Overview:
         - Total Users: {total_users}
@@ -121,8 +129,9 @@ async def get_insights_analysis(request: Request):
             "Keep paragraphs very short. Be direct, authoritative, and data-driven. Do not add generic greetings."
         )
         
+        # FIX: Using a valid model name (gemini-1.5-flash instead of non-existent 2.5)
         model = genai.GenerativeModel(
-            model_name='models/gemini-2.5-flash',
+            model_name='gemini-1.5-flash',
             system_instruction=system_prompt
         )
         
