@@ -9,9 +9,28 @@ import { toast } from "sonner";
 import { API } from "../lib/constants";
 
 const MACHINES = Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`);
-const SHIFTS = ['TURNO 1', 'TURNO 2', 'TURNO 3'];
+const SHIFTS = ['TURNO 1', 'TURNO 2'];
 const DESIGN_TYPES = ['FRENTE', 'ESPALDA', 'MANGA'];
 const SETUP_KEY = 'production_setup_value';
+
+const getSuggestedShift = () => {
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+
+  // Turno 1: 7:00 AM a 7:00 PM
+  if (hour >= 7 && hour < 19) return 'TURNO 1';
+
+  // Turno 2: Lunes a Jueves, 7:00 PM a 7:00 AM
+  // Noche de Lunes (19:00) -> Mañana de Viernes (07:00)
+  if (hour >= 19) {
+    if (day >= 1 && day <= 4) return 'TURNO 2';
+  } else if (hour < 7) {
+    if (day >= 2 && day <= 5) return 'TURNO 2';
+  }
+
+  return '';
+};
 
 const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin }) => {
   const { t } = useLang();
@@ -38,6 +57,10 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
         .then(r => r.ok ? r.json() : [])
         .then(data => setOperatorsList(data.filter(op => op.active)))
         .catch(() => {});
+      
+      // Auto-suggest shift when opening
+      const suggested = getSuggestedShift();
+      if (suggested) setShift(suggested);
     }
   }, [isOpen]);
 
@@ -67,6 +90,27 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!matchedOrder || !quantity || !machine) { toast.error(t('complete_fields')); return; }
+
+    // Shift Validation
+    const now = new Date();
+    const hour = now.getHours();
+    const day = now.getDay();
+    const min = now.getMinutes();
+
+    if (shift === 'TURNO 1') {
+      // 7:00 AM a 7:00 PM (con margen de 10 min hasta 7:10 PM si es necesario, 
+      // aunque el usuario mencionó "después de las 5", lo cual es confuso. 
+      // Implementamos el rango base por ahora).
+      if (hour < 7 || (hour >= 19 && min > 10)) {
+        if (!isAdmin && !confirm("Estás fuera del horario de Turno 1. ¿Deseas continuar?")) return;
+      }
+    } else if (shift === 'TURNO 2') {
+       const isMonToThuNight = (hour >= 19 && day >= 1 && day <= 4) || (hour < 7 && day >= 2 && day <= 5);
+       if (!isMonToThuNight) {
+         if (!isAdmin && !confirm("Estás fuera del horario de Turno 2 (Lun-Jue). ¿Deseas continuar?")) return;
+       }
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch(`${API}/production-logs`, {
