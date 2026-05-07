@@ -19,7 +19,10 @@ from pathlib import Path
 router = APIRouter(prefix="/api/orders")
 
 UPLOADS_DIR = Path("uploads") / "invoices"
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 # ==================== CACHE SYSTEM FOR ORDERS ====================
 _orders_cache = {}
