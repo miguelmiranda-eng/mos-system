@@ -158,6 +158,7 @@ const Dashboard = () => {
   const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
   const [tempOrderNo, setTempOrderNo] = useState('');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showMachinesInFilter, setShowMachinesInFilter] = useState(false);
 
   useEffect(() => {
     if (!highlightedOrderId) return;
@@ -1401,7 +1402,7 @@ const renderOrderRow = (order) => {
                                           {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
                                         </div>
                                         <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
-                                          {BOARDS.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
+                                          {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
                                             const checked = (filters['_board'] || []).includes(b);
                                             return (
                                               <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
@@ -1421,6 +1422,48 @@ const renderOrderRow = (order) => {
                                               </label>
                                             );
                                           })}
+
+                                          {/* Machines Folder */}
+                                          <div className="mt-2 pt-2 border-t border-border">
+                                            <button 
+                                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
+                                              className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
+                                            >
+                                              <div className="flex items-center gap-2">
+                                                <Monitor className="w-3.5 h-3.5" />
+                                                <span>MAQUINAS</span>
+                                              </div>
+                                              <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
+                                            </button>
+                                            {showMachinesInFilter && (
+                                              <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
+                                                {allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).sort((a,b) => {
+                                                  const numA = parseInt(a.replace('MAQUINA', '')) || 0;
+                                                  const numB = parseInt(b.replace('MAQUINA', '')) || 0;
+                                                  return numA - numB;
+                                                }).map(b => {
+                                                  const checked = (filters['_board'] || []).includes(b);
+                                                  return (
+                                                    <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={() => {
+                                                          setFilters(prev => {
+                                                            const cur = prev['_board'] || [];
+                                                            const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
+                                                            return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                                          });
+                                                        }}
+                                                        className="w-4 h-4 rounded border-border accent-primary"
+                                                      />
+                                                      <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
+                                                    </label>
+                                                  );
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
                                         </div>
                                       </>
                                     ) : (
@@ -1471,26 +1514,95 @@ const renderOrderRow = (order) => {
                                       
                                       {isSelect ? (
                                         <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
-                                          {getFilterOptions(col).map(opt => {
-                                            const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
-                                            return (
-                                              <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                <input
-                                                  type="checkbox"
-                                                  checked={checked}
-                                                  onChange={() => {
-                                                    setFilters(prev => {
-                                                      const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                                      const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                                      return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                                                    });
-                                                  }}
-                                                  className="w-4 h-4 rounded border-border accent-primary"
-                                                />
-                                                <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
-                                              </label>
-                                            );
-                                          })}
+                                          {col.key === 'board' ? (
+                                            <>
+                                              <div className="space-y-1">
+                                                {getFilterOptions(col).filter(opt => opt !== 'MASTER' && opt !== 'PAPELERA DE RECICLAJE' && !opt.startsWith('MAQUINA')).sort().map(opt => {
+                                                  const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                                  return (
+                                                    <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={() => {
+                                                          setFilters(prev => {
+                                                            const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                            const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                            return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                          });
+                                                        }}
+                                                        className="w-4 h-4 rounded border-border accent-primary"
+                                                      />
+                                                      <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
+                                                    </label>
+                                                  );
+                                                })}
+                                              </div>
+                                              
+                                              {/* Machines Folder */}
+                                              <div className="mt-2 pt-2 border-t border-border">
+                                                <button 
+                                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
+                                                  className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
+                                                >
+                                                  <div className="flex items-center gap-2">
+                                                    <Monitor className="w-3.5 h-3.5" />
+                                                    <span>MAQUINAS</span>
+                                                  </div>
+                                                  <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
+                                                </button>
+                                                {showMachinesInFilter && (
+                                                  <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
+                                                    {getFilterOptions(col).filter(opt => opt.startsWith('MAQUINA')).sort((a,b) => {
+                                                      const numA = parseInt(a.replace('MAQUINA', '')) || 0;
+                                                      const numB = parseInt(b.replace('MAQUINA', '')) || 0;
+                                                      return numA - numB;
+                                                    }).map(opt => {
+                                                      const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                                      return (
+                                                        <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                          <input
+                                                            type="checkbox"
+                                                            checked={checked}
+                                                            onChange={() => {
+                                                              setFilters(prev => {
+                                                                const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                                const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                                return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                              });
+                                                            }}
+                                                            className="w-4 h-4 rounded border-border accent-primary"
+                                                          />
+                                                          <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
+                                                        </label>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </>
+                                          ) : (
+                                            getFilterOptions(col).map(opt => {
+                                              const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                              return (
+                                                <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() => {
+                                                      setFilters(prev => {
+                                                        const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                        const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                        return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                      });
+                                                    }}
+                                                    className="w-4 h-4 rounded border-border accent-primary"
+                                                  />
+                                                  <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
+                                                </label>
+                                              );
+                                            })
+                                          )}
                                         </div>
                                       ) : isDate ? (
                                         <div className="space-y-3">
