@@ -124,21 +124,70 @@ export const useOrders = (currentBoard, boardFilters) => {
     localStorage.setItem('mos_column_widths', JSON.stringify(columnWidths));
   }, [columnWidths]);
 
+  const applyFilters = useCallback((data) => {
+    const EMPTY_FILTER = '\u2014Ninguno\u2014';
+    const currentFilters = boardFilters[currentBoard] || {};
+    let filtered = [...data];
+
+    Object.entries(currentFilters).forEach(([key, value]) => {
+      if (key === '_board') {
+        if (Array.isArray(value) && value.length > 0) {
+          filtered = filtered.filter(o => value.includes(o.board));
+          return;
+        } else if (typeof value === 'string' && value.trim()) {
+          const sv = value.toLowerCase();
+          filtered = filtered.filter(o => String(o.board || '').toLowerCase().includes(sv));
+          return;
+        }
+      }
+      if (value && typeof value === 'object' && !Array.isArray(value) && (value.from || value.to)) {
+        filtered = filtered.filter(o => {
+          const v = o[key];
+          if (!v) return false;
+          const d = v.substring(0, 10);
+          if (value.from && d < value.from) return false;
+          if (value.to && d > value.to) return false;
+          return true;
+        });
+      } else if (Array.isArray(value) && value.length > 0) {
+        const hasEmpty = value.includes(EMPTY_FILTER);
+        const realVals = value.filter(v => v !== EMPTY_FILTER);
+        filtered = filtered.filter(o => {
+          const v = o[key];
+          const isEmpty = v === null || v === undefined || v === '';
+          if (hasEmpty && isEmpty) return true;
+          if (realVals.length > 0) {
+            const sv = String(v);
+            if (realVals.includes(v) || realVals.includes(sv)) return true;
+            if (v) { try { const fd = new Date(v).toLocaleDateString(); if (realVals.includes(fd)) return true; } catch {} }
+          }
+          return false;
+        });
+      } else if (value && typeof value === 'string') {
+        if (value === EMPTY_FILTER) filtered = filtered.filter(o => !o[key] || o[key] === '');
+        else {
+          const sv = value.toLowerCase();
+          filtered = filtered.filter(o => String(o[key] || '').toLowerCase().includes(sv));
+        }
+      }
+    });
+    setOrders(filtered);
+  }, [currentBoard, boardFilters]);
+
   const fetchOrders = useCallback(async (silent = false, forceRefresh = false) => {
-    // Stale-while-revalidate logic:
-    const cacheKey = currentBoard + JSON.stringify(boardFilters[currentBoard] || {});
+    const cacheKey = currentBoard;
     const hasCache = boardDataCache[cacheKey];
     const now = Date.now();
-    const isStale = !lastFetchedTime[cacheKey] || (now - lastFetchedTime[cacheKey] > 30000); // 30s stale
+    const isStale = !lastFetchedTime[cacheKey] || (now - lastFetchedTime[cacheKey] > 30000);
 
     if (hasCache && !forceRefresh) {
-      setOrders(hasCache);
       setUnfilteredOrders(hasCache);
+      applyFilters(hasCache);
       if (!isStale) {
         setLoading(false);
         return;
       }
-      silent = true; // Update in background
+      silent = true;
     }
 
     if (!silent) setLoading(true);
@@ -150,63 +199,18 @@ export const useOrders = (currentBoard, boardFilters) => {
         let data = await res.json();
         data = data.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
         
-        // Save to cache before filtering locally
         boardDataCache[cacheKey] = data;
         lastFetchedTime[cacheKey] = now;
         
         setUnfilteredOrders(data);
-        const EMPTY_FILTER = '\u2014Ninguno\u2014';
-        const currentFilters = boardFilters[currentBoard] || {};
-        Object.entries(currentFilters).forEach(([key, value]) => {
-          if (key === '_board') {
-            if (Array.isArray(value) && value.length > 0) {
-              data = data.filter(o => value.includes(o.board));
-              return;
-            } else if (typeof value === 'string' && value.trim()) {
-              const sv = value.toLowerCase();
-              data = data.filter(o => String(o.board || '').toLowerCase().includes(sv));
-              return;
-            }
-          }
-          if (value && typeof value === 'object' && !Array.isArray(value) && (value.from || value.to)) {
-            data = data.filter(o => {
-              const v = o[key];
-              if (!v) return false;
-              const d = v.substring(0, 10);
-              if (value.from && d < value.from) return false;
-              if (value.to && d > value.to) return false;
-              return true;
-            });
-          } else if (Array.isArray(value) && value.length > 0) {
-            const hasEmpty = value.includes(EMPTY_FILTER);
-            const realVals = value.filter(v => v !== EMPTY_FILTER);
-            data = data.filter(o => {
-              const v = o[key];
-              const isEmpty = v === null || v === undefined || v === '';
-              if (hasEmpty && isEmpty) return true;
-              if (realVals.length > 0) {
-                const sv = String(v);
-                if (realVals.includes(v) || realVals.includes(sv)) return true;
-                if (v) { try { const fd = new Date(v).toLocaleDateString(); if (realVals.includes(fd)) return true; } catch {} }
-              }
-              return false;
-            });
-          } else if (value && typeof value === 'string') {
-            if (value === EMPTY_FILTER) data = data.filter(o => !o[key] || o[key] === '');
-            else {
-              const sv = value.toLowerCase();
-              data = data.filter(o => String(o[key] || '').toLowerCase().includes(sv));
-            }
-          }
-        });
-        setOrders(data);
+        applyFilters(data);
       }
     } catch (e) {
       if (e.message !== 'SESSION_EXPIRED' && !silent) toast.error(t('load_orders_err'));
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [currentBoard, boardFilters, t]);
+  }, [currentBoard, t, applyFilters]);
 
   const fetchAllOrders = useCallback(async () => {
     try { const res = await apiFetch(`${API}/orders`); if (res.ok) { const data = await res.json(); setAllOrders(data.filter(o => o.board !== 'PAPELERA DE RECICLAJE')); } } catch { /* silent */ }
@@ -337,9 +341,12 @@ export const useOrders = (currentBoard, boardFilters) => {
   useEffect(() => {
     const isNewBoard = lastBoardRef.current !== currentBoard;
     lastBoardRef.current = currentBoard;
-    // Non-silent (shows spinner) on board switch or initial load; silent on filter change
-    fetchOrders(!isNewBoard);
-  }, [currentBoard, boardFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isNewBoard) {
+      fetchOrders(false);
+    } else {
+      applyFilters(unfilteredOrders);
+    }
+  }, [currentBoard, boardFilters, applyFilters, unfilteredOrders]);
   useEffect(() => { fetchOptions(); }, [fetchOptions]);
   useEffect(() => { fetchAllOrders(); }, [fetchAllOrders]);
   useEffect(() => { fetchProductionSummary(); }, [fetchProductionSummary]);
