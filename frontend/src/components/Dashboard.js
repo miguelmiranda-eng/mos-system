@@ -1373,10 +1373,23 @@ const renderOrderRow = (order) => {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto relative isolation-isolate">
-        {loading ? <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> :
-          (calendarMode && (currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
-            readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
-              blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
+        {loading && !orders.length && (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          </div>
+        )}
+        
+        {loading && orders.length > 0 && (
+          <div className="absolute inset-0 z-[100] flex items-center justify-center bg-background/20 backdrop-blur-[1px] pointer-events-none">
+            <div className="bg-card p-3 rounded-full shadow-2xl border border-border animate-bounce">
+              <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          </div>
+        )}
+
+        {(calendarMode && (currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
+          readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
+            blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
                   <div role="table" className="text-sm" style={{ display: 'grid', gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map(col => `${col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width)}px`).join(' ')} minmax(180px, 1fr)`, minWidth: '100%', width: '100%' }}>
                     
