@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api")
 from fastapi.responses import Response, FileResponse
-from deps import db, require_auth, require_admin, log_activity, logger, UPLOADS_DIR
+from deps import db, require_auth, require_admin, log_activity, logger
+from pathlib import Path
 import base64
+
+UPLOADS_DIR = Path("uploads") / "invoices"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.get("/notifications")
 async def get_notifications(request: Request, limit: int = 50):
@@ -108,16 +112,18 @@ async def undo_action(activity_id: str, request: Request):
         logger.error(f"Undo error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to undo: {str(e)}")
 
-@router.get("/uploads/{filename}")
+@router.get("/uploads/{filename:path}")
 async def get_uploaded_file(filename: str):
-    """Retrieve an uploaded file from MongoDB or disk by filename."""
-    # Try MongoDB first (storage_key is the unique identifier)
+    """Retrieve an uploaded file from MongoDB (legacy base64) or disk by filename."""
+    # Try MongoDB first
     doc = await db.file_uploads.find_one({"storage_key": filename}, {"_id": 0})
-    if doc:
+    
+    if doc and "data" in doc and doc["data"]:
+        # Legacy Base64 image still in DB
         image_bytes = base64.b64decode(doc["data"])
         return Response(content=image_bytes, media_type=doc.get("content_type", "image/png"))
     
-    # Fallback to disk for old files or those not yet in MongoDB
+    # Fallback to disk (for migrated DB files or standard local uploads)
     file_path = UPLOADS_DIR / filename
     if file_path.exists():
         return FileResponse(file_path)

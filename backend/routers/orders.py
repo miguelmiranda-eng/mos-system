@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, UPLOADS_DIR, logger, MASTER_API_KEY
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, logger, MASTER_API_KEY
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -16,6 +16,9 @@ import time
 import asyncio
 
 router = APIRouter(prefix="/api/orders")
+
+UPLOADS_DIR = Path("uploads") / "invoices"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ==================== CACHE SYSTEM FOR ORDERS ====================
 _orders_cache = {}
@@ -648,14 +651,22 @@ async def upload_attachment(order_id: str, request: Request):
                 content_type = header.split(":")[1].split(";")[0]
             raw_b64 = raw_b64.split(",")[1]
         # Validate it decodes
-        base64.b64decode(raw_b64)
-        # Store in MongoDB collection 'file_uploads'
+        file_bytes = base64.b64decode(raw_b64)
+        
+        # Save to disk instead of MongoDB data field
         unique_suffix = uuid.uuid4().hex[:8]
         storage_key = f"{order_id}_{unique_suffix}_{filename}"
+        
+        file_path = UPLOADS_DIR / storage_key
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+
+        # Store metadata only in MongoDB
         await db.file_uploads.insert_one({
-            "storage_key": storage_key, "data": raw_b64, "content_type": content_type,
+            "storage_key": storage_key, "content_type": content_type,
             "order_id": order_id, "filename": filename, "uploaded_at": datetime.now(timezone.utc).isoformat()
         })
+        
         backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
         file_url = f"{backend_url}/api/uploads/{storage_key}"
         # Update order's generic attachments/images list
