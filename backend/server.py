@@ -19,16 +19,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=[
-        "https://mosdatabase-frontend.k9pirj.easypanel.host",
-        "https://ceo-dashboard-git-main-mirandatm.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:5173"
-    ] + [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -107,8 +98,19 @@ app.include_router(v1_insights_router)
 app.include_router(invoices_router)
 app.include_router(work_orders_router)
 
-# Auto-restore database on startup
 @app.on_event("startup")
+async def startup_event():
+    logging.info("MOS SYSTEM BACKEND STARTING...")
+    logging.info(f"Registered routes: {[route.path for route in app.routes]}")
+    try:
+        await db.command("ping")
+        logging.info("MongoDB connection: OK")
+    except Exception as e:
+        logging.error(f"MongoDB connection: FAILED - {e}")
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 async def startup_restore():
     from deps import db
     import asyncio
