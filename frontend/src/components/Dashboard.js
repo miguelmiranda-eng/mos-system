@@ -288,7 +288,7 @@ const Dashboard = () => {
     if (currentBoard !== 'MASTER' || masterConfigLoaded.current) return;
     const loadMasterConfig = async () => {
       try {
-        const res = await fetch(`${API}/user-view-config/MASTER`, { credentials: 'include' });
+        const res = await fetch(`${API}/config/user-view-config/MASTER`, { credentials: 'include' });
         if (res.ok) {
           const config = await res.json();
           if (config.user_id) {
@@ -316,7 +316,7 @@ const Dashboard = () => {
         filters: boardFilters['MASTER'] || {},
         group_by_date: groupByDate
       };
-      fetch(`${API}/user-view-config/MASTER`, {
+      fetch(`${API}/config/user-view-config/MASTER`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify(configPayload)
       }).catch(() => { });
