@@ -198,6 +198,10 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                   <SelectContent className="bg-popover border-border z-[300]">
                     <SelectItem value="general">{t('user_role')}</SelectItem>
                     <SelectItem value="admin">{t('admin')}</SelectItem>
+                    <SelectItem value="picker">Picker</SelectItem>
+                    <SelectItem value="operator">Operador</SelectItem>
+                    <SelectItem value="user">Usuario</SelectItem>
+                    <SelectItem value="ceo">CEO</SelectItem>
                   </SelectContent>
                 </Select>
                 <button onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}
@@ -231,6 +235,10 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                     <SelectContent className="bg-popover border-border z-[300]">
                       <SelectItem value="general">{t('user_role')}</SelectItem>
                       <SelectItem value="admin">{t('admin')}</SelectItem>
+                      <SelectItem value="picker">Picker</SelectItem>
+                      <SelectItem value="operator">Operador</SelectItem>
+                      <SelectItem value="user">Usuario</SelectItem>
+                      <SelectItem value="ceo">CEO</SelectItem>
                     </SelectContent>
                   </Select>
                   <button onClick={handleCreateUser} disabled={creating || !newEmail.trim() || !newPassword}
@@ -267,11 +275,14 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{u.email}</div>
                       </div>
-                      <Select value={(u.role === 'admin' || u.role === 'ceo') ? 'admin' : 'general'} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
+                      <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
                         <SelectTrigger className="w-28 h-8 text-xs bg-secondary border-border"><SelectValue /></SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
                           <SelectItem value="general"><span className="flex items-center gap-1"><User className="w-3 h-3" /> {t('user_role')}</span></SelectItem>
                           <SelectItem value="admin"><span className="flex items-center gap-1"><Shield className="w-3 h-3" /> {t('admin')}</span></SelectItem>
+                          <SelectItem value="picker">Picker</SelectItem>
+                          <SelectItem value="operator">Operador</SelectItem>
+                          <SelectItem value="ceo">CEO</SelectItem>
                         </SelectContent>
                       </Select>
                       {u.auth_type === 'email' && (
