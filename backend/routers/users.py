@@ -64,7 +64,7 @@ async def invite_user(request: Request):
     user = await require_admin(request)
     body = await request.json()
     email = body.get("email", "").strip().lower()
-    role = body.get("role", "user")
+    role = body.get("role", "general")
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
@@ -84,7 +84,7 @@ async def invite_user(request: Request):
 async def update_user_role(user_id: str, request: Request):
     user = await require_admin(request)
     body = await request.json()
-    new_role = body.get("role", "user")
+    new_role = body.get("role", "general")
     associated_customer = body.get("associated_customer", "")
     update_data = {"role": new_role}
     if associated_customer is not None:

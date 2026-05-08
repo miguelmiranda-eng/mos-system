@@ -45,7 +45,7 @@ const SECTIONS_DEFS = [
     items: [
       { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Administra clientes, brandings y estados.', icon: 'Tags' },
       { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para producción.', icon: 'UserSquare' },
-      { name: 'Dashboard Ejecutivo', path: '/ceo-dashboard', desc: 'Vista consolidada de KPIs de planta.', icon: 'TrendingUp', roles: ['admin', 'ceo'] },
+      { name: 'Prosper Pipeline', path: '/ceo-dashboard', desc: 'Seguimiento de órdenes y facturación.', icon: 'TrendingUp', roles: ['admin'] },
     ]
   }
 ];

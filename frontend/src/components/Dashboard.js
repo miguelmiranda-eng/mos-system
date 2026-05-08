@@ -850,14 +850,16 @@ const Dashboard = () => {
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
               <EditableCell
-                order={order}
+                orderId={order.order_id}
                 field={col.key}
                 value={val}
                 type={col.type}
                 options={col.optionKey ? options[col.optionKey] : []}
                 onUpdate={handleCellUpdate}
-                canEdit={canEditBoard}
+                readOnly={!canEditBoard}
                 isDark={isDark}
+                allOrders={orders}
+                columns={visibleColumns}
               />
             </div>
           );

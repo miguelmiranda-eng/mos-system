@@ -22,7 +22,7 @@ const UserManagementCenter = () => {
   
   const [users, setUsers] = useState([]);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('user');
+  const [inviteRole, setInviteRole] = useState('general');
   const [loading, setLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [expandedUser, setExpandedUser] = useState(null);
@@ -32,7 +32,7 @@ const UserManagementCenter = () => {
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState('user');
+  const [newRole, setNewRole] = useState('general');
   const [creating, setCreating] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [editName, setEditName] = useState('');
@@ -91,7 +91,7 @@ const UserManagementCenter = () => {
       });
       if (res.ok) {
         toast.success(`Usuario ${newEmail} creado`);
-        setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('user');
+        setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('general');
         fetchUsers();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -176,7 +176,7 @@ const UserManagementCenter = () => {
           associated_customer: inviteRole === 'customer' ? inviteCust : ''
         })
       });
-      if (res.ok) { toast.success(`${inviteEmail} invitado como ${inviteRole}`); setInviteEmail(''); setInviteRole('user'); fetchUsers(); }
+      if (res.ok) { toast.success(`${inviteEmail} invitado como ${inviteRole}`); setInviteEmail(''); setInviteRole('general'); fetchUsers(); }
       else { const data = await res.json(); toast.error(data.detail || t('invite_err')); }
     } catch { toast.error(t('invite_err')); } finally { setInviting(false); }
   };
@@ -287,10 +287,8 @@ const UserManagementCenter = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-popover border-border z-[300]">
-                      <SelectItem value="user">Usuario Estándar</SelectItem>
+                      <SelectItem value="general">Usuario General</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
-                      <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="ceo">CEO / Ejecutivo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -348,10 +346,8 @@ const UserManagementCenter = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-popover border-border z-[300]">
-                      <SelectItem value="user">Usuario Estándar</SelectItem>
+                      <SelectItem value="general">Usuario General</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
-                      <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="ceo">CEO / Ejecutivo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -457,10 +453,8 @@ const UserManagementCenter = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
-                        <SelectItem value="user">Usuario</SelectItem>
+                        <SelectItem value="general">General</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
-                        <SelectItem value="picker">Picker</SelectItem>
-                        <SelectItem value="ceo">CEO</SelectItem>
                       </SelectContent>
                     </Select>
 

@@ -129,7 +129,7 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
-    role: str = "user" # user, admin, ceo, yamil, angel
+    role: str = "general" # general, admin
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ProductionInsight(BaseModel):
@@ -337,6 +337,7 @@ class InvoiceModel(BaseModel):
     }
     approval_status: str = "pending"
     linked_work_orders: List[str] = []
+    access_token: Optional[str] = None
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
     model_config = {"extra": "allow"}

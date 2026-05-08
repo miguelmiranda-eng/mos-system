@@ -18,7 +18,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
   const { t } = useLang();
   const [users, setUsers] = useState([]);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('user');
+  const [inviteRole, setInviteRole] = useState('general');
   const [loading, setLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [expandedUser, setExpandedUser] = useState(null);
@@ -28,7 +28,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState('user');
+  const [newRole, setNewRole] = useState('general');
   const [creating, setCreating] = useState(false);
   const [editingUser, setEditingUser] = useState(null); // email of user being edited
   const [editName, setEditName] = useState('');
@@ -48,7 +48,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
       });
       if (res.ok) {
         toast.success('Usuario ' + newEmail + ' creado');
-        setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('user');
+        setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('general');
         fetchUsers();
       } else {
         const err = await res.json().catch(function() { return {}; });
@@ -139,7 +139,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole })
       });
-      if (res.ok) { toast.success(`${inviteEmail} ${t('invited_as')} ${inviteRole}`); setInviteEmail(''); setInviteRole('user'); fetchUsers(); }
+      if (res.ok) { toast.success(`${inviteEmail} ${t('invited_as')} ${inviteRole}`); setInviteEmail(''); setInviteRole('general'); fetchUsers(); }
       else { const data = await res.json(); toast.error(data.detail || t('invite_err')); }
     } catch { toast.error(t('invite_err')); } finally { setInviting(false); }
   };
@@ -196,9 +196,8 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                 <Select value={inviteRole} onValueChange={setInviteRole}>
                   <SelectTrigger className="w-32 bg-secondary border-border" data-testid="invite-role-select"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-popover border-border z-[300]">
-                    <SelectItem value="user">{t('user_role')}</SelectItem>
+                    <SelectItem value="general">{t('user_role')}</SelectItem>
                     <SelectItem value="admin">{t('admin')}</SelectItem>
-                    <SelectItem value="picker">Picker</SelectItem>
                   </SelectContent>
                 </Select>
                 <button onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}
@@ -230,9 +229,8 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                   <Select value={newRole} onValueChange={setNewRole}>
                     <SelectTrigger className="flex-1 bg-secondary border-border" data-testid="create-role-select"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border-border z-[300]">
-                      <SelectItem value="user">{t('user_role')}</SelectItem>
+                      <SelectItem value="general">{t('user_role')}</SelectItem>
                       <SelectItem value="admin">{t('admin')}</SelectItem>
-                      <SelectItem value="picker">Picker</SelectItem>
                     </SelectContent>
                   </Select>
                   <button onClick={handleCreateUser} disabled={creating || !newEmail.trim() || !newPassword}
@@ -272,9 +270,8 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                       <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
                         <SelectTrigger className="w-28 h-8 text-xs bg-secondary border-border"><SelectValue /></SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
-                          <SelectItem value="user"><span className="flex items-center gap-1"><User className="w-3 h-3" /> {t('user_role')}</span></SelectItem>
+                          <SelectItem value="general"><span className="flex items-center gap-1"><User className="w-3 h-3" /> {t('user_role')}</span></SelectItem>
                           <SelectItem value="admin"><span className="flex items-center gap-1"><Shield className="w-3 h-3" /> {t('admin')}</span></SelectItem>
-                          <SelectItem value="picker"><span className="flex items-center gap-1"><ClipboardCheck className="w-3 h-3" /> Picker</span></SelectItem>
                         </SelectContent>
                       </Select>
                       {u.auth_type === 'email' && (

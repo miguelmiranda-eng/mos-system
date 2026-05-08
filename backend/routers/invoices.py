@@ -80,7 +80,7 @@ async def send_invoice_notification(invoice: dict, user_email: str, subject_pref
 
 @router.get("")
 async def get_invoices(request: Request, status: str = None, type: str = None, search: str = None, show_deleted: bool = False):
-    await require_auth(request)
+    await require_admin(request)
     query = {}
     
     # Filter by deleted status
@@ -114,18 +114,37 @@ async def get_invoices(request: Request, status: str = None, type: str = None, s
 
 @router.get("/{invoice_id}")
 async def get_invoice(invoice_id: str, request: Request):
-    await require_auth(request)
+    await require_admin(request)
     invoice = await db.invoices.find_one({"invoice_id": invoice_id}, {"_id": 0})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return invoice
 
 @router.get("/public/{invoice_id}")
-async def get_public_invoice(invoice_id: str):
-    # Ruta pública para producción (sin require_auth)
+async def get_public_invoice(invoice_id: str, token: str = None):
+    # Ruta pública para producción con protección por token y filtrado de datos
     invoice = await db.invoices.find_one({"invoice_id": invoice_id}, {"_id": 0})
     if not invoice:
         raise HTTPException(status_code=404, detail="Order data not found")
+    
+    # Validar token
+    if not token or invoice.get("access_token") != token:
+        raise HTTPException(status_code=403, detail="Unauthorized access to this document")
+    
+    # PROYECCIÓN ESTRICTA: Eliminar datos sensibles para la vista pública de fábrica
+    sensitive_fields = [
+        "amounts", "client_email", "billing_address", "payment", 
+        "customer_notes", "internal_notes"
+    ]
+    for field in sensitive_fields:
+        invoice.pop(field, None)
+    
+    # Filtrar precios en los items
+    if "items" in invoice:
+        for item in invoice["items"]:
+            item.pop("price", None)
+            item.pop("amount", None)
+            
     return invoice
 
 async def get_next_invoice_number():
@@ -162,6 +181,7 @@ async def create_invoice(invoice_data: InvoiceModel, request: Request):
         doc["invoice_id"] = final_id
         doc["invoice_number"] = invoice_num
         doc["order_number"] = final_id
+        doc["access_token"] = uuid.uuid4().hex
         doc["created_at"] = datetime.now(timezone.utc).isoformat()
         doc["updated_at"] = datetime.now(timezone.utc).isoformat()
         
@@ -212,7 +232,9 @@ async def sync_invoice_to_mos_order(invoice: dict, user: dict):
     """Fuses Invoice data with MOS Order structure and saves it to the 'orders' collection."""
     try:
         # Usamos rutas relativas para que funcione tanto en Vercel como en Localhost
-        public_link = f"/public/production/{invoice['invoice_id']}"
+        # Incluimos el token de acceso en el enlace público
+        token = invoice.get("access_token", "")
+        public_link = f"/public/production/{invoice['invoice_id']}?token={token}"
         
         # Calculate total quantity and sizes across all items
         total_qty = 0
@@ -354,7 +376,7 @@ async def approve_invoice(invoice_id: str, request: Request):
 
 @router.post("/{invoice_id}/payment-intent")
 async def create_payment_intent(invoice_id: str, request: Request):
-    await require_auth(request)
+    await require_admin(request)
     invoice = await db.invoices.find_one({"invoice_id": invoice_id})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")

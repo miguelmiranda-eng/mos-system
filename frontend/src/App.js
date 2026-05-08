@@ -141,10 +141,10 @@ const AuthCallback = () => {
               setUser(userData);
               // Small delay to ensure React state propagates before navigation
               await new Promise(r => setTimeout(r, 100));
-              if (userData.role === 'ceo') {
+              if (userData.role === 'admin') {
                 navigate('/ceo-dashboard', { replace: true });
-              } else if (userData.role === 'operator' || userData.role === 'picker') {
-                navigate('/operator', { replace: true });
+              } else if (userData.role === 'general') {
+                navigate('/dashboard', { replace: true });
               } else {
                 navigate('/dashboard', { replace: true });
               }
@@ -208,9 +208,6 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if ((user.role === 'operator' || user.role === 'picker') && 
-                 !['/operator', '/wms'].includes(window.location.pathname)) {
-        navigate('/operator', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);
@@ -287,7 +284,7 @@ const CEORoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (user.role !== 'admin' && user.role !== 'ceo') {
+      } else if (user.role !== 'admin') {
         navigate('/dashboard', { replace: true });
       }
     }
