@@ -267,7 +267,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{u.email}</div>
                       </div>
-                      <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
+                      <Select value={(u.role === 'admin' || u.role === 'ceo') ? 'admin' : 'general'} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
                         <SelectTrigger className="w-28 h-8 text-xs bg-secondary border-border"><SelectValue /></SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
                           <SelectItem value="general"><span className="flex items-center gap-1"><User className="w-3 h-3" /> {t('user_role')}</span></SelectItem>

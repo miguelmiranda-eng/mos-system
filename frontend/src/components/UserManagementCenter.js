@@ -448,7 +448,7 @@ const UserManagementCenter = () => {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
+                    <Select value={(u.role === 'admin' || u.role === 'ceo') ? 'admin' : 'general'} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
                       <SelectTrigger className="w-32 h-9 bg-secondary/50 border-border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:bg-secondary">
                         <SelectValue />
                       </SelectTrigger>
