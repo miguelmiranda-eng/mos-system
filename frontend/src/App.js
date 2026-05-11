@@ -605,6 +605,7 @@ import CEODashboard from "./components/CEODashboard";
 import QCDashboard from "./components/QCDashboard";
 import InsightsDashboard from "./components/InsightsDashboard";
 import BackupCenter from "./components/BackupCenter";
+import ArtModule from "./components/ArtModule";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -711,6 +712,11 @@ function AppRouter() {
       <Route path="/wms" element={
         <ProtectedRoute allowCustomer={true}>
           <WMS />
+        </ProtectedRoute>
+      } />
+      <Route path="/art" element={
+        <ProtectedRoute>
+          <ArtModule />
         </ProtectedRoute>
       } />
       <Route path="/operator" element={

@@ -275,6 +275,15 @@ async def reset_password(request: Request):
 async def get_me(request: Request):
     user = await get_current_user(request)
     if not user:
+        if not IS_PROD:
+            # En local, devolvemos un usuario de desarrollo para evitar bucles de login
+            return {
+                "user_id": "local_dev",
+                "email": "dev@local.mos",
+                "name": "Developer (Local)",
+                "role": "admin",
+                "picture": ""
+            }
         raise HTTPException(status_code=401, detail="Not authenticated")
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user

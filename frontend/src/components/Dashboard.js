@@ -824,67 +824,132 @@ const Dashboard = () => {
           style={{ width: 160, minWidth: 160, maxWidth: 160 }} 
           onClick={() => setDetailsOrder(order)}
         >
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex flex-col gap-1.5 min-w-0">
+            {/* Row 1: Order Number + Priority */}
+            <div className="flex items-center gap-2">
               <span className={`font-black text-xl tracking-tighter truncate ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
                 {order.order_number}
               </span>
-              {order.priority === 'RUSH' && <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500 animate-pulse flex-shrink-0" />}
+              {order.priority === 'RUSH' && <Zap className="w-4 h-4 text-amber-500 fill-amber-500 animate-pulse flex-shrink-0" />}
             </div>
-            <div className="flex items-center gap-2 mt-0.5">
+
+            {/* Row 2: Art Status Identifiers (Prominent) */}
+            <div className="flex gap-1.5">
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${
+                order.art_sep_status 
+                  ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30' 
+                  : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
+              }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
+                SEP
+              </span>
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${
+                order.art_neck_status 
+                  ? 'bg-blue-500/20 text-blue-500 border-blue-500/30' 
+                  : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
+              }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
+                NECK
+              </span>
+            </div>
+
+            {/* Row 3: Board & Client */}
+            <div className="flex flex-col gap-0.5 mt-0.5">
               {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
-                <span className="px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter flex-shrink-0 text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white mb-1" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
                   {order.board}
                 </span>
               )}
-              <span className="text-[10px] font-bold text-muted-foreground/60 truncate uppercase tracking-widest">
-                {order.client?.substring(0, 15)}
+              <span className="text-[10px] font-bold text-muted-foreground/50 truncate uppercase tracking-widest leading-none">
+                {order.client}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Visible Columns */}
-        {/* Visible Columns - Always filter out order_number as it is already sticky in column 3 */}
         {visibleColumns.filter(c => c.key !== 'order_number').map((col) => {
           const val = order[col.key];
           const width = col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width);
+          
+          // SPECIAL CASE: Progress Bar for Remaining/Progress columns
+          const isProgressCol = ['remaining', 'restante', 'progress', 'progreso'].includes(col.key.toLowerCase());
+          
           return (
             <div 
               key={col.key} 
               className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`} 
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
-              <EditableCell
-                orderId={order.order_id}
-                field={col.key}
-                value={val}
-                type={col.type}
-                options={col.optionKey ? options[col.optionKey] : []}
-                onUpdate={handleCellUpdate}
-                readOnly={!canEditBoard}
-                isDark={isDark}
-                allOrders={orders}
-                columns={visibleColumns}
-              />
+              {isProgressCol && typeof val === 'number' ? (
+                <div className="w-full flex flex-col gap-1">
+                  <div className="flex justify-between items-center mb-0.5">
+                    <span className="text-[9px] font-black font-mono text-muted-foreground/70 uppercase">{val} pz</span>
+                    <span className="text-[9px] font-black font-mono text-royal">{Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/5">
+                    <div 
+                      className="h-full bg-gradient-to-r from-royal to-indigo-500 transition-all duration-500 shadow-[0_0_8px_rgba(65,105,225,0.4)]"
+                      style={{ width: `${Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <EditableCell
+                  orderId={order.order_id}
+                  field={col.key}
+                  value={val}
+                  type={col.type}
+                  options={col.optionKey ? options[col.optionKey] : []}
+                  onUpdate={handleCellUpdate}
+                  readOnly={!canEditBoard}
+                  isDark={isDark}
+                  allOrders={orders}
+                  columns={visibleColumns}
+                />
+              )}
             </div>
           );
         })}
 
-        {/* Action Buttons */}
-        <div className={`py-4 px-4 border-b border-border/5 flex items-center gap-2 ${rowBgClass}`} style={{ minWidth: 180 }}>
-          <button onClick={() => setDetailsOrder(order)} className="p-2 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group/btn" title={t('details')}><Eye className="w-4 h-4 group-hover/btn:scale-110" /></button>
-          <button onClick={() => setCommentsOrder(order)} className="p-2 rounded-lg bg-secondary/50 hover:bg-royal/20 text-muted-foreground hover:text-royal transition-all group/btn relative" title={t('comments')}>
-            <MessageSquare className="w-4 h-4 group-hover/btn:scale-110" />
-            {order._comments_count > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-royal text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-background">{order._comments_count}</span>}
-          </button>
-          {isAdmin && (
-            <button onClick={() => handleBulkMove([order.order_id], 'PAPELERA DE RECICLAJE')} className="p-2 rounded-lg bg-secondary/50 hover:bg-red-500/20 text-muted-foreground hover:text-red-500 transition-all group/btn" title={t('trash')}><Trash2 className="w-4 h-4 group-hover/btn:scale-110" /></button>
-          )}
+        {/* Action Buttons & Progress Bar */}
+        <div className={`py-4 px-4 border-b border-border/5 flex flex-col justify-center gap-2 ${rowBgClass}`} style={{ minWidth: 180 }}>
+          {(() => {
+            const prodData = productionSummary[order.order_number] || { total_produced: 0 };
+            const total = order.quantity || 0;
+            const produced = prodData.total_produced || 0;
+            const progress = total > 0 ? Math.min(100, (produced / total) * 100) : 0;
+            const remainingPieces = Math.max(0, total - produced);
+            
+            return (
+              <>
+                <div className="flex justify-between items-center mb-0.5">
+                  <span className={`text-[10px] font-black font-mono ${remainingPieces === 0 ? 'text-green-500' : 'text-muted-foreground'}`}>
+                    {remainingPieces} {t('pieces_unit')} {t('remaining_short')}
+                  </span>
+                  <span className={`text-[10px] font-black font-mono ${progress >= 100 ? 'text-green-500' : 'text-primary'}`}>
+                    {Math.round(progress)}%
+                  </span>
+                </div>
+                
+                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/5 relative group/progress">
+                  <div 
+                    className={`h-full transition-all duration-700 ease-out shadow-sm ${
+                      progress >= 100 ? 'bg-green-500' : 
+                      progress >= 50 ? 'bg-amber-500' : 
+                      'bg-red-500'
+                    }`}
+                    style={{ width: `${progress}%` }}
+                  />
+                  {/* Tooltip on hover */}
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/progress:opacity-100 transition-opacity bg-black/20 text-[8px] text-white font-bold uppercase tracking-tighter">
+                    {produced} / {total}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </React.Fragment>
     );
-  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove]);
+  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove, productionSummary]);
 
 
   const renderTableBody = () => {

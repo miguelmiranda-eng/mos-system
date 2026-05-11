@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users, 
   Database, Boxes, Layers, Tags, UserSquare, ArrowLeft, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, Settings, BarChart3, ShieldCheck, Activity, Search, 
-  CheckCircle2, Clock, PlayCircle, FileCheck, ChevronRight
+  CheckCircle2, Clock, PlayCircle, FileCheck, ChevronRight, Palette
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { API } from '../lib/constants';
@@ -14,7 +14,7 @@ import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
 const ICON_MAP = { 
   Warehouse, Boxes, Database, History, Zap, Users, Layers, Tags, 
   UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp,
-  Settings, BarChart3, ShieldCheck, Activity
+  Settings, BarChart3, ShieldCheck, Activity, Palette
 };
 
 const SECTIONS_DEFS = [
@@ -25,6 +25,15 @@ const SECTIONS_DEFS = [
       { name: 'WMS Central', path: '/wms', desc: 'Gestión completa de almacén y ubicaciones.', icon: 'Warehouse' },
       { name: 'Stock de Tintas', path: '/wms?tab=tintas', desc: 'Control de inventario de insumos químicos.', icon: 'Boxes' },
       { name: 'Mantenimiento', path: '/wms?tab=logs', desc: 'Registro de movimientos y auditoría.', icon: 'Database' },
+    ]
+  },
+  {
+    id: 'production',
+    title: 'Producción & Arte',
+    items: [
+      { name: 'Módulo de Arte', path: '/art', desc: 'Control de separaciones y trabajos de neck.', icon: 'Palette' },
+      { name: 'Control de Calidad', path: '/qc', desc: 'Inspección final de prendas y empaque.', icon: 'ShieldCheck' },
+      { name: 'Pantalla de Producción', path: '/operator', desc: 'Vista simplificada para operadores.', icon: 'Factory' },
     ]
   },
   {

@@ -175,6 +175,8 @@ class OrderCreate(BaseModel):
     style: Optional[str] = None
     sizes: Optional[Dict[str, int]] = None
     locked_by_qc: Optional[bool] = False
+    art_sep_status: Optional[bool] = False
+    art_neck_status: Optional[bool] = False
     
     model_config = {
         "extra": "allow",
@@ -228,6 +230,8 @@ class OrderUpdate(BaseModel):
     final_bill: Optional[str] = None
     board: Optional[str] = None
     locked_by_qc: Optional[bool] = None
+    art_sep_status: Optional[bool] = None
+    art_neck_status: Optional[bool] = None
 
     model_config = {
         "extra": "allow",
@@ -276,6 +280,12 @@ class ProductionLogCreate(BaseModel):
     design_type: Optional[str] = ""
     stop_cause: Optional[str] = ""
     supervisor: Optional[str] = ""
+
+class ArtLogCreate(BaseModel):
+    order_id: str
+    order_number: str
+    type: str # 'SEPARATION' | 'NECK'
+    details: Optional[str] = ""
 
 class InvoiceItem(BaseModel):
     category: Optional[str] = "Screen Printing"

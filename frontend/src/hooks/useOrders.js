@@ -208,7 +208,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     } catch (e) {
       if (e.message !== 'SESSION_EXPIRED' && !silent) toast.error(t('load_orders_err'));
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   }, [currentBoard, t, applyFilters]);
 
