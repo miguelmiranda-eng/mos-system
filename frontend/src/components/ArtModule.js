@@ -19,7 +19,7 @@ import { useLang } from '../contexts/LanguageContext';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
-import { Trash2, Download, Printer, CheckSquare, Square, Settings2, GripVertical, Eye, EyeOff } from 'lucide-react';
+import { Trash2, Download, Printer, CheckSquare, Square, Settings2, GripVertical, Eye, EyeOff, Grid, Image } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator } from './ui/dropdown-menu';
 
 const ArtModule = () => {
@@ -32,8 +32,9 @@ const ArtModule = () => {
   const [historyStats, setHistoryStats] = useState({ daily: [], weekly: [], monthly: [] });
   const [historyRange, setHistoryRange] = useState('daily'); // 'daily' | 'weekly' | 'monthly'
   const [activeTab, setActiveTab] = useState('ops'); // 'ops' | 'kpis' | 'preorders'
+  const [opsFilter, setOpsFilter] = useState('pending'); // 'pending' | 'worked'
   const [showPreOrderModal, setShowPreOrderModal] = useState(false);
-  const [preOrderData, setPreOrderData] = useState({ client: '', job_title_a: '', job_title_b: '', artwork_status: 'NEW', cancel_date: '' });
+  const [preOrderData, setPreOrderData] = useState({ client: '', design_number: '', job_title_a: '', job_title_b: '', screens: false, sample: '', artwork_status: 'NEW', cancel_date: '' });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -42,9 +43,17 @@ const ArtModule = () => {
   const [draggedCol, setDraggedCol] = useState(null);
   const [columnOrder, setColumnOrder] = useState(() => {
     const saved = localStorage.getItem('art_module_column_order');
-    return saved ? JSON.parse(saved) : {
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Asegurar que las columnas nuevas existan si se cargó un caché viejo
+      if (parsed.preorders && !parsed.preorders.includes('design_number')) parsed.preorders.splice(2, 0, 'design_number');
+      if (parsed.preorders && !parsed.preorders.includes('screens')) parsed.preorders.splice(4, 0, 'screens');
+      if (parsed.preorders && !parsed.preorders.includes('sample')) parsed.preorders.splice(5, 0, 'sample');
+      return parsed;
+    }
+    return {
       ops: ['selection', 'order_number', 'client', 'artwork_status', 'betty_column', 'job_title_a', 'job_title_b', 'cancel_date', 'actions'],
-      preorders: ['selection', 'order_number', 'client', 'artwork_status', 'betty_column', 'job_title_a', 'cancel_date', 'actions']
+      preorders: ['selection', 'order_number', 'design_number', 'client', 'screens', 'sample', 'artwork_status', 'betty_column', 'job_title_a', 'cancel_date', 'actions']
     };
   });
   const [hiddenColumns, setHiddenColumns] = useState(() => {
@@ -57,7 +66,7 @@ const ArtModule = () => {
     setLoading(true);
     try {
       const [pendingRes, statsRes, historyRes, optionsRes] = await Promise.all([
-        fetch(`${API}/art/pending`, { credentials: 'include' }),
+        fetch(`${API}/art/pending?status=${opsFilter}`, { credentials: 'include' }),
         fetch(`${API}/art/stats/daily`, { credentials: 'include' }),
         fetch(`${API}/art/stats/history`, { credentials: 'include' }),
         fetch(`${API}/config/options`, { credentials: 'include' })
@@ -72,7 +81,7 @@ const ArtModule = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [opsFilter]);
 
   useEffect(() => {
     fetchData();
@@ -167,7 +176,7 @@ const ArtModule = () => {
       if (res.ok) {
         toast.success("Pre-orden creada exitosamente");
         setShowPreOrderModal(false);
-        setPreOrderData({ client: '', job_title_a: '', job_title_b: '', artwork_status: 'NEW', cancel_date: '' });
+        setPreOrderData({ client: '', design_number: '', job_title_a: '', job_title_b: '', screens: false, sample: '', artwork_status: 'NEW', cancel_date: '' });
         fetchData();
       }
     } catch (err) {
@@ -342,7 +351,10 @@ const ArtModule = () => {
   const PRE_COL_DEFS = {
     selection: { label: '', width: 'w-10' },
     order_number: { label: 'ID Temp' },
+    design_number: { label: 'Design #' },
     client: { label: 'Cliente' },
+    screens: { label: 'Screens', align: 'center' },
+    sample: { label: 'Sample' },
     artwork_status: { label: 'Status Arte' },
     betty_column: { label: 'Betty' },
     job_title_a: { label: 'Job Title A' },
@@ -417,6 +429,23 @@ const ArtModule = () => {
             >
               KPIs y Productividad
             </button>
+            
+            {activeTab === 'ops' && (
+              <div className="flex bg-slate-100 rounded-xl p-1 ml-4 border border-slate-200">
+                <button 
+                  onClick={() => setOpsFilter('pending')}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${opsFilter === 'pending' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Pendientes
+                </button>
+                <button 
+                  onClick={() => setOpsFilter('worked')}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${opsFilter === 'worked' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Completadas / Trabajadas
+                </button>
+              </div>
+            )}
           </div>
 
             <div className="flex items-center gap-4">
@@ -761,8 +790,33 @@ const ArtModule = () => {
                             <p className="text-[8px] font-black text-amber-600 uppercase tracking-widest mt-1">Pre-Orden</p>
                           </td>
                         );
+                        if (colKey === 'design_number') return (
+                          <td key="design_number" className="py-4 px-6 text-[11px] font-bold text-slate-700 bg-amber-50/50 uppercase tracking-tight">{order.design_number || '---'}</td>
+                        );
                         if (colKey === 'client') return (
                           <td key="client" className="py-4 px-6 text-[11px] font-bold text-slate-500 uppercase tracking-tight max-w-[120px] truncate">{order.client}</td>
+                        );
+                        if (colKey === 'screens') return (
+                          <td key="screens" className="py-4 px-6 text-center">
+                            <button 
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleCellUpdate(order.order_id, 'screens', !order.screens);
+                               }}
+                               className="mx-auto w-6 h-6 rounded flex items-center justify-center transition-all hover:scale-110 active:scale-95 focus:outline-none"
+                            >
+                               {order.screens ? (
+                                 <div className="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                                    <CheckSquare className="w-3.5 h-3.5 text-white" />
+                                 </div>
+                               ) : (
+                                 <div className="w-5 h-5 rounded border-2 border-slate-300 bg-slate-50 hover:border-amber-400 hover:bg-amber-50"></div>
+                               )}
+                            </button>
+                          </td>
+                        );
+                        if (colKey === 'sample') return (
+                          <td key="sample" className="py-4 px-6"><EditableCell value={order.sample} field="sample" orderId={order.order_id} options={options.samples} onUpdate={handleCellUpdate} /></td>
                         );
                         if (colKey === 'artwork_status') return (
                           <td key="artwork_status" className="py-4 px-6"><EditableCell value={order.artwork_status} field="artwork_status" orderId={order.order_id} options={options.artwork_statuses} onUpdate={handleCellUpdate} /></td>
@@ -1018,6 +1072,21 @@ const ArtModule = () => {
                 </div>
               </div>
 
+              <div className="space-y-2 mb-6">
+                <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-2">
+                  <Tag className="w-3 h-3" /> Design # <span className="text-red-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  placeholder="Ej: DES-999"
+                  className="w-full bg-amber-50/50 border-2 border-amber-200 rounded-xl p-3 text-lg font-black text-slate-900 outline-none focus:border-amber-500 uppercase transition-colors"
+                  value={preOrderData.design_number}
+                  onChange={(e) => setPreOrderData({...preOrderData, design_number: e.target.value.toUpperCase()})}
+                  required
+                />
+                <p className="text-[9px] font-bold text-amber-600/70 uppercase">Llave de vinculación para orden real</p>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <FileText className="w-3 h-3" /> Job Title / Diseño
@@ -1033,6 +1102,18 @@ const ArtModule = () => {
               </div>
 
               <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Image className="w-3 h-3" /> Ejemplo / Sample
+                  </label>
+                  <SearchableSelect 
+                    options={options.samples || []}
+                    value={preOrderData.sample}
+                    onChange={(val) => setPreOrderData({...preOrderData, sample: val})}
+                    placeholder="Seleccionar Sample"
+                    allowCreate={true}
+                  />
+                </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     Artwork Status

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { 
   Plus, Loader2, AlertTriangle, Link2, 
   FileSearch, CheckCircle2, PackageSearch,
-  Zap, Info, ExternalLink, X
+  Zap, Info, ExternalLink, X, Tag
 } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
@@ -37,6 +37,10 @@ export const NewOrderForm = ({
   const [importedItems, setImportedItems] = useState([]);
   const [showImportPanel, setShowImportPanel] = useState(false);
 
+  // Pre-Order Linkage State
+  const [checkingDesign, setCheckingDesign] = useState(false);
+  const [linkedPreorderId, setLinkedPreorderId] = useState(null);
+
   const handlePrintavoAnalyze = async () => {
     if (!printavoUrl.trim()) {
       toast.error("Por favor ingresa un enlace o ubicación de PDF");
@@ -69,6 +73,40 @@ export const NewOrderForm = ({
       toast.error(err.message);
     } finally {
       setImportLoading(false);
+    }
+  };
+
+  const handleDesignCheck = async () => {
+    const dNum = formData.design_number || formData["design_#"];
+    if (!dNum || !dNum.trim()) return;
+    
+    setCheckingDesign(true);
+    try {
+      const res = await fetch(`${API}/art/preorder/check/${encodeURIComponent(dNum.trim())}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.found) {
+          toast.success("¡Pre-orden encontrada! Datos cargados.");
+          setLinkedPreorderId(data.data.preorder_id);
+          
+          setFormData(prev => ({
+            ...prev,
+            client: (options.clients || []).find(c => data.data.client && data.data.client.toUpperCase() === c.toUpperCase()) || data.data.client || prev.client,
+            job_title_a: data.data.job_title_a || prev.job_title_a,
+            sample: data.data.sample || prev.sample,
+            screens: data.data.screens || prev.screens,
+            artwork_status: data.data.artwork_status || prev.artwork_status,
+            betty_column: data.data.betty_column || prev.betty_column,
+            linked_preorder_id: data.data.preorder_id // Para enviar al backend
+          }));
+        } else {
+          toast.warning("No se encontró ninguna pre-orden activa con ese número");
+        }
+      }
+    } catch (err) {
+      toast.error("Error consultando pre-orden");
+    } finally {
+      setCheckingDesign(false);
     }
   };
 
@@ -383,6 +421,51 @@ export const NewOrderForm = ({
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Pre-Order Linkage Section */}
+          <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+              <Tag className="w-16 h-16 text-amber-500" />
+            </div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-600 shadow-inner">
+                <Link2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-amber-900">Vincular Pre-Orden</h3>
+                <p className="text-[10px] uppercase font-bold text-amber-700/60">Ingresa el Design # para jalar el arte</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-600/50" />
+                <input 
+                  type="text" 
+                  value={formData.design_number || formData["design_#"] || ''}
+                  onChange={(e) => {
+                    set('design_number', e.target.value.toUpperCase());
+                    set('design_#', e.target.value.toUpperCase());
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleDesignCheck(); } }}
+                  placeholder="Ej: DES-999"
+                  className="w-full bg-white border border-amber-200 rounded-xl pl-10 pr-4 py-3 text-lg font-black text-slate-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all outline-none uppercase"
+                />
+              </div>
+              <button 
+                type="button"
+                onClick={handleDesignCheck}
+                disabled={checkingDesign || (!formData.design_number && !formData["design_#"])}
+                className="px-8 py-3 bg-amber-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+              >
+                {checkingDesign ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
+              </button>
+            </div>
+            {linkedPreorderId && (
+              <div className="mt-3 flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Vinculado a Pre-Orden Exitosamente
               </div>
             )}
           </div>

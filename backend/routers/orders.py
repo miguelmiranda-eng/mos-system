@@ -197,6 +197,24 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
     if not order_data.get("board"):
         logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
         order_data["board"] = "SCHEDULING"
+        
+    # Pre-Order Linkage Logic
+    linked_preorder_id = order_data.pop("linked_preorder_id", None)
+    if linked_preorder_id:
+        preorder = await db.orders.find_one({"order_id": linked_preorder_id, "is_preorder": True})
+        if preorder:
+            logger.info(f"Linking new order {order_id} to preorder {linked_preorder_id}")
+            # Transfer art and screen statuses
+            order_data["art_sep_status"] = preorder.get("art_sep_status", False)
+            order_data["art_neck_status"] = preorder.get("art_neck_status", False)
+            order_data["screens"] = preorder.get("screens", False)
+            
+            # Mark preorder as converted
+            await db.orders.update_one(
+                {"order_id": linked_preorder_id},
+                {"$set": {"artwork_status": "CONVERTED", "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
     order_doc = {**order_data, "order_id": order_id, "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.orders.insert_one(order_doc)
     await log_activity(user, "create_order", {"order_id": order_id, "order_number": order.order_number})

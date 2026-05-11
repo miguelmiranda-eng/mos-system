@@ -62,7 +62,7 @@ async def log_art_work(request: Request, log_data: ArtLogCreate):
 
 
 @router.get("/pending")
-async def get_pending_art(request: Request):
+async def get_pending_art(request: Request, status: str = 'pending'):
     await get_user_or_mock(request)
 
     # Tableros excluidos - ordenes en estos tableros no necesitan seguimiento de arte
@@ -71,15 +71,24 @@ async def get_pending_art(request: Request):
         'INVENTARIO', 'EDI', 'FINAL BILL', 'RESPALDO MONDAY', 'CANCELLED'
     ]
 
-    # Buscar ordenes donde cualquiera de los estados no sea True
-    # ($ne: True captura False, None, y campos que no existen)
-    query = {
-        "board": {"$nin": excluded_boards},
-        "$or": [
-            {"art_sep_status": {"$ne": True}},
-            {"art_neck_status": {"$ne": True}}
-        ]
-    }
+    if status == 'worked':
+        # Mostrar ordenes donde AL MENOS UNO de los estados sea True
+        query = {
+            "board": {"$nin": excluded_boards},
+            "$or": [
+                {"art_sep_status": True},
+                {"art_neck_status": True}
+            ]
+        }
+    else:
+        # Default: pending. Mostrar ordenes donde cualquiera NO sea True
+        query = {
+            "board": {"$nin": excluded_boards},
+            "$or": [
+                {"art_sep_status": {"$ne": True}},
+                {"art_neck_status": {"$ne": True}}
+            ]
+        }
 
     cursor = db.orders.find(query, {
         "order_id": 1, "order_number": 1, "client": 1, "board": 1,
@@ -253,8 +262,11 @@ async def create_preorder(request: Request, data: dict):
         "order_id": str(uuid.uuid4()),
         "order_number": order_number,
         "client": data.get("client", "N/A"),
+        "design_number": data.get("design_number", "").strip().upper(),
         "job_title_a": data.get("job_title_a", ""),
         "job_title_b": data.get("job_title_b", ""),
+        "screens": data.get("screens", False),
+        "sample": data.get("sample", ""),
         "artwork_status": data.get("artwork_status", "NEW"),
         "betty_column": data.get("betty_column", ""),
         "cancel_date": data.get("cancel_date"),
@@ -280,3 +292,36 @@ async def create_preorder(request: Request, data: dict):
     })
     
     return {"status": "success", "order_id": new_order["order_id"], "order_number": order_number}
+
+@router.get("/preorder/check/{design_number}")
+async def check_preorder_design(design_number: str, request: Request):
+    await get_user_or_mock(request)
+    
+    clean_design = design_number.strip().upper()
+    if not clean_design:
+        raise HTTPException(400, "Design number cannot be empty")
+        
+    preorder = await db.orders.find_one({
+        "is_preorder": True,
+        "design_number": clean_design,
+        "artwork_status": {"$ne": "CONVERTED"}
+    }, {"_id": 0})
+    
+    if not preorder:
+        return {"found": False}
+        
+    return {
+        "found": True,
+        "data": {
+            "client": preorder.get("client", ""),
+            "job_title_a": preorder.get("job_title_a", ""),
+            "job_title_b": preorder.get("job_title_b", ""),
+            "screens": preorder.get("screens", False),
+            "sample": preorder.get("sample", ""),
+            "artwork_status": preorder.get("artwork_status", "NEW"),
+            "betty_column": preorder.get("betty_column", ""),
+            "art_sep_status": preorder.get("art_sep_status", False),
+            "art_neck_status": preorder.get("art_neck_status", False),
+            "preorder_id": preorder.get("order_id")
+        }
+    }

@@ -875,7 +875,7 @@ const Dashboard = () => {
           return (
             <div 
               key={col.key} 
-              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`} 
+              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`} 
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
               {isProgressCol && typeof val === 'number' ? (
