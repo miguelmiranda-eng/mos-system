@@ -31,17 +31,21 @@ async def log_movement(user, movement_type, details):
 async def create_location(request: Request):
     user = await require_auth(request)
     body = await request.json()
-    name = body.get("name", "").strip()
-    zone = body.get("zone", "").strip()
+    name = body.get("name", "").strip().upper()
+    zone = body.get("zone", "").strip().upper()
     loc_type = body.get("type", "rack")
     if not name:
         raise HTTPException(400, "Nombre de ubicacion requerido")
-    existing = await db.wms_locations.find_one({"name": name})
+    
+    # Búsqueda insensible a mayúsculas para evitar duplicados como "a1" y "A1"
+    existing = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
     if existing:
-        raise HTTPException(400, "Ubicacion ya existe")
+        raise HTTPException(400, f"La ubicación '{name}' ya existe")
+        
     loc = {
         "location_id": gen_id("loc"), "name": name, "zone": zone,
         "type": loc_type, "active": True, "created_at": now_iso(),
+        "is_custom": True
     }
     await db.wms_locations.insert_one(loc)
     loc.pop("_id", None)
@@ -50,7 +54,7 @@ async def create_location(request: Request):
 @router.get("/locations")
 async def list_locations(request: Request):
     await require_auth(request)
-    locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+    locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
     return locs
 
 @router.delete("/locations/{location_id}")
@@ -199,11 +203,12 @@ async def create_receiving(request: Request):
         await _update_inventory_enhanced(style, color, size, total_units, "add", customer, inv_location, is_bpo)
 
     # Ensure location exists
-    existing_loc = await db.wms_locations.find_one({"name": inv_location})
+    inv_location_upper = inv_location.upper()
+    existing_loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(inv_location_upper)}$", "$options": "i"}})
     if not existing_loc:
         await db.wms_locations.insert_one({
-            "location_id": gen_id("loc"), "name": inv_location, 
-            "zone": inv_location.split('-')[0] if '-' in inv_location else "RECEIVING",
+            "location_id": gen_id("loc"), "name": inv_location_upper, 
+            "zone": inv_location_upper.split('-')[0] if '-' in inv_location_upper else "RECEIVING",
             "type": "rack", "active": True, "created_at": now_iso(),
         })
 
@@ -1681,15 +1686,19 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
             await db.wms_boxes.insert_many(box_docs[i:i+batch_size])
 
 
-    # Auto-create locations
+    # Auto-create locations with strict case-insensitive check
     locations_created = 0
     for loc_name in locations_set:
-        existing = await db.wms_locations.find_one({"name": loc_name})
+        # Normalizar el nombre para la busqueda
+        clean_name = loc_name.strip().upper()
+        if not clean_name: continue
+        
+        existing = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"}})
         if not existing:
-            zone = loc_name.split('-')[0] if '-' in loc_name else "DEFAULT"
+            zone = clean_name.split('-')[0] if '-' in clean_name else "DEFAULT"
             await db.wms_locations.insert_one({
                 "location_id": f"loc_{uuid.uuid4().hex[:12]}",
-                "name": loc_name,
+                "name": clean_name,
                 "zone": zone,
                 "type": "rack",
                 "active": True,

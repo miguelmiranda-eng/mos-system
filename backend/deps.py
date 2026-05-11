@@ -177,6 +177,7 @@ class OrderCreate(BaseModel):
     locked_by_qc: Optional[bool] = False
     art_sep_status: Optional[bool] = False
     art_neck_status: Optional[bool] = False
+    is_preorder: Optional[bool] = False
     
     model_config = {
         "extra": "allow",
@@ -232,6 +233,7 @@ class OrderUpdate(BaseModel):
     locked_by_qc: Optional[bool] = None
     art_sep_status: Optional[bool] = None
     art_neck_status: Optional[bool] = None
+    is_preorder: Optional[bool] = None
 
     model_config = {
         "extra": "allow",

@@ -35,6 +35,7 @@ async def log_art_work(request: Request, log_data: ArtLogCreate):
         "details": log_data.details,
         "user_id": user["user_id"],
         "user_name": user["name"],
+        "is_preorder": order.get("is_preorder", False),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d")
     }
@@ -84,7 +85,7 @@ async def get_pending_art(request: Request):
         "order_id": 1, "order_number": 1, "client": 1, "board": 1,
         "art_sep_status": 1, "art_neck_status": 1, "priority": 1, "due_date": 1,
         "cancel_date": 1, "artwork_status": 1, "betty_column": 1, 
-        "job_title_a": 1, "job_title_b": 1,
+        "job_title_a": 1, "job_title_b": 1, "is_preorder": 1,
         "_id": 0
     }).sort([("created_at", -1)]).limit(500)
 
@@ -147,8 +148,10 @@ async def get_art_history(request: Request):
         {"$match": match_query},
         {"$group": {
             "_id": "$date",
-            "separations": {"$sum": {"$cond": [{"$eq": ["$type", "SEPARATION"]}, 1, 0]}},
-            "necks": {"$sum": {"$cond": [{"$eq": ["$type", "NECK"]}, 1, 0]}}
+            "separations_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "separations_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}}
         }},
         {"$sort": {"_id": 1}},
         {"$limit": 30}
@@ -156,7 +159,6 @@ async def get_art_history(request: Request):
     daily_stats = await db.art_logs.aggregate(daily_pipeline).to_list(30)
 
     # Weekly Aggregation
-    # Note: We use the ISO week for grouping
     weekly_pipeline = [
         {"$match": {"timestamp": {"$gte": (now - timedelta(weeks=12)).isoformat()}}},
         {"$addFields": {
@@ -167,9 +169,11 @@ async def get_art_history(request: Request):
                 "year": {"$year": "$ts_date"},
                 "week": {"$week": "$ts_date"}
             },
-            "separations": {"$sum": {"$cond": [{"$eq": ["$type", "SEPARATION"]}, 1, 0]}},
-            "necks": {"$sum": {"$cond": [{"$eq": ["$type", "NECK"]}, 1, 0]}},
-            "date": {"$first": "$date"} # Use the first date of the week as label
+            "separations_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "separations_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}},
+            "date": {"$first": "$date"}
         }},
         {"$sort": {"_id.year": 1, "_id.week": 1}},
         {"$limit": 12}
@@ -187,8 +191,10 @@ async def get_art_history(request: Request):
                 "year": {"$year": "$ts_date"},
                 "month": {"$month": "$ts_date"}
             },
-            "separations": {"$sum": {"$cond": [{"$eq": ["$type", "SEPARATION"]}, 1, 0]}},
-            "necks": {"$sum": {"$cond": [{"$eq": ["$type", "NECK"]}, 1, 0]}}
+            "separations_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "separations_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "SEPARATION"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_real": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$ne": ["$is_preorder", True]}]}, 1, 0]}},
+            "necks_pre": {"$sum": {"$cond": [{"$and": [{"$eq": ["$type", "NECK"]}, {"$eq": ["$is_preorder", True]}]}, 1, 0]}}
         }},
         {"$sort": {"_id.year": 1, "_id.month": 1}},
         {"$limit": 12}
@@ -200,26 +206,30 @@ async def get_art_history(request: Request):
     monthly_stats = [
         {
             "label": f"{month_names[m['_id']['month']]} {m['_id']['year']}",
-            "separations": m["separations"],
-            "necks": m["necks"]
+            "separations": m["separations_real"] + m["separations_pre"],
+            "separations_pre": m["separations_pre"],
+            "necks": m["necks_real"] + m["necks_pre"],
+            "necks_pre": m["necks_pre"]
         } for m in monthly_raw
     ]
 
-    # Process weekly to be cleaner
     weekly_stats = [
         {
             "label": f"Sem {w['_id']['week']}",
-            "separations": w["separations"],
-            "necks": w["necks"]
+            "separations": w["separations_real"] + w["separations_pre"],
+            "separations_pre": w["separations_pre"],
+            "necks": w["necks_real"] + w["necks_pre"],
+            "necks_pre": w["necks_pre"]
         } for w in weekly_stats
     ]
 
-    # Process daily to be cleaner
     daily_stats = [
         {
-            "label": d["_id"][-5:] if "-" in d["_id"] else d["_id"], # MM-DD
-            "separations": d["separations"],
-            "necks": d["necks"]
+            "label": d["_id"][-5:] if "-" in d["_id"] else d["_id"],
+            "separations": d["separations_real"] + d["separations_pre"],
+            "separations_pre": d["separations_pre"],
+            "necks": d["necks_real"] + d["necks_pre"],
+            "necks_pre": d["necks_pre"]
         } for d in daily_stats
     ]
 
@@ -228,3 +238,45 @@ async def get_art_history(request: Request):
         "weekly": weekly_stats,
         "monthly": monthly_stats
     }
+
+@router.post("/preorder")
+async def create_preorder(request: Request, data: dict):
+    user = await get_user_or_mock(request)
+    
+    # Generate a temporary order number if not provided
+    order_number = data.get("order_number")
+    if not order_number:
+        count = await db.orders.count_documents({"is_preorder": True})
+        order_number = f"PRE-{count + 1:04d}"
+        
+    new_order = {
+        "order_id": str(uuid.uuid4()),
+        "order_number": order_number,
+        "client": data.get("client", "N/A"),
+        "job_title_a": data.get("job_title_a", ""),
+        "job_title_b": data.get("job_title_b", ""),
+        "artwork_status": data.get("artwork_status", "NEW"),
+        "betty_column": data.get("betty_column", ""),
+        "cancel_date": data.get("cancel_date"),
+        "board": "PRE-ORDENES",
+        "is_preorder": True,
+        "art_sep_status": False,
+        "art_neck_status": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user["name"]
+    }
+    
+    await db.orders.insert_one(new_order)
+    
+    # Remove _id as it is not JSON serializable (ObjectId)
+    if "_id" in new_order:
+        new_order.pop("_id")
+    
+    from ws_manager import ws_manager
+    await ws_manager.broadcast({
+        "type": "ORDER_CREATED",
+        "order": new_order,
+        "user": user["name"]
+    })
+    
+    return {"status": "success", "order_id": new_order["order_id"], "order_number": order_number}
