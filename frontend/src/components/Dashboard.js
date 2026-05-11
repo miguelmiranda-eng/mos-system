@@ -523,6 +523,11 @@ const Dashboard = () => {
   const handleColumnDragEnd = () => setDraggedCol(null);
 
   const handleToggleColumnVisibility = async (colKey) => {
+    // Prevent hiding essential columns (Order Number and Style)
+    if (['order_number', 'style'].includes(colKey)) {
+      toast.error("Esta columna es obligatoria para la navegación.");
+      return;
+    }
     setHiddenColumns(prev => {
       const current = prev[currentBoard] || [];
       const next = current.includes(colKey) ? current.filter(x => x !== colKey) : [...current, colKey];
@@ -783,14 +788,14 @@ const Dashboard = () => {
         : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
 
     const isHighlighted = highlightedOrderId === order.order_id;
-    const canEditBoard = currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS';
+    const canEditBoard = isAdmin || (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS');
 
     return (
       <React.Fragment key={order.order_id}>
         {/* Selection Checkbox */}
         <div
           data-order-id={order.order_id}
-          className={`py-4 px-2 sticky left-0 z-10 transition-colors border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`py-4 px-2 sticky left-0 z-[30] border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <input 
             type="checkbox" 
@@ -800,8 +805,8 @@ const Dashboard = () => {
           />
         </div>
 
-        {/* Quick Actions */}
-        <div className={`py-4 px-1 sticky left-[48px] z-10 transition-colors border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+        {/* Quick Actions (Sticky Column 2) */}
+        <div className={`py-4 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <div className="flex flex-col gap-1 items-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary relative" title={t('comments')}>
               <MessageSquare className="w-3 h-3" />
@@ -813,9 +818,9 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Order Number / Board (Sticky) */}
+        {/* Order Number / Board (Sticky Column 3) */}
         <div 
-          className={`py-4 px-3 sticky left-[96px] z-10 transition-colors border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} 
+          className={`py-4 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} 
           style={{ width: 160, minWidth: 160, maxWidth: 160 }} 
           onClick={() => setDetailsOrder(order)}
         >
@@ -840,7 +845,8 @@ const Dashboard = () => {
         </div>
 
         {/* Visible Columns */}
-        {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col) => {
+        {/* Visible Columns - Always filter out order_number as it is already sticky in column 3 */}
+        {visibleColumns.filter(c => c.key !== 'order_number').map((col) => {
           const val = order[col.key];
           const width = col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width);
           return (
@@ -1333,19 +1339,29 @@ const Dashboard = () => {
             {columns.map(col => {
               const isHidden = (hiddenColumns[currentBoard] || []).includes(col.key);
               return (
-                <button
-                  key={col.key}
-                  onClick={() => handleToggleColumnVisibility(col.key)}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
-                    isHidden 
-                      ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60" 
-                      : "bg-background border-border text-foreground hover:border-royal/50"
+                <div key={col.key} className="flex items-center gap-1 group/col">
+                  <button
+                    onClick={() => handleToggleColumnVisibility(col.key)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
+                      isHidden 
+                        ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60" 
+                        : "bg-background border-border text-foreground hover:border-royal/50"
+                    )}
+                  >
+                    {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
+                    {col.label}
+                  </button>
+                  {isAdmin && col.custom && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteColumn(col.key); }}
+                      className="p-1.5 rounded-md text-destructive opacity-0 group-hover/col:opacity-100 hover:bg-destructive/10 transition-all"
+                      title="Eliminar Columna"
+                    >
+                      <X size={12} />
+                    </button>
                   )}
-                >
-                  {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
-                  {col.label}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -1442,24 +1458,26 @@ const Dashboard = () => {
           readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
             blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
                 <>
-                  <div role="table" className="text-sm" style={{ display: 'grid', gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map(col => `${col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width)}px`).join(' ')} minmax(180px, 1fr)`, minWidth: '100%', width: '100%' }}>
+                  <div role="table" className="text-sm isolate" style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`, 
+                    minWidth: '100%', 
+                    width: 'max-content'
+                  }}>
                     
-                        <div className={`py-4 px-2 sticky left-0 top-0 z-30 border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
-                        <div className={`py-4 px-1 sticky left-[48px] top-0 z-30 border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
+                        <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                        <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
                         
-                        {/* Column 3: Permanent Identifier (Board for Master, Order for others) */}
-                        {(() => {
-                          const isReflection = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
-                          return (
-                            <div className={`py-4 px-3 sticky left-[96px] top-0 z-30 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="truncate">{isReflection ? 'Board' : 'Orden'}</span>
-                                <Popover open={openFilter === (isReflection ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? (isReflection ? '_board' : 'order_number') : null)}>
-                                  <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[isReflection ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
-                                    <ListFilter className="w-3.5 h-3.5" />
-                                  </PopoverTrigger>
-                                  <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
-                                    {isReflection ? (
+                        {/* Column 3: Permanent Identifier (Sticky) */}
+                        <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
+                            <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
+                              <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+                                <ListFilter className="w-3.5 h-3.5" />
+                              </PopoverTrigger>
+                              <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
+                                {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? (
                                       <>
                                         <div className="flex items-center justify-between mb-2">
                                           <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
@@ -1548,11 +1566,9 @@ const Dashboard = () => {
                                 </Popover>
                               </div>
                             </div>
-                          );
-                        })()}
 
-                        {/* Columns 4+: Draggable Scrollable Content (with buffer on first) */}
-                        {visibleColumns.filter(c => (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? true : c.key !== 'order_number').map((col, idx) => {
+                        {/* Columns 4+: Draggable Scrollable Content (Always filter order_number) */}
+                        {visibleColumns.filter(c => c.key !== 'order_number').map((col, idx) => {
                           const isOrderNum = col.key === 'order_number';
                           const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
                           const filterVal = filters[col.key];

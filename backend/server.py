@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import logging
 from ws_manager import ws_manager
+from deps import db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
