@@ -2758,40 +2758,111 @@ const LocationsModule = () => {
         />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {filtered.map(l => (
-          <div key={l.location_id} className={`p-4 bg-card/40 border border-border/40 rounded-3xl hover:border-primary/40 transition-all group hover:scale-105 shadow-sm relative ${activeTab === 'system' ? 'border-l-4 border-l-indigo-500/50' : ''}`}>
-            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-              <button 
-                onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
-                className="p-2 text-muted-foreground hover:text-primary transition-all"
-                title="Imprimir etiqueta"
-              >
-                <Printer className="w-3.5 h-3.5" />
-              </button>
-              <button 
-                onClick={() => handleDelete(l.location_id, l.name)}
-                className="p-2 text-muted-foreground hover:text-red-500 transition-all"
-                title="Eliminar ubicación"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+      <div className="space-y-10 pb-10">
+        {(() => {
+          const grouped = filtered.reduce((acc, l) => {
+            const zone = l.zone || 'SIN ZONA';
+            if (!acc[zone]) acc[zone] = [];
+            acc[zone].push(l);
+            return acc;
+          }, {});
+          
+          const sortedZones = Object.keys(grouped).sort();
+          
+          if (filtered.length === 0) return (
+            <div className="py-20 text-center bg-secondary/10 rounded-[3rem] border-2 border-dashed border-border/20">
+              <MapPin className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+              <p className="text-sm font-black text-muted-foreground uppercase tracking-widest">No se encontraron ubicaciones</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3 group-hover:rotate-12 transition-transform">
-              <MapPin className="w-5 h-5 text-primary" />
+          );
+
+          return sortedZones.map(zone => (
+            <div key={zone} className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-6 w-1 bg-primary rounded-full shadow-[0_0_10px_rgba(255,193,7,0.5)]" />
+                <h3 className="text-lg font-black uppercase tracking-tighter flex items-center gap-2">
+                  {zone}
+                  <span className="text-[10px] font-bold bg-secondary/50 px-2.5 py-1 rounded-full text-muted-foreground">
+                    {grouped[zone].length} {t('wms_locations') || 'UBICACIONES'}
+                  </span>
+                </h3>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                {grouped[zone].map(l => {
+                  const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
+                  const isEmpty = summary.total_units === 0;
+                  
+                  return (
+                    <div 
+                      key={l.location_id} 
+                      className={`group p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:border-primary/40 transition-all hover:scale-[1.02] hover:shadow-xl relative flex flex-col ${activeTab === 'system' ? 'border-l-4 border-l-indigo-500/50' : ''}`}
+                    >
+                      {/* Acciones */}
+                      <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button 
+                          onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
+                          className="p-2 text-muted-foreground hover:text-primary transition-all"
+                          title="Imprimir etiqueta"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(l.location_id, l.name)}
+                          className="p-2 text-muted-foreground hover:text-red-500 transition-all"
+                          title="Eliminar ubicación"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isEmpty ? 'bg-secondary/20 text-muted-foreground/30' : 'bg-primary/10 text-primary shadow-inner shadow-primary/10'}`}>
+                          <MapPin className="w-6 h-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-mono font-black text-xl tracking-tighter text-foreground leading-none truncate">{l.name}</div>
+                          <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-0.5">{zone}</div>
+                        </div>
+                      </div>
+
+                      {/* Resumen de Inventario */}
+                      <div className="flex-1 mt-2 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Inventario</span>
+                          <span className={`text-xs font-black tabular-nums ${isEmpty ? 'text-muted-foreground/30' : 'text-emerald-500'}`}>
+                            {summary.total_units} PCS
+                          </span>
+                        </div>
+
+                        {!isEmpty ? (
+                          <div className="space-y-1.5 p-3 bg-black/10 rounded-2xl border border-white/5">
+                            {summary.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-[10px] font-bold">
+                                <span className="truncate text-foreground/80 pr-2">{item.style}</span>
+                                <span className="text-muted-foreground tabular-nums">{item.units}</span>
+                              </div>
+                            ))}
+                            {summary.skus_count > 5 && (
+                              <div className="pt-1.5 mt-1.5 border-t border-white/5 text-[9px] font-black text-center text-primary/40 uppercase tracking-tighter">
+                                + {summary.skus_count - 5} {t('more') || 'MÁS'} SKUS
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="py-4 text-center border border-dashed border-border/20 rounded-2xl">
+                            <span className="text-[10px] font-bold text-muted-foreground/20 uppercase tracking-widest">Vacio</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="font-mono font-black text-lg tracking-tighter text-foreground leading-none mb-1">{l.name}</div>
-            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{l.zone || 'Sin Zona'}</div>
-          </div>
-        ))}
+          ));
+        })()}
       </div>
-      
-      {filtered.length === 0 && (
-        <div className="py-20 text-center bg-secondary/10 rounded-[3rem] border-2 border-dashed border-border/20">
-          <MapPin className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-          <p className="text-sm font-black text-muted-foreground uppercase tracking-widest">No se encontraron ubicaciones</p>
-        </div>
-      )}
     </div>
   );
 };

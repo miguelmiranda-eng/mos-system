@@ -53,8 +53,52 @@ async def create_location(request: Request):
 
 @router.get("/locations")
 async def list_locations(request: Request):
+    """List all locations with an aggregated summary of inventory stored in each."""
     await require_auth(request)
+    
+    # 1. Fetch all locations
     locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
+    
+    # 2. Fetch inventory summary (only items with stock)
+    inventory_records = await db.wms_inventory.find(
+        {"units_on_hand": {"$gt": 0}},
+        {"_id": 0, "style": 1, "color": 1, "size": 1, "units_on_hand": 1, "location": 1}
+    ).to_list(10000)
+    
+    # 3. Map inventory to locations
+    loc_summary = {}
+    for inv in inventory_records:
+        loc_name = inv.get("location")
+        if not loc_name: continue
+        
+        if loc_name not in loc_summary:
+            loc_summary[loc_name] = {
+                "total_units": 0,
+                "skus_count": 0,
+                "items": [] # Top items summary
+            }
+        
+        loc_summary[loc_name]["total_units"] += inv.get("units_on_hand", 0)
+        
+        # Add to items if not already there (compact summary)
+        style = inv.get("style", "N/A")
+        # Find if this style is already in the summary list for this location
+        existing = next((item for item in loc_summary[loc_name]["items"] if item["style"] == style), None)
+        if existing:
+            existing["units"] += inv.get("units_on_hand", 0)
+        else:
+            if len(loc_summary[loc_name]["items"]) < 5: # Limit summary to top 5 styles
+                loc_summary[loc_name]["items"].append({
+                    "style": style,
+                    "units": inv.get("units_on_hand", 0)
+                })
+            loc_summary[loc_name]["skus_count"] += 1
+
+    # 4. Merge summary into locations list
+    for loc in locs:
+        summary = loc_summary.get(loc["name"], {"total_units": 0, "skus_count": 0, "items": []})
+        loc["inventory_summary"] = summary
+
     return locs
 
 @router.delete("/locations/{location_id}")
