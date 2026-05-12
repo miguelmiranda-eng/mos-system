@@ -743,8 +743,8 @@ const ArtModule = () => {
         <div className="space-y-10">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-black uppercase tracking-tighter text-slate-900">Gestión de Pre-Órdenes</h2>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-tight">Adelanta el arte de trabajos que aún no tienen número de orden oficial.</p>
+              <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Gestión de Pre-Órdenes (v2)</h1>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Adelanta el arte de trabajos que aún no tienen número de orden oficial.</p>
             </div>
             <button 
               onClick={() => setShowPreOrderModal(true)}
