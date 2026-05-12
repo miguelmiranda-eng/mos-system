@@ -17,7 +17,7 @@ import { API } from '../lib/constants';
 import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, X, Edit2, Trash2,
   Clock, MapPin, Users, Repeat, AlignLeft, Bell, Search, Loader2,
-  ArrowLeft, Check, Flag, Lock, Globe,
+  ArrowLeft, Check, Flag, Lock, Globe, RefreshCw,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 
@@ -30,6 +30,7 @@ const CATEGORIES = [
   { id: 'urgent',     label: 'Urgente',       color: '#ef4444', emoji: '🔴' },
   { id: 'reminder',   label: 'Recordatorio',  color: '#10b981', emoji: '🔔' },
   { id: 'deadline',   label: 'Deadline',      color: '#f97316', emoji: '⏰' },
+  { id: 'google',     label: 'Google',        color: '#4285f4', emoji: '🌐' },
 ];
 
 const PRIORITIES = [
@@ -634,6 +635,9 @@ const SmartAgenda = () => {
   const [filterCat,      setFilterCat]      = useState('all');
   const [searchQuery,    setSearchQuery]    = useState('');
   const [showSearch,     setShowSearch]     = useState(false);
+  const [googleEvents,   setGoogleEvents]   = useState([]);
+  const [googleStatus,   setGoogleStatus]   = useState({ connected: false });
+  const [syncingGoogle,  setSyncingGoogle]  = useState(false);
 
   const alertTimers = useRef([]);
 
@@ -655,6 +659,51 @@ const SmartAgenda = () => {
   }, []);
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
+
+  // ── Google Calendar Sync ──────────────────────────────────────────────
+  const fetchGoogleEvents = useCallback(async () => {
+    setSyncingGoogle(true);
+    try {
+      const res = await fetch(`${API}/agenda/google/sync`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setGoogleEvents(data.events || []);
+      }
+    } catch { toast.error('Error al sincronizar con Google'); }
+    finally { setSyncingGoogle(false); }
+  }, []);
+
+  const checkGoogleStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/agenda/google/status`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setGoogleStatus(data);
+        if (data.connected) fetchGoogleEvents();
+      }
+    } catch { /* ignore */ }
+  }, [fetchGoogleEvents]);
+
+  useEffect(() => {
+    checkGoogleStatus();
+    // Check if we just came back from a redirect
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google_connected')) {
+      toast.success('¡Google Calendar conectado con éxito!');
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [checkGoogleStatus]);
+
+  const handleConnectGoogle = async () => {
+    try {
+      const res = await fetch(`${API}/agenda/google/auth-url`, { credentials: 'include' });
+      if (res.ok) {
+        const { url } = await res.json();
+        window.location.href = url;
+      }
+    } catch { toast.error('Error al iniciar conexión con Google'); }
+  };
 
   // ── Alert / notification system ────────────────────────────────────────
   useEffect(() => {
@@ -689,7 +738,7 @@ const SmartAgenda = () => {
 
   // ── Transform events for react-big-calendar ────────────────────────────
   const rbcEvents = useMemo(() => {
-    let list = events;
+    let list = [...events, ...googleEvents];
     if (filterCat !== 'all') list = list.filter(e => e.category === filterCat);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -935,6 +984,34 @@ const SmartAgenda = () => {
               </button>
             ))}
           </div>
+
+          {/* Google Connect/Sync */}
+          {googleStatus.connected ? (
+            <button
+              onClick={fetchGoogleEvents}
+              disabled={syncingGoogle}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border',
+                isDark 
+                  ? 'border-blue-500/30 text-blue-400 hover:bg-blue-500/10' 
+                  : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+              )}
+              title="Sincronizar con Google"
+            >
+              <RefreshCw size={13} className={cn(syncingGoogle && 'animate-spin')} />
+              <span className="hidden lg:inline">{syncingGoogle ? 'Sincronizando...' : 'Google'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleConnectGoogle}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-blue-500/50 text-blue-500 hover:bg-blue-500 hover:text-white shadow-lg shadow-blue-500/10'
+              )}
+            >
+              <Globe size={13} />
+              <span className="hidden lg:inline">Conectar Google</span>
+            </button>
+          )}
 
           {/* New event */}
           <button

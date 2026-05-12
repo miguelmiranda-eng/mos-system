@@ -85,6 +85,7 @@ from routers.invoices import router as invoices_router
 from routers.work_orders import router as work_orders_router
 from routers.art import router as art_router
 from routers.agenda import router as agenda_router
+from routers.google_calendar import router as google_calendar_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -103,6 +104,7 @@ app.include_router(invoices_router)
 app.include_router(work_orders_router)
 app.include_router(art_router)
 app.include_router(agenda_router)
+app.include_router(google_calendar_router)
 
 @app.on_event("startup")
 async def startup_event():
