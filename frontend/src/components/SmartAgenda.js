@@ -667,11 +667,17 @@ const SmartAgenda = () => {
       const res = await fetch(`${API}/agenda/google/sync`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        console.log("Google Sync Data:", data); // Debugging
+        console.log("Google Sync Data:", data);
         setGoogleEvents(data.events || []);
         if (data.error) toast.error(`Google: ${data.error}`);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(`Error de sincronización (${res.status}): ${errData.detail || 'Fallo en el servidor'}`);
       }
-    } catch { toast.error('Error al sincronizar con Google'); }
+    } catch (err) { 
+      console.error("Google Sync Error:", err);
+      toast.error('Error de conexión al sincronizar con Google'); 
+    }
     finally { setSyncingGoogle(false); }
   }, []);
 
