@@ -378,44 +378,44 @@ const ArtModule = () => {
   return (
     <div className="min-h-screen bg-slate-50 font-barlow pb-20">
       {/* HEADER */}
-      <header className="bg-white border-b border-slate-200 px-8 py-6 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-6">
+      <header className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 md:py-6 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
+          <div className="flex items-center gap-3 md:gap-6">
             <button 
               onClick={() => navigate('/home')}
-              className="p-3 hover:bg-slate-100 rounded-2xl transition-all text-slate-400 hover:text-slate-900"
+              className="p-2 md:p-3 hover:bg-slate-100 rounded-2xl transition-all text-slate-400 hover:text-slate-900"
             >
-              <ArrowLeft className="w-6 h-6" />
+              <ArrowLeft className="w-5 h-5 md:w-6 md:h-6" />
             </button>
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                <Palette className="w-7 h-7 text-white" />
+            <div className="flex items-center gap-3 md:gap-4">
+              <div className="w-10 h-10 md:w-12 md:h-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                <Palette className="w-5 h-5 md:w-7 md:h-7 text-white" />
               </div>
               <div className="flex flex-col">
-                <h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900">Módulo de <span className="text-emerald-500">Arte</span></h1>
-                <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-0.5">Medición de Productividad</span>
+                <h1 className="text-lg md:text-2xl font-black uppercase tracking-tighter text-slate-900">Módulo de <span className="text-emerald-500">Arte</span></h1>
+                <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-0.5 hidden sm:block">Medición de Productividad</span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-4 md:gap-8 ml-auto md:ml-0">
             <div className="flex flex-col items-end">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Separaciones Hoy</span>
-              <span className="text-3xl font-black text-emerald-600">{dailyStats.total_separations}</span>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Sep Hoy</span>
+              <span className="text-2xl md:text-3xl font-black text-emerald-600">{dailyStats.total_separations}</span>
             </div>
-            <div className="w-px h-10 bg-slate-200" />
+            <div className="w-px h-8 md:h-10 bg-slate-200" />
             <div className="flex flex-col items-end">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Necks Hoy</span>
-              <span className="text-3xl font-black text-blue-600">{dailyStats.total_necks}</span>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Necks Hoy</span>
+              <span className="text-2xl md:text-3xl font-black text-blue-600">{dailyStats.total_necks}</span>
             </div>
           </div>
         </div>
       </header>
 
       {/* TABS NAVIGATION */}
-      <nav className="bg-white border-b border-slate-200 px-8 sticky top-[97px] z-30">
-        <div className="max-w-7xl mx-auto flex items-center justify-between py-4">
-          <div className="flex gap-4">
+      <nav className="bg-white border-b border-slate-200 px-4 md:px-8 sticky top-[85px] md:top-[97px] z-30">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between py-3 md:py-4 gap-2 md:gap-0">
+          <div className="flex gap-2 md:gap-4 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-hide">
             <button 
               onClick={() => setActiveTab('ops')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'ops' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
@@ -520,11 +520,11 @@ const ArtModule = () => {
       </div>
     </nav>
 
-      <main className="max-w-7xl mx-auto px-8 mt-10">
+      <main className="max-w-7xl mx-auto px-3 md:px-8 mt-6 md:mt-10">
         {activeTab === 'ops' ? (
           <div className="space-y-10">
             {/* SEARCH BAR */}
-            <section className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-xl shadow-slate-200/40 relative">
+            <section className="bg-white rounded-2xl md:rounded-[2rem] border border-slate-200 p-4 md:p-8 shadow-xl shadow-slate-200/40 relative">
             <div className="flex items-center gap-4 mb-6">
                <Search className="w-5 h-5 text-emerald-500" />
                <h2 className="text-lg font-black uppercase tracking-tight text-slate-900">Registrar Trabajo de Orden</h2>
@@ -543,7 +543,7 @@ const ArtModule = () => {
 
             {/* SEARCH RESULTS DROPDOWN */}
             {searchResults.length > 0 && searchQuery.length >= 3 && (
-              <div className="absolute left-8 right-8 mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden divide-y divide-slate-100">
+              <div className="absolute left-4 right-4 md:left-8 md:right-8 mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden divide-y divide-slate-100">
                 {searchResults.map(order => (
                   <div key={order.order_id} className="p-4 hover:bg-slate-50 flex items-center justify-between">
                     <div>
@@ -590,8 +590,8 @@ const ArtModule = () => {
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Priorizado por entrega</span>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
-              <div className="max-h-[calc(100vh-450px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
+            <div className="bg-white border border-slate-200 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
+              <div className="max-h-[calc(100vh-350px)] md:max-h-[calc(100vh-450px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 z-20 bg-white">
                     <tr className="bg-slate-50/80 backdrop-blur-sm border-b border-slate-100">

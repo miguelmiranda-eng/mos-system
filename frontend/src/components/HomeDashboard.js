@@ -101,7 +101,7 @@ const HomeDashboard = () => {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-barlow overflow-y-auto pb-20">
       {/* HEADER */}
-      <header className="bg-white border-b border-slate-200 px-8 py-6 mb-8 shadow-sm sticky top-0 z-40">
+      <header className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 md:py-6 mb-6 md:mb-8 shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
            <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -115,8 +115,8 @@ const HomeDashboard = () => {
               </div>
            </div>
 
-           <div className="flex items-center gap-4">
-              <div className="relative w-64 md:w-80">
+           <div className="flex items-center gap-3 md:gap-4 w-full md:w-auto">
+              <div className="relative flex-1 md:flex-none w-full md:w-80">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input 
                   type="text"
@@ -135,7 +135,7 @@ const HomeDashboard = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 space-y-12">
+      <main className="max-w-7xl mx-auto px-4 md:px-8 space-y-8 md:space-y-12">
         {/* ORIGINAL GRID LAYOUT WITH EXECUTIVE STYLE */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
            {filteredSections.map(section => (
@@ -175,7 +175,7 @@ const HomeDashboard = () => {
         </div>
       </main>
 
-      <footer className="max-w-7xl mx-auto px-12 mt-16 border-t border-slate-200 pt-10 flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
+      <footer className="max-w-7xl mx-auto px-4 md:px-12 mt-10 md:mt-16 border-t border-slate-200 pt-6 md:pt-10 flex flex-col md:flex-row justify-between items-center gap-3 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
          <div className="flex items-center gap-3">
             <Factory className="w-4 h-4 text-emerald-500/50" />
             <span>Industrial OS</span>

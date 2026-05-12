@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -160,12 +160,25 @@ const Dashboard = () => {
   const [showGuide, setShowGuide] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(window.innerWidth < 768);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [detailsOrder, setDetailsOrder] = useState(null);
   const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
   const [tempOrderNo, setTempOrderNo] = useState('');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showMachinesInFilter, setShowMachinesInFilter] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setIsSidebarCollapsed(true);
+      else setIsMobileMenuOpen(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     if (!highlightedOrderId) return;
@@ -951,8 +964,94 @@ const Dashboard = () => {
   }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove, productionSummary]);
 
 
+  const renderMobileOrderCard = (order) => {
+    const isSelected = selectedOrders.includes(order.order_id);
+    const prodData = productionSummary[order.order_number] || { total_produced: 0 };
+    const total = order.quantity || 0;
+    const produced = prodData.total_produced || 0;
+    const progress = total > 0 ? Math.min(100, (produced / total) * 100) : 0;
+    const remainingPieces = Math.max(0, total - produced);
+
+    return (
+      <div 
+        key={order.order_id}
+        className={`m-3 p-4 rounded-2xl border transition-all ${isDark ? 'bg-navy-light/30 border-white/5' : 'bg-white border-gray-100 shadow-sm'}`}
+        onClick={() => setDetailsOrder(order)}
+      >
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex flex-col">
+            <span className="text-xl font-black tracking-tighter">#{order.order_number}</span>
+            <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">{order.client}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); }}
+              className="p-2 bg-muted/20 rounded-xl text-muted-foreground relative"
+            >
+              <MessageSquare className="w-4 h-4" />
+              {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full" />}
+            </button>
+            <input 
+              type="checkbox" 
+              checked={isSelected} 
+              onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }} 
+              className="w-5 h-5 rounded border-border accent-primary" 
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <span className={`px-2 py-0.5 rounded text-[9px] font-black border tracking-wider ${order.art_sep_status ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-secondary/40 text-muted-foreground/30 border-border/5'}`}>SEP</span>
+          <span className={`px-2 py-0.5 rounded text-[9px] font-black border tracking-wider ${order.art_neck_status ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-secondary/40 text-muted-foreground/30 border-border/5'}`}>NECK</span>
+          <span className="ml-auto text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest">{order.board}</span>
+        </div>
+
+        <div className="space-y-3 mb-4">
+           {visibleColumns.slice(0, 5).filter(c => !['order_number', 'art_sep_status', 'art_neck_status', 'selection', 'client'].includes(c.key)).map(col => (
+             <div key={col.key} className="flex justify-between items-center gap-4">
+               <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
+               <div className="text-sm font-bold truncate">
+                 <EditableCell 
+                    orderId={order.order_id} field={col.key} value={order[col.key]} 
+                    type={col.type} options={col.optionKey ? options[col.optionKey] : []}
+                    onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
+                    columns={visibleColumns}
+                 />
+               </div>
+             </div>
+           ))}
+        </div>
+
+        <div className="pt-3 border-t border-border/5">
+          <div className="flex justify-between items-center mb-1">
+            <span className={`text-[10px] font-black uppercase ${remainingPieces === 0 ? 'text-green-500' : 'text-muted-foreground/60'}`}>
+              {remainingPieces} {t('pieces_unit')} {t('remaining_short')}
+            </span>
+            <span className="text-[10px] font-black text-primary">{Math.round(progress)}%</span>
+          </div>
+          <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-700 ${progress >= 100 ? 'bg-green-500' : 'bg-primary'}`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
   const renderTableBody = () => {
     const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
+    
+    if (isMobile) {
+      return (
+        <div className="flex flex-col pb-20">
+          {visibleOrders.map(renderMobileOrderCard)}
+        </div>
+      );
+    }
+
     if (!groupByDate) return visibleOrders.map(renderOrderRow);
     const groups = {};
     const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
@@ -1009,6 +1108,9 @@ const Dashboard = () => {
         isAdmin={isAdmin}
         navigate={navigate}
         isDark={isDark}
+        isMobile={isMobile}
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
       />
 
       {/* MAIN CONTENT AREA */}
@@ -1026,9 +1128,17 @@ const Dashboard = () => {
 
       {/* Header - Cleaned up version */}
       <header className={`h-16 px-4 flex items-center justify-between z-40 border-b ${isDark ? 'bg-navy-dark border-white/5 shadow-lg' : 'bg-white border-gray-200 shadow-sm'}`}>
+        {isMobile && (
+          <button 
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-2 mr-2 hover:bg-muted/40 rounded-lg transition-all"
+          >
+            <Menu className="w-5 h-5 text-muted-foreground" />
+          </button>
+        )}
         <div className="flex items-center gap-4 flex-1">
-          <div className="flex items-center gap-3 max-w-md w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group">
-            <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors" />
+          <div className={`flex items-center gap-3 w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group ${isMobile ? 'max-w-[200px]' : 'max-w-md'}`}>
+            <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors flex-shrink-0" />
             <input 
               type="text" 
               value={searchQuery} 
@@ -1040,7 +1150,7 @@ const Dashboard = () => {
                   else if (results) setSearchResults(results); 
                 } 
               }} 
-              placeholder={t('search_placeholder')} 
+              placeholder={isMobile ? 'Buscar...' : t('search_placeholder')} 
               className="w-full bg-transparent border-none text-sm outline-none focus:outline-none focus:ring-0 placeholder:text-muted-foreground/50 transition-all font-medium py-1"
             />
           </div>
@@ -1085,10 +1195,10 @@ const Dashboard = () => {
             <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all" title={isDark ? t('light_mode') : t('dark_mode')}>
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
-            <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>
-            <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1">
+            {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
+            {!isMobile && <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
-            </button>
+            </button>}
             <div className="relative">
               <button
                 data-testid="notifications-btn"
@@ -2072,7 +2182,7 @@ const Dashboard = () => {
       {/* Enterprise Side-Drawer Detail View */}
       {detailsOrder && (
         <div className="enterprise-drawer" style={{
-          position: 'fixed', inset: '0 0 0 auto', width: '780px',
+          position: 'fixed', inset: '0 0 0 auto', width: isMobile ? '100%' : '780px',
           borderLeft: '1px solid rgba(255,255,255,0.06)',
           boxShadow: '-10px 0 60px rgba(0,0,0,0.6)',
           display: 'flex', flexDirection: 'column', height: '100vh',

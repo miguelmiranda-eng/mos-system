@@ -30,7 +30,10 @@ const Sidebar = ({
   onShowAnalytics,
   isAdmin,
   navigate,
-  isDark
+  isDark,
+  isMobile,
+  isOpen,
+  onClose
 }) => {
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
   const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
@@ -57,20 +60,31 @@ const Sidebar = ({
   );
 
   return (
-    <aside
-      style={{ backgroundColor: isDark ? '#0d1e35' : '#a8c5e8' }}
-      className={cn(
-        "flex flex-col transition-all duration-300 border-r z-50 flex-shrink-0",
-        isCollapsed ? "w-14" : "w-64",
-        isDark ? "border-white/6" : "border-blue-300"
+    <>
+      {/* Backdrop for mobile */}
+      {isMobile && isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] transition-opacity duration-300"
+          onClick={onClose}
+        />
       )}
-    >
-      {/* Header */}
-      <div className={cn(
-        "h-14 flex items-center justify-between px-4 border-b flex-shrink-0",
-        isDark ? "border-white/6" : "border-neutral-200"
-      )}>
-        {!isCollapsed && (
+
+      <aside
+        style={{ backgroundColor: isDark ? '#0d1e35' : '#a8c5e8' }}
+        className={cn(
+          "flex flex-col transition-all duration-300 border-r flex-shrink-0 overflow-hidden",
+          isMobile 
+            ? cn("fixed inset-y-0 left-0 z-[101] w-64 shadow-2xl transform", isOpen ? "translate-x-0" : "-translate-x-full")
+            : cn("relative z-50", isCollapsed ? "w-14" : "w-64"),
+          isDark ? "border-white/6" : "border-blue-300"
+        )}
+      >
+        {/* Header */}
+        <div className={cn(
+          "h-14 flex items-center justify-between px-4 border-b flex-shrink-0",
+          isDark ? "border-white/6" : "border-neutral-200"
+        )}>
+          {(isOpen || !isCollapsed) && (
           <button
             onClick={() => navigate('/home')}
             className="text-left hover:opacity-70 transition-opacity leading-none"
@@ -83,37 +97,42 @@ const Sidebar = ({
             </span>
           </button>
         )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className={cn("p-1 rounded transition-colors flex-shrink-0 ml-auto", isDark ? "text-white/20 hover:text-white/50" : "text-neutral-400 hover:text-neutral-600")}
-        >
-          {isCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
-        </button>
+        {!isMobile && (
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className={cn("p-1 rounded transition-colors flex-shrink-0 ml-auto", isDark ? "text-white/20 hover:text-white/50" : "text-neutral-400 hover:text-neutral-600")}
+          >
+            {isCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          </button>
+        )}
       </div>
 
       {/* Nav */}
       <div className="flex-1 overflow-y-auto custom-scrollbar pb-4">
 
         {/* Boards */}
-        {!isCollapsed && <p className={sectionLabel}>General</p>}
+        {(isOpen || !isCollapsed) && <p className={sectionLabel}>General</p>}
         <nav className="px-2">
           {regularBoards.map((board) => (
             <button
               key={board}
-              onClick={() => setCurrentBoard(board)}
+              onClick={() => {
+                setCurrentBoard(board);
+                if (isMobile) onClose();
+              }}
               className={navItem(currentBoard === board)}
-              title={isCollapsed ? board : ""}
+              title={isCollapsed && !isMobile ? board : ""}
             >
               <div
                 className={cn("w-2 h-2 rounded-full flex-shrink-0", currentBoard === board ? "opacity-100" : "opacity-40")}
                 style={{ backgroundColor: BOARD_COLORS[board]?.accent || (isDark ? '#555' : '#aaa') }}
               />
-              {!isCollapsed && <span className="truncate">{toTitle(board)}</span>}
+              {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
             </button>
           ))}
 
           {/* Machines collapsible */}
-          {!isCollapsed && machineBoards.length > 0 && (
+          {(isOpen || !isCollapsed) && machineBoards.length > 0 && (
             <Collapsible open={isMachinesOpen} onOpenChange={setIsMachinesOpen} className="w-full">
               <CollapsibleTrigger asChild>
                 <button className={navItem(isAnyMachineActive)}>
@@ -126,7 +145,10 @@ const Sidebar = ({
                 {machineBoards.map((board) => (
                   <button
                     key={board}
-                    onClick={() => setCurrentBoard(board)}
+                    onClick={() => {
+                      setCurrentBoard(board);
+                      if (isMobile) onClose();
+                    }}
                     className={navItem(currentBoard === board)}
                   >
                     <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-50" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#aaa' }} />
@@ -137,7 +159,7 @@ const Sidebar = ({
             </Collapsible>
           )}
 
-          {isCollapsed && machineBoards.length > 0 && (
+          {isCollapsed && !isMobile && machineBoards.length > 0 && (
             <button
               onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
               className={navItem(isAnyMachineActive)}
@@ -149,31 +171,31 @@ const Sidebar = ({
         </nav>
 
         {/* Tools */}
-        {!isCollapsed && <p className={sectionLabel}>Herramientas</p>}
+        {(isOpen || !isCollapsed) && <p className={sectionLabel}>Herramientas</p>}
         <nav className="px-2">
-          <button onClick={() => navigate('/qc')} className={navItem(false)} title={isCollapsed ? "Control de Calidad" : ""}>
+          <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Control de Calidad" : ""}>
             <ShieldCheck size={15} className={iconCls(false)} />
-            {!isCollapsed && <span>Control de Calidad</span>}
+            {(isOpen || !isCollapsed) && <span>Control de Calidad</span>}
           </button>
-          <button onClick={() => navigate('/art')} className={navItem(false)} title={isCollapsed ? "Módulo de Arte" : ""}>
+          <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Módulo de Arte" : ""}>
             <Palette size={15} className={iconCls(false)} />
-            {!isCollapsed && <span>Módulo de Arte</span>}
+            {(isOpen || !isCollapsed) && <span>Módulo de Arte</span>}
           </button>
-          <button onClick={() => navigate('/insights')} className={navItem(false)} title={isCollapsed ? "Insights" : ""}>
+          <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Insights" : ""}>
             <Sparkles size={15} className={iconCls(false)} />
-            {!isCollapsed && <span>Insights</span>}
+            {(isOpen || !isCollapsed) && <span>Insights</span>}
           </button>
-          <button onClick={onShowAnalytics} className={navItem(false)} title={isCollapsed ? "Análisis" : ""}>
+          <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
             <BarChart3 size={15} className={iconCls(false)} />
-            {!isCollapsed && <span>Análisis</span>}
+            {(isOpen || !isCollapsed) && <span>Análisis</span>}
           </button>
-          <button onClick={onShowTrash} className={navItem(false)} title={isCollapsed ? "Papelera" : ""}>
+          <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Papelera" : ""}>
             <div className="relative flex-shrink-0">
               <Trash2 size={15} className={iconCls(false)} />
               {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
             </div>
-            {!isCollapsed && <span className="flex-1 text-left">Papelera</span>}
-            {!isCollapsed && trashCount > 0 && (
+            {(isOpen || !isCollapsed) && <span className="flex-1 text-left">Papelera</span>}
+            {(isOpen || !isCollapsed) && trashCount > 0 && (
               <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
                 {trashCount}
               </span>
@@ -184,19 +206,19 @@ const Sidebar = ({
         {/* Admin */}
         {isAdmin && (
           <>
-            {!isCollapsed && <p className={sectionLabel}>Admin</p>}
+            {(isOpen || !isCollapsed) && <p className={sectionLabel}>Admin</p>}
             <nav className="px-2">
-              <button onClick={() => navigate('/users')} className={navItem(false)} title={isCollapsed ? "Usuarios" : ""}>
+              <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Usuarios" : ""}>
                 <Users size={15} className={iconCls(false)} />
-                {!isCollapsed && <span>Usuarios</span>}
+                {(isOpen || !isCollapsed) && <span>Usuarios</span>}
               </button>
-              <button onClick={() => navigate('/activity-log')} className={navItem(false)} title={isCollapsed ? "Log Actividad" : ""}>
+              <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Log Actividad" : ""}>
                 <History size={15} className={iconCls(false)} />
-                {!isCollapsed && <span>Log Actividad</span>}
+                {(isOpen || !isCollapsed) && <span>Log Actividad</span>}
               </button>
-              <button onClick={() => navigate('/catalog-center')} className={navItem(false)} title={isCollapsed ? "Catálogos" : ""}>
+              <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Catálogos" : ""}>
                 <Box size={15} className={iconCls(false)} />
-                {!isCollapsed && <span>Catálogos</span>}
+                {(isOpen || !isCollapsed) && <span>Catálogos</span>}
               </button>
             </nav>
           </>
@@ -204,12 +226,13 @@ const Sidebar = ({
       </div>
 
       {/* Footer */}
-      {!isCollapsed && (
+      {(isOpen || !isCollapsed) && (
         <div className={cn("px-4 py-3 border-t text-[11px]", isDark ? "border-white/6 text-white/20" : "border-neutral-200 text-neutral-400")}>
           MOS <span className={isDark ? "text-royal/60" : "text-royal/70"}>System</span> · Prosper Mfg.
         </div>
       )}
     </aside>
+    </>
   );
 };
 
