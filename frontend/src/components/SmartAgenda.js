@@ -668,8 +668,12 @@ const SmartAgenda = () => {
       if (res.ok) {
         const data = await res.json();
         console.log("Google Sync Data:", data);
-        setGoogleEvents(data.events || []);
-        if (data.error) toast.error(`Google: ${data.error}`);
+        if (data && data.events) {
+          setGoogleEvents(data.events);
+          if (data.error) toast.error(`Google: ${data.error}`);
+        } else {
+          setGoogleEvents([]);
+        }
       } else {
         const errData = await res.json().catch(() => ({}));
         toast.error(`Error de sincronización (${res.status}): ${errData.detail || 'Fallo en el servidor'}`);
