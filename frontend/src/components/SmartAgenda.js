@@ -667,7 +667,9 @@ const SmartAgenda = () => {
       const res = await fetch(`${API}/agenda/google/sync`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
+        console.log("Google Sync Data:", data); // Debugging
         setGoogleEvents(data.events || []);
+        if (data.error) toast.error(`Google: ${data.error}`);
       }
     } catch { toast.error('Error al sincronizar con Google'); }
     finally { setSyncingGoogle(false); }

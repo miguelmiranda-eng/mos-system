@@ -190,12 +190,13 @@ async def sync_google_events(request: Request):
     try:
         service = build('calendar', 'v3', credentials=creds)
         
-        # Get events from last 30 days and next 60 days
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        # Get events from last 30 days and next 90 days
+        time_min = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace('+00:00', 'Z')
+        
         events_result = service.events().list(
             calendarId='primary', 
-            timeMin=now,
-            maxResults=50, 
+            timeMin=time_min,
+            maxResults=250, 
             singleEvents=True,
             orderBy='startTime'
         ).execute()
