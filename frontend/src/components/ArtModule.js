@@ -645,7 +645,6 @@ const ArtModule = () => {
                             <td key="order_number" className="py-4 px-6">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-black text-slate-900">#{order.order_number}</span>
-                                {order.priority === 'RUSH' && <span className="bg-amber-100 text-amber-600 text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest">RUSH</span>}
                               </div>
                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">{order.board}</p>
                             </td>

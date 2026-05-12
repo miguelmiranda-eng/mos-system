@@ -830,7 +830,6 @@ const Dashboard = () => {
               <span className={`font-black text-xl tracking-tighter truncate ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
                 {order.order_number}
               </span>
-              {order.priority === 'RUSH' && <Zap className="w-4 h-4 text-amber-500 fill-amber-500 animate-pulse flex-shrink-0" />}
             </div>
 
             {/* Row 2: Art Status Identifiers (Prominent) */}
