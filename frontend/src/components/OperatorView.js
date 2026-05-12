@@ -258,13 +258,21 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
           Guardar Progreso
         </button>
         <button
-          onClick={() => onSave(ticket.ticket_id, pickedSizes, true)}
-          disabled={saving || !isComplete}
-          className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-green-700 disabled:opacity-50"
+          onClick={() => {
+            if (!isComplete) {
+              if (window.confirm("Faltan tallas por surtir. ¿Estás seguro que deseas completar este surtido PARCIALMENTE?")) {
+                onSave(ticket.ticket_id, pickedSizes, true);
+              }
+            } else {
+              onSave(ticket.ticket_id, pickedSizes, true);
+            }
+          }}
+          disabled={saving}
+          className={`flex-1 px-4 py-3 ${isComplete ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-amber-500 hover:bg-amber-600 text-black'} rounded-lg text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50`}
           data-testid="operator-complete-pick"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-          Completar Surtido
+          {isComplete ? 'Completar Surtido' : 'Completar Parcial'}
         </button>
       </div>
     </div>

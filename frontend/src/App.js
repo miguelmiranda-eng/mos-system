@@ -208,6 +208,9 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
+      } else if (user.role === 'picker' && window.location.pathname !== '/operator') {
+        // Force pickers to stay in their dedicated view
+        navigate('/operator', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);

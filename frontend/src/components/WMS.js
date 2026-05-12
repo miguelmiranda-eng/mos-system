@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, Link2, ClipboardCheck, Zap,
   Factory, CheckCircle, History, ArrowLeft, Warehouse, Download, Plus, FileDown,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
-  Sun, Moon, Home, AlertTriangle, LayoutDashboard, ExternalLink, LogOut
+  Sun, Moon, Home, AlertTriangle, LayoutDashboard, ExternalLink, LogOut, Scissors, RefreshCw
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
@@ -1066,7 +1066,7 @@ const PickingModule = () => {
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
-  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
+  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: 'production', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
   const [form, setForm] = useState(emptyForm);
 
   const loadTickets = useCallback(() => { fetcher('/pick-tickets').then(setTickets).catch(() => {}); }, []);
@@ -1091,7 +1091,8 @@ const PickingModule = () => {
     const order = orders.find(o => o.order_number === orderNum);
     if (order) {
       const customer = order.client || order.branding || '';
-      setForm(p => ({ ...p, customer, quantity: order.quantity || 0 }));
+      const dest = order.art_neck_status ? 'neck_cutting' : 'production';
+      setForm(p => ({ ...p, customer, quantity: order.quantity || 0, destination: dest }));
       loadOptions(customer, '', '');
     }
   };
@@ -1125,7 +1126,8 @@ const PickingModule = () => {
     setForm({
       order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
       style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
-      assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '', sizes: sizesObj
+      assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '', 
+      destination: t.destination || 'production', sizes: sizesObj
     });
     setSizeLocations(t.size_locations || {});
     if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
@@ -1147,13 +1149,13 @@ const PickingModule = () => {
     try {
       const payload = { ...form, client: form.customer, sizes: Object.fromEntries(Object.entries(form.sizes).map(([k, v]) => [k, parseInt(v) || 0])) };
       let res;
-      if (editingTicket) {
+      if (editingTicket && !editingTicket.is_virtual) {
         res = await putter(`/pick-tickets/${editingTicket.ticket_id}/edit`, payload);
       } else {
         res = await poster('/pick-tickets', payload);
       }
       if (res.ok) {
-        toast.success(editingTicket ? t('ticket_updated') : t('ticket_created'));
+        toast.success(editingTicket && !editingTicket.is_virtual ? t('ticket_updated') : t('ticket_created'));
         resetForm();
         loadTickets(); loadStats();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
@@ -1488,10 +1490,17 @@ const PickingModule = () => {
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_qty_auto')}</label>
               <input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="pick-qty" />
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-wider text-pink-500 font-black block mb-1">Destino</label>
+              <select value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} className="w-full px-3 py-2 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded text-sm font-bold focus:ring-1 focus:ring-pink-500">
+                <option value="production">Producción Directa</option>
+                <option value="neck_cutting">Corte de Neck</option>
+              </select>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -1521,15 +1530,18 @@ const PickingModule = () => {
                     <td className="p-1"><input type="number" min="0" value={form.sizes[sz]} onChange={e => updateSize(sz, e.target.value)} placeholder="0" className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono text-foreground" data-testid={`pick-size-${sz}`} /></td>
                     <td className="p-1">
                       {getSizeLocs(sz).length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-2">
                           {getSizeLocs(sz).slice(0, 4).map((l, i) => (
-                            <span key={i} className="inline-flex flex-col bg-primary/15 px-1.5 py-0.5 rounded text-[10px] font-mono" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
-                              <span className="text-primary font-bold">{l.location} <span className="text-emerald-400">({l.available})</span></span>
-                              <span className="flex items-center gap-1 opacity-70">
-                                {l.country_of_origin && <span className="text-muted-foreground uppercase">{l.country_of_origin}</span>}
-                                {l.percentage !== undefined && <span className="text-yellow-400 font-bold">{l.percentage}%</span>}
-                              </span>
-                            </span>
+                            <div key={i} className="flex flex-col bg-background border border-border/40 px-2 py-1 rounded-md shadow-sm" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-foreground font-bold text-xs">{l.location}</span>
+                                <span className="text-emerald-500 font-black text-xs tabular-nums bg-emerald-500/10 px-1 rounded">{l.available}</span>
+                              </div>
+                              <div className="flex items-center justify-between mt-0.5 gap-2">
+                                {l.country_of_origin && <span className="text-[9px] text-muted-foreground uppercase tracking-widest">{l.country_of_origin}</span>}
+                                {l.percentage !== undefined && <span className="text-[9px] text-yellow-500 font-black">{l.percentage}%</span>}
+                              </div>
+                            </div>
                           ))}
                           {getSizeLocs(sz).length > 4 && <span className="text-xs text-muted-foreground">+{getSizeLocs(sz).length - 4}</span>}
                         </div>
@@ -2878,6 +2890,101 @@ const InventoryDashboardWrapper = () => <InventoryDashboard {..._wmsInventoryDas
 let _wmsInventoryModuleProps = {};
 const InventoryModuleWrapper = () => <InventoryModule {..._wmsInventoryModuleProps} />;
 
+// ==================== NECK CUTTING MODULE ====================
+const NeckCuttingModule = () => {
+  const { t } = useLang();
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetcher("/neck-cutting");
+      setOrders(data || []);
+    } catch {}
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleDeliver = async (order) => {
+    if (!window.confirm(`¿Surtir material de la orden #${order.order_number} a producción? Se descontará del inventario global.`)) return;
+    try {
+      const itemsToDeliver = order.items.map(i => ({ box_id: i.box_id, qty: i.units || i.qty || 0 }));
+      const res = await poster("/neck-cutting/deliver", { 
+        order_number: order.order_number,
+        items: itemsToDeliver
+      });
+      if (res.ok) {
+        toast.success("Material surtido a producción exitosamente");
+        load();
+      } else {
+        toast.error("Error al surtir material");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black uppercase tracking-tighter text-pink-500">Área de Corte (Neck)</h2>
+          <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest opacity-60">Órdenes en proceso de corte y habilitado</p>
+        </div>
+        <button onClick={load} className="p-3 bg-secondary/20 rounded-2xl hover:bg-secondary/40 transition-all">
+          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {orders.map(o => (
+          <div key={o.order_number} className="group p-6 bg-card/40 border border-border/40 rounded-[2.5rem] hover:border-pink-500/40 transition-all shadow-sm">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <div className="text-[10px] font-black uppercase text-pink-500 tracking-widest mb-1">Pick Ticket en Corte</div>
+                <div className="text-2xl font-black uppercase tracking-tighter">#{o.order_number}</div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase truncate max-w-[200px]">{o.customer}</div>
+              </div>
+              <div className="px-4 py-2 bg-pink-500/10 text-pink-500 border border-pink-500/20 rounded-2xl text-xs font-black uppercase tracking-widest">
+                {o.total_qty} PCS
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-6 bg-black/10 p-4 rounded-2xl border border-white/5">
+              <div className="flex justify-between items-center text-[10px] font-black uppercase text-muted-foreground/40 mb-2">
+                <span>Material Surtido</span>
+              </div>
+              {o.items.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center text-xs font-bold gap-4">
+                  <span className="text-foreground/80 truncate">{item.sku} - {item.size}</span>
+                  <span className="tabular-nums text-muted-foreground bg-black/20 px-2 py-0.5 rounded">{item.qty || item.units} PCS</span>
+                </div>
+              ))}
+            </div>
+
+            <button 
+              onClick={() => handleDeliver(o)}
+              className="w-full py-4 bg-pink-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-pink-500/20 flex items-center justify-center gap-2"
+            >
+              <Factory className="w-4 h-4" />
+              Surtir a Producción
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {orders.length === 0 && !loading && (
+        <div className="py-20 text-center bg-secondary/10 rounded-[3rem] border-2 border-dashed border-border/20">
+          <Scissors className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+          <p className="text-sm font-black text-muted-foreground uppercase tracking-widest">No hay órdenes en proceso de corte</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const MODULE_COMPONENTS = {
   directed: DirectedWorkModule,
   dashboard: InventoryDashboardWrapper,
@@ -2886,6 +2993,7 @@ const MODULE_COMPONENTS = {
   inventory: InventoryModuleWrapper,
   locations: LocationsModule,
   picking: PickingModule,
+  neck_cutting: NeckCuttingModule,
   finished: FinishedGoodsModule,
   movements: MovementsModule,
   cycle_count: CycleCountModule,
@@ -2899,7 +3007,7 @@ export default function WMS() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
   const isDark = theme === 'dark';
-  const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0 });
+  const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
   const [currentUser, setCurrentUser] = useState(null);
   const [historyOrder, setHistoryOrder] = useState(null);
   const [globalSearch, setGlobalSearch] = useState('');
@@ -2926,6 +3034,7 @@ export default function WMS() {
     { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
     { id: 'locations', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400', desc: 'Mapa lógico y gestión de ubicaciones' },
     { id: 'picking', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400', desc: t('wms_mod_picking_desc') },
+    { id: 'neck_cutting', label: 'Corte de Neck', icon: Scissors, color: 'text-pink-400', desc: 'Material surtido en espera de corte' },
     { id: 'finished', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400', desc: t('wms_mod_finished_desc') },
     { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
     { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
@@ -2936,15 +3045,17 @@ export default function WMS() {
 
   const loadBadges = useCallback(async () => {
     try {
-      const [pendingBoxes, pendingTickets, activeCounts] = await Promise.all([
+      const [pendingBoxes, pendingTickets, activeCounts, neckCutting] = await Promise.all([
         fetcher('/boxes?status=received'),
         fetcher('/pick-tickets?status=pending'),
-        fetcher('/cycle-counts?status=in_progress')
+        fetcher('/cycle-counts?status=in_progress'),
+        fetcher('/neck-cutting')
       ]);
       setBadges({
         putaway: pendingBoxes.length || 0,
         picking: pendingTickets.length || 0,
-        cycle_count: activeCounts.length || 0
+        cycle_count: activeCounts.length || 0,
+        neck_cutting: neckCutting.length || 0
       });
     } catch {}
   }, []);
@@ -3060,7 +3171,11 @@ export default function WMS() {
         </div>
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
-          {MODULES.filter(m => currentUser?.role !== 'customer' || m.id === 'dashboard').map(m => {
+          {MODULES.filter(m => {
+            if (currentUser?.role === 'customer') return m.id === 'dashboard';
+            if (currentUser?.role === 'picker') return ['directed', 'picking', 'neck_cutting'].includes(m.id);
+            return true;
+          }).map(m => {
             const Icon = m.icon;
             const isActive = activeModule === m.id;
             const badgeCount = badges[m.id] || 0;

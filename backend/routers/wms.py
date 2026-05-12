@@ -247,7 +247,7 @@ async def create_receiving(request: Request):
             "box_id": box_id, "barcode": box_id, "receiving_id": receiving_id,
             "customer": customer, "manufacturer": manufacturer, "style": style,
             "sku": sku or style, "color": color, "size": size,
-            "units": total_units, "seq_num": seq, "location": inv_location,
+            "units": total_units, "qty": total_units, "seq_num": seq, "location": inv_location,
             "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
             "lpn_id": box_id, "coo": country_of_origin, "lot_number": lot_number,
             "asn_reference": body.get("asn_reference", "").strip(),
@@ -438,6 +438,16 @@ async def _update_inventory_enhanced(sku, color, size, qty, operation, customer=
                         "assigned_to": None, "context": {"sku": sku, "suggested_zone": location, "reason": "Threshold breach (<50)"},
                         "created_at": now_iso(),
                     })
+        elif operation == "pick_to_neck":
+            # 1. Deduct from current shelf
+            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
+            # 2. Add to CUTTING_NECK (keep it allocated/reserved for the order)
+            neck_key = {"sku": sku, "color": color or "", "size": size or "", "location": "CUTTING_NECK"}
+            await db.wms_inventory.update_one(
+                neck_key,
+                {"$inc": {"units_on_hand": qty, "units_allocated": qty}, "$set": {"updated_at": now_iso(), "customer": customer}},
+                upsert=True
+            )
 
 async def _update_inventory(sku, color, size, qty, operation="add", location=""):
     # Standard fallback for old calls
@@ -872,6 +882,7 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
         "total_pick_qty": total_qty,
         "status": "pending",
         "board_category": data.get("board_category", "UNSET"),
+        "destination": data.get("destination", "production"),
         "blank_status": data.get("blank_status", ""),
         "picking_status": "assigned" if assigned_to else "unassigned",
         "assigned_to": assigned_to or None,
@@ -1030,19 +1041,24 @@ async def list_pick_tickets(request: Request, status: str = ""):
                 "customer": vo.get("client") or vo.get("customer") or vo.get("branding") or "No Client",
                 "client": vo.get("client") or vo.get("customer") or vo.get("branding"),
                 "manufacturer": vo.get("manufacturer") or vo.get("branding"),
-                "style": "",
-                "color": "",
+                "style": vo.get("style") or vo.get("garment_style") or "",
+                "color": vo.get("color") or vo.get("garment_color") or "",
+                "sizes": vo.get("sizes", {}),
                 "quantity": vo.get("quantity") or 0,
                 "total_pick_qty": vo.get("quantity") or 0,
                 "status": "pending",
                 "blank_status": vo.get("blank_status") or "PENDIENTE",
                 "picking_status": "unassigned",
                 "board_category": vo.get("board", "UNSET").upper(),
+                "destination": "neck_cutting" if vo.get("art_neck_status") else "production",
                 "job_title_a": vo.get("job_title_a"),
                 "job_title_b": vo.get("job_title_b"),
                 "created_at": vo.get("created_at") or now_iso(),
                 "is_virtual": True
             })
+
+    # Sort the combined list by created_at descending so newest orders/tickets appear first
+    real_tickets.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
     return real_tickets
 
@@ -1152,25 +1168,24 @@ async def save_pick_progress(ticket_id: str, request: Request):
     }
     if is_complete:
         update["completed_at"] = now_iso()
-        # DISCOUNT INVENTORY logic
+        # RESERVE INVENTORY logic (Allocation)
         try:
             # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
             for sz, data in picked_sizes.items():
                 if isinstance(data, dict) and "details" in data:
                     for loc, qty in data["details"].items():
                         if qty > 0:
-                            # Subtract from wms_inventory
-                            await db.wms_inventory.update_one(
-                                {
-                                    "style": {"$regex": f"^{re.escape(ticket.get('style', '').strip())}$", "$options": "i"},
-                                    "size": {"$regex": f"^{re.escape(sz.strip())}$", "$options": "i"},
-                                    "color": {"$regex": f"^{re.escape(ticket.get('color', '').strip())}$", "$options": "i"} if ticket.get("color") else {"$exists": True},
-                                    "inv_location": loc
-                                },
-                                {"$inc": {"available": -qty}}
+                            # Use official allocate operation to reserve stock
+                            await _update_inventory(
+                                ticket.get('style', '').strip(),
+                                ticket.get('color', '').strip(),
+                                sz.strip(),
+                                qty,
+                                "allocate",
+                                location=loc
                             )
         except Exception as e:
-            print(f"Error discounting inventory: {e}")
+            logger.error(f"Error allocating inventory: {e}")
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
     await log_movement(user, "pick_progress", {
@@ -1192,51 +1207,97 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     if not ticket:
         raise HTTPException(404, "Pick ticket no encontrado")
 
+    is_neck_cutting = ticket.get("destination") == "neck_cutting"
+    inv_operation = "pick_to_neck" if is_neck_cutting else "deduct"
+
     # Handle confirmed lines (legacy or explicit)
     if confirmed_lines:
         for line in confirmed_lines:
             box_id = line.get("box_id")
-            qty = int(line.get("qty", 0))
+            pick_qty = int(line.get("qty", 0))
             box = await db.wms_boxes.find_one({"box_id": box_id})
             if box:
-                new_units = max(0, box.get("units", 0) - qty)
-                update = {"units": new_units}
-                if new_units == 0:
-                    update["status"] = "picked"
-                await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update})
-                await _update_inventory(box["sku"], box.get("color", ""), box.get("size", ""), qty, "deduct", location=box.get("location", ""))
+                # Support both 'units' and 'qty' field names
+                current_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
+                new_qty = max(0, current_qty - pick_qty)
+                
+                # Update box: just reduce units and link to order
+                box_update = {
+                    "units": new_qty, 
+                    "qty": new_qty,
+                    "order_number": ticket.get("order_number"),
+                    "last_order_id": ticket.get("order_id")
+                }
+                await db.wms_boxes.update_one({"box_id": box_id}, {"$set": box_update})
+                
+                # Move to neck process area OR deduct from global
+                await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), pick_qty, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
     else:
         # Newer flow: Use picked_sizes to auto-deduct from available boxes
         picked_sizes = ticket.get("picked_sizes") or ticket.get("sizes") or {}
         style = ticket.get("style", "")
         color = ticket.get("color", "")
-        for sz, qty in picked_sizes.items():
-            try:
-                qty_int = int(qty)
-            except (ValueError, TypeError):
-                continue
-            if qty_int <= 0: continue
+        order_number = ticket.get("order_number")
+        for sz, data in picked_sizes.items():
+            # Handle both old {sz: qty} and new {sz: {total: X, details: {...}}} formats
+            qty_to_pick = 0
+            if isinstance(data, dict):
+                qty_to_pick = int(data.get("total", 0))
+                # If we have details, we deduct from specific locations
+                if "details" in data:
+                    for loc, loc_qty in data["details"].items():
+                        if loc_qty <= 0: continue
+                        # Find boxes in this specific location
+                        q = {"sku": style, "color": color, "size": sz, "location": loc, "units": {"$gt": 0}}
+                        boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(100)
+                        rem = loc_qty
+                        for box in boxes:
+                            if rem <= 0: break
+                            b_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
+                            take = min(b_qty, rem)
+                            new_b_qty = b_qty - take
+                            upd = {
+                                "units": new_b_qty, "qty": new_b_qty,
+                                "order_number": order_number,
+                                "last_order_id": ticket.get("order_id")
+                            }
+                            await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+                            await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=loc, customer=box.get("customer", ""))
+                            rem -= take
+                    continue 
+            else:
+                qty_to_pick = int(data)
+
+            if qty_to_pick <= 0: continue
             
-            # Find boxes for this SKU/Color/Size
+            # General fallback if no location details provided
             query = {
                 "$or": [{"style": style}, {"sku": style}],
-                "color": color, "size": sz, "status": "stored", "state": "raw", "units": {"$gt": 0}
+                "color": color, "size": sz, "status": "stored", "state": "raw"
             }
-            boxes = await db.wms_boxes.find(query).sort("seq_num", 1).to_list(100)
-            remaining = qty_int
+            boxes = await db.wms_boxes.find(query).sort("created_at", 1).to_list(100)
+            remaining = qty_to_pick
             for box in boxes:
                 if remaining <= 0: break
-                take = min(box["units"], remaining)
-                new_units = box["units"] - take
-                upd = {"units": new_units}
-                if new_units == 0: upd["status"] = "picked"
+                b_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
+                if b_qty <= 0: continue
+                
+                take = min(b_qty, remaining)
+                new_b_qty = b_qty - take
+                upd = {
+                    "units": new_b_qty, "qty": new_b_qty,
+                    "order_number": order_number,
+                    "last_order_id": ticket.get("order_id")
+                }
                 await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
-                await _update_inventory(box["sku"], box.get("color", ""), box.get("size", ""), take, "deduct", location=box.get("location", ""))
+                await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
                 remaining -= take
 
+    new_status = "in_neck_cutting" if is_neck_cutting else "confirmed"
+    
     await db.wms_pick_tickets.update_one({"ticket_id": target_id}, {"$set": {
-        "status": "confirmed", 
-        "picking_status": "completed", 
+        "status": new_status, 
+        "picking_status": "completed" if not is_neck_cutting else "in_neck_cutting", 
         "confirmed_at": now_iso(), 
         "confirmed_by": user.get("user_id")
     }})
@@ -1259,7 +1320,7 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
         raise HTTPException(400, "No se puede editar un ticket confirmado/completado")
 
     update = {}
-    for field in ["order_number", "customer", "client", "manufacturer", "style", "color", "quantity"]:
+    for field in ["order_number", "customer", "client", "manufacturer", "style", "color", "quantity", "destination"]:
         if field in body:
             update[field] = body[field]
     if "sizes" in body:
@@ -1390,14 +1451,97 @@ async def production_move(request: Request):
     await log_movement(user, "production_move", {"target_state": target_state, "count": len(moved)})
     return move_doc
 
-@router.get("/production")
-async def list_production(request: Request, state: str = ""):
-    await require_auth(request)
-    query = {}
-    if state: query["state"] = state
-    else: query["state"] = {"$in": ["wip", "finished"]}
-    boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return boxes
+
+@router.get("/neck-cutting")
+async def list_neck_cutting(request: Request):
+    await require_auth(request)
+    tickets = await db.wms_pick_tickets.find({"status": "in_neck_cutting"}, {"_id": 0}).sort("order_number", 1).to_list(1000)
+    
+    grouped = {}
+    for t in tickets:
+        ono = t.get("order_number") or "SIN_ORDEN"
+        if ono not in grouped:
+            grouped[ono] = {
+                "ticket_id": t.get("ticket_id"),
+                "order_number": ono,
+                "customer": t.get("customer", ""),
+                "style": t.get("style", ""),
+                "items": [],
+                "total_qty": 0,
+                "last_order_id": t.get("order_id")
+            }
+        
+        picked = t.get("picked_sizes", {})
+        if not picked:
+            picked = t.get("sizes", {})
+            
+        for sz, data in picked.items():
+            qty = 0
+            if isinstance(data, dict):
+                qty = int(data.get("total", 0))
+            else:
+                qty = int(data)
+                
+            if qty > 0:
+                # Mock box_id for UI compatibility if needed, but we don't strictly need it 
+                # since we are no longer updating box units from the UI here.
+                grouped[ono]["items"].append({
+                    "sku": t.get("style", ""),
+                    "size": sz,
+                    "qty": qty,
+                    "units": qty,
+                    "box_id": f"dummy_{sz}"
+                })
+                grouped[ono]["total_qty"] += qty
+                
+    return list(grouped.values())
+
+@router.post("/neck-cutting/deliver")
+async def deliver_to_production(request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    order_number = body.get("order_number")
+    
+    if not order_number:
+        raise HTTPException(400, "order_number requerido")
+        
+    ticket = await db.wms_pick_tickets.find_one({"order_number": order_number, "status": "in_neck_cutting"})
+    if not ticket:
+        raise HTTPException(404, "No hay material en Neck Cutting para esta orden")
+        
+    picked_sizes = ticket.get("picked_sizes") or ticket.get("sizes") or {}
+    style = ticket.get("style", "")
+    color = ticket.get("color", "")
+    
+    delivered_count = 0
+    for sz, data in picked_sizes.items():
+        qty = 0
+        if isinstance(data, dict):
+            qty = int(data.get("total", 0))
+        else:
+            qty = int(data)
+            
+        if qty > 0:
+            # REAL DEDUCT from inventory (Final removal from global On Hand)
+            await _update_inventory_enhanced(
+                style, 
+                color, 
+                sz, 
+                qty, 
+                "deduct", 
+                location="CUTTING_NECK"
+            )
+            delivered_count += qty
+            
+    # Mark ticket as completed
+    await db.wms_pick_tickets.update_one(
+        {"_id": ticket["_id"]}, 
+        {"$set": {"status": "confirmed", "picking_status": "completed", "delivered_at": now_iso()}}
+    )
+        
+    await log_movement(user, "neck_cut_delivery", {"order_number": order_number, "qty": delivered_count})
+    return {"message": f"Entrega a producción exitosa: {delivered_count} piezas", "order_number": order_number}
 
 # ==================== FINISHED GOODS ====================
 
@@ -1776,6 +1920,7 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
                     "color": color,
                     "size": size,
                     "units": box_units,
+                    "qty": box_units,
                     "location": inv_loc,
                     "state": "putaway",
                     "customer": get(row, 'CustomerID', '').strip().upper(),

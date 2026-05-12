@@ -30,12 +30,14 @@ const Sidebar = ({
   onShowTrash,
   onShowAnalytics,
   isAdmin,
+  userRole,
   navigate,
   isDark,
   isMobile,
   isOpen,
   onClose
 }) => {
+  const isPicker = userRole === 'picker';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
   const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
   const isAnyMachineActive = machineBoards.includes(currentBoard);
@@ -111,121 +113,133 @@ const Sidebar = ({
       {/* Nav */}
       <div className="flex-1 overflow-y-auto custom-scrollbar pb-4">
 
-        {/* Boards */}
-        {(isOpen || !isCollapsed) && <p className={sectionLabel}>General</p>}
-        <nav className="px-2">
-          {regularBoards.map((board) => (
-            <button
-              key={board}
-              onClick={() => {
-                setCurrentBoard(board);
-                if (isMobile) onClose();
-              }}
-              className={navItem(currentBoard === board)}
-              title={isCollapsed && !isMobile ? board : ""}
-            >
-              <div
-                className={cn("w-2 h-2 rounded-full flex-shrink-0", currentBoard === board ? "opacity-100" : "opacity-40")}
-                style={{ backgroundColor: BOARD_COLORS[board]?.accent || (isDark ? '#555' : '#aaa') }}
-              />
-              {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
-            </button>
-          ))}
-
-          {/* Machines collapsible */}
-          {(isOpen || !isCollapsed) && machineBoards.length > 0 && (
-            <Collapsible open={isMachinesOpen} onOpenChange={setIsMachinesOpen} className="w-full">
-              <CollapsibleTrigger asChild>
-                <button className={navItem(isAnyMachineActive)}>
-                  <Cpu size={15} className={iconCls(isAnyMachineActive)} />
-                  <span className="flex-1 text-left">máquinas</span>
-                  <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isMachinesOpen && "rotate-180")} />
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
-                {machineBoards.map((board) => (
-                  <button
-                    key={board}
-                    onClick={() => {
-                      setCurrentBoard(board);
-                      if (isMobile) onClose();
-                    }}
-                    className={navItem(currentBoard === board)}
-                  >
-                    <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-50" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#aaa' }} />
-                    <span className="truncate">{toTitle(board)}</span>
-                  </button>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-
-          {isCollapsed && !isMobile && machineBoards.length > 0 && (
-            <button
-              onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
-              className={navItem(isAnyMachineActive)}
-              title="Máquinas"
-            >
-              <Cpu size={15} className={iconCls(isAnyMachineActive)} />
-            </button>
-          )}
-        </nav>
-
-        {/* Tools */}
-        {(isOpen || !isCollapsed) && <p className={sectionLabel}>Herramientas</p>}
-        <nav className="px-2">
-          <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Smart Agenda" : ""}>
-            <CalendarDays size={15} className={iconCls(false)} />
-            {(isOpen || !isCollapsed) && <span>Smart Agenda</span>}
-          </button>
-          <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Control de Calidad" : ""}>
-            <ShieldCheck size={15} className={iconCls(false)} />
-            {(isOpen || !isCollapsed) && <span>Control de Calidad</span>}
-          </button>
-          <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Módulo de Arte" : ""}>
-            <Palette size={15} className={iconCls(false)} />
-            {(isOpen || !isCollapsed) && <span>Módulo de Arte</span>}
-          </button>
-          <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Insights" : ""}>
-            <Sparkles size={15} className={iconCls(false)} />
-            {(isOpen || !isCollapsed) && <span>Insights</span>}
-          </button>
-          <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
-            <BarChart3 size={15} className={iconCls(false)} />
-            {(isOpen || !isCollapsed) && <span>Análisis</span>}
-          </button>
-          <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Papelera" : ""}>
-            <div className="relative flex-shrink-0">
-              <Trash2 size={15} className={iconCls(false)} />
-              {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
-            </div>
-            {(isOpen || !isCollapsed) && <span className="flex-1 text-left">Papelera</span>}
-            {(isOpen || !isCollapsed) && trashCount > 0 && (
-              <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
-                {trashCount}
-              </span>
-            )}
-          </button>
-        </nav>
-
-        {/* Admin */}
-        {isAdmin && (
+        {/* Picker Specific View */}
+        {isPicker ? (
+          <nav className="px-2 pt-4">
+             <button onClick={() => { navigate('/operator'); if (isMobile) onClose(); }} className={navItem(true)} title="Vista de Surtido">
+                <Box size={15} className={iconCls(true)} />
+                {(isOpen || !isCollapsed) && <span>Vista de Surtido</span>}
+             </button>
+          </nav>
+        ) : (
           <>
-            {(isOpen || !isCollapsed) && <p className={sectionLabel}>Admin</p>}
+            {/* Boards */}
+            {(isOpen || !isCollapsed) && <p className={sectionLabel}>General</p>}
             <nav className="px-2">
-              <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Usuarios" : ""}>
-                <Users size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Usuarios</span>}
+              {regularBoards.map((board) => (
+                <button
+                  key={board}
+                  onClick={() => {
+                    setCurrentBoard(board);
+                    if (isMobile) onClose();
+                  }}
+                  className={navItem(currentBoard === board)}
+                  title={isCollapsed && !isMobile ? board : ""}
+                >
+                  <div
+                    className={cn("w-2 h-2 rounded-full flex-shrink-0", currentBoard === board ? "opacity-100" : "opacity-40")}
+                    style={{ backgroundColor: BOARD_COLORS[board]?.accent || (isDark ? '#555' : '#aaa') }}
+                  />
+                  {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
+                </button>
+              ))}
+
+              {/* Machines collapsible */}
+              {(isOpen || !isCollapsed) && machineBoards.length > 0 && (
+                <Collapsible open={isMachinesOpen} onOpenChange={setIsMachinesOpen} className="w-full">
+                  <CollapsibleTrigger asChild>
+                    <button className={navItem(isAnyMachineActive)}>
+                      <Cpu size={15} className={iconCls(isAnyMachineActive)} />
+                      <span className="flex-1 text-left">máquinas</span>
+                      <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isMachinesOpen && "rotate-180")} />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
+                    {machineBoards.map((board) => (
+                      <button
+                        key={board}
+                        onClick={() => {
+                          setCurrentBoard(board);
+                          if (isMobile) onClose();
+                        }}
+                        className={navItem(currentBoard === board)}
+                      >
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-50" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#aaa' }} />
+                        <span className="truncate">{toTitle(board)}</span>
+                      </button>
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+
+              {isCollapsed && !isMobile && machineBoards.length > 0 && (
+                <button
+                  onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
+                  className={navItem(isAnyMachineActive)}
+                  title="Máquinas"
+                >
+                  <Cpu size={15} className={iconCls(isAnyMachineActive)} />
+                </button>
+              )}
+            </nav>
+
+            {/* Tools */}
+            {(isOpen || !isCollapsed) && <p className={sectionLabel}>Herramientas</p>}
+            <nav className="px-2">
+              <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Smart Agenda" : ""}>
+                <CalendarDays size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Smart Agenda</span>}
               </button>
-              <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Log Actividad" : ""}>
-                <History size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Log Actividad</span>}
+              <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Control de Calidad" : ""}>
+                <ShieldCheck size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Control de Calidad</span>}
               </button>
-              <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Catálogos" : ""}>
-                <Box size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Catálogos</span>}
+              <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Módulo de Arte" : ""}>
+                <Palette size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Módulo de Arte</span>}
+              </button>
+              <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Insights" : ""}>
+                <Sparkles size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Insights</span>}
+              </button>
+              <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
+                <BarChart3 size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Análisis</span>}
+              </button>
+              <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Papelera" : ""}>
+                <div className="relative flex-shrink-0">
+                  <Trash2 size={15} className={iconCls(false)} />
+                  {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
+                </div>
+                {(isOpen || !isCollapsed) && <span className="flex-1 text-left">Papelera</span>}
+                {(isOpen || !isCollapsed) && trashCount > 0 && (
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
+                    {trashCount}
+                  </span>
+                )}
               </button>
             </nav>
+
+            {/* Admin */}
+            {isAdmin && (
+              <>
+                {(isOpen || !isCollapsed) && <p className={sectionLabel}>Admin</p>}
+                <nav className="px-2">
+                  <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Usuarios" : ""}>
+                    <Users size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>Usuarios</span>}
+                  </button>
+                  <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Log Actividad" : ""}>
+                    <History size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>Log Actividad</span>}
+                  </button>
+                  <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Catálogos" : ""}>
+                    <Box size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>Catálogos</span>}
+                  </button>
+                </nav>
+              </>
+            )}
           </>
         )}
       </div>

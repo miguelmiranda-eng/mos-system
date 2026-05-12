@@ -1106,6 +1106,7 @@ const Dashboard = () => {
         onShowAutomations={() => setShowAutomations(true)}
         onShowAnalytics={() => { setShowAnalytics(true); fetchAllOrders(); }}
         isAdmin={isAdmin}
+        userRole={user?.role}
         navigate={navigate}
         isDark={isDark}
         isMobile={isMobile}
