@@ -1030,7 +1030,21 @@ const ArtModule = () => {
                         );
                         if (colKey === 'screens') return (
                           <td key="screens" className="py-4 px-6 text-center">
-                            {order.screens ? <div className="mx-auto w-5 h-5 rounded bg-emerald-500 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-white" /></div> : <div className="mx-auto w-5 h-5 rounded border-2 border-slate-200"></div>}
+                            <button 
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleCellUpdate(order.order_id, 'screens', !order.screens);
+                               }}
+                               className="mx-auto w-6 h-6 rounded flex items-center justify-center transition-all hover:scale-110 active:scale-95 focus:outline-none"
+                            >
+                               {order.screens ? (
+                                 <div className="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                                    <CheckSquare className="w-3.5 h-3.5 text-white" />
+                                 </div>
+                               ) : (
+                                 <div className="w-5 h-5 rounded border-2 border-slate-200 bg-slate-50 hover:border-blue-400 hover:bg-blue-50"></div>
+                               )}
+                            </button>
                           </td>
                         );
                         if (colKey === 'artwork_status') return (
