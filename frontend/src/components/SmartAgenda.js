@@ -750,13 +750,15 @@ const SmartAgenda = () => {
         (e.location || '').toLowerCase().includes(q),
       );
     }
-    return list.map(e => ({
+    const mapped = list.map(e => ({
       ...e,
       start:  parseISO(e.start_dt),
       end:    parseISO(e.end_dt),
       allDay: e.all_day,
     }));
-  }, [events, filterCat, searchQuery]);
+    console.log("RBC Final List:", mapped);
+    return mapped;
+  }, [events, googleEvents, filterCat, searchQuery]);
 
   // ── Upcoming events list (sidebar) ─────────────────────────────────────
   const upcomingEvents = useMemo(() => {
