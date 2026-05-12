@@ -156,9 +156,10 @@ async def sync_google_events(request: Request):
     expiry = None
     if creds_data.get('expiry'):
         try:
+            # Google auth library compares with naive utcnow(), so we make it naive
             expiry = datetime.fromisoformat(creds_data['expiry'])
-            if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry.tzinfo is not None:
+                expiry = expiry.replace(tzinfo=None)
         except:
             pass
 
