@@ -108,18 +108,20 @@ async def print_locations(request: Request, ids: str = "all"):
         
         # Draw Barcode (Code128)
         try:
-            barcode = code128.Code128(name, barHeight=0.6*inch, barWidth=1.2)
-            # Create a drawing to wrap the barcode
-            d = Drawing(barcode.width, barcode.height)
-            d.add(barcode)
+            # Adjust barWidth to be slightly smaller to ensure it fits the 4-inch label
+            barcode = code128.Code128(name, barHeight=0.5*inch, barWidth=1.0)
             
             # Center the barcode drawing
             x_pos = (label_width - barcode.width) / 2
-            renderPDF.draw(d, c, x_pos, 20)
+            # Draw directly to the canvas instead of wrapping in a Drawing if possible
+            # but renderPDF.draw is fine if we center it correctly
+            d = Drawing(barcode.width, barcode.height)
+            d.add(barcode)
+            renderPDF.draw(d, c, x_pos, 25)
         except Exception as e:
             logger.error(f"Error generating barcode for {name}: {e}")
             c.setFont("Helvetica-Oblique", 8)
-            c.drawCentredString(label_width / 2, 30, "(Error al generar código de barras)")
+            c.drawCentredString(label_width / 2, 35, f"(Error: {str(e)[:30]})")
 
         c.showPage()
 
@@ -130,7 +132,7 @@ async def print_locations(request: Request, ids: str = "all"):
     return StreamingResponse(
         buffer, 
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"inline; filename={filename}"}
     )
 
 @router.post("/receiving")
