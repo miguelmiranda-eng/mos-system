@@ -449,15 +449,7 @@ const ArtModule = () => {
           </div>
 
           <div className="flex items-center gap-4 md:gap-8 ml-auto md:ml-0">
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Sep Hoy</span>
-              <span className="text-2xl md:text-3xl font-black text-emerald-600">{dailyStats.total_separations}</span>
-            </div>
-            <div className="w-px h-8 md:h-10 bg-slate-200" />
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Necks Hoy</span>
-              <span className="text-2xl md:text-3xl font-black text-blue-600">{dailyStats.total_necks}</span>
-            </div>
+            {/* Stats removed as requested - available in KPIs tab */}
           </div>
         </div>
       </header>
