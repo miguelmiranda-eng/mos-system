@@ -34,7 +34,16 @@ const ArtModule = () => {
   const [activeTab, setActiveTab] = useState('ops'); // 'ops' | 'kpis' | 'preorders'
   const [opsFilter, setOpsFilter] = useState('pending'); // 'pending' | 'worked'
   const [showPreOrderModal, setShowPreOrderModal] = useState(false);
-  const [preOrderData, setPreOrderData] = useState({ client: '', design_number: '', job_title_a: '', job_title_b: '', screens: false, sample: '', artwork_status: 'NEW', cancel_date: '' });
+  const [preOrderData, setPreOrderData] = useState({ 
+    client: '', 
+    design_number: '', 
+    betty_column: '',
+    ref_link: '',
+    screens: false, 
+    sample: '', 
+    artwork_status: 'NEW', 
+    cancel_date: '' 
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -181,7 +190,16 @@ const ArtModule = () => {
       if (res.ok) {
         toast.success("Pre-orden creada exitosamente");
         setShowPreOrderModal(false);
-        setPreOrderData({ client: '', design_number: '', job_title_a: '', job_title_b: '', screens: false, sample: '', artwork_status: 'NEW', cancel_date: '' });
+        setPreOrderData({ 
+          client: '', 
+          design_number: '', 
+          betty_column: '',
+          ref_link: '',
+          screens: false, 
+          sample: '', 
+          artwork_status: 'NEW', 
+          cancel_date: '' 
+        });
         fetchData();
       }
     } catch (err) {
