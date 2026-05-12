@@ -49,11 +49,16 @@ const ArtModule = () => {
       if (parsed.preorders && !parsed.preorders.includes('design_number')) parsed.preorders.splice(2, 0, 'design_number');
       if (parsed.preorders && !parsed.preorders.includes('screens')) parsed.preorders.splice(4, 0, 'screens');
       if (parsed.preorders && !parsed.preorders.includes('sample')) parsed.preorders.splice(5, 0, 'sample');
+      // Reemplazar job_title_a por ref_link en preordenes (campo renombrado)
+      if (parsed.preorders && parsed.preorders.includes('job_title_a') && !parsed.preorders.includes('ref_link')) {
+        parsed.preorders = parsed.preorders.map(k => k === 'job_title_a' ? 'ref_link' : k);
+      }
+      if (parsed.preorders && !parsed.preorders.includes('ref_link')) parsed.preorders.splice(-2, 0, 'ref_link');
       return parsed;
     }
     return {
       ops: ['selection', 'order_number', 'client', 'artwork_status', 'betty_column', 'job_title_a', 'job_title_b', 'cancel_date', 'actions'],
-      preorders: ['selection', 'order_number', 'design_number', 'client', 'screens', 'sample', 'artwork_status', 'betty_column', 'job_title_a', 'cancel_date', 'actions']
+      preorders: ['selection', 'order_number', 'design_number', 'client', 'screens', 'sample', 'artwork_status', 'betty_column', 'ref_link', 'cancel_date', 'actions']
     };
   });
   const [hiddenColumns, setHiddenColumns] = useState(() => {
@@ -357,7 +362,7 @@ const ArtModule = () => {
     sample: { label: 'Sample' },
     artwork_status: { label: 'Status Arte' },
     betty_column: { label: 'Betty' },
-    job_title_a: { label: 'Job Title A' },
+    ref_link: { label: 'Ref. Link' },
     cancel_date: { label: 'Cancel' },
     actions: { label: 'Acciones', align: 'center' }
   };
@@ -824,8 +829,17 @@ const ArtModule = () => {
                         if (colKey === 'betty_column') return (
                           <td key="betty_column" className="py-4 px-6"><EditableCell value={order.betty_column} field="betty_column" orderId={order.order_id} options={options.betty_columns} onUpdate={handleCellUpdate} /></td>
                         );
-                        if (colKey === 'job_title_a') return (
-                          <td key="job_title_a" className="py-4 px-6"><EditableCell value={order.job_title_a} field="job_title_a" orderId={order.order_id} onUpdate={handleCellUpdate} type="link_desc" /></td>
+                        if (colKey === 'ref_link') return (
+                          <td key="ref_link" className="py-4 px-6">
+                            {order.ref_link ? (
+                              <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline">
+                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                <span className="truncate max-w-[120px]">Ver Referencia</span>
+                              </a>
+                            ) : (
+                              <EditableCell value={order.ref_link} field="ref_link" orderId={order.order_id} onUpdate={handleCellUpdate} type="link" />
+                            )}
+                          </td>
                         );
                         if (colKey === 'cancel_date') return (
                           <td key="cancel_date" className="py-4 px-6"><EditableCell value={order.cancel_date} field="cancel_date" orderId={order.order_id} onUpdate={handleCellUpdate} type="date" /></td>
@@ -1089,16 +1103,16 @@ const ArtModule = () => {
 
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <FileText className="w-3 h-3" /> Job Title / Diseño
+                  <ExternalLink className="w-3 h-3" /> Ref. Link <span className="text-slate-300 font-normal">(Temporal)</span>
                 </label>
                 <input 
-                  type="text"
-                  placeholder="Nombre del diseño o descripción..."
+                  type="url"
+                  placeholder="https://drive.google.com/..."
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl p-3 text-sm font-bold outline-none focus:border-amber-500"
-                  value={preOrderData.job_title_a}
-                  onChange={(e) => setPreOrderData({...preOrderData, job_title_a: e.target.value})}
-                  required
+                  value={preOrderData.ref_link || ''}
+                  onChange={(e) => setPreOrderData({...preOrderData, ref_link: e.target.value})}
                 />
+                <p className="text-[9px] font-bold text-slate-400/70 uppercase">Solo visible en Pre-Órdenes — no pasa a la orden real</p>
               </div>
 
               <div className="grid grid-cols-2 gap-6">

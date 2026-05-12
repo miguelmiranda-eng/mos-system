@@ -263,8 +263,7 @@ async def create_preorder(request: Request, data: dict):
         "order_number": order_number,
         "client": data.get("client", "N/A"),
         "design_number": data.get("design_number", "").strip().upper(),
-        "job_title_a": data.get("job_title_a", ""),
-        "job_title_b": data.get("job_title_b", ""),
+        "ref_link": data.get("ref_link", ""),   # Temporal: solo visible en pre-ordenes
         "screens": data.get("screens", False),
         "sample": data.get("sample", ""),
         "artwork_status": data.get("artwork_status", "NEW"),
