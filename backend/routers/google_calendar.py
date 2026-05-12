@@ -146,52 +146,11 @@ async def google_disconnect(request: Request):
 async def sync_google_events(request: Request):
     """Fetches events from Google and merges them with local view (doesn't persist to local DB for now, just proxy)."""
     user = await require_auth(request)
-    token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
-    
-    if not token_doc:
-        return {"events": [], "connected": False}
-    
-    creds_data = token_doc["credentials"]
-    
-    # Parse expiry back to datetime if it exists
-    expiry = None
-    if creds_data.get('expiry'):
-        try:
-            # Google auth library compares with naive utcnow(), so we make it naive
-            expiry = datetime.fromisoformat(creds_data['expiry'])
-            if expiry.tzinfo is not None:
-                expiry = expiry.replace(tzinfo=None)
-        except:
-            pass
-
-    creds = Credentials(
-        token=creds_data['token'],
-        refresh_token=creds_data.get('refresh_token'),
-        token_uri=creds_data['token_uri'],
-        client_id=creds_data['client_id'],
-        client_secret=creds_data['client_secret'],
-        scopes=creds_data['scopes'],
-        expiry=expiry
-    )
-    
-    try:
-        # Refresh token if expired
-        if creds.expired and creds.refresh_token:
-            creds.refresh(GoogleRequest())
-            # Update stored tokens
-            creds_data['token'] = creds.token
-            creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
-            await db.user_google_tokens.update_one(
-                {"user_id": user["user_id"]},
-                {"$set": {"credentials": creds_data, "updated_at": datetime.now(timezone.utc).isoformat()}}
-            )
-    except Exception as e:
-        # If refresh fails, user might need to re-connect
-        return {"events": [], "connected": True, "error": f"Token refresh failed: {str(e)}", "needs_reconnect": True}
+    service = await get_google_service(user["user_id"])
+    if not service:
+        return {"events": [], "connected": True, "error": "Could not connect to Google"}
 
     try:
-        service = build('calendar', 'v3', credentials=creds)
-        
         # Get events from last 30 days and next 90 days
         time_min = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace('+00:00', 'Z')
         
@@ -228,6 +187,8 @@ async def sync_google_events(request: Request):
             "is_google": True,
             "html_link": ge.get('htmlLink')
         })
+        
+    return {"events": formatted_events, "connected": True, "count": len(formatted_events)}
         
 async def get_google_service(user_id: str):
     """Helper to get an authenticated Google Calendar service for a user."""
