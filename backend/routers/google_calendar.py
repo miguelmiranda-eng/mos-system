@@ -151,39 +151,58 @@ async def sync_google_events(request: Request):
         return {"events": [], "connected": False}
     
     creds_data = token_doc["credentials"]
+    
+    # Parse expiry back to datetime if it exists
+    expiry = None
+    if creds_data.get('expiry'):
+        try:
+            expiry = datetime.fromisoformat(creds_data['expiry'])
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+        except:
+            pass
+
     creds = Credentials(
         token=creds_data['token'],
         refresh_token=creds_data.get('refresh_token'),
         token_uri=creds_data['token_uri'],
         client_id=creds_data['client_id'],
         client_secret=creds_data['client_secret'],
-        scopes=creds_data['scopes']
+        scopes=creds_data['scopes'],
+        expiry=expiry
     )
     
-    # Refresh token if expired
-    if creds.expired and creds.refresh_token:
-        creds.refresh(GoogleRequest())
-        # Update stored tokens
-        creds_data['token'] = creds.token
-        creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
-        await db.user_google_tokens.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {"credentials": creds_data, "updated_at": datetime.now(timezone.utc).isoformat()}}
-        )
+    try:
+        # Refresh token if expired
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            # Update stored tokens
+            creds_data['token'] = creds.token
+            creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
+            await db.user_google_tokens.update_one(
+                {"user_id": user["user_id"]},
+                {"$set": {"credentials": creds_data, "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+    except Exception as e:
+        # If refresh fails, user might need to re-connect
+        return {"events": [], "connected": True, "error": f"Token refresh failed: {str(e)}", "needs_reconnect": True}
 
-    service = build('calendar', 'v3', credentials=creds)
-    
-    # Get events from last 30 days and next 60 days
-    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-    events_result = service.events().list(
-        calendarId='primary', 
-        timeMin=now,
-        maxResults=50, 
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
-    
-    g_events = events_result.get('items', [])
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        
+        # Get events from last 30 days and next 60 days
+        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        events_result = service.events().list(
+            calendarId='primary', 
+            timeMin=now,
+            maxResults=50, 
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        g_events = events_result.get('items', [])
+    except Exception as e:
+        return {"events": [], "connected": True, "error": f"Google API call failed: {str(e)}"}
     
     # Transform to our internal format
     formatted_events = []
