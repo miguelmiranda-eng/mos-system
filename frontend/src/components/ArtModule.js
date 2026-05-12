@@ -813,7 +813,15 @@ const ArtModule = () => {
                           </td>
                         );
                         if (colKey === 'design_number') return (
-                          <td key="design_number" className="py-4 px-6 text-[11px] font-bold text-slate-700 bg-amber-50/50 uppercase tracking-tight">{order.design_number || '---'}</td>
+                          <td key="design_number" className="py-4 px-6 bg-amber-50/30">
+                            <EditableCell 
+                              value={order.design_number} 
+                              field="design_number" 
+                              orderId={order.order_id} 
+                              onUpdate={handleCellUpdate} 
+                              className="font-black text-slate-800 uppercase"
+                            />
+                          </td>
                         );
                         if (colKey === 'client') return (
                           <td key="client" className="py-4 px-6 text-[11px] font-bold text-slate-500 uppercase tracking-tight max-w-[120px] truncate">{order.client}</td>
@@ -848,14 +856,14 @@ const ArtModule = () => {
                         );
                         if (colKey === 'ref_link') return (
                           <td key="ref_link" className="py-4 px-6">
-                            {order.ref_link ? (
-                              <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline">
-                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                <span className="truncate max-w-[120px]">Ver Referencia</span>
-                              </a>
-                            ) : (
-                              <EditableCell value={order.ref_link} field="ref_link" orderId={order.order_id} onUpdate={handleCellUpdate} type="link" />
-                            )}
+                            <div className="flex items-center gap-2">
+                              <EditableCell value={order.ref_link} field="ref_link" orderId={order.order_id} onUpdate={handleCellUpdate} placeholder="+ Link" />
+                              {order.ref_link && (
+                                <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="p-1.5 bg-slate-100 hover:bg-amber-100 text-slate-400 hover:text-amber-600 rounded-lg transition-colors">
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
                           </td>
                         );
                         if (colKey === 'cancel_date') return (

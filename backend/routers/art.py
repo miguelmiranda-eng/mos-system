@@ -94,6 +94,7 @@ async def get_pending_art(request: Request, status: str = 'pending'):
         "order_id": 1, "order_number": 1, "client": 1, "board": 1,
         "art_sep_status": 1, "art_neck_status": 1, "priority": 1, "due_date": 1,
         "cancel_date": 1, "artwork_status": 1, "betty_column": 1, 
+        "design_number": 1, "ref_link": 1, "screens": 1, "sample": 1,
         "job_title_a": 1, "job_title_b": 1, "is_preorder": 1,
         "_id": 0
     }).sort([("created_at", -1)]).limit(500)
