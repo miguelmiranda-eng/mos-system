@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Palette, Search, Clock, CheckCircle2, AlertCircle, 
   ChevronRight, ArrowLeft, Loader2, Tag, Layers, BarChart2,
-  History, TrendingUp, BarChart3, Calendar, Plus, User, FileText, X
+  History, TrendingUp, BarChart3, Calendar, Plus, User, FileText, X, ExternalLink
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
