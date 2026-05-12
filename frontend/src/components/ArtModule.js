@@ -48,6 +48,7 @@ const ArtModule = () => {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [options, setOptions] = useState({});
+  const [screensFilter, setScreensFilter] = useState('all'); // all, ready, pending
   const [selectedOrders, setSelectedOrders] = useState(new Set());
   const [draggedCol, setDraggedCol] = useState(null);
   const [columnOrder, setColumnOrder] = useState(() => {
@@ -787,13 +788,37 @@ const ArtModule = () => {
               <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Gestión de Pre-Órdenes (v2)</h1>
               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Adelanta el arte de trabajos que aún no tienen número de orden oficial.</p>
             </div>
-            <button 
-              onClick={() => setShowPreOrderModal(true)}
-              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-amber-500/20 transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              Nueva Pre-Orden
-            </button>
+            <div className="flex items-center gap-4">
+              {/* SCREENS FILTER TOGGLE */}
+              <div className="flex bg-slate-100 rounded-xl p-1 border border-slate-200">
+                <button 
+                  onClick={() => setScreensFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
+                >
+                  Todos
+                </button>
+                <button 
+                  onClick={() => setScreensFilter('ready')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'ready' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Listo (✅)
+                </button>
+                <button 
+                  onClick={() => setScreensFilter('pending')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Pendiente (⬜)
+                </button>
+              </div>
+
+              <button 
+                onClick={() => setShowPreOrderModal(true)}
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-amber-500/20 transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                Nueva Pre-Orden
+              </button>
+            </div>
           </div>
 
           <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
@@ -834,7 +859,14 @@ const ArtModule = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {pendingOrders.filter(o => o.is_preorder).map(order => (
+                  {pendingOrders
+                    .filter(o => o.is_preorder)
+                    .filter(o => {
+                      if (screensFilter === 'ready') return o.screens;
+                      if (screensFilter === 'pending') return !o.screens;
+                      return true;
+                    })
+                    .map(order => (
                     <tr key={order.order_id} className={`hover:bg-amber-50/20 transition-colors group ${selectedOrders.has(order.order_id) ? 'bg-amber-50' : ''}`}>
                       {columnOrder.preorders.filter(key => !hiddenColumns.includes(key)).map(colKey => {
                         if (colKey === 'selection') return (
@@ -967,7 +999,29 @@ const ArtModule = () => {
               </h1>
               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Órdenes que ya han pasado por arte y están listas para marcos.</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4">
+              {/* SCREENS FILTER TOGGLE */}
+              <div className="flex bg-slate-100 rounded-xl p-1 border border-slate-200">
+                <button 
+                  onClick={() => setScreensFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
+                >
+                  Todos
+                </button>
+                <button 
+                  onClick={() => setScreensFilter('ready')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'ready' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Listo (✅)
+                </button>
+                <button 
+                  onClick={() => setScreensFilter('pending')}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Pendiente (⬜)
+                </button>
+              </div>
+
               <div className="px-4 py-2 bg-blue-50 rounded-xl border border-blue-100 flex items-center gap-2">
                 <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Total en Cuadros</span>
                 <span className="text-lg font-black text-blue-700">{pendingOrders.length}</span>
@@ -1003,7 +1057,13 @@ const ArtModule = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {pendingOrders.map(order => (
+                  {pendingOrders
+                    .filter(o => {
+                      if (screensFilter === 'ready') return o.screens;
+                      if (screensFilter === 'pending') return !o.screens;
+                      return true;
+                    })
+                    .map(order => (
                     <tr key={order.order_id} className={`hover:bg-blue-50/20 transition-colors group ${selectedOrders.has(order.order_id) ? 'bg-blue-50' : ''}`}>
                       {columnOrder.preorders.filter(key => !hiddenColumns.includes(key)).map(colKey => {
                         if (colKey === 'selection') return (
