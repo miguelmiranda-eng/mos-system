@@ -206,6 +206,8 @@ async def sync_google_events(request: Request):
     except Exception as e:
         return {"events": [], "connected": True, "error": f"Google API call failed: {str(e)}"}
     
+    logging.info(f"GOOGLE_CALENDAR: Found {len(g_events)} events for user {user['user_id']}")
+    
     # Transform to our internal format
     formatted_events = []
     for ge in g_events:
@@ -220,10 +222,112 @@ async def sync_google_events(request: Request):
             "end_dt": end,
             "all_day": 'date' in ge['start'],
             "category": "google",
-            "color": "#4285F4", # Google Blue
+            "color": "#4285F4",
             "location": ge.get('location', ''),
             "is_google": True,
             "html_link": ge.get('htmlLink')
         })
         
-    return {"events": formatted_events, "connected": True}
+async def get_google_service(user_id: str):
+    """Helper to get an authenticated Google Calendar service for a user."""
+    token_doc = await db.user_google_tokens.find_one({"user_id": user_id})
+    if not token_doc:
+        return None
+    
+    creds_data = token_doc["credentials"]
+    expiry = None
+    if creds_data.get('expiry'):
+        try:
+            expiry = datetime.fromisoformat(creds_data['expiry']).replace(tzinfo=None)
+        except: pass
+
+    creds = Credentials(
+        token=creds_data['token'],
+        refresh_token=creds_data.get('refresh_token'),
+        token_uri=creds_data['token_uri'],
+        client_id=creds_data['client_id'],
+        client_secret=creds_data['client_secret'],
+        scopes=creds_data['scopes'],
+        expiry=expiry
+    )
+
+    try:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            creds_data['token'] = creds.token
+            creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
+            await db.user_google_tokens.update_one(
+                {"user_id": user_id},
+                {"$set": {"credentials": creds_data, "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+        return build('calendar', 'v3', credentials=creds)
+    except:
+        return None
+
+async def create_google_event(user_id: str, event_data: dict):
+    """Pushes a new MOS event to Google Calendar."""
+    service = await get_google_service(user_id)
+    if not service: return None
+    
+    g_event = {
+        'summary': event_data['title'],
+        'location': event_data.get('location', ''),
+        'description': event_data.get('description', ''),
+        'start': {
+            'dateTime': event_data['start_dt'] + ":00" if "T" in event_data['start_dt'] else None,
+            'date': event_data['start_dt'] if "T" not in event_data['start_dt'] else None,
+            'timeZone': 'UTC',
+        },
+        'end': {
+            'dateTime': event_data['end_dt'] + ":00" if "T" in event_data['end_dt'] else None,
+            'date': event_data['end_dt'] if "T" not in event_data['end_dt'] else None,
+            'timeZone': 'UTC',
+        },
+        'reminders': {'useDefault': True},
+    }
+    
+    try:
+        created = service.events().insert(calendarId='primary', body=g_event).execute()
+        return created.get('id')
+    except Exception as e:
+        print(f"Error creating google event: {e}")
+        return None
+
+async def update_google_event(user_id: str, google_event_id: str, event_data: dict):
+    """Updates an existing Google event from MOS."""
+    service = await get_google_service(user_id)
+    if not service or not google_event_id: return False
+    
+    g_event = {
+        'summary': event_data.get('title'),
+        'location': event_data.get('location', ''),
+        'description': event_data.get('description', ''),
+        'start': {
+            'dateTime': event_data['start_dt'] + ":00" if "T" in event_data['start_dt'] else None,
+            'date': event_data['start_dt'] if "T" not in event_data['start_dt'] else None,
+            'timeZone': 'UTC',
+        },
+        'end': {
+            'dateTime': event_data['end_dt'] + ":00" if "T" in event_data['end_dt'] else None,
+            'date': event_data['end_dt'] if "T" not in event_data['end_dt'] else None,
+            'timeZone': 'UTC',
+        },
+    }
+    # Remove None values
+    g_event = {k: v for k, v in g_event.items() if v is not None}
+
+    try:
+        service.events().patch(calendarId='primary', eventId=google_event_id, body=g_event).execute()
+        return True
+    except:
+        return False
+
+async def delete_google_event(user_id: str, google_event_id: str):
+    """Deletes a Google event when removed from MOS."""
+    service = await get_google_service(user_id)
+    if not service or not google_event_id: return False
+    try:
+        service.events().delete(calendarId='primary', eventId=google_event_id).execute()
+        return True
+    except:
+        return False

@@ -17,11 +17,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 app = FastAPI()
 
-# CORS
+# CORS - Specific origins are required when allow_credentials is True
+ALLOWED_ORIGINS = [
+    "https://mosdatabase-frontend.k9pirj.easypanel.host",
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

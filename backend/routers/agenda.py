@@ -5,6 +5,7 @@ from typing import Optional
 from deps import db, require_auth, log_activity
 from datetime import datetime, timezone
 import uuid
+from routers.google_calendar import create_google_event, update_google_event, delete_google_event
 
 router = APIRouter(prefix="/api/agenda")
 
@@ -142,6 +143,13 @@ async def create_event(request: Request, data: AgendaEventCreate):
         "category":   data.category,
         "visibility": data.visibility,
     })
+
+    # Sync to Google Calendar if connected
+    g_id = await create_google_event(user["user_id"], event)
+    if g_id:
+        await db.agenda_events.update_one({"event_id": event["event_id"]}, {"$set": {"google_event_id": g_id}})
+        event["google_event_id"] = g_id
+
     return event
 
 
@@ -170,6 +178,11 @@ async def update_event(request: Request, event_id: str, data: AgendaEventUpdate)
         "event_id":      event_id,
         "changed_fields": list(updates.keys()),
     })
+
+    # Sync update to Google
+    if existing.get("google_event_id"):
+        await update_google_event(user["user_id"], existing["google_event_id"], updated)
+
     return updated
 
 
@@ -188,6 +201,11 @@ async def delete_event(request: Request, event_id: str):
         "event_id": event_id,
         "title":    existing.get("title"),
     })
+
+    # Sync deletion to Google
+    if existing.get("google_event_id"):
+        await delete_google_event(user["user_id"], existing["google_event_id"])
+
     return {"status": "deleted", "event_id": event_id}
 
 
