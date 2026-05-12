@@ -99,12 +99,12 @@ async def print_locations(request: Request, ids: str = "all"):
         zone = loc.get("zone", "N/A").upper()
         
         # Draw Location Name (Large)
-        c.setFont("Helvetica-Bold", 40)
-        c.drawCentredString(label_width / 2, label_height - 60, name)
+        c.setFont("Helvetica-Bold", 45)
+        c.drawCentredString(label_width / 2, label_height - 50, name)
         
         # Draw Zone (Small)
-        c.setFont("Helvetica", 10)
-        c.drawCentredString(label_width / 2, label_height - 85, f"ZONA: {zone}")
+        c.setFont("Helvetica", 12)
+        c.drawCentredString(label_width / 2, label_height - 75, f"ZONA: {zone}")
         
         # Draw Barcode (Code128)
         try:
@@ -114,8 +114,8 @@ async def print_locations(request: Request, ids: str = "all"):
             # Center the barcode
             x_pos = (label_width - barcode.width) / 2
             
-            # Draw directly to canvas
-            barcode.drawOn(c, x_pos, 25)
+            # Draw directly to canvas (Y position lowered to 15 to avoid overlap)
+            barcode.drawOn(c, x_pos, 15)
         except Exception as e:
             logger.error(f"Error generating barcode for {name}: {e}")
             c.setFont("Helvetica-Oblique", 8)
