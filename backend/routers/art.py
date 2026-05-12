@@ -87,10 +87,10 @@ async def get_pending_art(request: Request, status: str = 'pending'):
             "is_preorder": True
         }
     else:
-        # Default: pending. Ahora mostramos TODO lo que no esté en boards excluidos,
-        # sin importar si ya se marcó sep o neck, para que no desaparezcan.
+        # Default: pending. Mostramos lo que no esté en boards excluidos,
+        # EXCLUYENDO también el tablero de SCREENS para que no se mezcle.
         query = {
-            "board": {"$nin": excluded_boards}
+            "board": {"$nin": excluded_boards + ["SCREENS"]}
         }
 
     cursor = db.orders.find(query, {

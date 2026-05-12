@@ -96,11 +96,12 @@ const ArtModule = () => {
     } finally {
       setLoading(false);
     }
-  }, [opsFilter]);
+  }, [opsFilter, activeTab]);
 
   useEffect(() => {
+    setPendingOrders([]); // Clear stale data before fetching new tab data
     fetchData();
-  }, [fetchData, activeTab]); // Re-fetch when tab changes
+  }, [fetchData, activeTab]);
 
   const handleSearch = async (val) => {
     setSearchQuery(val);
