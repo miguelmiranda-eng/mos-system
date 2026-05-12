@@ -1066,7 +1066,7 @@ const PickingModule = () => {
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
-  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: 'production', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
+  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: 'production', board_category: 'UNSET', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
   const [form, setForm] = useState(emptyForm);
 
   const loadTickets = useCallback(() => { fetcher('/pick-tickets').then(setTickets).catch(() => {}); }, []);
@@ -1127,7 +1127,7 @@ const PickingModule = () => {
       order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
       style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
       assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '', 
-      destination: t.destination || 'production', sizes: sizesObj
+      destination: t.destination || 'production', board_category: t.board_category || 'UNSET', sizes: sizesObj
     });
     setSizeLocations(t.size_locations || {});
     if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
