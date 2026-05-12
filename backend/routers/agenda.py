@@ -5,7 +5,7 @@ from typing import Optional
 from deps import db, require_auth, log_activity
 from datetime import datetime, timezone
 import uuid
-from routers.google_calendar import create_google_event, update_google_event, delete_google_event
+from .google_calendar import create_google_event, update_google_event, delete_google_event
 
 router = APIRouter(prefix="/api/agenda")
 

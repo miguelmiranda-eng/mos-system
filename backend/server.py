@@ -68,10 +68,18 @@ import traceback
 async def global_exception_handler(request: _Request, exc: Exception):
     error_detail = traceback.format_exc()
     logging.error(f"UNHANDLED 500 on {request.method} {request.url}:\n{error_detail}")
+    
+    # Use the request origin if it's in our allowed list, otherwise default to the main frontend
+    origin = request.headers.get("origin")
+    allowed_origin = origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0]
+    
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc), "type": type(exc).__name__},
-        headers={"Access-Control-Allow-Origin": "*"}
+        headers={
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Credentials": "true"
+        }
     )
 
 # Import and register routers
