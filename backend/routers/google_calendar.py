@@ -7,6 +7,9 @@ from google.auth.transport.requests import Request as GoogleRequest
 import os
 import json
 from datetime import datetime, timezone
+
+# Allow scope changes from Google (avoids the warning error you saw)
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 from deps import db, require_auth, log_activity
 
 router = APIRouter(prefix="/api/agenda/google")
