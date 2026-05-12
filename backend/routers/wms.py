@@ -108,16 +108,14 @@ async def print_locations(request: Request, ids: str = "all"):
         
         # Draw Barcode (Code128)
         try:
-            # Adjust barWidth to be slightly smaller to ensure it fits the 4-inch label
+            # Code128 widget from reportlab.graphics.barcode
             barcode = code128.Code128(name, barHeight=0.5*inch, barWidth=1.0)
             
-            # Center the barcode drawing
+            # Center the barcode
             x_pos = (label_width - barcode.width) / 2
-            # Draw directly to the canvas instead of wrapping in a Drawing if possible
-            # but renderPDF.draw is fine if we center it correctly
-            d = Drawing(barcode.width, barcode.height)
-            d.add(barcode)
-            renderPDF.draw(d, c, x_pos, 25)
+            
+            # Draw directly to canvas
+            barcode.drawOn(c, x_pos, 25)
         except Exception as e:
             logger.error(f"Error generating barcode for {name}: {e}")
             c.setFont("Helvetica-Oblique", 8)
