@@ -150,6 +150,8 @@ async def create_event(request: Request, data: AgendaEventCreate):
         await db.agenda_events.update_one({"event_id": event["event_id"]}, {"$set": {"google_event_id": g_id}})
         event["google_event_id"] = g_id
 
+    # Remove MongoDB internal _id which is not JSON serializable before returning
+    event.pop("_id", None)
     return event
 
 
