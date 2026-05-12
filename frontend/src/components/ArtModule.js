@@ -855,12 +855,27 @@ const ArtModule = () => {
                           <td key="betty_column" className="py-4 px-6"><EditableCell value={order.betty_column} field="betty_column" orderId={order.order_id} options={options.betty_columns} onUpdate={handleCellUpdate} /></td>
                         );
                         if (colKey === 'ref_link') return (
-                          <td key="ref_link" className="py-4 px-6">
+                          <td key="ref_link" className="py-4 px-6 min-w-[150px]">
                             <div className="flex items-center gap-2">
-                              <EditableCell value={order.ref_link} field="ref_link" orderId={order.order_id} onUpdate={handleCellUpdate} placeholder="+ Link" />
+                              <div className="flex-1">
+                                <EditableCell 
+                                  value={order.ref_link} 
+                                  field="ref_link" 
+                                  orderId={order.order_id} 
+                                  onUpdate={handleCellUpdate} 
+                                  placeholder="+ Link" 
+                                  className="text-[10px] text-slate-400 italic truncate max-w-[80px]"
+                                />
+                              </div>
                               {order.ref_link && (
-                                <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="p-1.5 bg-slate-100 hover:bg-amber-100 text-slate-400 hover:text-amber-600 rounded-lg transition-colors">
-                                  <ExternalLink className="w-3.5 h-3.5" />
+                                <a 
+                                  href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="flex items-center gap-1.5 px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-[9px] font-black uppercase tracking-tighter shadow-sm transition-all active:scale-95"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  Abrir
                                 </a>
                               )}
                             </div>
