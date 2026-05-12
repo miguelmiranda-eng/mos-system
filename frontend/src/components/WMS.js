@@ -1229,7 +1229,10 @@ const PickingModule = () => {
     const hasSizes = Object.values(sizes).some(v => v > 0);
     const pickedSizes = ticket.picked_sizes || {};
     const totalReq = Object.values(sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
-    const totalPkd = Object.values(pickedSizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
+    const totalPkd = Object.values(pickedSizes).reduce((s, v) => {
+      const val = typeof v === 'object' && v !== null ? v.total : v;
+      return s + (parseInt(val) || 0);
+    }, 0);
     const pct = totalReq > 0 ? Math.round((totalPkd / totalReq) * 100) : 0;
     
     const statusColors = {
