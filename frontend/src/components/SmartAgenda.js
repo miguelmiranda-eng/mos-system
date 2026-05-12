@@ -698,6 +698,14 @@ const SmartAgenda = () => {
 
   useEffect(() => {
     checkGoogleStatus();
+    
+    // Auto-sync every 60 seconds
+    const interval = setInterval(() => {
+      console.log("Auto-syncing events...");
+      loadEvents();
+      if (googleStatus.connected) fetchGoogleEvents();
+    }, 60000);
+
     // Check if we just came back from a redirect
     const params = new URLSearchParams(window.location.search);
     if (params.get('google_connected')) {
@@ -705,7 +713,9 @@ const SmartAgenda = () => {
       // Clean URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [checkGoogleStatus]);
+
+    return () => clearInterval(interval);
+  }, [checkGoogleStatus, loadEvents, fetchGoogleEvents, googleStatus.connected]);
 
   const handleConnectGoogle = async () => {
     try {
