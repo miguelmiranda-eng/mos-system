@@ -606,6 +606,7 @@ import QCDashboard from "./components/QCDashboard";
 import InsightsDashboard from "./components/InsightsDashboard";
 import BackupCenter from "./components/BackupCenter";
 import ArtModule from "./components/ArtModule";
+import SmartAgenda from "./components/SmartAgenda";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -763,6 +764,11 @@ function AppRouter() {
         <AdminRoute>
           <BackupCenter />
         </AdminRoute>
+      } />
+      <Route path="/agenda" element={
+        <ProtectedRoute>
+          <SmartAgenda />
+        </ProtectedRoute>
       } />
     </Routes>
   );

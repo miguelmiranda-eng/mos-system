@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Palette,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -173,6 +174,10 @@ const Sidebar = ({
         {/* Tools */}
         {(isOpen || !isCollapsed) && <p className={sectionLabel}>Herramientas</p>}
         <nav className="px-2">
+          <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Smart Agenda" : ""}>
+            <CalendarDays size={15} className={iconCls(false)} />
+            {(isOpen || !isCollapsed) && <span>Smart Agenda</span>}
+          </button>
           <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Control de Calidad" : ""}>
             <ShieldCheck size={15} className={iconCls(false)} />
             {(isOpen || !isCollapsed) && <span>Control de Calidad</span>}
