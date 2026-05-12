@@ -565,7 +565,18 @@ const PutawayModule = () => {
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-bold text-foreground flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> {t('wms_locations')} ({locations.length})</div>
-            <button onClick={() => setShowNewLoc(!showNewLoc)} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('add')}</button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}
+                className="text-[10px] font-black uppercase tracking-widest text-emerald-500 hover:text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-lg transition-all"
+                title="Imprimir todas las ubicaciones"
+              >
+                <Printer className="w-3 h-3" /> Imprimir Todo
+              </button>
+              <button onClick={() => setShowNewLoc(!showNewLoc)} className="text-xs text-primary hover:underline flex items-center gap-1">
+                <Plus className="w-3 h-3" /> {t('add')}
+              </button>
+            </div>
           </div>
           {showNewLoc && (
             <div className="flex gap-2">
@@ -574,11 +585,20 @@ const PutawayModule = () => {
               <button onClick={handleCreateLoc} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm">{t('wms_create_btn')}</button>
             </div>
           )}
-          <div className="max-h-40 overflow-auto space-y-1">
+          <div className="max-h-40 overflow-auto space-y-1 pr-1 custom-scrollbar">
             {locations.map(l => (
-              <div key={l.location_id} className="flex items-center justify-between px-2 py-1 text-xs bg-secondary/50 rounded">
-                <span className="font-mono font-medium">{l.name}</span>
-                <span className="text-muted-foreground">{l.zone}</span>
+              <div key={l.location_id} className="flex items-center justify-between px-2 py-1.5 text-xs bg-secondary/50 rounded group hover:bg-secondary transition-colors">
+                <div className="flex flex-col">
+                  <span className="font-mono font-bold text-foreground">{l.name}</span>
+                  <span className="text-[9px] text-muted-foreground uppercase font-black tracking-tighter">{l.zone || 'SIN ZONA'}</span>
+                </div>
+                <button 
+                  onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
+                  className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-primary/20 rounded text-primary transition-all"
+                  title="Imprimir etiqueta"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                </button>
               </div>
             ))}
           </div>

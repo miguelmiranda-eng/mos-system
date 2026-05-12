@@ -65,6 +65,74 @@ async def delete_location(location_id: str, request: Request):
         raise HTTPException(404, "Ubicacion no encontrada")
     return {"message": "Ubicacion eliminada"}
 
+@router.get("/locations/print")
+async def print_locations(request: Request, ids: str = "all"):
+    """Generate a PDF for Zebra Label Printers (4x2 inch) for WMS locations."""
+    await require_auth(request)
+    
+    from reportlab.lib.pagesizes import landscape
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+    from reportlab.graphics.barcode import code128
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics import renderPDF
+
+    # 1. Fetch locations
+    if ids == "all":
+        locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
+    else:
+        id_list = ids.split(",")
+        locs = await db.wms_locations.find({"location_id": {"$in": id_list}}, {"_id": 0}).sort("name", 1).to_list(3000)
+
+    if not locs:
+        raise HTTPException(404, "No se encontraron ubicaciones para imprimir")
+
+    # 2. Create PDF buffer
+    buffer = io.BytesIO()
+    # Zebra labels are usually 4x2 inches
+    label_width = 4 * inch
+    label_height = 2 * inch
+    c = canvas.Canvas(buffer, pagesize=(label_width, label_height))
+
+    for loc in locs:
+        name = loc.get("name", "N/A").upper()
+        zone = loc.get("zone", "N/A").upper()
+        
+        # Draw Location Name (Large)
+        c.setFont("Helvetica-Bold", 40)
+        c.drawCentredString(label_width / 2, label_height - 60, name)
+        
+        # Draw Zone (Small)
+        c.setFont("Helvetica", 10)
+        c.drawCentredString(label_width / 2, label_height - 85, f"ZONA: {zone}")
+        
+        # Draw Barcode (Code128)
+        try:
+            barcode = code128.Code128(name, barHeight=0.6*inch, barWidth=1.2)
+            # Create a drawing to wrap the barcode
+            d = Drawing(barcode.width, barcode.height)
+            d.add(barcode)
+            
+            # Center the barcode drawing
+            x_pos = (label_width - barcode.width) / 2
+            renderPDF.draw(d, c, x_pos, 20)
+        except Exception as e:
+            logger.error(f"Error generating barcode for {name}: {e}")
+            c.setFont("Helvetica-Oblique", 8)
+            c.drawCentredString(label_width / 2, 30, "(Error al generar código de barras)")
+
+        c.showPage()
+
+    c.save()
+    buffer.seek(0)
+    
+    filename = f"Etiquetas_WMS_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        buffer, 
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 @router.post("/receiving")
 async def create_receiving(request: Request):
     user = await require_auth(request)
