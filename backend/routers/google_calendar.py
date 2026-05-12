@@ -6,6 +6,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 import os
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 # Allow scope changes from Google (avoids the warning error you saw)
