@@ -2798,31 +2798,33 @@ const LocationsModule = () => {
                       key={l.location_id} 
                       className={`group p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:border-primary/40 transition-all hover:scale-[1.02] hover:shadow-xl relative flex flex-col ${activeTab === 'system' ? 'border-l-4 border-l-indigo-500/50' : ''}`}
                     >
-                      {/* Acciones */}
-                      <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                        <button 
-                          onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
-                          className="p-2 text-muted-foreground hover:text-primary transition-all"
-                          title="Imprimir etiqueta"
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(l.location_id, l.name)}
-                          className="p-2 text-muted-foreground hover:text-red-500 transition-all"
-                          title="Eliminar ubicación"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isEmpty ? 'bg-secondary/20 text-muted-foreground/30' : 'bg-primary/10 text-primary shadow-inner shadow-primary/10'}`}>
-                          <MapPin className="w-6 h-6" />
+                      <div className="flex items-start justify-between mb-4 gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-12 h-12 flex-shrink-0 rounded-2xl flex items-center justify-center transition-all ${isEmpty ? 'bg-secondary/20 text-muted-foreground/30' : 'bg-primary/10 text-primary shadow-inner shadow-primary/10'}`}>
+                            <MapPin className="w-6 h-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-mono font-black text-xl tracking-tighter text-foreground leading-none truncate">{l.name}</div>
+                            <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-0.5">{zone}</div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="font-mono font-black text-xl tracking-tighter text-foreground leading-none truncate">{l.name}</div>
-                          <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-0.5">{zone}</div>
+
+                        {/* Acciones - Ahora integradas en el flex para no encimarse */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 pt-1">
+                          <button 
+                            onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
+                            className="p-2 text-muted-foreground hover:text-primary transition-all"
+                            title="Imprimir etiqueta"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => handleDelete(l.location_id, l.name)}
+                            className="p-2 text-muted-foreground hover:text-red-500 transition-all"
+                            title="Eliminar ubicación"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
