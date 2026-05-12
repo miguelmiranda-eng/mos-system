@@ -79,8 +79,9 @@ const ArtModule = () => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      const currentStatus = activeTab === 'screens' ? 'ready_for_screens' : opsFilter;
       const [pendingRes, statsRes, historyRes, optionsRes] = await Promise.all([
-        fetch(`${API}/art/pending?status=${opsFilter}`, { credentials: 'include' }),
+        fetch(`${API}/art/pending?status=${currentStatus}`, { credentials: 'include' }),
         fetch(`${API}/art/stats/daily`, { credentials: 'include' }),
         fetch(`${API}/art/stats/history`, { credentials: 'include' }),
         fetch(`${API}/config/options`, { credentials: 'include' })
@@ -99,7 +100,7 @@ const ArtModule = () => {
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, activeTab]); // Re-fetch when tab changes
 
   const handleSearch = async (val) => {
     setSearchQuery(val);
@@ -204,6 +205,32 @@ const ArtModule = () => {
       }
     } catch (err) {
       toast.error("Error al crear pre-orden");
+    }
+  };
+
+  const handleBulkMoveToScreens = async () => {
+    const ids = Array.from(selectedOrders);
+    if (ids.length === 0) return;
+
+    if (!window.confirm(`¿Mover ${ids.length} órdenes seleccionadas a LISTO PARA CUADROS?`)) return;
+
+    setActionLoading('bulk-move');
+    try {
+      await Promise.all(ids.map(id => 
+        fetch(`${API}/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ board: 'SCREENS' }),
+          credentials: 'include'
+        })
+      ));
+      toast.success(`${ids.length} órdenes movidas a CUADROS`);
+      setSelectedOrders(new Set());
+      fetchData();
+    } catch (err) {
+      toast.error("Error al mover órdenes");
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -447,6 +474,12 @@ const ArtModule = () => {
               Pre-Órdenes
             </button>
             <button 
+              onClick={() => setActiveTab('screens')}
+              className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'screens' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              Listo para Cuadros
+            </button>
+            <button 
               onClick={() => setActiveTab('kpis')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'kpis' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
@@ -517,6 +550,13 @@ const ArtModule = () => {
                   title="Exportar PDF"
                 >
                   <Printer className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={handleBulkMoveToScreens}
+                  className="p-2 hover:bg-white rounded-lg text-blue-600 transition-all"
+                  title="Mover a Cuadros"
+                >
+                  <Grid className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={handleBulkDelete}
@@ -906,6 +946,132 @@ const ArtModule = () => {
                           <div className="text-center">
                             <p className="text-sm font-black uppercase tracking-widest text-slate-900">No hay pre-órdenes</p>
                             <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">Crea una para empezar a adelantar trabajo.</p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      ) : activeTab === 'screens' ? (
+        <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-3">
+                <Grid className="w-8 h-8 text-blue-600" />
+                Listo para Cuadros
+              </h1>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Órdenes que ya han pasado por arte y están listas para marcos.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="px-4 py-2 bg-blue-50 rounded-xl border border-blue-100 flex items-center gap-2">
+                <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Total en Cuadros</span>
+                <span className="text-lg font-black text-blue-700">{pendingOrders.length}</span>
+              </div>
+            </div>
+          </div>
+
+          <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
+            <div className="max-h-[calc(100vh-350px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 z-20 bg-white">
+                  <tr className="bg-blue-50/50 backdrop-blur-sm border-b border-blue-100">
+                    {columnOrder.preorders.filter(key => !hiddenColumns.includes(key)).map(colKey => {
+                      const def = PRE_COL_DEFS[colKey];
+                      if (colKey === 'selection') return (
+                        <th key="selection" className="py-5 px-6 w-10">
+                          <button 
+                            onClick={() => toggleSelectAll(pendingOrders)}
+                            className="text-blue-400 hover:text-blue-600 transition-colors"
+                          >
+                            {pendingOrders.length > 0 && pendingOrders.every(o => selectedOrders.has(o.order_id)) 
+                              ? <CheckSquare className="w-4 h-4 text-blue-600" /> 
+                              : <Square className="w-4 h-4" />}
+                          </button>
+                        </th>
+                      );
+                      return (
+                        <th key={colKey} className={`py-5 px-6 text-[10px] font-black uppercase tracking-widest text-blue-700 ${def.align === 'center' ? 'text-center' : ''}`}>
+                          {def.label}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {pendingOrders.map(order => (
+                    <tr key={order.order_id} className={`hover:bg-blue-50/20 transition-colors group ${selectedOrders.has(order.order_id) ? 'bg-blue-50' : ''}`}>
+                      {columnOrder.preorders.filter(key => !hiddenColumns.includes(key)).map(colKey => {
+                        if (colKey === 'selection') return (
+                          <td key="selection" className="py-4 px-6">
+                            <button 
+                              onClick={() => toggleSelect(order.order_id)}
+                              className={`transition-colors ${selectedOrders.has(order.order_id) ? 'text-blue-600' : 'text-slate-300 group-hover:text-slate-400'}`}
+                            >
+                              {selectedOrders.has(order.order_id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                            </button>
+                          </td>
+                        );
+                        if (colKey === 'order_number') return (
+                          <td key="order_number" className="py-4 px-6">
+                            <span className="font-black text-slate-900">#{order.order_number}</span>
+                            <p className="text-[8px] font-black text-blue-600 uppercase tracking-widest mt-1">{order.board}</p>
+                          </td>
+                        );
+                        if (colKey === 'design_number') return (
+                          <td key="design_number" className="py-4 px-6 text-[11px] font-bold text-slate-700 bg-blue-50/30 uppercase">{order.design_number}</td>
+                        );
+                        if (colKey === 'client') return (
+                          <td key="client" className="py-4 px-6 text-[11px] font-bold text-slate-500 uppercase truncate max-w-[120px]">{order.client}</td>
+                        );
+                        if (colKey === 'screens') return (
+                          <td key="screens" className="py-4 px-6 text-center">
+                            {order.screens ? <div className="mx-auto w-5 h-5 rounded bg-emerald-500 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-white" /></div> : <div className="mx-auto w-5 h-5 rounded border-2 border-slate-200"></div>}
+                          </td>
+                        );
+                        if (colKey === 'artwork_status') return (
+                          <td key="artwork_status" className="py-4 px-6"><span className="px-2 py-1 bg-slate-100 rounded text-[9px] font-black text-slate-600 uppercase">{order.artwork_status}</span></td>
+                        );
+                        if (colKey === 'betty_column') return (
+                          <td key="betty_column" className="py-4 px-6"><span className="px-2 py-1 bg-blue-50 rounded text-[9px] font-black text-blue-600 uppercase">{order.betty_column}</span></td>
+                        );
+                        if (colKey === 'ref_link') return (
+                          <td key="ref_link" className="py-4 px-6">
+                            {order.ref_link && (
+                              <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white rounded-md text-[9px] font-black uppercase w-fit">
+                                <ExternalLink className="w-3 h-3" /> Abrir
+                              </a>
+                            )}
+                          </td>
+                        );
+                        if (colKey === 'cancel_date') return (
+                          <td key="cancel_date" className="py-4 px-6 text-[10px] font-bold text-slate-400">{order.cancel_date}</td>
+                        );
+                        if (colKey === 'actions') return (
+                          <td key="actions" className="py-4 px-6">
+                            <div className="flex gap-2 justify-center opacity-40 grayscale">
+                               <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center"><CheckCircle2 className="w-4 h-4" /></div>
+                               <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center"><CheckCircle2 className="w-4 h-4" /></div>
+                            </div>
+                          </td>
+                        );
+                        return null;
+                      })}
+                    </tr>
+                  ))}
+                  {pendingOrders.length === 0 && (
+                    <tr>
+                      <td colSpan="10" className="py-20 text-center">
+                        <div className="flex flex-col items-center justify-center text-slate-300 gap-4">
+                          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center text-blue-300">
+                            <Grid className="w-8 h-8" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-black uppercase tracking-widest text-slate-900">Sin órdenes en cuadros</p>
+                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">Mueve pre-órdenes aquí para organizarlas.</p>
                           </div>
                         </div>
                       </td>

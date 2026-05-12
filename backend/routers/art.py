@@ -80,14 +80,17 @@ async def get_pending_art(request: Request, status: str = 'pending'):
                 {"art_neck_status": True}
             ]
         }
-    else:
-        # Default: pending. Mostrar ordenes donde cualquiera NO sea True
+    elif status == 'ready_for_screens':
+        # Nuevo apartado: Listo para cuadros
         query = {
-            "board": {"$nin": excluded_boards},
-            "$or": [
-                {"art_sep_status": {"$ne": True}},
-                {"art_neck_status": {"$ne": True}}
-            ]
+            "board": "SCREENS",
+            "is_preorder": True
+        }
+    else:
+        # Default: pending. Ahora mostramos TODO lo que no esté en boards excluidos,
+        # sin importar si ya se marcó sep o neck, para que no desaparezcan.
+        query = {
+            "board": {"$nin": excluded_boards}
         }
 
     cursor = db.orders.find(query, {
