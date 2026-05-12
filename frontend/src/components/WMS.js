@@ -2672,13 +2672,22 @@ const LocationsModule = () => {
           <h2 className="text-2xl font-black uppercase tracking-tighter">Gestión de Ubicaciones</h2>
           <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest opacity-60">Mapa lógico del almacén</p>
         </div>
-        <button 
-          onClick={() => setShowNewLoc(!showNewLoc)}
-          className="flex items-center gap-2 px-6 py-3 bg-primary text-black rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-lg"
-        >
-          {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-          {showNewLoc ? t('cancel') : 'Nueva Ubicación'}
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}
+            className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-lg shadow-emerald-500/20"
+          >
+            <Printer className="w-4 h-4" />
+            Imprimir Etiquetas
+          </button>
+          <button 
+            onClick={() => setShowNewLoc(!showNewLoc)}
+            className="flex items-center gap-2 px-6 py-3 bg-primary text-black rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-lg"
+          >
+            {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {showNewLoc ? t('cancel') : 'Nueva Ubicación'}
+          </button>
+        </div>
       </div>
 
       {/* Tabs de Separación */}
@@ -2752,13 +2761,22 @@ const LocationsModule = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {filtered.map(l => (
           <div key={l.location_id} className={`p-4 bg-card/40 border border-border/40 rounded-3xl hover:border-primary/40 transition-all group hover:scale-105 shadow-sm relative ${activeTab === 'system' ? 'border-l-4 border-l-indigo-500/50' : ''}`}>
-            <button 
-              onClick={() => handleDelete(l.location_id, l.name)}
-              className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-              title="Eliminar ubicación"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+              <button 
+                onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
+                className="p-2 text-muted-foreground hover:text-primary transition-all"
+                title="Imprimir etiqueta"
+              >
+                <Printer className="w-3.5 h-3.5" />
+              </button>
+              <button 
+                onClick={() => handleDelete(l.location_id, l.name)}
+                className="p-2 text-muted-foreground hover:text-red-500 transition-all"
+                title="Eliminar ubicación"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3 group-hover:rotate-12 transition-transform">
               <MapPin className="w-5 h-5 text-primary" />
             </div>
