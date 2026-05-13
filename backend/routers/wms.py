@@ -409,6 +409,10 @@ async def putaway_bulk(request: Request):
 async def _update_inventory_enhanced(sku, color, size, qty, operation, customer="", location="", is_bpo=False):
     key = {"sku": sku, "color": color or "", "size": size or "", "location": location or ""}
     inv = await db.wms_inventory.find_one(key)
+    # FALLBACK: Excel-imported inventory may have sku='None' with real value in 'style'
+    if not inv and sku:
+        style_key = {"style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"}, "color": color or "", "size": size or "", "location": location or ""}
+        inv = await db.wms_inventory.find_one(style_key)
     if not inv and operation == "add":
         await db.wms_inventory.insert_one({
             "sku": sku, "style": sku, "color": color or "", "size": size or "",
@@ -442,10 +446,12 @@ async def _update_inventory_enhanced(sku, color, size, qty, operation, customer=
             # 1. Deduct from current shelf
             await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
             # 2. Add to CUTTING_NECK (keep it allocated/reserved for the order)
-            neck_key = {"sku": sku, "color": color or "", "size": size or "", "location": "CUTTING_NECK"}
+            # Use the same sku/style as the source record for consistency
+            inv_sku = inv.get("sku") or inv.get("style") or sku
+            neck_key = {"sku": inv_sku, "color": color or "", "size": size or "", "location": "CUTTING_NECK"}
             await db.wms_inventory.update_one(
                 neck_key,
-                {"$inc": {"units_on_hand": qty, "units_allocated": qty}, "$set": {"updated_at": now_iso(), "customer": customer}},
+                {"$inc": {"units_on_hand": qty, "units_allocated": qty}, "$set": {"updated_at": now_iso(), "customer": customer, "style": inv.get("style", sku)}},
                 upsert=True
             )
 
@@ -1168,24 +1174,39 @@ async def save_pick_progress(ticket_id: str, request: Request):
     }
     if is_complete:
         update["completed_at"] = now_iso()
-        # RESERVE INVENTORY logic (Allocation)
+        # REAL DEDUCTION: deduct from shelves (or move to CUTTING_NECK) when picker completes
+        is_neck = ticket.get("destination") == "neck_cutting"
+        inv_op = "pick_to_neck" if is_neck else "deduct"
         try:
+            style = ticket.get('style', '').strip()
+            color = ticket.get('color', '').strip()
+            customer = ticket.get('customer', '')
             # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
             for sz, data in picked_sizes.items():
                 if isinstance(data, dict) and "details" in data:
                     for loc, qty in data["details"].items():
                         if qty > 0:
-                            # Use official allocate operation to reserve stock
-                            await _update_inventory(
-                                ticket.get('style', '').strip(),
-                                ticket.get('color', '').strip(),
-                                sz.strip(),
-                                qty,
-                                "allocate",
-                                location=loc
+                            await _update_inventory_enhanced(
+                                style, color, sz.strip(), qty,
+                                inv_op, location=loc, customer=customer
                             )
+                else:
+                    # Simple format: { "S": 50 }
+                    qty = int(data) if not isinstance(data, dict) else int(data.get("total", 0))
+                    if qty > 0:
+                        await _update_inventory_enhanced(
+                            style, color, sz.strip(), qty,
+                            inv_op, customer=customer
+                        )
         except Exception as e:
-            logger.error(f"Error allocating inventory: {e}")
+            logger.error(f"Error deducting inventory on pick complete: {e}")
+
+        # Update ticket status based on destination
+        if is_neck:
+            update["status"] = "in_neck_cutting"
+            update["picking_status"] = "in_neck_cutting"
+        else:
+            update["status"] = "confirmed"
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
     await log_movement(user, "pick_progress", {
@@ -1206,6 +1227,10 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": target_id})
     if not ticket:
         raise HTTPException(404, "Pick ticket no encontrado")
+
+    # Guard: skip if already processed by pick-progress completion
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
+        return {"message": "Pick ya fue procesado previamente", "ticket_id": target_id}
 
     is_neck_cutting = ticket.get("destination") == "neck_cutting"
     inv_operation = "pick_to_neck" if is_neck_cutting else "deduct"
@@ -1264,6 +1289,10 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                             await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
                             await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=loc, customer=box.get("customer", ""))
                             rem -= take
+                        # FALLBACK: If no boxes found (e.g. Excel-imported inventory), deduct directly from wms_inventory
+                        if rem > 0:
+                            logger.info(f"Confirm pick fallback: deducting {rem} units of {style}/{color}/{sz} from {loc} (no boxes found)")
+                            await _update_inventory_enhanced(style, color, sz, rem, inv_operation, location=loc, customer=ticket.get("customer", ""))
                     continue 
             else:
                 qty_to_pick = int(data)
@@ -1523,15 +1552,26 @@ async def deliver_to_production(request: Request):
             qty = int(data)
             
         if qty > 0:
-            # REAL DEDUCT from inventory (Final removal from global On Hand)
-            await _update_inventory_enhanced(
-                style, 
-                color, 
-                sz, 
-                qty, 
-                "deduct", 
-                location="CUTTING_NECK"
-            )
+            # REAL DEDUCT from inventory (Final removal from CUTTING_NECK)
+            neck_key = {"sku": style, "color": color or "", "size": sz or "", "location": "CUTTING_NECK"}
+            neck_inv = await db.wms_inventory.find_one(neck_key)
+            if neck_inv:
+                await _update_inventory_enhanced(
+                    style, color, sz, qty, "deduct", location="CUTTING_NECK"
+                )
+            else:
+                # FALLBACK: CUTTING_NECK record missing (pick_to_neck never ran)
+                # Deduct from original shelf locations using picked_sizes details
+                logger.warning(f"Deliver fallback: no CUTTING_NECK record for {style}/{color}/{sz}, deducting from original locations")
+                if isinstance(data, dict) and "details" in data:
+                    for loc, loc_qty in data["details"].items():
+                        if loc_qty > 0:
+                            await _update_inventory_enhanced(
+                                style, color, sz, loc_qty, "deduct", location=loc
+                            )
+                else:
+                    # Last resort: deduct without location
+                    await _update_inventory_enhanced(style, color, sz, qty, "deduct")
             delivered_count += qty
             
     # Mark ticket as completed
