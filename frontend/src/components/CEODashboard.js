@@ -240,38 +240,39 @@ const CEODashboard = () => {
 
       <header className="mb-8 md:mb-12 relative z-10">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 md:gap-8">
-          <div className="flex items-center gap-4 md:gap-8">
+          <div className="flex items-center gap-4 md:gap-8 w-full lg:w-auto">
             <button 
               onClick={() => navigate('/home')} 
-              className={`p-3 md:p-4 rounded-2xl border transition-all group backdrop-blur-md ${
+              className={`p-4 rounded-2xl border transition-all group backdrop-blur-md ${
                 isDark ? 'bg-white/5 hover:bg-white/10 border-white/10' : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 shadow-sm'
               }`}
             >
-              <ArrowLeft className={`w-5 h-5 md:w-6 md:h-6 transition-transform group-hover:-translate-x-1 ${isDark ? 'text-foreground' : 'text-emerald-900'}`} />
+              <ArrowLeft className={`w-6 h-6 transition-transform group-hover:-translate-x-1 ${isDark ? 'text-foreground' : 'text-emerald-900'}`} />
             </button>
             <div className="space-y-1">
               <div className="flex items-center gap-3 md:gap-4">
                 <div className={`p-2 rounded-lg ${isDark ? 'bg-[#e94560]/20' : 'bg-emerald-500/10'}`}>
-                  <LayoutDashboard className={`w-4 h-4 md:w-5 md:h-5 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
+                  <LayoutDashboard className={`w-5 h-5 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
                 </div>
-                <h1 className={`text-2xl md:text-3xl lg:text-4xl font-black uppercase tracking-[-0.05em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>
-                  {t('ceo_exclusive_insights').split(' ')[0]} <span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-[#e94560] to-[#ff758c]' : 'from-emerald-600 to-emerald-400'}`}>{t('ceo_exclusive_insights').split(' ')[1]}</span>
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase tracking-[-0.05em] leading-none">
+                  <span className={isDark ? 'text-white' : 'text-emerald-950'}>{t('ceo_exclusive_insights').split(' ')[0]}</span>{' '}
+                  <span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-[#e94560] to-[#ff758c]' : 'from-emerald-600 to-emerald-400'}`}>
+                    {t('ceo_exclusive_insights').split(' ')[1]}
+                  </span>
                 </h1>
               </div>
-              <p className={`font-medium text-[9px] md:text-[11px] uppercase tracking-[0.3em] flex items-center gap-2 md:gap-3 ${isDark ? 'text-muted-foreground/60' : 'text-emerald-800/40'}`}>
+              <p className={`font-medium text-[9px] md:text-[10px] lg:text-[11px] uppercase tracking-[0.3em] flex items-center gap-2 md:gap-3 ${isDark ? 'text-muted-foreground/60' : 'text-emerald-800/40'}`}>
                 {t('ceo_operations')} <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`font-black uppercase tracking-widest text-[8px] md:text-[9px] ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>{t('ceo_prosper_mfg')}</span> 
-                <span className={`hidden sm:inline w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`hidden sm:inline px-2 py-0.5 border rounded text-[8px] md:text-[9px] ${isDark ? 'border-[#e94560]/30 text-[#e94560]/80' : 'border-emerald-500/20 text-emerald-600'}`}>{t('ceo_read_only')}</span>
+                <span className={`font-black uppercase tracking-widest ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>{t('ceo_prosper_mfg')}</span> 
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 md:gap-6">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-wrap items-center gap-4 md:gap-6 w-full lg:w-auto">
+            <div className="flex items-center gap-3 self-start sm:self-auto">
               <button
                 onClick={toggleLang}
-                className={`flex items-center gap-2 md:gap-3 px-4 md:px-6 py-2 md:py-2.5 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
+                className={`flex items-center gap-3 px-5 py-3 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
                   isDark 
                     ? 'bg-white/5 hover:bg-white/10 border-white/10 text-white' 
                     : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 text-emerald-900 shadow-sm'
@@ -285,17 +286,17 @@ const CEODashboard = () => {
               <ThemeSwitch />
             </div>
 
-            <div className={`flex flex-col md:flex-row items-center gap-4 p-3 md:p-2 rounded-[2rem] border backdrop-blur-xl w-full md:w-auto ${
+            <div className={`flex flex-col sm:flex-row items-center gap-4 p-3 md:p-2 rounded-3xl border backdrop-blur-xl w-full sm:w-auto ${
               isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-emerald-500/10 shadow-sm'
             }`}>
-              <div className={`flex items-center gap-1 p-1 rounded-2xl border w-full md:w-auto overflow-x-auto ${isDark ? 'bg-black/40 border-white/5' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
+              <div className="flex items-center gap-1 p-1 rounded-2xl border bg-black/20 border-white/5 w-full sm:w-auto overflow-x-auto">
                 {['today', 'week', 'month'].map((p) => (
                   <button
                     key={p}
                     onClick={() => { setPeriod(p); setDateFrom(''); setDateTo(''); }}
-                    className={`flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-300 ${
+                    className={`flex-1 sm:flex-none px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-300 ${
                       period === p 
-                        ? (isDark ? 'bg-[#e94560] text-white shadow-lg shadow-[#e94560]/20' : 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20')
+                        ? (isDark ? 'bg-[#e94560] text-white shadow-xl' : 'bg-emerald-500 text-white shadow-xl')
                         : (isDark ? 'text-muted-foreground hover:text-white' : 'text-emerald-700/60 hover:text-emerald-700')
                     }`}
                   >
@@ -304,56 +305,44 @@ const CEODashboard = () => {
                 ))}
               </div>
               
-              <div className={`flex items-center gap-2 md:gap-3 px-0 md:px-4 border-t md:border-t-0 md:border-l w-full md:w-auto pt-3 md:pt-0 ${isDark ? 'border-white/10' : 'border-emerald-500/10'}`}>
-                <div className="flex items-center gap-2 flex-1 md:flex-none">
+              <div className={`flex items-center gap-3 px-0 sm:px-4 border-t sm:border-t-0 sm:border-l w-full sm:w-auto pt-4 sm:pt-0 ${isDark ? 'border-white/10' : 'border-emerald-500/10'}`}>
+                <div className="flex items-center gap-2 flex-1 sm:flex-none">
                   <input 
                     type="date" 
                     value={dateFrom} 
                     onChange={(e) => { setDateFrom(e.target.value); setPeriod('custom'); }}
-                    className={`flex-1 md:w-28 border rounded-xl px-2 py-2 text-[9px] uppercase outline-none transition-colors ${
+                    className={`flex-1 sm:w-32 border rounded-xl px-3 py-2.5 text-[10px] uppercase outline-none transition-colors ${
                       isDark ? 'bg-white/5 border-white/10 text-white focus:border-[#e94560]/50' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-900 focus:border-emerald-500/40'
                     }`}
                   />
-                  <span className="text-[9px] font-black opacity-30">{t('ceo_to')}</span>
+                  <span className="text-[10px] font-black opacity-30">{t('ceo_to')}</span>
                   <input 
                     type="date" 
                     value={dateTo} 
                     onChange={(e) => { setDateTo(e.target.value); setPeriod('custom'); }}
-                    className={`flex-1 md:w-28 border rounded-xl px-2 py-2 text-[9px] uppercase outline-none transition-colors ${
+                    className={`flex-1 sm:w-32 border rounded-xl px-3 py-2.5 text-[10px] uppercase outline-none transition-colors ${
                       isDark ? 'bg-white/5 border-white/10 text-white focus:border-[#e94560]/50' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-900 focus:border-emerald-500/40'
                     }`}
                   />
                 </div>
-                {(dateFrom && dateTo) && (
-                  <button 
-                    onClick={() => fetchAnalytics('custom')}
-                    className={`p-2 rounded-xl transition-all ${
-                      isDark 
-                        ? (period === 'custom' ? 'bg-[#e94560] text-white' : 'bg-[#e94560]/10 text-[#e94560] hover:bg-[#e94560]/20') 
-                        : (period === 'custom' ? 'bg-emerald-500 text-white' : 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20')
-                    }`}
-                  >
-                    <Calendar className="w-4 h-4" />
-                  </button>
-                )}
               </div>
 
-              <div className="flex items-center gap-2 border-t md:border-t-0 md:border-l w-full md:w-auto pt-3 md:pt-0 border-white/10 md:pl-4">
+              <div className="flex items-center gap-2 border-t sm:border-t-0 sm:border-l w-full sm:w-auto pt-4 sm:pt-0 border-white/10 sm:pl-4">
                 <button 
                   onClick={() => handleExport('excel')}
-                  className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-3 md:px-4 py-2.5 border transition-all rounded-xl text-[9px] font-black uppercase tracking-[0.1em] ${
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 border transition-all rounded-xl text-[10px] font-black uppercase tracking-[0.1em] ${
                     isDark ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-500/10'
                   }`}
                 >
-                  <Download className="w-3 h-3" /> EXCEL
+                  <Download className="w-4 h-4" /> EXCEL
                 </button>
                 <button 
                   onClick={() => handleExport('pdf')}
-                  className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-3 md:px-4 py-2.5 border transition-all rounded-xl text-[9px] font-black uppercase tracking-[0.1em] ${
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 border transition-all rounded-xl text-[10px] font-black uppercase tracking-[0.1em] ${
                     isDark ? 'bg-[#e94560]/10 hover:bg-[#e94560]/20 text-[#e94560] border-[#e94560]/20' : 'bg-emerald-700 hover:bg-emerald-800 text-white border-transparent'
                   }`}
                 >
-                  <Download className="w-3 h-3" /> PDF
+                  <Download className="w-4 h-4" /> PDF
                 </button>
               </div>
             </div>
