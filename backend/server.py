@@ -37,6 +37,11 @@ UPLOAD_DIR = "uploads/invoices"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/api/invoices/static", StaticFiles(directory=UPLOAD_DIR), name="invoices_static")
 
+# Shipping Uploads
+SHIPPING_DIR = "uploads/shipping"
+os.makedirs(SHIPPING_DIR, exist_ok=True)
+app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shipping_static")
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logging.info(f"PROXY_CHECK: Incoming {request.method} {request.url}")
@@ -101,6 +106,7 @@ from routers.work_orders import router as work_orders_router
 from routers.art import router as art_router
 from routers.agenda import router as agenda_router
 from routers.google_calendar import router as google_calendar_router
+from routers.shipping import router as shipping_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -120,6 +126,7 @@ app.include_router(work_orders_router)
 app.include_router(art_router)
 app.include_router(agenda_router)
 app.include_router(google_calendar_router)
+app.include_router(shipping_router)
 
 @app.on_event("startup")
 async def startup_event():

@@ -13,6 +13,7 @@ import {
   Sparkles,
   Palette,
   CalendarDays,
+  Truck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -201,6 +202,10 @@ const Sidebar = ({
               <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Insights" : ""}>
                 <Sparkles size={15} className={iconCls(false)} />
                 {(isOpen || !isCollapsed) && <span>Insights</span>}
+              </button>
+              <button onClick={() => { navigate('/shipping'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Envíos" : ""}>
+                <Truck size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Envíos</span>}
               </button>
               <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
                 <BarChart3 size={15} className={iconCls(false)} />

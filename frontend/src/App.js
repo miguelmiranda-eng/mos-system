@@ -610,6 +610,7 @@ import InsightsDashboard from "./components/InsightsDashboard";
 import BackupCenter from "./components/BackupCenter";
 import ArtModule from "./components/ArtModule";
 import SmartAgenda from "./components/SmartAgenda";
+import ShippingModule from "./components/ShippingModule";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -771,6 +772,11 @@ function AppRouter() {
       <Route path="/agenda" element={
         <ProtectedRoute>
           <SmartAgenda />
+        </ProtectedRoute>
+      } />
+      <Route path="/shipping" element={
+        <ProtectedRoute>
+          <ShippingModule />
         </ProtectedRoute>
       } />
     </Routes>
