@@ -224,7 +224,6 @@ const CEODashboard = () => {
   }
 
   return (
-  return (
     <div className={`min-h-screen font-barlow p-4 md:p-8 lg:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
       isDark ? 'bg-[#050508]' : 'bg-[#f8fafc]'
     }`}>
