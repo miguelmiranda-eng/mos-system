@@ -1113,16 +1113,18 @@ const Dashboard = () => {
         onClose={() => setIsMobileMenuOpen(false)}
       />
 
+      <div className={`relative flex-1 flex flex-col overflow-hidden transition-colors duration-300`}>
+        <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
+        <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
-
-      {/* Header - Cleaned up version */}
+        {/* Header - Cleaned up version */}
       <header className={`h-16 px-4 flex items-center justify-between z-40 border-b ${isDark ? 'bg-navy-dark border-white/5 shadow-lg' : 'bg-white border-gray-200 shadow-sm'}`}>
-        {isMobile && (
+        {(isMobile || isTablet) && (
           <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-2 mr-2 hover:bg-muted/40 rounded-lg transition-all"
           >
-            <Menu className="w-5 h-5 text-muted-foreground" />
+            <Menu className="w-6 h-6 text-muted-foreground" />
           </button>
         )}
         <div className="flex items-center gap-4 flex-1">
@@ -1258,17 +1260,17 @@ const Dashboard = () => {
 
       {/* Enterprise Suite       {/* Enterprise Suite Command Bar (Unified) */}
       <div className={cn(
-        "px-4 md:px-6 py-4 flex flex-col gap-4 border-b z-30 transition-all",
+        "px-6 py-4 flex flex-col gap-4 border-b z-30 transition-all",
         isDark ? "bg-navy border-white/5 shadow-2xl" : "bg-card border-gray-200 shadow-sm"
       )}>
         {/* TOP ROW: Views, Metrics and Board Identifier */}
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between w-full gap-4">
-          <div className="flex flex-wrap items-center gap-4 md:gap-6 relative z-10 w-full lg:w-auto">
+        <div className="flex items-end justify-between w-full">
+          <div className="flex items-center gap-6 relative z-10">
             {/* Saved Views Selector */}
-            <div className="flex flex-col items-start lg:items-center">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 w-full text-left lg:text-center">Vistas Guardadas</label>
+            <div className="flex flex-col items-center">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 text-center">Vistas Guardadas</label>
               <DropdownMenu>
-                <DropdownMenuTrigger className="flex items-center justify-between gap-3 px-4 py-2 bg-muted/20 border border-border/20 rounded-lg hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none min-w-[160px] w-full sm:w-[180px]">
+                <DropdownMenuTrigger className="flex items-center justify-between gap-3 px-4 py-2 bg-muted/20 border border-border/20 rounded-lg hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none min-w-[160px] w-[180px]">
                   <span className={cn("text-xs font-bold uppercase tracking-tight flex-1 text-center", activeViewName ? "text-royal" : "text-muted-foreground")}>
                     {activeViewName || "Vista Estándar"}
                   </span>
@@ -1314,48 +1316,48 @@ const Dashboard = () => {
               </DropdownMenu>
             </div>
 
-            <div className="hidden sm:block h-10 w-px bg-border/40" />
+            <div className="h-10 w-px bg-border/40" />
 
             {/* Quick Metrics */}
-            <div className="flex items-center gap-6 md:gap-8">
+            <div className="flex items-center gap-8">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Órdenes</span>
-                <span className="text-lg md:text-xl font-bold tracking-tighter">{orders.length}</span>
+                <span className="text-xl font-bold tracking-tighter">{orders.length}</span>
               </div>
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Total Qty</span>
-                <span className="text-lg md:text-xl font-bold tracking-tighter text-royal">
+                <span className="text-xl font-bold tracking-tighter text-royal">
                   {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
                 </span>
               </div>
             </div>
 
-            <div className="hidden lg:block h-10 w-px bg-border/40 ml-2" />
+            <div className="h-10 w-px bg-border/40 ml-2" />
 
             {/* Board Title Identifier */}
-            <div className="text-2xl md:text-3xl lg:text-[2.5rem] lg:mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/30 pointer-events-none select-none whitespace-nowrap leading-none lg:ml-2">
+            <div className="text-[2.5rem] mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/30 pointer-events-none select-none whitespace-nowrap leading-none ml-2">
               {currentBoard}
             </div>
 
           </div>
 
           {/* Top-right action buttons */}
-          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-            <button onClick={() => setShowNewOrder(true)} className="flex-1 lg:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
+          <div className="flex items-center gap-2 self-center">
+            <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
               <Plus className="w-3.5 h-3.5" />
               Nueva Orden
             </button>
-            <div className="flex items-center flex-1 lg:flex-none rounded-lg overflow-hidden border border-emerald-600/40 shadow-sm shadow-emerald-600/10">
-              <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} title="Producción" className="flex-1 lg:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all border-r border-emerald-500/40">
+            <div className="flex items-center rounded-lg overflow-hidden border border-emerald-600/40 shadow-sm shadow-emerald-600/10">
+              <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} title="Producción" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all border-r border-emerald-500/40">
                 <Factory className="w-3.5 h-3.5" />
                 Production
               </button>
-              <button onClick={() => setShowProductionScreen(true)} title="Pantalla de Producción (TV)" className="flex-1 lg:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all">
+              <button onClick={() => setShowProductionScreen(true)} title="Pantalla de Producción (TV)" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all">
                 <Monitor className="w-3.5 h-3.5" />
                 TV
               </button>
             </div>
-            <button onClick={() => setShowCapacityPlan(true)} title="Planificación" className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-card border border-border text-foreground hover:bg-muted hover:text-royal rounded-lg font-bold text-[10px] uppercase tracking-widest shadow-sm hover:shadow-md transition-all whitespace-nowrap">
+            <button onClick={() => setShowCapacityPlan(true)} title="Planificación" className="flex items-center gap-2 px-4 py-1.5 bg-card border border-border text-foreground hover:bg-muted hover:text-royal rounded-lg font-bold text-[10px] uppercase tracking-widest shadow-sm hover:shadow-md transition-all whitespace-nowrap">
               <TrendingUp className="w-3.5 h-3.5" />
               PLAN
             </button>
@@ -1602,7 +1604,10 @@ const Dashboard = () => {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto relative isolation-isolate">
+      <main className={cn(
+        "flex-1 overflow-auto relative isolation-isolate",
+        (isMobile || isTablet) && detailsOrder && "hidden"
+      )}>
         {loading && !orders.length && (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -2368,7 +2373,7 @@ const Dashboard = () => {
         t={t}
       />
     </div>
-  </div >
+  </div>
 );
 };
 

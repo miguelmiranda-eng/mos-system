@@ -63,26 +63,28 @@ const Sidebar = ({
     isDark ? "text-white/25" : "text-neutral-400"
   );
 
-  const isTablet = window.innerWidth < 1024;
+  const isTablet = typeof window !== 'undefined' && window.innerWidth < 1024;
 
   return (
     <>
-      {/* Backdrop for tablet/mobile */}
+      {/* Backdrop for mobile/tablet */}
       {(isMobile || isTablet) && isOpen && (
         <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] transition-opacity duration-300 animate-in fade-in"
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300"
           onClick={onClose}
         />
       )}
 
       <aside
-        style={{ backgroundColor: isDark ? '#0d1e35' : '#ffffff' }}
+        style={{ 
+          backgroundColor: isDark ? '#0d1e35' : (isMobile || isTablet) ? '#ffffff' : '#a8c5e8' 
+        }}
         className={cn(
-          "flex flex-col transition-all duration-300 border-r flex-shrink-0 overflow-hidden shadow-sm",
+          "flex flex-col transition-all duration-300 border-r flex-shrink-0 overflow-hidden",
           (isMobile || isTablet)
-            ? cn("fixed inset-y-0 left-0 z-[101] w-72 shadow-[20px_0_50px_rgba(0,0,0,0.2)] transform", isOpen ? "translate-x-0" : "-translate-x-full")
+            ? cn("fixed inset-y-0 left-0 z-[101] w-72 shadow-[20px_0_50px_rgba(0,0,0,0.15)] transform", isOpen ? "translate-x-0" : "-translate-x-full")
             : cn("relative z-50", isCollapsed ? "w-14" : "w-64"),
-          isDark ? "border-white/6" : "border-neutral-200"
+          isDark ? "border-white/6" : (isMobile || isTablet) ? "border-neutral-200" : "border-blue-300"
         )}
       >
         {/* Header */}
