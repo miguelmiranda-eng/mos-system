@@ -71,18 +71,18 @@ const Dashboard = () => {
     // Let React render valid React elements (like links, spans, etc) directly
     if (React.isValidElement(val)) return val;
     if (typeof val === 'object') {
-        // Handle {url, desc} objects as clickable links
-        if (val.url && val.desc) {
-          return (
-            <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer"
-               style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: 700 }}>
-              {val.desc}
-            </a>
-          );
-        }
-        if (val.url) return <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>{normalizePublicUrl(val.url)}</a>;
-        if (val.desc || val.text || val.value || val.name) return String(val.desc || val.text || val.value || val.name);
-        try { return JSON.stringify(val); } catch { return '[Object]'; }
+      // Handle {url, desc} objects as clickable links
+      if (val.url && val.desc) {
+        return (
+          <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer"
+            style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: 700 }}>
+            {val.desc}
+          </a>
+        );
+      }
+      if (val.url) return <a href={normalizePublicUrl(val.url)} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>{normalizePublicUrl(val.url)}</a>;
+      if (val.desc || val.text || val.value || val.name) return String(val.desc || val.text || val.value || val.name);
+      try { return JSON.stringify(val); } catch { return '[Object]'; }
     }
     return val;
   };
@@ -160,8 +160,9 @@ const Dashboard = () => {
   const [showGuide, setShowGuide] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(window.innerWidth < 768);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(window.innerWidth < 1024);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [isTablet, setIsTablet] = useState(window.innerWidth < 1024 && window.innerWidth >= 768);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [detailsOrder, setDetailsOrder] = useState(null);
   const [isEditingOrderNo, setIsEditingOrderNo] = useState(false);
@@ -171,9 +172,12 @@ const Dashboard = () => {
 
   useEffect(() => {
     const handleResize = () => {
-      const mobile = window.innerWidth < 768;
+      const width = window.innerWidth;
+      const mobile = width < 768;
+      const tablet = width < 1024 && width >= 768;
       setIsMobile(mobile);
-      if (mobile) setIsSidebarCollapsed(true);
+      setIsTablet(tablet);
+      if (width < 1024) setIsSidebarCollapsed(true);
       else setIsMobileMenuOpen(false);
     };
     window.addEventListener('resize', handleResize);
@@ -274,7 +278,7 @@ const Dashboard = () => {
   }, [isAdmin, user]); // eslint-disable-line react-hooks/exhaustive-deps
   const visibleBoards = isAdmin ? activeBoards : activeBoards.filter(b => (myBoardPerms[b] || 'edit') !== 'none');
   const canEditBoard = isAdmin || (myBoardPerms[currentBoard] || 'edit') === 'edit';
-  
+
   // Specific notification metrics
   const unreadMentions = notifications.filter(n => n.type === 'mention' && !n.read).length;
 
@@ -294,9 +298,9 @@ const Dashboard = () => {
   // Close notifications on outside click
   useEffect(() => {
     if (!showNotifications) return;
-    const handler = (e) => { 
+    const handler = (e) => {
       if (!e.target.closest('[data-testid="notifications-dropdown"]') && !e.target.closest('[data-testid="notifications-btn"]')) {
-        setShowNotifications(false); 
+        setShowNotifications(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -461,8 +465,8 @@ const Dashboard = () => {
         setNewViewName('');
         setShowSaveView(false);
       }
-    } catch { 
-      toast.error(t('save_view_err')); 
+    } catch {
+      toast.error(t('save_view_err'));
       setShowSaveView(false);
     }
   };
@@ -545,7 +549,7 @@ const Dashboard = () => {
       const current = prev[currentBoard] || [];
       const next = current.includes(colKey) ? current.filter(x => x !== colKey) : [...current, colKey];
       const newHidden = { ...prev, [currentBoard]: next };
-      
+
       // Auto-save layout
       fetch(`${API}/config/board-layout/${currentBoard}`, {
         method: 'POST',
@@ -553,7 +557,7 @@ const Dashboard = () => {
         credentials: 'include',
         body: JSON.stringify({ hidden_columns: next, column_order: boardColumnOrders[currentBoard] || [] })
       }).catch(err => console.error('Error saving layout:', err));
-      
+
       return newHidden;
     });
   };
@@ -561,7 +565,7 @@ const Dashboard = () => {
   const handleUpdateColumnOrder = (newOrder) => {
     setBoardColumnOrders(prev => {
       const updated = { ...prev, [currentBoard]: newOrder };
-      
+
       // Auto-save layout
       fetch(`${API}/config/board-layout/${currentBoard}`, {
         method: 'POST',
@@ -569,7 +573,7 @@ const Dashboard = () => {
         credentials: 'include',
         body: JSON.stringify({ hidden_columns: hiddenColumns[currentBoard] || [], column_order: newOrder })
       }).catch(err => console.error('Error saving layout:', err));
-      
+
       return updated;
     });
   };
@@ -587,8 +591,8 @@ const Dashboard = () => {
   // Trash
   const fetchTrashOrders = async () => {
     setTrashLoading(true);
-    try { 
-      const res = await apiFetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' }); 
+    try {
+      const res = await apiFetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setTrashOrders(data);
@@ -617,24 +621,24 @@ const Dashboard = () => {
   const handlePermanentDelete = async (orderIds) => {
     if (!window.confirm(`${t('permanent_delete')} ${orderIds.length} ${t('orders')}?`)) return;
     setOperationLoading(true);
-    try { 
-      for (const oid of orderIds) { 
-        const res = await apiFetch(`${API}/orders/${oid}/permanent`, { 
-          method: 'DELETE', 
-          credentials: 'include' 
-        }); 
+    try {
+      for (const oid of orderIds) {
+        const res = await apiFetch(`${API}/orders/${oid}/permanent`, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.detail || 'Error en el servidor');
         }
-      } 
-      toast.success(`${orderIds.length} ${t('orders')} eliminadas permanentemente`); 
-      fetchTrashOrders(); 
+      }
+      toast.success(`${orderIds.length} ${t('orders')} eliminadas permanentemente`);
+      fetchTrashOrders();
       fetchTrashCount();
-    } catch (err) { 
-      toast.error(`${t('perm_del_err')}: ${err.message}`); 
-    } finally { 
-      setOperationLoading(false); 
+    } catch (err) {
+      toast.error(`${t('perm_del_err')}: ${err.message}`);
+    } finally {
+      setOperationLoading(false);
     }
   };
 
@@ -643,7 +647,7 @@ const Dashboard = () => {
     try {
       const selectedIds = selectedOrders.map(String);
       const ordersToExport = orders.filter(o => selectedIds.includes(String(o.order_id)));
-      
+
       if (ordersToExport.length === 0) {
         toast.error(t('select_export'));
         return;
@@ -764,11 +768,11 @@ const Dashboard = () => {
 
 
 
-  
+
   // Top-level hooks for data fetching
-  
-  
-  
+
+
+
 
   // Initial data loading
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
@@ -781,7 +785,7 @@ const Dashboard = () => {
       if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
       return String(v).trim().toLowerCase();
     };
-    
+
     const isSearchMatch = debouncedSearchQuery && (
       getVal(order.order_number).includes(sq) ||
       getVal(order.client).includes(sq) ||
@@ -794,10 +798,10 @@ const Dashboard = () => {
     );
 
     const isSelected = selectedOrders.includes(order.order_id);
-    const rowBgClass = isSearchMatch 
-      ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50') 
-      : isSelected 
-        ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50') 
+    const rowBgClass = isSearchMatch
+      ? (isDark ? 'bg-[hsl(220,70%,22%)]' : 'bg-blue-50')
+      : isSelected
+        ? (isDark ? 'bg-[hsl(220,70%,18%)]' : 'bg-blue-50')
         : (isDark ? 'bg-[hsl(220,30%,9%)] group-hover:bg-[hsl(220,30%,12%)]' : 'bg-white group-hover:bg-gray-50');
 
     const isHighlighted = highlightedOrderId === order.order_id;
@@ -810,11 +814,11 @@ const Dashboard = () => {
           data-order-id={order.order_id}
           className={`py-4 px-2 sticky left-0 z-[30] border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-          <input 
-            type="checkbox" 
-            checked={isSelected} 
-            onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }} 
-            className="w-4 h-4 rounded border-border accent-primary cursor-pointer" 
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }}
+            className="w-4 h-4 rounded border-border accent-primary cursor-pointer"
           />
         </div>
 
@@ -832,9 +836,9 @@ const Dashboard = () => {
         </div>
 
         {/* Order Number / Board (Sticky Column 3) */}
-        <div 
-          className={`py-4 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} 
-          style={{ width: 160, minWidth: 160, maxWidth: 160 }} 
+        <div
+          className={`py-4 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          style={{ width: 160, minWidth: 160, maxWidth: 160 }}
           onClick={() => setDetailsOrder(order)}
         >
           <div className="flex flex-col gap-1.5 min-w-0">
@@ -847,18 +851,16 @@ const Dashboard = () => {
 
             {/* Row 2: Art Status Identifiers (Prominent) */}
             <div className="flex gap-1.5">
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${
-                order.art_sep_status 
-                  ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30' 
-                  : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
-              }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${order.art_sep_status
+                ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30'
+                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
+                }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
                 SEP
               </span>
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${
-                order.art_neck_status 
-                  ? 'bg-blue-500/20 text-blue-500 border-blue-500/30' 
-                  : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
-              }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${order.art_neck_status
+                ? 'bg-blue-500/20 text-blue-500 border-blue-500/30'
+                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
+                }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
                 NECK
               </span>
             </div>
@@ -880,14 +882,14 @@ const Dashboard = () => {
         {visibleColumns.filter(c => c.key !== 'order_number').map((col) => {
           const val = order[col.key];
           const width = col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width);
-          
+
           // SPECIAL CASE: Progress Bar for Remaining/Progress columns
           const isProgressCol = ['remaining', 'restante', 'progress', 'progreso'].includes(col.key.toLowerCase());
-          
+
           return (
-            <div 
-              key={col.key} 
-              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`} 
+            <div
+              key={col.key}
+              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`}
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
               {isProgressCol && typeof val === 'number' ? (
@@ -897,7 +899,7 @@ const Dashboard = () => {
                     <span className="text-[9px] font-black font-mono text-royal">{Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%</span>
                   </div>
                   <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/5">
-                    <div 
+                    <div
                       className="h-full bg-gradient-to-r from-royal to-indigo-500 transition-all duration-500 shadow-[0_0_8px_rgba(65,105,225,0.4)]"
                       style={{ width: `${Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%` }}
                     />
@@ -929,7 +931,7 @@ const Dashboard = () => {
             const produced = prodData.total_produced || 0;
             const progress = total > 0 ? Math.min(100, (produced / total) * 100) : 0;
             const remainingPieces = Math.max(0, total - produced);
-            
+
             return (
               <>
                 <div className="flex justify-between items-center mb-0.5">
@@ -940,14 +942,13 @@ const Dashboard = () => {
                     {Math.round(progress)}%
                   </span>
                 </div>
-                
+
                 <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/5 relative group/progress">
-                  <div 
-                    className={`h-full transition-all duration-700 ease-out shadow-sm ${
-                      progress >= 100 ? 'bg-green-500' : 
-                      progress >= 50 ? 'bg-amber-500' : 
-                      'bg-red-500'
-                    }`}
+                  <div
+                    className={`h-full transition-all duration-700 ease-out shadow-sm ${progress >= 100 ? 'bg-green-500' :
+                      progress >= 50 ? 'bg-amber-500' :
+                        'bg-red-500'
+                      }`}
                     style={{ width: `${progress}%` }}
                   />
                   {/* Tooltip on hover */}
@@ -973,7 +974,7 @@ const Dashboard = () => {
     const remainingPieces = Math.max(0, total - produced);
 
     return (
-      <div 
+      <div
         key={order.order_id}
         className={`m-3 p-4 rounded-2xl border transition-all ${isDark ? 'bg-navy-light/30 border-white/5' : 'bg-white border-gray-100 shadow-sm'}`}
         onClick={() => setDetailsOrder(order)}
@@ -984,18 +985,18 @@ const Dashboard = () => {
             <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">{order.client}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); }}
               className="p-2 bg-muted/20 rounded-xl text-muted-foreground relative"
             >
               <MessageSquare className="w-4 h-4" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full" />}
             </button>
-            <input 
-              type="checkbox" 
-              checked={isSelected} 
-              onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }} 
-              className="w-5 h-5 rounded border-border accent-primary" 
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }}
+              className="w-5 h-5 rounded border-border accent-primary"
             />
           </div>
         </div>
@@ -1007,19 +1008,19 @@ const Dashboard = () => {
         </div>
 
         <div className="space-y-3 mb-4">
-           {visibleColumns.slice(0, 5).filter(c => !['order_number', 'art_sep_status', 'art_neck_status', 'selection', 'client'].includes(c.key)).map(col => (
-             <div key={col.key} className="flex justify-between items-center gap-4">
-               <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
-               <div className="text-sm font-bold truncate">
-                 <EditableCell 
-                    orderId={order.order_id} field={col.key} value={order[col.key]} 
-                    type={col.type} options={col.optionKey ? options[col.optionKey] : []}
-                    onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
-                    columns={visibleColumns}
-                 />
-               </div>
-             </div>
-           ))}
+          {visibleColumns.slice(0, 5).filter(c => !['order_number', 'art_sep_status', 'art_neck_status', 'selection', 'client'].includes(c.key)).map(col => (
+            <div key={col.key} className="flex justify-between items-center gap-4">
+              <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
+              <div className="text-sm font-bold truncate">
+                <EditableCell
+                  orderId={order.order_id} field={col.key} value={order[col.key]}
+                  type={col.type} options={col.optionKey ? options[col.optionKey] : []}
+                  onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
+                  columns={visibleColumns}
+                />
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="pt-3 border-t border-border/5">
@@ -1030,7 +1031,7 @@ const Dashboard = () => {
             <span className="text-[10px] font-black text-primary">{Math.round(progress)}%</span>
           </div>
           <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
-            <div 
+            <div
               className={`h-full transition-all duration-700 ${progress >= 100 ? 'bg-green-500' : 'bg-primary'}`}
               style={{ width: `${progress}%` }}
             />
@@ -1043,7 +1044,7 @@ const Dashboard = () => {
 
   const renderTableBody = () => {
     const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
-    
+
     if (isMobile) {
       return (
         <div className="flex flex-col pb-20">
@@ -1078,7 +1079,7 @@ const Dashboard = () => {
       const isCollapsed = !!collapsedGroups[dateKey];
       return (
         <React.Fragment key={dateKey}>
-          <div style={{gridColumn:'1 / -1'}} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`} data-testid={`date-group-${dateKey}`}>
+          <div style={{ gridColumn: '1 / -1' }} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`} data-testid={`date-group-${dateKey}`}>
             <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-primary/20' : 'text-blue-700 hover:bg-blue-100'}`}>
               <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
               <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
@@ -1093,44 +1094,31 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {/* ENTERPRISE SIDEBAR */}
-      <Sidebar 
+    <div className={cn("flex h-screen overflow-hidden", isDark ? "bg-[#0a0a0c]" : "bg-[#f8fafc]")}>
+      <Sidebar
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
         currentBoard={currentBoard}
         setCurrentBoard={setCurrentBoard}
         boards={activeBoards}
         trashCount={trashCount}
-        onShowTrash={() => { setShowTrash(true); fetchTrashOrders(); }}
-        onShowAutomations={() => setShowAutomations(true)}
-        onShowAnalytics={() => { setShowAnalytics(true); fetchAllOrders(); }}
+        onShowTrash={() => setShowTrash(true)}
+        onShowAnalytics={() => setShowAnalytics(true)}
         isAdmin={isAdmin}
         userRole={user?.role}
         navigate={navigate}
         isDark={isDark}
-        isMobile={isMobile}
+        isMobile={isMobile || isTablet}
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
       />
 
-      {/* MAIN CONTENT AREA */}
-      <div className={`relative flex-1 flex flex-col overflow-hidden transition-colors duration-300`}>
-        <Toaster position="bottom-right" theme={isDark ? "dark" : "light"} />
-        <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
-
-      {automationRunning && (
-        <div className="fixed bottom-6 right-6 z-[200] flex items-center gap-3 bg-primary text-primary-foreground px-5 py-3 rounded-lg shadow-2xl animate-pulse" data-testid="automation-running-indicator">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <div><div className="text-sm font-bold">Ejecutando automatizacion...</div><div className="text-xs opacity-80">{automationMessage}</div></div>
-        </div>
-      )}
 
 
       {/* Header - Cleaned up version */}
       <header className={`h-16 px-4 flex items-center justify-between z-40 border-b ${isDark ? 'bg-navy-dark border-white/5 shadow-lg' : 'bg-white border-gray-200 shadow-sm'}`}>
         {isMobile && (
-          <button 
+          <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-2 mr-2 hover:bg-muted/40 rounded-lg transition-all"
           >
@@ -1140,18 +1128,18 @@ const Dashboard = () => {
         <div className="flex items-center gap-4 flex-1">
           <div className={`flex items-center gap-3 w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group ${isMobile ? 'max-w-[200px]' : 'max-w-md'}`}>
             <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors flex-shrink-0" />
-            <input 
-              type="text" 
-              value={searchQuery} 
-              onChange={(e) => setSearchQuery(e.target.value)} 
-              onKeyDown={async (e) => { 
-                if (e.key === 'Enter') { 
-                  const results = await handleGlobalSearch(searchQuery, setCurrentBoard); 
-                  if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); } 
-                  else if (results) setSearchResults(results); 
-                } 
-              }} 
-              placeholder={isMobile ? 'Buscar...' : t('search_placeholder')} 
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter') {
+                  const results = await handleGlobalSearch(searchQuery, setCurrentBoard);
+                  if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); }
+                  else if (results) setSearchResults(results);
+                }
+              }}
+              placeholder={isMobile ? 'Buscar...' : t('search_placeholder')}
               className="w-full bg-transparent border-none text-sm outline-none focus:outline-none focus:ring-0 placeholder:text-muted-foreground/50 transition-all font-medium py-1"
             />
           </div>
@@ -1234,7 +1222,7 @@ const Dashboard = () => {
                           >
                             <div className="flex justify-between items-start mb-1.5">
                               <span className={cn("text-xs font-bold uppercase tracking-tight flex-1", !n.read ? "text-foreground" : "text-muted-foreground")}>{n.title || "Aviso del Sistema"}</span>
-                              <span className="text-[9px] text-muted-foreground ml-2 font-medium">{n.created_at ? new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Ahora'}</span>
+                              <span className="text-[9px] text-muted-foreground ml-2 font-medium">{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Ahora'}</span>
                             </div>
                             <p className="text-xs text-muted-foreground leading-relaxed">{n.message}</p>
                           </button>
@@ -1257,12 +1245,12 @@ const Dashboard = () => {
             {user?.picture ? (
               <img src={user.picture} alt="" className="w-8 h-8 rounded-full border border-white/10" />
             ) : (
-                <div className="w-8 h-8 rounded-full bg-royal/20 flex items-center justify-center text-royal font-bold text-xs uppercase">
-                  {user?.name?.[0]}
-                </div>
+              <div className="w-8 h-8 rounded-full bg-royal/20 flex items-center justify-center text-royal font-bold text-xs uppercase">
+                {user?.name?.[0]}
+              </div>
             )}
             <button onClick={logout} className="p-2 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
-               <LogOut className="w-4 h-4" />
+              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -1287,43 +1275,43 @@ const Dashboard = () => {
                   <ChevronDown className="w-4 h-4 text-muted-foreground group-hover:text-royal transition-colors" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
-                   {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">No hay vistas guardadas</div>}
-                   
-                   {pinnedViews.length > 0 && (
-                     <div className="p-2 border-b border-border/50">
-                       <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">Fijadas</div>
-                       {pinnedViews.map(view => (
-                         <div key={view.view_id} className="flex items-center gap-1 group">
-                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                             {view.name}
-                           </DropdownMenuItem>
-                           <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
-                         </div>
-                       ))}
-                     </div>
-                   )}
+                  {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">No hay vistas guardadas</div>}
 
-                   {unpinnedViews.length > 0 && (
-                     <div className="p-2">
-                       <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">Todas</div>
-                       {unpinnedViews.map(view => (
-                         <div key={view.view_id} className="flex items-center gap-1 group">
-                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                             {view.name}
-                           </DropdownMenuItem>
-                           <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
-                           <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
-                         </div>
-                       ))}
-                     </div>
-                   )}
+                  {pinnedViews.length > 0 && (
+                    <div className="p-2 border-b border-border/50">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">Fijadas</div>
+                      {pinnedViews.map(view => (
+                        <div key={view.view_id} className="flex items-center gap-1 group">
+                          <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                            {view.name}
+                          </DropdownMenuItem>
+                          <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                   <DropdownMenuSeparator className="bg-border/50" />
-                   <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
-                     Restablecer Vista <RefreshCw className="w-3 h-3" />
-                   </DropdownMenuItem>
+                  {unpinnedViews.length > 0 && (
+                    <div className="p-2">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">Todas</div>
+                      {unpinnedViews.map(view => (
+                        <div key={view.view_id} className="flex items-center gap-1 group">
+                          <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                            {view.name}
+                          </DropdownMenuItem>
+                          <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <DropdownMenuSeparator className="bg-border/50" />
+                  <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
+                    Restablecer Vista <RefreshCw className="w-3 h-3" />
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
-             </DropdownMenu>
+              </DropdownMenu>
             </div>
 
             <div className="hidden sm:block h-10 w-px bg-border/40" />
@@ -1331,14 +1319,14 @@ const Dashboard = () => {
             {/* Quick Metrics */}
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex flex-col">
-                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Órdenes</span>
-                 <span className="text-lg md:text-xl font-bold tracking-tighter">{orders.length}</span>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Órdenes</span>
+                <span className="text-lg md:text-xl font-bold tracking-tighter">{orders.length}</span>
               </div>
               <div className="flex flex-col">
-                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Total Qty</span>
-                 <span className="text-lg md:text-xl font-bold tracking-tighter text-royal">
-                   {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
-                 </span>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Total Qty</span>
+                <span className="text-lg md:text-xl font-bold tracking-tighter text-royal">
+                  {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
+                </span>
               </div>
             </div>
 
@@ -1376,13 +1364,13 @@ const Dashboard = () => {
       </div>
 
       {/* BOTTOM ROW: Controls and Actions */}
-        <div className="flex items-center justify-between w-full pt-2">
-          {/* Left Controls */}
-          <div className="flex items-center gap-2">
-            {/* View Toggle */}
-            <div className="flex items-center border border-border rounded-lg overflow-hidden mr-4 bg-muted/10">
-            <button 
-              onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(false); }} 
+      <div className="flex items-center justify-between w-full pt-2">
+        {/* Left Controls */}
+        <div className="flex items-center gap-2">
+          {/* View Toggle */}
+          <div className="flex items-center border border-border rounded-lg overflow-hidden mr-4 bg-muted/10">
+            <button
+              onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(false); }}
               className={cn("px-3 py-2 transition-all border-r border-border", !calendarMode && !readyCalendarMode && !blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
               title="Vista de Tabla"
             >
@@ -1399,15 +1387,15 @@ const Dashboard = () => {
             )}
             {currentBoard === 'SCHEDULING' && (
               <>
-                <button 
-                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(true); setBlanksTrackingMode(false); }} 
+                <button
+                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(true); setBlanksTrackingMode(false); }}
                   className={cn("px-3 py-2 transition-all border-r border-border", readyCalendarMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
                   title="Ready to Scheduled"
                 >
                   <CalendarCheck size={16} />
                 </button>
-                <button 
-                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(true); }} 
+                <button
+                  onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(true); }}
                   className={cn("px-3 py-2 transition-all", blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
                   title="Seguimiento de Blanks"
                 >
@@ -1433,67 +1421,67 @@ const Dashboard = () => {
               </Select>
             </div>
           )}
-          </div>
+        </div>
 
-          {/* Right Actions */}
-          <div className="flex items-center gap-2">
-            {/* Mechanic Actions */}
-            <div className="flex items-center gap-1.5 p-1">
-             <button
-                onClick={() => setShowGantt(true)}
-                title="Gantt"
-                className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"
-              >
-                <GanttChart size={18} />
-                <span className="sr-only">Gantt</span>
-              </button>
+        {/* Right Actions */}
+        <div className="flex items-center gap-2">
+          {/* Mechanic Actions */}
+          <div className="flex items-center gap-1.5 p-1">
+            <button
+              onClick={() => setShowGantt(true)}
+              title="Gantt"
+              className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"
+            >
+              <GanttChart size={18} />
+              <span className="sr-only">Gantt</span>
+            </button>
           </div>
 
           <div className="h-8 w-px bg-border/40 mx-2" />
 
           {/* Admin Tools */}
           {isAdmin && (
-             <div className="flex items-center gap-1.5 p-1 bg-muted/20 rounded-lg border border-border/20">
-                <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
-                <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>
-                
-                <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
-                  <PopoverTrigger asChild>
-                    <button className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all" title="Visibilidad de Tableros">
-                      <Eye size={18} />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[400] bg-card border-border p-0" align="end">
-                    <div className="p-3 border-b border-border font-roboto font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
-                    <ScrollArea className="h-60">
-                      {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
-                        const isHidden = hiddenBoards.includes(b);
-                        const isDeletable = b !== 'MASTER' && b !== 'COMPLETOS' && b !== 'PAPELERA DE RECICLAJE';
-                        return (
-                          <div key={b} className="flex items-center group/item hover:bg-secondary/50 transition-all">
-                            <button onClick={() => toggleBoardVisibility(b)} className={`flex-1 flex items-center gap-2 px-3 py-2 text-left text-sm ${isHidden ? 'opacity-50' : ''}`}>
-                              {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
-                              <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
-                            </button>
-                            {isDeletable && (
-                              <button 
-                                onClick={() => { setShowBoardVisibility(false); setDeleteBoardConfirm({ step: 1, name: b }); }}
-                                className="p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all"
-                                title={`Eliminar ${b}`}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </ScrollArea>
-                  </PopoverContent>
-                </Popover>
+            <div className="flex items-center gap-1.5 p-1 bg-muted/20 rounded-lg border border-border/20">
+              <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
+              <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>
 
-                <button onClick={() => setShowImportExcel(true)} title="Importar Excel" className="p-2.5 rounded-lg hover:bg-emerald-600/10 text-emerald-600 transition-all"><FileDown size={18} /></button>
-                <button onClick={() => setShowColumnManager(!showColumnManager)} title="Columnas" className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all"><Settings size={18} /></button>
-             </div>
+              <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
+                <PopoverTrigger asChild>
+                  <button className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all" title="Visibilidad de Tableros">
+                    <Eye size={18} />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[400] bg-card border-border p-0" align="end">
+                  <div className="p-3 border-b border-border font-roboto font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
+                  <ScrollArea className="h-60">
+                    {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
+                      const isHidden = hiddenBoards.includes(b);
+                      const isDeletable = b !== 'MASTER' && b !== 'COMPLETOS' && b !== 'PAPELERA DE RECICLAJE';
+                      return (
+                        <div key={b} className="flex items-center group/item hover:bg-secondary/50 transition-all">
+                          <button onClick={() => toggleBoardVisibility(b)} className={`flex-1 flex items-center gap-2 px-3 py-2 text-left text-sm ${isHidden ? 'opacity-50' : ''}`}>
+                            {isHidden ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-green-500" />}
+                            <span className={`flex-1 ${isHidden ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{b}</span>
+                          </button>
+                          {isDeletable && (
+                            <button
+                              onClick={() => { setShowBoardVisibility(false); setDeleteBoardConfirm({ step: 1, name: b }); }}
+                              className="p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all"
+                              title={`Eliminar ${b}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </ScrollArea>
+                </PopoverContent>
+              </Popover>
+
+              <button onClick={() => setShowImportExcel(true)} title="Importar Excel" className="p-2.5 rounded-lg hover:bg-emerald-600/10 text-emerald-600 transition-all"><FileDown size={18} /></button>
+              <button onClick={() => setShowColumnManager(!showColumnManager)} title="Columnas" className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all"><Settings size={18} /></button>
+            </div>
           )}
 
 
@@ -1519,8 +1507,8 @@ const Dashboard = () => {
                     onClick={() => handleToggleColumnVisibility(col.key)}
                     className={cn(
                       "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
-                      isHidden 
-                        ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60" 
+                      isHidden
+                        ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60"
                         : "bg-background border-border text-foreground hover:border-royal/50"
                     )}
                   >
@@ -1570,7 +1558,7 @@ const Dashboard = () => {
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold text-primary cursor-pointer text-sm md:text-base">
                         <div className="flex items-center gap-2.5">
-                          <Monitor className="w-5 h-5" /> 
+                          <Monitor className="w-5 h-5" />
                           <span>MAQUINAS</span>
                         </div>
                       </DropdownMenuSubTrigger>
@@ -1620,7 +1608,7 @@ const Dashboard = () => {
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         )}
-        
+
         {loading && orders.length > 0 && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center bg-background/20 backdrop-blur-[1px] pointer-events-none">
             <div className="bg-card p-3 rounded-full shadow-2xl border border-border animate-bounce">
@@ -1632,276 +1620,276 @@ const Dashboard = () => {
         {(calendarMode && (currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
           readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
             blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
-                <>
-                  <div role="table" className="text-sm isolate" style={{ 
-                    display: 'grid', 
-                    gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`, 
-                    minWidth: '100%', 
-                    width: 'max-content'
-                  }}>
-                    
-                        <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
-                        <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
-                        
-                        {/* Column 3: Permanent Identifier (Sticky) */}
-                        <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
-                            <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
-                              <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+              <>
+                <div role="table" className="text-sm isolate" style={{
+                  display: 'grid',
+                  gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`,
+                  minWidth: '100%',
+                  width: 'max-content'
+                }}>
+
+                  <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
+
+                  {/* Column 3: Permanent Identifier (Sticky) */}
+                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
+                      <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
+                        <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+                          <ListFilter className="w-3.5 h-3.5" />
+                        </PopoverTrigger>
+                        <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
+                          {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? (
+                            <>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
+                                {filters['_board'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                              </div>
+                              <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
+                                {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
+                                  const checked = (filters['_board'] || []).includes(b);
+                                  return (
+                                    <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => {
+                                          setFilters(prev => {
+                                            const cur = prev['_board'] || [];
+                                            const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
+                                            return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                          });
+                                        }}
+                                        className="w-4 h-4 rounded border-border accent-primary"
+                                      />
+                                      <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
+                                    </label>
+                                  );
+                                })}
+
+                                {/* Machines Folder */}
+                                <div className="mt-2 pt-2 border-t border-border">
+                                  <button
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
+                                    className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <Monitor className="w-3.5 h-3.5" />
+                                      <span>MAQUINAS</span>
+                                    </div>
+                                    <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
+                                  </button>
+                                  {showMachinesInFilter && (
+                                    <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
+                                      {allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).sort((a, b) => {
+                                        const numA = parseInt(a.replace('MAQUINA', '')) || 0;
+                                        const numB = parseInt(b.replace('MAQUINA', '')) || 0;
+                                        return numA - numB;
+                                      }).map(b => {
+                                        const checked = (filters['_board'] || []).includes(b);
+                                        return (
+                                          <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={() => {
+                                                setFilters(prev => {
+                                                  const cur = prev['_board'] || [];
+                                                  const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
+                                                  return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                                });
+                                              }}
+                                              className="w-4 h-4 rounded border-border accent-primary"
+                                            />
+                                            <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Orden</span>
+                                {filters['order_number'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                              </div>
+                              <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
+                            </>
+                          )}
+                          <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                            <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
+                              {t('save_view')}
+                            </button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
+
+                  {/* Columns 4+: Draggable Scrollable Content (Always filter order_number) */}
+                  {visibleColumns.filter(c => c.key !== 'order_number').map((col, idx) => {
+                    const isOrderNum = col.key === 'order_number';
+                    const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
+                    const filterVal = filters[col.key];
+                    const isSelect = col.type === 'select' || col.type === 'status' || (col.optionKey && options[col.optionKey]);
+                    const isDate = col.type === 'date';
+
+                    return (
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
+                            {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
+                            <span className="truncate">{col.label}</span>
+                            {/* Filter Trigger Icon */}
+                            <Popover open={openFilter === col.key} onOpenChange={(val) => setOpenFilter(val ? col.key : null)}>
+                              <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
                                 <ListFilter className="w-3.5 h-3.5" />
                               </PopoverTrigger>
-                              <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
-                                {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? (
+                              <PopoverContent className="z-[600] min-w-[240px] bg-card border-border p-4 shadow-2xl overflow-y-auto max-h-[400px]">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{col.label}</span>
+                                  {filterVal && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                </div>
+
+                                {isSelect ? (
+                                  <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
+                                    {col.key === 'board' ? (
                                       <>
-                                        <div className="flex items-center justify-between mb-2">
-                                          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
-                                          {filters['_board'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
-                                        </div>
-                                        <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
-                                          {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
-                                            const checked = (filters['_board'] || []).includes(b);
+                                        <div className="space-y-1">
+                                          {getFilterOptions(col).filter(opt => opt !== 'MASTER' && opt !== 'PAPELERA DE RECICLAJE' && !opt.startsWith('MAQUINA')).sort().map(opt => {
+                                            const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
                                             return (
-                                              <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                              <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
                                                 <input
                                                   type="checkbox"
                                                   checked={checked}
                                                   onChange={() => {
                                                     setFilters(prev => {
-                                                      const cur = prev['_board'] || [];
-                                                      const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
-                                                      return { ...prev, '_board': next.length > 0 ? next : undefined };
+                                                      const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                      const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                      return { ...prev, [col.key]: next.length > 0 ? next : undefined };
                                                     });
                                                   }}
                                                   className="w-4 h-4 rounded border-border accent-primary"
                                                 />
-                                                <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
+                                                <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
                                               </label>
                                             );
                                           })}
+                                        </div>
 
-                                          {/* Machines Folder */}
-                                          <div className="mt-2 pt-2 border-t border-border">
-                                            <button 
-                                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
-                                              className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
-                                            >
-                                              <div className="flex items-center gap-2">
-                                                <Monitor className="w-3.5 h-3.5" />
-                                                <span>MAQUINAS</span>
-                                              </div>
-                                              <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
-                                            </button>
-                                            {showMachinesInFilter && (
-                                              <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
-                                                {allBoardsIncludingHidden.filter(b => b.startsWith('MAQUINA')).sort((a,b) => {
-                                                  const numA = parseInt(a.replace('MAQUINA', '')) || 0;
-                                                  const numB = parseInt(b.replace('MAQUINA', '')) || 0;
-                                                  return numA - numB;
-                                                }).map(b => {
-                                                  const checked = (filters['_board'] || []).includes(b);
-                                                  return (
-                                                    <label key={b} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                      <input
-                                                        type="checkbox"
-                                                        checked={checked}
-                                                        onChange={() => {
-                                                          setFilters(prev => {
-                                                            const cur = prev['_board'] || [];
-                                                            const next = cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b];
-                                                            return { ...prev, '_board': next.length > 0 ? next : undefined };
-                                                          });
-                                                        }}
-                                                        className="w-4 h-4 rounded border-border accent-primary"
-                                                      />
-                                                      <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{b}</span>
-                                                    </label>
-                                                  );
-                                                })}
-                                              </div>
-                                            )}
-                                          </div>
+                                        {/* Machines Folder */}
+                                        <div className="mt-2 pt-2 border-t border-border">
+                                          <button
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
+                                            className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <Monitor className="w-3.5 h-3.5" />
+                                              <span>MAQUINAS</span>
+                                            </div>
+                                            <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
+                                          </button>
+                                          {showMachinesInFilter && (
+                                            <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
+                                              {getFilterOptions(col).filter(opt => opt.startsWith('MAQUINA')).sort((a, b) => {
+                                                const numA = parseInt(a.replace('MAQUINA', '')) || 0;
+                                                const numB = parseInt(b.replace('MAQUINA', '')) || 0;
+                                                return numA - numB;
+                                              }).map(opt => {
+                                                const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                                return (
+                                                  <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={checked}
+                                                      onChange={() => {
+                                                        setFilters(prev => {
+                                                          const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                          const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                          return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                        });
+                                                      }}
+                                                      className="w-4 h-4 rounded border-border accent-primary"
+                                                    />
+                                                    <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
+                                                  </label>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
                                         </div>
                                       </>
                                     ) : (
-                                      <>
-                                        <div className="flex items-center justify-between mb-2">
-                                          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Orden</span>
-                                          {filters['order_number'] && <button onClick={() => setFilters(prev => { const n={...prev}; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
-                                        </div>
-                                        <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
-                                      </>
+                                      getFilterOptions(col).map(opt => {
+                                        const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
+                                        return (
+                                          <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={() => {
+                                                setFilters(prev => {
+                                                  const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
+                                                  const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
+                                                  return { ...prev, [col.key]: next.length > 0 ? next : undefined };
+                                                });
+                                              }}
+                                              className="w-4 h-4 rounded border-border accent-primary"
+                                            />
+                                            <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
+                                          </label>
+                                        );
+                                      })
                                     )}
-                                    <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
-                                      <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
-                                        {t('save_view')}
-                                      </button>
+                                  </div>
+                                ) : isDate ? (
+                                  <div className="space-y-3">
+                                    <div className="space-y-1">
+                                      <label className="text-[10px] uppercase font-bold opacity-60">Desde</label>
+                                      <input type="date" value={filterVal?.from || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), from: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
                                     </div>
-                                  </PopoverContent>
-                                </Popover>
-                              </div>
-                            </div>
-
-                        {/* Columns 4+: Draggable Scrollable Content (Always filter order_number) */}
-                        {visibleColumns.filter(c => c.key !== 'order_number').map((col, idx) => {
-                          const isOrderNum = col.key === 'order_number';
-                          const width = isOrderNum ? 220 : (columnWidths[col.key] || col.width);
-                          const filterVal = filters[col.key];
-                          const isSelect = col.type === 'select' || col.type === 'status' || (col.optionKey && options[col.optionKey]);
-                          const isDate = col.type === 'date';
-
-                          return (
-                            <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
-                              <div className="flex items-center justify-between gap-1">
-                                <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
-                                  {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
-                                  <span className="truncate">{col.label}</span>
-                                  {/* Filter Trigger Icon */}
-                                  <Popover open={openFilter === col.key} onOpenChange={(val) => setOpenFilter(val ? col.key : null)}>
-                                    <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filterVal ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`} onClick={(e) => e.stopPropagation()}>
-                                      <ListFilter className="w-3.5 h-3.5" />
-                                    </PopoverTrigger>
-                                    <PopoverContent className="z-[600] min-w-[240px] bg-card border-border p-4 shadow-2xl overflow-y-auto max-h-[400px]">
-                                      <div className="flex items-center justify-between mb-2">
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{col.label}</span>
-                                        {filterVal && <button onClick={() => setFilters(prev => { const n={...prev}; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
-                                      </div>
-                                      
-                                      {isSelect ? (
-                                        <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
-                                          {col.key === 'board' ? (
-                                            <>
-                                              <div className="space-y-1">
-                                                {getFilterOptions(col).filter(opt => opt !== 'MASTER' && opt !== 'PAPELERA DE RECICLAJE' && !opt.startsWith('MAQUINA')).sort().map(opt => {
-                                                  const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
-                                                  return (
-                                                    <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                      <input
-                                                        type="checkbox"
-                                                        checked={checked}
-                                                        onChange={() => {
-                                                          setFilters(prev => {
-                                                            const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                                            const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                                            return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                                                          });
-                                                        }}
-                                                        className="w-4 h-4 rounded border-border accent-primary"
-                                                      />
-                                                      <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
-                                                    </label>
-                                                  );
-                                                })}
-                                              </div>
-                                              
-                                              {/* Machines Folder */}
-                                              <div className="mt-2 pt-2 border-t border-border">
-                                                <button 
-                                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowMachinesInFilter(!showMachinesInFilter); }}
-                                                  className="flex items-center justify-between w-full py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors text-xs font-bold text-primary"
-                                                >
-                                                  <div className="flex items-center gap-2">
-                                                    <Monitor className="w-3.5 h-3.5" />
-                                                    <span>MAQUINAS</span>
-                                                  </div>
-                                                  <ChevronDown className={`w-3 h-3 transition-transform ${showMachinesInFilter ? 'rotate-180' : ''}`} />
-                                                </button>
-                                                {showMachinesInFilter && (
-                                                  <div className="pl-4 mt-1 space-y-1 border-l border-primary/20 ml-3">
-                                                    {getFilterOptions(col).filter(opt => opt.startsWith('MAQUINA')).sort((a,b) => {
-                                                      const numA = parseInt(a.replace('MAQUINA', '')) || 0;
-                                                      const numB = parseInt(b.replace('MAQUINA', '')) || 0;
-                                                      return numA - numB;
-                                                    }).map(opt => {
-                                                      const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
-                                                      return (
-                                                        <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                          <input
-                                                            type="checkbox"
-                                                            checked={checked}
-                                                            onChange={() => {
-                                                              setFilters(prev => {
-                                                                const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                                                const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                                                return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                                                              });
-                                                            }}
-                                                            className="w-4 h-4 rounded border-border accent-primary"
-                                                          />
-                                                          <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
-                                                        </label>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </>
-                                          ) : (
-                                            getFilterOptions(col).map(opt => {
-                                              const checked = Array.isArray(filterVal) ? filterVal.includes(opt) : filterVal === opt;
-                                              return (
-                                                <label key={opt} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-secondary cursor-pointer transition-colors">
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={() => {
-                                                      setFilters(prev => {
-                                                        const cur = Array.isArray(prev[col.key]) ? [...prev[col.key]] : (prev[col.key] ? [prev[col.key]] : []);
-                                                        const next = checked ? cur.filter(v => v !== opt) : [...cur, opt];
-                                                        return { ...prev, [col.key]: next.length > 0 ? next : undefined };
-                                                      });
-                                                    }}
-                                                    className="w-4 h-4 rounded border-border accent-primary"
-                                                  />
-                                                  <span className={`text-xs ${checked ? 'font-bold text-primary' : 'text-foreground'}`}>{opt}</span>
-                                                </label>
-                                              );
-                                            })
-                                          )}
-                                        </div>
-                                      ) : isDate ? (
-                                        <div className="space-y-3">
-                                          <div className="space-y-1">
-                                            <label className="text-[10px] uppercase font-bold opacity-60">Desde</label>
-                                            <input type="date" value={filterVal?.from || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), from: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
-                                          </div>
-                                          <div className="space-y-1">
-                                            <label className="text-[10px] uppercase font-bold opacity-60">Hasta</label>
-                                            <input type="date" value={filterVal?.to || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), to: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="relative mt-1">
-                                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                                          <input
-                                            type="text"
-                                            value={typeof filterVal === 'string' ? filterVal : ''}
-                                            onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: e.target.value || undefined }))}
-                                            placeholder={`Buscar ${col.label.toLowerCase()}...`}
-                                            className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
-                                            autoFocus
-                                          />
-                                        </div>
-                                      )}
-                                      <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
-                                        <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
-                                          {t('save_view')}
-                                        </button>
-                                      </div>
-                                    </PopoverContent>
-                                  </Popover>
+                                    <div className="space-y-1">
+                                      <label className="text-[10px] uppercase font-bold opacity-60">Hasta</label>
+                                      <input type="date" value={filterVal?.to || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), to: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="relative mt-1">
+                                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                                    <input
+                                      type="text"
+                                      value={typeof filterVal === 'string' ? filterVal : ''}
+                                      onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: e.target.value || undefined }))}
+                                      placeholder={`Buscar ${col.label.toLowerCase()}...`}
+                                      className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
+                                      autoFocus
+                                    />
+                                  </div>
+                                )}
+                                <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                                  <button onClick={() => setShowSaveView(true)} className="text-[10px] font-bold uppercase tracking-widest text-royal hover:underline">
+                                    {t('save_view')}
+                                  </button>
                                 </div>
-                                <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
-                    {renderTableBody()}
-                  </div>
-                  {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
-                </>
-              )}
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                          <div className="cursor-col-resize px-1 opacity-40 hover:opacity-100" onMouseDown={(e) => { e.stopPropagation(); const startX = e.clientX; const startWidth = columnWidths[col.key] || col.width; const onMouseMove = (ev) => { setColumnWidths(prev => ({ ...prev, [col.key]: Math.max(80, startWidth + (ev.clientX - startX)) })); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }}><GripVertical className="w-4 h-4" /></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
+                  {renderTableBody()}
+                </div>
+                {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
+              </>
+            )}
       </main>
 
       {/* Modals */}
@@ -2123,11 +2111,11 @@ const Dashboard = () => {
           <div className="py-4 space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre de la Vista</label>
-              <input 
-                value={newViewName} 
-                onChange={(e) => setNewViewName(e.target.value)} 
-                placeholder="Ej: Solo Prioridad Alta" 
-                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all" 
+              <input
+                value={newViewName}
+                onChange={(e) => setNewViewName(e.target.value)}
+                placeholder="Ej: Solo Prioridad Alta"
+                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all"
                 autoFocus
               />
             </div>
@@ -2153,11 +2141,11 @@ const Dashboard = () => {
           <div className="py-4 space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre del Tablero</label>
-              <input 
-                value={newBoardName} 
-                onChange={(e) => setNewBoardName(e.target.value)} 
-                placeholder="Ej: CALIDAD, EMBALAJE..." 
-                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all uppercase" 
+              <input
+                value={newBoardName}
+                onChange={(e) => setNewBoardName(e.target.value)}
+                placeholder="Ej: CALIDAD, EMBALAJE..."
+                className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all uppercase"
                 autoFocus
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
               />
@@ -2165,9 +2153,9 @@ const Dashboard = () => {
           </div>
           <DialogFooter>
             <button onClick={() => setShowNewBoard(false)} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-all">Cancelar</button>
-            <button 
-              onClick={handleCreateBoard} 
-              disabled={!newBoardName.trim()} 
+            <button
+              onClick={handleCreateBoard}
+              disabled={!newBoardName.trim()}
               className="px-6 py-2 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all disabled:opacity-50"
             >
               Crear Tablero
@@ -2182,112 +2170,116 @@ const Dashboard = () => {
       <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
       {/* Enterprise Side-Drawer Detail View */}
       {detailsOrder && (
-        <div className="enterprise-drawer" style={{
-          position: 'fixed', inset: '0 0 0 auto', width: isMobile ? '100%' : '780px',
-          borderLeft: '1px solid rgba(255,255,255,0.06)',
+        <div className={cn(
+          "enterprise-drawer",
+          (isMobile || isTablet) ? "fixed inset-0 w-full" : "fixed inset-y-0 right-0 w-[780px] border-l"
+        )} style={{
+          backgroundColor: isDark ? '#0a0a0c' : '#ffffff',
           boxShadow: '-10px 0 60px rgba(0,0,0,0.6)',
           display: 'flex', flexDirection: 'column', height: '100vh',
           zIndex: 100, fontFamily: 'inherit',
           animation: 'slideInFromRight 0.3s ease-out'
         }}>
           {/* Header */}
-          <div style={{
-            padding: '24px 28px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            backgroundColor: 'rgba(255,255,255,0.01)', flexShrink: 0
-          }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '10px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.25em', marginBottom: '6px', opacity: 0.9 }}>
-                Detalles de Orden
-              </p>
-              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px' }}>
-                {isAdmin && isEditingOrderNo ? (
-                  <input
-                    type="text"
-                    value={tempOrderNo}
-                    onChange={(e) => setTempOrderNo(e.target.value)}
-                    onBlur={() => {
-                      if (tempOrderNo !== detailsOrder.order_number) {
-                        handleCellUpdate(detailsOrder.order_id, 'order_number', tempOrderNo);
-                        setDetailsOrder({ ...detailsOrder, order_number: tempOrderNo });
-                      }
-                      setIsEditingOrderNo(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+          <div className={cn(
+            "p-6 md:p-8 flex items-center justify-between flex-shrink-0 border-b",
+            isDark ? "bg-white/[0.02] border-white/5" : "bg-gray-50 border-gray-100"
+          )}>
+            <div className="flex items-center gap-4">
+              {(isMobile || isTablet) && (
+                <button
+                  onClick={() => setDetailsOrder(null)}
+                  className={cn("p-2.5 rounded-xl transition-all", isDark ? "bg-white/5 text-white/50 hover:text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+              )}
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: '10px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.25em', marginBottom: '6px', opacity: 0.9 }}>
+                  Detalles de Orden
+                </p>
+                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px' }}>
+                  {isAdmin && isEditingOrderNo ? (
+                    <input
+                      type="text"
+                      value={tempOrderNo}
+                      onChange={(e) => setTempOrderNo(e.target.value)}
+                      onBlur={() => {
                         if (tempOrderNo !== detailsOrder.order_number) {
                           handleCellUpdate(detailsOrder.order_id, 'order_number', tempOrderNo);
                           setDetailsOrder({ ...detailsOrder, order_number: tempOrderNo });
                         }
                         setIsEditingOrderNo(false);
-                      }
-                      if (e.key === 'Escape') setIsEditingOrderNo(false);
-                    }}
-                    autoFocus
-                    style={{
-                      fontSize: '28px', fontWeight: 900, textTransform: 'uppercase',
-                      backgroundColor: 'rgba(255,255,255,0.05)', color: '#ffffff',
-                      border: '1px solid #4169e1', borderRadius: '4px',
-                      padding: '2px 8px', outline: 'none', width: '200px',
-                      marginLeft: '-8px'
-                    }}
-                  />
-                ) : (
-                  <h3 
-                    onClick={() => {
-                      if (isAdmin) {
-                        setTempOrderNo(detailsOrder.order_number);
-                        setIsEditingOrderNo(true);
-                      }
-                    }}
-                    style={{ 
-                      fontSize: '28px', fontWeight: 900, letterSpacing: '-0.04em', 
-                      textTransform: 'uppercase', lineHeight: 1, color: '#ffffff', 
-                      margin: 0, cursor: isAdmin ? 'pointer' : 'default' 
-                    }}
-                    title={isAdmin ? "Click para editar número de orden" : ""}
-                  >
-                    {detailsOrder.order_number}
-                  </h3>
-                )}
-
-                {(() => {
-                  const ps = productionSummary[detailsOrder.order_id];
-                  const totalProduced = ps ? ps.total_produced : 0;
-                  const qty = detailsOrder.quantity || 0;
-                  const remaining = Math.max(0, qty - totalProduced);
-                  const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
-                  if (qty <= 0) return null;
-                  const barColor = pct >= 100 ? '#22c55e' : pct >= 50 ? '#94a3b8' : '#ef4444';
-                  const pctColor = pct >= 100 ? '#4ade80' : pct >= 50 ? '#cbd5e1' : '#f87171';
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ fontSize: '9px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Progreso</span>
-                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>Faltan: {remaining}</span>
-                        <span style={{ fontSize: '11px', fontWeight: 900, color: pctColor }}>{pct.toFixed(0)}%</span>
-                      </div>
-                      <div style={{ width: '128px', height: '5px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
-                        <div style={{ width: `${pct}%`, height: '100%', backgroundColor: barColor, transition: 'width 1s ease', borderRadius: '999px' }} />
-                      </div>
-                    </div>
-                  );
-                })()}
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (tempOrderNo !== detailsOrder.order_number) {
+                            handleCellUpdate(detailsOrder.order_id, 'order_number', tempOrderNo);
+                            setDetailsOrder({ ...detailsOrder, order_number: tempOrderNo });
+                          }
+                          setIsEditingOrderNo(false);
+                        }
+                        if (e.key === 'Escape') setIsEditingOrderNo(false);
+                      }}
+                      autoFocus
+                      className={cn(
+                        "text-3xl font-black uppercase bg-transparent outline-none border-b-2",
+                        isDark ? "text-white border-royal" : "text-navy border-royal"
+                      )}
+                      style={{ width: '200px' }}
+                    />
+                  ) : (
+                    <h3
+                      onClick={() => {
+                        if (isAdmin) {
+                          setTempOrderNo(detailsOrder.order_number);
+                          setIsEditingOrderNo(true);
+                        }
+                      }}
+                      className={cn(
+                        "text-3xl font-black uppercase tracking-tighter leading-none cursor-pointer",
+                        isDark ? "text-white" : "text-navy"
+                      )}
+                      title={isAdmin ? "Click para editar número de orden" : ""}
+                    >
+                      {detailsOrder.order_number}
+                    </h3>
+                  )}
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => setDetailsOrder(null)}
-              style={{ padding: '8px', borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b', marginLeft: '16px' }}
-              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#64748b'; }}
-            >
-              <X style={{ width: '22px', height: '22px' }} />
-            </button>
+
+            <div className="flex items-center gap-3">
+              {(() => {
+                const ps = productionSummary[detailsOrder.order_id];
+                const totalProduced = ps ? ps.total_produced : 0;
+                const qty = detailsOrder.quantity || 0;
+                const pct = qty > 0 ? Math.min(100, (totalProduced / qty) * 100) : 0;
+                if (qty <= 0) return null;
+                return (
+                  <div className="hidden sm:flex flex-col items-end gap-2 pr-4 border-r border-border/50">
+                    <span className="text-[10px] font-black text-royal uppercase tracking-widest">{pct.toFixed(0)}% Completado</span>
+                    <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-royal" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
+              <button
+                onClick={() => setDetailsOrder(null)}
+                className={cn(
+                  "p-2.5 rounded-full transition-all",
+                  isDark ? "bg-white/5 text-white/30 hover:bg-white/10 hover:text-white" : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                )}
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
           </div>
 
           {/* Body - Scrollable */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '32px 28px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
-            
+
             {/* Cliente */}
             <div>
               <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
@@ -2366,7 +2358,7 @@ const Dashboard = () => {
       )}
 
       {/* Command Palette */}
-      <CommandPalette 
+      <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
         onNewOrder={() => setShowNewOrder(true)}
@@ -2376,7 +2368,7 @@ const Dashboard = () => {
         t={t}
       />
     </div>
-  </div>
+  </div >
 );
 };
 
