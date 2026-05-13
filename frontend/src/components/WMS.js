@@ -1461,7 +1461,8 @@ const PickingModule = () => {
           <button 
             onClick={() => { resetForm(); setShowForm(true); }} 
             className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
-            data-testid="new-pick-btn"
+          >
+            <Plus className="w-5 h-5" /> {t('wms_new_pick')}
           </button>
         </div>
       </div>
