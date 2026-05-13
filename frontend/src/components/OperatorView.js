@@ -398,10 +398,9 @@ export default function OperatorView() {
           </button>
         </div>
       </header>
-
       <div className="flex h-[calc(100vh-57px)]">
-        {/* Ticket List Sidebar */}
-        <aside className="w-80 border-r border-border bg-card p-4 overflow-y-auto flex-shrink-0">
+        {/* Ticket List Sidebar - Responsive: hidden on mobile if ticket is selected */}
+        <aside className={`${selectedTicket ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-border bg-card p-4 overflow-y-auto flex-shrink-0 flex-col`}>
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -442,15 +441,24 @@ export default function OperatorView() {
           )}
         </aside>
 
-        {/* Main Picking Area */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        {/* Main Picking Area - Responsive: full width on mobile, hidden if no ticket and is mobile */}
+        <main className={`${!selectedTicket ? 'hidden md:block' : 'block'} flex-1 p-4 md:p-6 overflow-y-auto`}>
           {selectedTicket ? (
-            <PickingInterface ticket={selectedTicket} onSave={handleSave} saving={saving} />
+            <div className="max-w-3xl mx-auto">
+               {/* Mobile Back Button */}
+               <button 
+                 onClick={() => setSelectedTicket(null)}
+                 className="md:hidden mb-6 flex items-center gap-2 text-primary font-bold text-sm bg-primary/10 px-5 py-3 rounded-2xl active:scale-95 transition-transform"
+               >
+                 <LogOut className="w-4 h-4 rotate-180" /> Volver a la lista de pedidos
+               </button>
+               <PickingInterface ticket={selectedTicket} onSave={handleSave} saving={saving} />
+            </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <ClipboardCheck className="w-16 h-16 text-muted-foreground/30 mb-4" />
-              <h2 className="text-lg font-bold text-foreground mb-1">Selecciona un ticket</h2>
-              <p className="text-sm text-muted-foreground">Elige un pick ticket de la lista para comenzar el surtido</p>
+            <div className="flex flex-col items-center justify-center h-full text-center p-8">
+              <ClipboardCheck className="w-20 h-20 text-muted-foreground/20 mb-6" />
+              <h2 className="text-xl font-bold text-foreground mb-2">Selecciona un ticket</h2>
+              <p className="text-sm text-muted-foreground max-w-xs mx-auto">Elige un pedido de la lista de la izquierda para comenzar el surtido en el almacén</p>
             </div>
           )}
         </main>
