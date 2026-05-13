@@ -224,7 +224,8 @@ const CEODashboard = () => {
   }
 
   return (
-    <div className={`min-h-screen font-barlow p-6 md:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
+  return (
+    <div className={`min-h-screen font-barlow p-4 md:p-8 lg:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
       isDark ? 'bg-[#050508]' : 'bg-[#f8fafc]'
     }`}>
       {/* Dynamic Background Effects */}
@@ -238,65 +239,64 @@ const CEODashboard = () => {
         <div className={`absolute inset-0 scanline opacity-[0.03] transition-opacity ${isDark ? '' : 'hidden'}`} />
       </div>
 
-      <header className="mb-12 relative z-10">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-8">
-          <div className="flex items-center gap-8">
+      <header className="mb-8 md:mb-12 relative z-10">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 md:gap-8">
+          <div className="flex items-center gap-4 md:gap-8">
             <button 
               onClick={() => navigate('/home')} 
-              className={`p-4 rounded-2xl border transition-all group backdrop-blur-md ${
+              className={`p-3 md:p-4 rounded-2xl border transition-all group backdrop-blur-md ${
                 isDark ? 'bg-white/5 hover:bg-white/10 border-white/10' : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 shadow-sm'
               }`}
             >
-              <ArrowLeft className={`w-6 h-6 transition-transform group-hover:-translate-x-1 ${isDark ? 'text-foreground' : 'text-emerald-900'}`} />
+              <ArrowLeft className={`w-5 h-5 md:w-6 md:h-6 transition-transform group-hover:-translate-x-1 ${isDark ? 'text-foreground' : 'text-emerald-900'}`} />
             </button>
             <div className="space-y-1">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 md:gap-4">
                 <div className={`p-2 rounded-lg ${isDark ? 'bg-[#e94560]/20' : 'bg-emerald-500/10'}`}>
-                  <LayoutDashboard className={`w-5 h-5 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
+                  <LayoutDashboard className={`w-4 h-4 md:w-5 md:h-5 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
                 </div>
-                <h1 className={`text-4xl font-black uppercase tracking-[-0.05em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>
+                <h1 className={`text-2xl md:text-3xl lg:text-4xl font-black uppercase tracking-[-0.05em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>
                   {t('ceo_exclusive_insights').split(' ')[0]} <span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-[#e94560] to-[#ff758c]' : 'from-emerald-600 to-emerald-400'}`}>{t('ceo_exclusive_insights').split(' ')[1]}</span>
                 </h1>
               </div>
-              <p className={`font-medium text-[11px] uppercase tracking-[0.3em] flex items-center gap-3 ${isDark ? 'text-muted-foreground/60' : 'text-emerald-800/40'}`}>
+              <p className={`font-medium text-[9px] md:text-[11px] uppercase tracking-[0.3em] flex items-center gap-2 md:gap-3 ${isDark ? 'text-muted-foreground/60' : 'text-emerald-800/40'}`}>
                 {t('ceo_operations')} <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`font-black uppercase tracking-widest text-[9px] ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>{t('ceo_prosper_mfg')}</span> 
-                <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
-                <span className={`px-2 py-0.5 border rounded text-[9px] ${isDark ? 'border-[#e94560]/30 text-[#e94560]/80' : 'border-emerald-500/20 text-emerald-600'}`}>{t('ceo_read_only')}</span>
+                <span className={`font-black uppercase tracking-widest text-[8px] md:text-[9px] ${isDark ? 'text-[#e94560]/80' : 'text-emerald-600'}`}>{t('ceo_prosper_mfg')}</span> 
+                <span className={`hidden sm:inline w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-emerald-500/20'}`} /> 
+                <span className={`hidden sm:inline px-2 py-0.5 border rounded text-[8px] md:text-[9px] ${isDark ? 'border-[#e94560]/30 text-[#e94560]/80' : 'border-emerald-500/20 text-emerald-600'}`}>{t('ceo_read_only')}</span>
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-6">
-            <button
-              onClick={toggleLang}
-              className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
-                isDark 
-                  ? 'bg-white/5 hover:bg-white/10 border-white/10 text-white' 
-                  : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 text-emerald-900 shadow-sm'
-              }`}
-            >
-              <div className={`p-1.5 rounded-lg transition-colors ${
-                isDark ? 'group-hover:bg-[#e94560]/20' : 'group-hover:bg-emerald-500/10'
-              }`}>
-                <Languages className={`w-4 h-4 transition-transform group-hover:rotate-12 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-widest">
-                {lang === 'es' ? 'English' : 'Español'}
-              </span>
-            </button>
-            <ThemeSwitch />
-            <div className={`flex flex-wrap items-center gap-4 p-2 rounded-3xl border backdrop-blur-xl ${
+          <div className="flex flex-wrap items-center gap-3 md:gap-6">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleLang}
+                className={`flex items-center gap-2 md:gap-3 px-4 md:px-6 py-2 md:py-2.5 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
+                  isDark 
+                    ? 'bg-white/5 hover:bg-white/10 border-white/10 text-white' 
+                    : 'bg-white/60 hover:bg-white/80 border-emerald-500/10 text-emerald-900 shadow-sm'
+                }`}
+              >
+                <Languages className={`w-4 h-4 ${isDark ? 'text-[#e94560]' : 'text-emerald-600'}`} />
+                <span className="text-[10px] font-black uppercase tracking-widest">
+                  {lang === 'es' ? 'EN' : 'ES'}
+                </span>
+              </button>
+              <ThemeSwitch />
+            </div>
+
+            <div className={`flex flex-col md:flex-row items-center gap-4 p-3 md:p-2 rounded-[2rem] border backdrop-blur-xl w-full md:w-auto ${
               isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-emerald-500/10 shadow-sm'
             }`}>
-              <div className={`flex items-center gap-1 p-1 rounded-2xl border ${isDark ? 'bg-black/40 border-white/5' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
+              <div className={`flex items-center gap-1 p-1 rounded-2xl border w-full md:w-auto overflow-x-auto ${isDark ? 'bg-black/40 border-white/5' : 'bg-emerald-500/5 border-emerald-500/10'}`}>
                 {['today', 'week', 'month'].map((p) => (
                   <button
                     key={p}
                     onClick={() => { setPeriod(p); setDateFrom(''); setDateTo(''); }}
-                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-300 ${
+                    className={`flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-300 ${
                       period === p 
-                        ? (isDark ? 'bg-[#e94560] text-white shadow-[0_10px_20px_-5px_rgba(233,69,96,0.4)]' : 'bg-emerald-500 text-white shadow-[0_10px_20px_-5px_rgba(16,185,129,0.3)]')
+                        ? (isDark ? 'bg-[#e94560] text-white shadow-lg shadow-[#e94560]/20' : 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20')
                         : (isDark ? 'text-muted-foreground hover:text-white' : 'text-emerald-700/60 hover:text-emerald-700')
                     }`}
                   >
@@ -305,22 +305,22 @@ const CEODashboard = () => {
                 ))}
               </div>
               
-              <div className={`flex items-center gap-3 px-4 border-l ${isDark ? 'border-white/10' : 'border-emerald-500/10'}`}>
-                <div className="flex items-center gap-2">
+              <div className={`flex items-center gap-2 md:gap-3 px-0 md:px-4 border-t md:border-t-0 md:border-l w-full md:w-auto pt-3 md:pt-0 ${isDark ? 'border-white/10' : 'border-emerald-500/10'}`}>
+                <div className="flex items-center gap-2 flex-1 md:flex-none">
                   <input 
                     type="date" 
                     value={dateFrom} 
                     onChange={(e) => { setDateFrom(e.target.value); setPeriod('custom'); }}
-                    className={`border rounded-xl px-3 py-2 text-[10px] uppercase outline-none transition-colors ${
+                    className={`flex-1 md:w-28 border rounded-xl px-2 py-2 text-[9px] uppercase outline-none transition-colors ${
                       isDark ? 'bg-white/5 border-white/10 text-white focus:border-[#e94560]/50' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-900 focus:border-emerald-500/40'
                     }`}
                   />
-                  <span className="text-[10px] font-black opacity-30">{t('ceo_to')}</span>
+                  <span className="text-[9px] font-black opacity-30">{t('ceo_to')}</span>
                   <input 
                     type="date" 
                     value={dateTo} 
                     onChange={(e) => { setDateTo(e.target.value); setPeriod('custom'); }}
-                    className={`border rounded-xl px-3 py-2 text-[10px] uppercase outline-none transition-colors ${
+                    className={`flex-1 md:w-28 border rounded-xl px-2 py-2 text-[9px] uppercase outline-none transition-colors ${
                       isDark ? 'bg-white/5 border-white/10 text-white focus:border-[#e94560]/50' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-900 focus:border-emerald-500/40'
                     }`}
                   />
@@ -328,7 +328,7 @@ const CEODashboard = () => {
                 {(dateFrom && dateTo) && (
                   <button 
                     onClick={() => fetchAnalytics('custom')}
-                    className={`p-2.5 rounded-xl transition-all ${
+                    className={`p-2 rounded-xl transition-all ${
                       isDark 
                         ? (period === 'custom' ? 'bg-[#e94560] text-white' : 'bg-[#e94560]/10 text-[#e94560] hover:bg-[#e94560]/20') 
                         : (period === 'custom' ? 'bg-emerald-500 text-white' : 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20')
@@ -339,22 +339,22 @@ const CEODashboard = () => {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 border-l border-white/10 pl-4 pr-2">
+              <div className="flex items-center gap-2 border-t md:border-t-0 md:border-l w-full md:w-auto pt-3 md:pt-0 border-white/10 md:pl-4">
                 <button 
                   onClick={() => handleExport('excel')}
-                  className={`flex items-center gap-2 px-4 py-2.5 border transition-all rounded-xl text-[10px] font-black uppercase tracking-[0.1em] ${
+                  className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-3 md:px-4 py-2.5 border transition-all rounded-xl text-[9px] font-black uppercase tracking-[0.1em] ${
                     isDark ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-500/10'
                   }`}
                 >
-                  <Download className="w-3.5 h-3.5" /> {t('ceo_excel')}
+                  <Download className="w-3 h-3" /> EXCEL
                 </button>
                 <button 
                   onClick={() => handleExport('pdf')}
-                  className={`flex items-center gap-2 px-4 py-2.5 border transition-all rounded-xl text-[10px] font-black uppercase tracking-[0.1em] ${
+                  className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-3 md:px-4 py-2.5 border transition-all rounded-xl text-[9px] font-black uppercase tracking-[0.1em] ${
                     isDark ? 'bg-[#e94560]/10 hover:bg-[#e94560]/20 text-[#e94560] border-[#e94560]/20' : 'bg-emerald-700 hover:bg-emerald-800 text-white border-transparent'
                   }`}
                 >
-                  <Download className="w-3.5 h-3.5" /> {t('ceo_pdf')}
+                  <Download className="w-3 h-3" /> PDF
                 </button>
               </div>
             </div>
@@ -363,36 +363,36 @@ const CEODashboard = () => {
       </header>
 
       {/* Main Content */}
-      <div className="relative z-10 space-y-8">
-        {/* Stat Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="relative z-10 space-y-6 md:space-y-8">
+        {/* Stat Cards - Optimized for 2x2 on tablets, 4x1 on large screens */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           {stats.map((stat, i) => (
             <StatCard key={i} {...stat} />
           ))}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 md:gap-8">
           {/* Main Production Chart */}
-          <div className={`xl:col-span-8 backdrop-blur-3xl border rounded-[40px] p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
+          <div className={`xl:col-span-8 backdrop-blur-3xl border rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
             isDark ? 'bg-gradient-to-br from-card/80 to-card/40 border-white/5' : 'bg-white/90 border-emerald-500/10'
           }`}>
             <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-${isDark ? '[#e94560]' : 'emerald-500'}/30 to-transparent`} />
-            <div className="flex items-center justify-between mb-10">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 md:mb-10">
               <div className="flex items-center gap-4">
-                <div className={`w-1.5 h-10 rounded-full shadow-lg ${isDark ? 'bg-gradient-to-b from-[#e94560] to-[#ff758c] shadow-[#e94560]/50' : 'bg-gradient-to-b from-emerald-600 to-emerald-400 shadow-emerald-500/30'}`} />
+                <div className={`w-1.5 h-8 md:h-10 rounded-full shadow-lg ${isDark ? 'bg-gradient-to-b from-[#e94560] to-[#ff758c] shadow-[#e94560]/50' : 'bg-gradient-to-b from-emerald-600 to-emerald-400 shadow-emerald-500/30'}`} />
                 <div>
-                  <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_production_trend')}</h2>
-                  <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_industrial_engine')}</p>
+                  <h2 className={`text-xl md:text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_production_trend')}</h2>
+                  <p className={`text-[9px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_industrial_engine')}</p>
                 </div>
               </div>
-              <div className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl border ${
+              <div className={`self-start sm:self-auto flex items-center gap-2 text-[9px] font-black uppercase tracking-widest px-4 py-2 rounded-xl border ${
                 isDark ? 'text-[#e94560] bg-[#e94560]/10 border-[#e94560]/20' : 'text-emerald-600 bg-emerald-500/5 border-emerald-500/10'
               }`}>
                 <TrendingUp className="w-3 h-3" /> {data.granularity === 'hour' ? t('ceo_units_hour') : t('ceo_units_day')}
               </div>
             </div>
             
-            <div className="h-[420px] w-full mt-4">
+            <div className="h-[300px] md:h-[420px] w-full mt-4">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <AreaChart data={trendChartData}>
                   <defs>
@@ -445,26 +445,26 @@ const CEODashboard = () => {
           </div>
 
           {/* Efficiency by Machine */}
-          <div className={`xl:col-span-4 backdrop-blur-3xl border rounded-[40px] p-10 shadow-2xl relative overflow-hidden transition-all duration-500 ${
+          <div className={`xl:col-span-4 backdrop-blur-3xl border rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl relative overflow-hidden transition-all duration-500 ${
             isDark ? 'bg-gradient-to-br from-card/80 to-card/40 border-white/5' : 'bg-white/90 border-emerald-500/10'
           }`}>
              <div className="absolute top-0 right-0 p-4 opacity-5">
-               <Cpu className={`w-32 h-32 ${isDark ? 'text-white' : 'text-emerald-900'}`} />
+               <Cpu className={`w-24 md:w-32 h-24 md:h-32 ${isDark ? 'text-white' : 'text-emerald-900'}`} />
              </div>
-            <div className="flex items-center gap-4 mb-10">
+            <div className="flex items-center gap-4 mb-8 md:mb-10">
               <div className={`p-3 rounded-2xl border ${isDark ? 'bg-blue-500/10 border-blue-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                 <Cpu className={`w-6 h-6 ${isDark ? 'text-blue-500 text-glow-blue' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_machine_load')}</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_plant_resource')}</p>
+                <h2 className={`text-xl md:text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_machine_load')}</h2>
+                <p className={`text-[9px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_plant_resource')}</p>
               </div>
             </div>
             
-            <div className="space-y-8 max-h-[420px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-6 md:space-y-8 max-h-[300px] md:max-h-[420px] overflow-y-auto pr-2 custom-scrollbar">
               {data?.by_machine.map((m, i) => (
                 <div key={i} className="space-y-3 group/item">
-                  <div className="flex justify-between text-[11px] font-black uppercase tracking-widest">
+                  <div className="flex justify-between text-[10px] md:text-[11px] font-black uppercase tracking-widest">
                     <span className={`${isDark ? 'text-white/60 group-hover/item:text-white' : 'text-emerald-900/60 group-hover/item:text-emerald-950'} transition-colors`}>{m.machine.replace(/MAQUINA/gi, t('ceo_machine_label'))}</span>
                     <span className={`${isDark ? 'text-blue-400' : 'text-emerald-600'} group-hover/item:scale-110 transition-transform`}>{m.produced.toLocaleString()} <span className="text-[9px] opacity-40 ml-0.5">{t('ceo_unit_short')}</span></span>
                   </div>
@@ -484,21 +484,21 @@ const CEODashboard = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
           {/* Top Clients */}
-          <div className={`backdrop-blur-3xl border rounded-[40px] p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
+          <div className={`backdrop-blur-3xl border rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
             isDark ? 'bg-gradient-to-br from-card/80 to-card/40 border-white/5' : 'bg-white/90 border-emerald-500/10'
           }`}>
-            <div className="flex items-center gap-4 mb-10">
+            <div className="flex items-center gap-4 mb-8 md:mb-10">
               <div className={`p-3 rounded-2xl border ${isDark ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                 <Layers className={`w-6 h-6 ${isDark ? 'text-emerald-500 text-glow-emerald' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_top_clients')}</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_client_impact')}</p>
+                <h2 className={`text-xl md:text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_top_clients')}</h2>
+                <p className={`text-[9px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_client_impact')}</p>
               </div>
             </div>
-            <div className="h-[320px] w-full mt-4">
+            <div className="h-[250px] md:h-[320px] w-full mt-4">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={data?.by_client.slice(0, 7)}>
                   <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#ffffff05" : "#00000005"} vertical={false} />
@@ -529,7 +529,7 @@ const CEODashboard = () => {
                     }}
                     labelStyle={{ color: isDark ? '#fff' : '#064e3b', fontWeight: 'bold', marginBottom: '4px' }}
                   />
-                  <Bar dataKey="produced" radius={[10, 10, 0, 0]} barSize={40}>
+                  <Bar dataKey="produced" radius={[10, 10, 0, 0]} barSize={30}>
                     {data?.by_client.map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.8} />
                     ))}
@@ -540,27 +540,27 @@ const CEODashboard = () => {
           </div>
 
           {/* Distribution by Shift */}
-          <div className={`backdrop-blur-3xl border rounded-[40px] p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
+          <div className={`backdrop-blur-3xl border rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl relative overflow-hidden group transition-all duration-500 ${
             isDark ? 'bg-gradient-to-br from-card/80 to-card/40 border-white/5' : 'bg-white/90 border-emerald-500/10'
           }`}>
-            <div className="flex items-center gap-4 mb-10">
+            <div className="flex items-center gap-4 mb-8 md:mb-10">
               <div className={`p-3 rounded-2xl border ${isDark ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                 <Calendar className={`w-6 h-6 ${isDark ? 'text-orange-500 text-glow-orange' : 'text-emerald-600'}`} />
               </div>
               <div>
-                <h2 className={`text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_shifts')}</h2>
-                <p className={`text-[10px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_shift_balance')}</p>
+                <h2 className={`text-xl md:text-2xl font-black uppercase tracking-[-0.02em] ${isDark ? 'text-white' : 'text-emerald-950'}`}>{t('ceo_shifts')}</h2>
+                <p className={`text-[9px] font-black uppercase tracking-[0.4em] mt-1 ${isDark ? 'text-muted-foreground/40' : 'text-emerald-800/20'}`}>{t('ceo_shift_balance')}</p>
               </div>
             </div>
-            <div className="h-[320px] w-full mt-4 flex items-center justify-center">
+            <div className="h-[250px] md:h-[320px] w-full mt-4 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <PieChart>
                   <Pie
                     data={data?.by_shift}
                     cx="50%"
                     cy="50%"
-                    innerRadius={70}
-                    outerRadius={100}
+                    innerRadius={60}
+                    outerRadius={90}
                     paddingAngle={8}
                     dataKey="produced"
                     stroke="none"
@@ -597,7 +597,7 @@ const CEODashboard = () => {
                         'Afternoon': 'ceo_shift_afternoon',
                         'Night': 'ceo_shift_night'
                       };
-                      return <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-white/40' : 'text-emerald-800/40'}`}>{t(shiftKeys[val] || val)}</span>
+                      return <span className={`text-[9px] font-black uppercase tracking-wider ${isDark ? 'text-white/40' : 'text-emerald-800/40'}`}>{t(shiftKeys[val] || val)}</span>
                     }}
                   />
                 </PieChart>
