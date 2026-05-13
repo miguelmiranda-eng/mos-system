@@ -1046,6 +1046,7 @@ const PickingModule = () => {
     } catch { toast.error("Connection error"); }
   };
   const [tickets, setTickets] = useState([]);
+  const [search, setSearch] = useState('');
   const [orders, setOrders] = useState([]);
   const [operators, setOperators] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -1215,11 +1216,21 @@ const PickingModule = () => {
     pw.document.close();
   };
 
-  const pendingTicketsRaw = tickets.filter(t => t.status !== 'confirmed');
+  const filteredTickets = tickets.filter(t => {
+    const term = search.toLowerCase();
+    return (
+      t.ticket_id.toLowerCase().includes(term) ||
+      (t.order_number || '').toString().includes(term) ||
+      (t.customer || '').toLowerCase().includes(term) ||
+      (t.style || '').toLowerCase().includes(term)
+    );
+  });
+
+  const pendingTicketsRaw = filteredTickets.filter(t => t.status !== 'confirmed');
   const pendingTickets = activeBoardFilter === 'ALL' 
     ? pendingTicketsRaw 
     : pendingTicketsRaw.filter(t => (t.board_category || 'UNSET') === activeBoardFilter);
-  const completedTickets = tickets.filter(t => t.status === 'confirmed' || t.picking_status === 'completed');
+  const completedTickets = filteredTickets.filter(t => t.status === 'confirmed' || t.picking_status === 'completed');
   const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
 
   // New ticket card renderer (Premium Kanban style)
@@ -1451,10 +1462,28 @@ const PickingModule = () => {
             onClick={() => { resetForm(); setShowForm(true); }} 
             className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
             data-testid="new-pick-btn"
-          >
-            <Plus className="w-5 h-5" /> {t('wms_new_pick')}
           </button>
         </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground opacity-50" />
+        <input 
+          placeholder={t('wms_search_pick_hint') || "Buscar por ticket, orden o cliente..."} 
+          value={search} 
+          onChange={e => setSearch(e.target.value)} 
+          className="w-full pl-10 pr-4 py-2.5 bg-card/40 border border-border/20 rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/20 transition-all font-medium backdrop-blur-sm shadow-inner" 
+          data-testid="pick-search-input"
+        />
+        {search && (
+          <button 
+            onClick={() => setSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-secondary rounded-full transition-colors"
+          >
+            <X className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+        )}
       </div>
       {/* Form (create/edit) */}
       {showForm && (
