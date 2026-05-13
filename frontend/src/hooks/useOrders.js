@@ -346,17 +346,21 @@ export const useOrders = (currentBoard, boardFilters) => {
     } else {
       applyFilters(unfilteredOrders);
     }
-  }, [currentBoard, boardFilters, applyFilters, unfilteredOrders]);
-  useEffect(() => { fetchOptions(); }, [fetchOptions]);
-  useEffect(() => { fetchAllOrders(); }, [fetchAllOrders]);
-  useEffect(() => { fetchProductionSummary(); }, [fetchProductionSummary]);
+  }, [currentBoard, applyFilters, unfilteredOrders]); // Removed boardFilters to prevent loop
+
   useEffect(() => { 
-    fetchNotifications();
+    fetchOptions(); 
+    fetchAllOrders();
+    fetchProductionSummary();
     fetchBoards();
     fetchGroups();
+  }, [fetchOptions, fetchAllOrders, fetchProductionSummary, fetchBoards, fetchGroups]);
+
+  useEffect(() => { 
+    fetchNotifications();
     const interval = setInterval(fetchNotifications, 300000); // Poll notifications every 5 minutes
     return () => clearInterval(interval); 
-  }, [fetchNotifications, fetchBoards, fetchGroups]);
+  }, [fetchNotifications]);
 
   // ==================== REAL-TIME WEBSOCKET ====================
   const wsRef = useRef(null);

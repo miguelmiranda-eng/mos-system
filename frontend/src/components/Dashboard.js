@@ -171,17 +171,24 @@ const Dashboard = () => {
   const [showMachinesInFilter, setShowMachinesInFilter] = useState(false);
 
   useEffect(() => {
+    let resizeTimer;
     const handleResize = () => {
-      const width = window.innerWidth;
-      const mobile = width < 768;
-      const tablet = width < 1024 && width >= 768;
-      setIsMobile(mobile);
-      setIsTablet(tablet);
-      if (width < 1024) setIsSidebarCollapsed(true);
-      else setIsMobileMenuOpen(false);
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const width = window.innerWidth;
+        const mobile = width < 768;
+        const tablet = width < 1024 && width >= 768;
+        setIsMobile(mobile);
+        setIsTablet(tablet);
+        if (width < 1024) setIsSidebarCollapsed(true);
+        else setIsMobileMenuOpen(false);
+      }, 150);
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(resizeTimer);
+    };
   }, []);
 
   useEffect(() => {
