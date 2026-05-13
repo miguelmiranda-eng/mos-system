@@ -33,8 +33,9 @@ const ShippingModule = () => {
     if (!url) return "";
     if (url.startsWith("http")) return url;
     const cleanBase = BACKEND_URL?.endsWith("/") ? BACKEND_URL.slice(0, -1) : BACKEND_URL;
-    const cleanPath = url.startsWith("/") ? url : `/${url}`;
-    return `${cleanBase}${cleanPath}`;
+    // The backend mounts shipping uploads at /api/shipping/static
+    const fileName = url.split('/').pop(); 
+    return `${cleanBase}/api/shipping/static/${fileName}`;
   };
 
   const fetchRecords = useCallback(async () => {
