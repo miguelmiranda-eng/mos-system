@@ -1980,7 +1980,7 @@ const Dashboard = () => {
               <div role="table" className="w-full text-sm border-collapse">
                 <div className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
                   <div role="row" className="flex border-b border-border/50">
-                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-secondary z-[40] border-r border-border/40 shadow-[4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('order')}</div>
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-[#1e293b] z-[40] border-r border-border/40 shadow-[4px_0_10px_rgba(0,0,0,0.2)] !bg-secondary">{t('order')}</div>
                     <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[200px] border-r border-border/40">Tablero</div>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
                       <div role="cell" key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-r border-border/40" style={{ minWidth: col.width || 150 }}>{col.label}</div>
@@ -1992,19 +1992,12 @@ const Dashboard = () => {
                   {searchResults?.map(order => (
                     <div role="row" className="flex border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group" key={order.order_id}
                       data-testid={`search-result-${order.order_id}`}>
-                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
-                        <EditableCell
-                          value={order.order_number}
-                          field="order_number"
-                          orderId={order.order_id}
-                          onUpdate={(id, f, v) => {
-                            handleCellUpdate(id, f, v);
-                            setSearchResults(prev => prev.map(o => o.order_id === id ? { ...o, [f]: v } : o));
-                          }}
-                          type="text"
-                          isDark={isDark}
-                          className="font-mono font-bold text-primary text-base"
-                        />
+                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); }}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-royal text-lg hover:underline transition-all">
+                            {order.order_number}
+                          </span>
+                        </div>
                       </div>
                       <div role="cell" className="py-3 px-4 min-w-[200px] border-r border-border/30">
                         <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
@@ -2182,7 +2175,7 @@ const Dashboard = () => {
           backgroundColor: isDark ? '#0a0a0c' : '#ffffff',
           boxShadow: '-10px 0 60px rgba(0,0,0,0.6)',
           display: 'flex', flexDirection: 'column', height: '100vh',
-          zIndex: 500, fontFamily: 'inherit',
+          zIndex: 9999, fontFamily: 'inherit',
           animation: 'slideInFromRight 0.3s ease-out'
         }}>
           {/* Header */}
