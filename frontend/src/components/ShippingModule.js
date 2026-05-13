@@ -28,6 +28,14 @@ const ShippingModule = () => {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [searchDate, setSearchDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  
+  const getFullUrl = (url) => {
+    if (!url) return "";
+    if (url.startsWith("http")) return url;
+    const cleanBase = BACKEND_URL?.endsWith("/") ? BACKEND_URL.slice(0, -1) : BACKEND_URL;
+    const cleanPath = url.startsWith("/") ? url : `/${url}`;
+    return `${cleanBase}${cleanPath}`;
+  };
 
   const fetchRecords = useCallback(async () => {
     setFetchLoading(true);
@@ -266,7 +274,12 @@ const ShippingModule = () => {
                           {rec.evidence.slice(0, 3).map((ev) => (
                             <div key={ev.id} className="w-8 h-8 rounded-lg border-2 border-white shadow-sm overflow-hidden bg-white">
                               {["jpg", "jpeg", "png"].includes(ev.type) ? (
-                                <img src={`${BACKEND_URL}${ev.url}`} alt="" className="w-full h-full object-cover" />
+                                <img 
+                                  src={getFullUrl(ev.url)} 
+                                  alt="" 
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => { e.target.src = ""; e.target.className = "hidden"; }} 
+                                />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
                                   {getFileIcon(ev.type)}
@@ -355,13 +368,18 @@ const ShippingModule = () => {
                       {selectedRecord.evidence.map((ev) => (
                         <a 
                           key={ev.id}
-                          href={`${BACKEND_URL}${ev.url}`}
+                          href={getFullUrl(ev.url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="relative aspect-video rounded-2xl overflow-hidden bg-slate-100 border-2 border-slate-100 hover:border-blue-600 transition-all group/modal-ev"
                         >
                           {["jpg", "jpeg", "png"].includes(ev.type) ? (
-                            <img src={`${BACKEND_URL}${ev.url}`} alt="" className="w-full h-full object-cover" />
+                            <img 
+                              src={getFullUrl(ev.url)} 
+                              alt="" 
+                              className="w-full h-full object-cover" 
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
                           ) : (
                             <div className="w-full h-full flex flex-col items-center justify-center gap-2">
                               {getFileIcon(ev.type)}
