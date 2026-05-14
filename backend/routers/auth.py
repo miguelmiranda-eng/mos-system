@@ -33,7 +33,15 @@ async def _create_session(user_id, response):
         "user_id": user_id, "session_token": session_token,
         "expires_at": expires_at.isoformat(), "created_at": datetime.now(timezone.utc).isoformat()
     })
-    response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
+    response.set_cookie(
+        key="session_token", 
+        value=session_token, 
+        httponly=True, 
+        secure=IS_PROD, 
+        samesite="none" if IS_PROD else "lax", 
+        path="/", 
+        max_age=7*24*60*60
+    )
     return session_token
 
 @router.get("/google")
@@ -275,15 +283,6 @@ async def reset_password(request: Request):
 async def get_me(request: Request):
     user = await get_current_user(request)
     if not user:
-        if not IS_PROD:
-            # En local, devolvemos un usuario de desarrollo para evitar bucles de login
-            return {
-                "user_id": "local_dev",
-                "email": "dev@local.mos",
-                "name": "Developer (Local)",
-                "role": "admin",
-                "picture": ""
-            }
         raise HTTPException(status_code=401, detail="Not authenticated")
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
     return safe_user

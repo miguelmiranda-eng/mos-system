@@ -14,12 +14,35 @@ import {
   Palette,
   CalendarDays,
   Truck,
+  LayoutTemplate,
+  Shirt,
+  Layers,
+  Beaker,
+  CheckCircle,
+  Receipt,
+  Globe,
+  Folder
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 
 const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+const getBoardIcon = (board) => {
+  const b = board.toUpperCase();
+  if (b.includes('MASTER')) return LayoutTemplate;
+  if (b.includes('SCHEDULING') || b.includes('READY')) return CalendarDays;
+  if (b.includes('BLANKS') || b.includes('NECK')) return Shirt;
+  if (b.includes('SCREENS')) return Layers;
+  if (b.includes('EJEMPLOS')) return Beaker;
+  if (b.includes('COMPLETOS')) return CheckCircle;
+  if (b.includes('BILL')) return Receipt;
+  if (b.includes('CALIDAD')) return ShieldCheck;
+  if (b.includes('EDI')) return Globe;
+  if (b.includes('MAQUINA')) return Cpu;
+  return Folder;
+};
 
 const Sidebar = ({
   isCollapsed,
@@ -131,23 +154,27 @@ const Sidebar = ({
             {/* Boards */}
             {(isOpen || !isCollapsed) && <p className={sectionLabel}>General</p>}
             <nav className="px-2">
-              {regularBoards.map((board) => (
+              {regularBoards.map((board) => {
+                const IconComponent = getBoardIcon(board);
+                const isActive = currentBoard === board;
+                return (
                 <button
                   key={board}
                   onClick={() => {
                     setCurrentBoard(board);
                     if (isMobile) onClose();
                   }}
-                  className={navItem(currentBoard === board)}
+                  className={navItem(isActive)}
                   title={isCollapsed && !isMobile ? board : ""}
                 >
-                  <div
-                    className={cn("w-2 h-2 rounded-full flex-shrink-0", currentBoard === board ? "opacity-100" : "opacity-40")}
-                    style={{ backgroundColor: BOARD_COLORS[board]?.accent || (isDark ? '#555' : '#aaa') }}
+                  <IconComponent 
+                    size={15} 
+                    className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
+                    style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
                   />
                   {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
                 </button>
-              ))}
+              )})}
 
               {/* Machines collapsible */}
               {(isOpen || !isCollapsed) && machineBoards.length > 0 && (
@@ -160,19 +187,26 @@ const Sidebar = ({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
-                    {machineBoards.map((board) => (
+                    {machineBoards.map((board) => {
+                      const IconComponent = getBoardIcon(board);
+                      const isActive = currentBoard === board;
+                      return (
                       <button
                         key={board}
                         onClick={() => {
                           setCurrentBoard(board);
                           if (isMobile) onClose();
                         }}
-                        className={navItem(currentBoard === board)}
+                        className={navItem(isActive)}
                       >
-                        <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-50" style={{ backgroundColor: BOARD_COLORS[board]?.accent || '#aaa' }} />
+                        <IconComponent 
+                          size={15} 
+                          className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
+                          style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
+                        />
                         <span className="truncate">{toTitle(board)}</span>
                       </button>
-                    ))}
+                    )})}
                   </CollapsibleContent>
                 </Collapsible>
               )}

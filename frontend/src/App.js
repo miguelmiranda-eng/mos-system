@@ -37,15 +37,21 @@ const AuthProvider = ({ children }) => {
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
-      } else if (response.status === 401 && isPeriodicCheck) {
-        // Session expired — auto logout silently
-        console.warn("Session expired, logging out...");
+      } else if (response.status === 401) {
+        // Session expired or invalid — always clear and redirect to stop infinite loop
+        console.warn("Session invalid (401), clearing state and redirecting to login...");
         setUser(null);
         localStorage.removeItem("mos_user");
-        window.location.href = '/';
+        if (!isPeriodicCheck) {
+          // Only redirect if this is the initial check (not heartbeat) and not already on home
+          if (window.location.pathname !== '/') {
+            window.location.replace('/');
+          }
+        }
       }
     } catch (error) {
-      console.error("Auth check failed:", error);
+      // Network error — don't loop, just fail gracefully
+      console.error("Auth check failed (network):", error);
     } finally {
       if (!isPeriodicCheck) setLoading(false);
     }
@@ -324,7 +330,8 @@ const LandingPage = () => {
   const [forgotSent, setForgotSent] = useState(false);
 
   useEffect(() => {
-    if (user) {
+    // Only redirect if user is confirmed authenticated (has a real user_id)
+    if (user && user.user_id) {
       if (user.role === 'operator' || user.role === 'picker') {
         navigate('/operator', { replace: true });
       } else if (user.role === 'ceo') {
