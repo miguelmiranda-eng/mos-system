@@ -440,6 +440,14 @@ export const useOrders = (currentBoard, boardFilters) => {
   }, [saveColumnsConfig, removedDefaults]);
 
   const handleCellUpdate = async (orderId, field, value) => {
+    const user = JSON.parse(localStorage.getItem('mos_user') || '{}');
+    const orderToUpdate = orders.find(o => o.order_id === orderId);
+    
+    if (field === 'board' && orderToUpdate?.board === 'CONTROL DE CALIDAD' && !['supersu', 'inspector_qc'].includes(user?.role)) {
+      toast.error('🔒 La orden está en CONTROL DE CALIDAD. Solo SuperSU o Inspector QC pueden moverla.');
+      return;
+    }
+
     // Optimistic update: update local state immediately
     const updateFn = (prev) => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o);
     setOrders(updateFn);

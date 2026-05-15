@@ -272,8 +272,13 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
         # Following the "flattening" philosophy, let's allow it but warn.
         logger.warning(f"Board being cleared for order {order_id}")
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Board QC Lock: block moving OUT of CONTROL DE CALIDAD
     old_board = existing.get("board")
     new_board = update_data.get("board")
+    if old_board == "CONTROL DE CALIDAD" and new_board and new_board != old_board:
+        if user.get("role") not in ("supersu", "inspector_qc"):
+            raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
+
     await db.orders.update_one({"order_id": order_id}, {"$set": update_data})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     changed_data = {k: v for k, v in update_data.items() if k != "updated_at"}
@@ -344,6 +349,9 @@ async def move_order(order_id: str, request: Request):
     if existing.get("locked_by_qc") and user.get("role") not in ("admin", "supersu"):
         raise HTTPException(status_code=403, detail="locked_by_qc")
     old_board = existing.get("board")
+    if old_board == "CONTROL DE CALIDAD" and target_board != old_board:
+        if user.get("role") not in ("supersu", "inspector_qc"):
+            raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
     await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await log_activity(user, "move_order", {"order_id": order_id, "order_number": existing.get("order_number"), "from_board": old_board, "to_board": target_board}, previous_data={"order_id": order_id, "fields": {"board": old_board}})
@@ -434,6 +442,11 @@ async def bulk_move_orders(request: Request):
         locked = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("locked_by_qc")]
         if locked:
             raise HTTPException(status_code=403, detail=f"locked_by_qc:{','.join(locked)}")
+
+    if user.get("role") not in ("supersu", "inspector_qc"):
+        qc_board = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("board") == "CONTROL DE CALIDAD"]
+        if qc_board:
+            raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
 
     result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     await log_activity(user, "bulk_move_orders", {"order_count": len(order_ids), "target_board": target_board}, previous_data={"order_ids": order_ids, "original_boards": original_boards})

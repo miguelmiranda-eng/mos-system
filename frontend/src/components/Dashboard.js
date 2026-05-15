@@ -259,6 +259,14 @@ const Dashboard = () => {
   const isAdmin = ['admin', 'supersu'].includes(user?.role);
 
   const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete) => {
+    const qcBoardOrders = orders.filter(o => orderIds.includes(o.order_id) && o.board === 'CONTROL DE CALIDAD');
+    const isQcAdmin = ['supersu', 'inspector_qc'].includes(user?.role);
+
+    if (qcBoardOrders.length > 0 && !isQcAdmin) {
+      toast.error(`🔒 ${qcBoardOrders.length} orden(es) están en CONTROL DE CALIDAD. Solo SuperSU o Inspector QC pueden moverlas.`);
+      return;
+    }
+
     const lockedOrders = orders.filter(o => orderIds.includes(o.order_id) && o.locked_by_qc);
     if (lockedOrders.length > 0) {
       if (!isAdmin) {
