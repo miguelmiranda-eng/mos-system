@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>PL {{ data.meta.vendorPO }} ({{ data.meta.clientPO }})</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4a69a5;
+            --label-bg: #e0e8f7;
+            --border: #000;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: white;
+            padding: 10px;
+            margin: 0;
+            font-size: 9px;
+            color: #000;
+        }
+        .print-container {
+            width: 100%;
+            margin: 0 auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+        th, td {
+            border: 1px solid var(--border);
+            padding: 2px 4px;
+            text-align: center;
+        }
+        .header-title {
+            background: var(--primary);
+            color: white;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 4px;
+            text-align: center;
+        }
+        .label-cell {
+            background: var(--label-bg);
+            font-weight: 700;
+            text-align: right;
+            width: 15%;
+        }
+        .val-cell {
+            font-weight: 700;
+            text-align: center;
+            width: 18%;
+        }
+        .main-header {
+            background: var(--primary);
+            color: white;
+            font-size: 8px;
+            font-weight: 700;
+        }
+        .highlight-blue {
+            background: var(--label-bg) !important;
+            font-weight: 700;
+        }
+        .bold { font-weight: 700; }
+        .text-left { text-align: left; }
+        .text-right { text-align: right; }
+        
+        .summary-header {
+            background: var(--primary);
+            color: white;
+            font-weight: 700;
+            text-align: left;
+            padding: 3px 8px;
+            font-size: 10px;
+            border: 1px solid var(--border);
+            border-bottom: none;
+        }
+        
+        .size-table-header {
+            background: var(--primary);
+            color: white;
+            font-weight: 700;
+            padding: 3px;
+            font-size: 9px;
+            text-align: center;
+            border: 1px solid var(--border);
+            border-bottom: none;
+        }
+
+        @media print {
+            .no-print { display: none; }
+            body { padding: 0; }
+            @page {
+                size: letter landscape;
+                margin: 0.3cm;
+            }
+            .highlight-blue {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .header-title, .main-header, .label-cell, .summary-header, .size-table-header {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+        
+        .btn-print {
+            background: var(--primary);
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .size-tables-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .note-box {
+            border: 1px solid var(--border);
+            padding: 6px;
+            margin-bottom: 10px;
+            min-height: 30px;
+            font-size: 8px;
+        }
+        
+        .flex-row {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+        
+        .summary-grid-table {
+            width: auto;
+            flex-grow: 1;
+        }
+        .summary-grid-table td.label {
+            text-align: right;
+            background: var(--label-bg);
+            font-weight: 700;
+            width: 280px;
+        }
+        .summary-grid-table th {
+            font-size: 8px;
+            min-width: 50px;
+        }
+        .box-summary-table {
+            width: 250px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="print-container">
+        <button class="btn-print no-print" onclick="window.print()">Confirmar Impresión</button>
+
+        <!-- Top Header: High-Quality Image Provided by User -->
+        <div style="margin-bottom: 15px; border-radius: 4px; overflow: hidden; line-height: 0;">
+            <img src="{{ url_for('static', filename='images/header_hq.png') }}" alt="Header" style="width: 100%; height: auto;">
+        </div>
+
+        <!-- Meta Information Grid (Left and Right Tables) -->
+        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+            <!-- Left Meta Info -->
+            <table style="width: 300px; margin-bottom: 0;">
+                <tr>
+                    <td class="label-cell" style="width: 40%; text-align: left; padding-left: 8px;">VENDOR PO</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.vendorPO }}</td>
+                </tr>
+                <tr>
+                    <td class="label-cell" style="text-align: left; padding-left: 8px;">CLIENT PO</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.clientPO }}</td>
+                </tr>
+                <tr>
+                    <td class="label-cell" style="text-align: left; padding-left: 8px;">STORE NAME</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.storeName }}</td>
+                </tr>
+            </table>
+
+            <!-- Right Meta Info -->
+            <table style="width: 300px; margin-bottom: 0;">
+                <tr>
+                    <td class="label-cell" style="width: 40%; text-align: left; padding-left: 8px;">Client</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.client }}</td>
+                </tr>
+                <tr>
+                    <td class="label-cell" style="text-align: left; padding-left: 8px;">Date Packed:</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.datePacked }}</td>
+                </tr>
+                <tr>
+                    <td class="label-cell" style="text-align: left; padding-left: 8px;">Packer Name:</td>
+                    <td class="val-cell" style="text-align: left; padding-left: 8px;">{{ data.meta.packerName }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Main Data Table -->
+        <table>
+            <tr class="main-header">
+                <th style="width: 70px">STORE PO</th>
+                <th style="width: 80px">Design Code</th>
+                <th>Garment Type</th>
+                <th>Garment Color</th>
+                <th>XS/OSFA</th>
+                <th>SM</th>
+                <th>MD</th>
+                <th>LG</th>
+                <th>XL</th>
+                <th>2XL</th>
+                <th>3XL</th>
+                <th>4XL</th>
+                <th>TOTAL</th>
+                <th>Boxes</th>
+                <th>Pcs/Box</th>
+                <th style="width: 70px">Box Dim</th>
+                <th>Weight</th>
+                <th>Pallet #</th>
+                <th style="width: 70px">Pallet Dim</th>
+            </tr>
+            {% for row in data.rows %}
+            <tr>
+                <td>{{ row.storePO }}</td>
+                <td>{{ row.designCode }}</td>
+                <td class="text-left">{{ row.garmentType }}</td>
+                <td class="text-left">{{ row.garmentColor }}</td>
+                <td>{{ row.xs }}</td>
+                <td>{{ row.sm }}</td>
+                <td>{{ row.md }}</td>
+                <td>{{ row.lg }}</td>
+                <td>{{ row.xl }}</td>
+                <td>{{ row.xxl }}</td>
+                <td>{{ row.xxxl }}</td>
+                <td>{{ row.xxxxl }}</td>
+                <td class="bold">{{ row.total }}</td>
+                <td>{{ row.boxQty }}</td>
+                <td>{{ row.pcsPerBox }}</td>
+                <td>{{ row.boxDim }}</td>
+                <td>{{ row.boxWeight }}</td>
+                <td>{{ row.palletNo }}</td>
+                <td>{{ row.palletDim }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="highlight-blue">
+                <td colspan="4" class="text-right bold">TOTAL SHIPPED</td>
+                <td>{{ data.summaryGridData[0].xs if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].sm if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].md if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].lg if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].xl if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].xxl if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].xxxl if data.summaryGridData|length > 0 else 0 }}</td>
+                <td>{{ data.summaryGridData[0].xxxxl if data.summaryGridData|length > 0 else 0 }}</td>
+                <td class="bold">{{ data.summaryGridData[0].total if data.summaryGridData|length > 0 else 0 }}</td>
+                <td class="bold">
+                    {% set ns = namespace(box_sum=0) %}
+                    {% for r in data.rows %}
+                        {% set ns.box_sum = ns.box_sum + (r.boxQty|int if r.boxQty else 0) %}
+                    {% endfor %}
+                    {{ ns.box_sum }}
+                </td>
+                <td colspan="5"></td>
+            </tr>
+        </table>
+
+        <!-- Summary Grid and Box Summary side by side -->
+        <div class="flex-row">
+            <table class="summary-grid-table">
+                <tr class="main-header">
+                    <th style="background: none; border:none; border-bottom: 1px solid #000;"></th>
+                    <th>XS or OSFA</th>
+                    <th>SM</th>
+                    <th>MD</th>
+                    <th>LG</th>
+                    <th>XL</th>
+                    <th>2XL</th>
+                    <th>3XL</th>
+                    <th>4XL</th>
+                    <th>TOTAL</th>
+                </tr>
+                {% for sg in data.summaryGridData %}
+                {% if loop.index > 1 %}
+                <tr>
+                    <td class="label">{{ sg.label }}</td>
+                    <td>{{ sg.xs }}</td>
+                    <td>{{ sg.sm }}</td>
+                    <td>{{ sg.md }}</td>
+                    <td>{{ sg.lg }}</td>
+                    <td>{{ sg.xl }}</td>
+                    <td>{{ sg.xxl }}</td>
+                    <td>{{ sg.xxxl }}</td>
+                    <td>{{ sg.xxxxl }}</td>
+                    <td class="bold">{{ sg.total }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </table>
+
+            <div class="box-summary-table">
+                <table>
+                    <tr>
+                        <td class="label-cell" style="width: 60%">NEW BOXES</td>
+                        <td class="val-cell">{{ data.meta.newBoxes }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">RECYCLED BOXES</td>
+                        <td class="val-cell">{{ data.meta.recycledBoxes }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- Notes section -->
+        <div class="bold" style="margin-bottom: 2px;">NOTES:</div>
+        <div class="note-box">{{ data.meta.note or '' }}</div>
+
+        <!-- Size Tables & Import/Export Section (New Page) -->
+        <div style="page-break-before: always;">
+            <!-- Header for Second Page (Logo only) -->
+            <div class="header-title" style="margin-bottom: 20px;">
+                <div style="display: flex; align-items: center; justify-content: center;">
+                    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" style="height: 60px; filter: brightness(0) invert(1);">
+                </div>
+            </div>
+
+            <div class="summary-header">Sizes Breakdown by Material & Origin (Warehouse)</div>
+            <div style="margin-top: 10px; margin-bottom: 15px; display: flex; gap: 40px; font-weight: bold; font-size: 10px;">
+                <div>PICKING DATE: <span style="font-weight: normal; border-bottom: 1px solid #000; padding: 0 10px;">{{ data.meta.pickingDate or '__________' }}</span></div>
+                <div>PICKER NAME: <span style="font-weight: normal; border-bottom: 1px solid #000; padding: 0 10px;">{{ data.meta.pickerName or '__________' }}</span></div>
+            </div>
+
+            <div class="size-tables-grid">
+            {% for st in data.sizeTablesData %}
+            <div>
+                <div class="size-table-header">SIZE {{ st.size }}</div>
+                <table>
+                    <tr class="main-header">
+                        <th>Percentage</th>
+                        <th>Country of Origin</th>
+                        <th>Qty</th>
+                    </tr>
+                    {% for row in st.rows %}
+                    <tr>
+                        <td class="text-left" style="font-size: 7px;">{{ row.perc }}</td>
+                        <td style="font-size: 7px;">{{ row.orig }}</td>
+                        <td>{{ row.qty }}</td>
+                    </tr>
+                    {% endfor %}
+                    <tr class="highlight-blue">
+                        <td colspan="2" class="text-right bold">Total:</td>
+                        <td class="bold">{{ st.rows|sum(attribute='qty') if st.rows else 0 }}</td>
+                    </tr>
+                </table>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Summary (Import & Export) -->
+        <div class="summary-header">SUMMARY (IMPORT & EXPORT)</div>
+        <table>
+            <tr class="main-header">
+                <th colspan="2">Percentage</th>
+                <th colspan="2">Country of Origin</th>
+                <th>XS or OSFA</th>
+                <th>SM</th>
+                <th>MD</th>
+                <th>LG</th>
+                <th>XL</th>
+                <th>2XL</th>
+                <th>3XL</th>
+                <th>4XL</th>
+                <th>TOTAL</th>
+            </tr>
+            {% for bd in data.breakdowns %}
+            <tr>
+                <td colspan="2">{{ bd.perc }}</td>
+                <td colspan="2">{{ bd.orig }}</td>
+                <td>{{ bd.xs }}</td>
+                <td>{{ bd.sm }}</td>
+                <td>{{ bd.md }}</td>
+                <td>{{ bd.lg }}</td>
+                <td>{{ bd.xl }}</td>
+                <td>{{ bd.xxl }}</td>
+                <td>{{ bd.xxxl }}</td>
+                <td>{{ bd.xxxxl }}</td>
+                <td class="bold">{{ bd.total }}</td>
+            </tr>
+            {% endfor %}
+            <tr>
+                <td colspan="12" class="text-right bold">Total Qty:</td>
+                <td class="bold highlight-blue">{{ data.grandTotalQty }}</td>
+            </tr>
+        </table>
+        </div>
+
+    </div>
+
+    <script>
+        window.onload = () => {
+            setTimeout(() => {
+                window.print();
+            }, 800);
+        };
+    </script>
+</body>
+</html>

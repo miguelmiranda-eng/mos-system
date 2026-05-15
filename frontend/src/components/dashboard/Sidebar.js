@@ -245,6 +245,10 @@ const Sidebar = ({
                 <Truck size={15} className={iconCls(false)} />
                 {(isOpen || !isCollapsed) && <span>Envíos</span>}
               </button>
+              <button onClick={() => { navigate('/packing'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Packing List" : ""}>
+                <Box size={15} className={iconCls(false)} />
+                {(isOpen || !isCollapsed) && <span>Packing List</span>}
+              </button>
               <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
                 <BarChart3 size={15} className={iconCls(false)} />
                 {(isOpen || !isCollapsed) && <span>Análisis</span>}
