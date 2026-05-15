@@ -12,20 +12,6 @@ import json
 router = APIRouter(prefix="/api/packing")
 templates = Jinja2Templates(directory="templates/packing")
 
-async def get_request_data(request: Request):
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        return await request.json()
-    else:
-        form = await request.form()
-        data_str = form.get("data")
-        if data_str:
-            try:
-                return json.loads(data_str)
-            except:
-                pass
-    return {}
-
 def build_excel(data, base_dir="."):
     meta = data.get('meta', {})
     rows = data.get('rows', [])
@@ -541,7 +527,7 @@ def build_excel(data, base_dir="."):
 async def export_excel(request: Request):
     await require_auth(request)
     try:
-        data = await get_request_data(request)
+        data = await request.json()
         wb, filename = build_excel(data, base_dir=".")
         
         output = io.BytesIO()
@@ -560,7 +546,7 @@ async def export_excel(request: Request):
 async def print_preview(request: Request):
     await require_auth(request)
     try:
-        data = await get_request_data(request)
+        data = await request.json()
         return templates.TemplateResponse("print_preview.html", {"request": request, "data": data})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -569,7 +555,7 @@ async def print_preview(request: Request):
 async def pallet_label(request: Request):
     await require_auth(request)
     try:
-        data = await get_request_data(request)
+        data = await request.json()
         pallets = {}
         rows = data.get('rows', [])
         meta = data.get('meta', {})
