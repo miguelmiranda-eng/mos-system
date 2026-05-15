@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { API } from '../config';
+import { API } from '../lib/constants';
 import '../styles/packing.css';
 
 const SIZE_KEYS = ['xs', 'sm', 'md', 'lg', 'xl', 'xxl', 'xxxl', 'xxxxl'];
@@ -221,6 +221,7 @@ export default function PackingListTool() {
             const res = await fetch(`${API}/packing/export`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify(collectData())
             });
             if (res.ok) {
