@@ -599,9 +599,31 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     colors = await db.wms_inventory.aggregate(color_pipeline).to_list(5000)
     locs = await db.wms_inventory.aggregate(loc_pipeline).to_list(5000)
 
-    # Customers list: ONLY from MOS Orders 'client' column
-    custs = await db.orders.distinct("client", {"client": {"$nin": [None, "", " "]}})
-    merged_customers = sorted([str(c).strip() for c in custs if c])
+    # Customers list: Match the EXACT logic of the MOS Dashboard filters
+    # 1. Exclude Trash and Ghost orders
+    # 2. Get unique clients from BOTH 'client' and 'branding' as MOS treats them as one in the UI
+    pipeline = [
+        {
+            "$match": {
+                "board": {"$nin": [None, "", "PAPELERA DE RECICLAJE"]}
+            }
+        },
+        {
+            "$project": {
+                "client": 1,
+                "branding": 1
+            }
+        }
+    ]
+    
+    unique_clients = set()
+    async for doc in db.orders.aggregate(pipeline):
+        for field in ["client", "branding"]:
+            val = doc.get(field)
+            if val and isinstance(val, str) and val.strip():
+                unique_clients.add(val.strip())
+
+    merged_customers = sorted(list(unique_clients), key=lambda s: s.lower())
 
     return {
         "customers": merged_customers,
