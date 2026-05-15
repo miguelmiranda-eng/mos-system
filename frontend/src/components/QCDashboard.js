@@ -41,7 +41,7 @@ const RESULTS = [
 ];
 
 const WRITE_ROLES = ['admin', 'operator', 'qc'];
-const RELEASE_ROLES = ['admin', 'qc', 'supersu'];
+const RELEASE_ROLES = ['supersu', 'inspector_qc'];
 
 const EMPTY_FORM = {
   order_number: '', client: '',

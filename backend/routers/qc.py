@@ -245,7 +245,9 @@ async def export_qc_csv(request: Request):
 
 @router.post("/orders/{order_id}/release")
 async def release_order_lock(order_id: str, request: Request):
-    user = await require_role(request, ["qc"])
+    user = await require_auth(request)
+    if user.get("role") not in ("supersu", "inspector_qc"):
+        raise HTTPException(status_code=403, detail="Solo el Super Usuario o Inspector de Calidad pueden liberar órdenes")
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(404, "Order not found")
