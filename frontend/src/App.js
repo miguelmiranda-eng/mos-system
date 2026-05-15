@@ -335,7 +335,7 @@ const LandingPage = () => {
       if (user.role === 'operator' || user.role === 'picker') {
         navigate('/operator', { replace: true });
       } else if (['admin', 'supersu', 'ceo'].includes(user.role)) {
-        navigate('/ceo-dashboard', { replace: true });
+        navigate('/dashboard', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }
@@ -355,7 +355,7 @@ const LandingPage = () => {
         const userData = await res.json();
         setUser(userData);
         if (userData.role === 'ceo') {
-          navigate('/ceo-dashboard', { replace: true });
+          navigate('/dashboard', { replace: true });
         } else if (userData.role === 'operator' || userData.role === 'picker') {
           navigate('/operator', { replace: true });
         } else {

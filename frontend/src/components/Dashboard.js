@@ -1109,7 +1109,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className={cn("flex h-screen overflow-hidden", isDark ? "bg-[#0a0a0c]" : "bg-[#f8fafc]")}>
+    <div className="flex h-[100dvh] w-full overflow-hidden border-none bg-background">
       <Sidebar
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
@@ -1133,7 +1133,7 @@ const Dashboard = () => {
         <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
         {/* Header - Cleaned up version */}
-      <header className={`h-16 px-4 flex items-center justify-between z-40 border-b ${isDark ? 'bg-navy-dark border-white/5 shadow-lg' : 'bg-white border-gray-200 shadow-sm'}`}>
+      <header className="h-16 px-4 flex items-center justify-between z-40 bg-card text-card-foreground border-b border-border shadow-sm">
         {(isMobile || isTablet) && (
           <button
             onClick={() => setIsMobileMenuOpen(true)}
@@ -1195,21 +1195,21 @@ const Dashboard = () => {
           );
         })()}
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 text-card-foreground">
           {/* Quick Actions */}
           <div className="flex items-center gap-1">
-            <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all" title={isDark ? t('light_mode') : t('dark_mode')}>
+            <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all text-muted-foreground hover:text-foreground" title={isDark ? t('light_mode') : t('dark_mode')}>
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
             {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
-            {!isMobile && <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1">
+            {!isMobile && <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
             </button>}
             <div className="relative">
               <button
                 data-testid="notifications-btn"
                 onClick={() => { setShowNotifications(!showNotifications); if (!showNotifications && unreadCount > 0) markNotificationsRead(); }}
-                className={cn("p-2 rounded hover:bg-muted/50 relative transition-colors", showNotifications && "bg-muted")}
+                className={cn("p-2 rounded hover:bg-muted/50 relative transition-colors text-muted-foreground hover:text-foreground", showNotifications && "bg-muted text-foreground")}
               >
                 <Bell className="w-4 h-4" />
                 {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-royal rounded-full border-2 border-background" />}
@@ -1273,11 +1273,8 @@ const Dashboard = () => {
         </div>
       </header>
 
-      {/* Enterprise Suite       {/* Enterprise Suite Command Bar (Unified) */}
-      <div className={cn(
-        "px-6 py-4 flex flex-col gap-4 border-b z-30 transition-all",
-        isDark ? "bg-navy border-white/5 shadow-2xl" : "bg-card border-gray-200 shadow-sm"
-      )}>
+      {/* Enterprise Suite Command Bar (Unified) */}
+      <div className="px-6 py-4 flex flex-col gap-4 z-30 transition-all bg-card border-b border-border shadow-sm">
         {/* TOP ROW: Views, Metrics and Board Identifier */}
         <div className="flex items-end justify-between w-full">
           <div className="flex items-center gap-6 relative z-10">
@@ -1648,11 +1645,11 @@ const Dashboard = () => {
                   width: 'max-content'
                 }}>
 
-                  <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
-                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)]' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
+                  <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-muted-foreground' : 'bg-gray-50 text-muted-foreground'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
@@ -1759,7 +1756,7 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-muted-foreground' : 'bg-gray-50 text-muted-foreground'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
                           <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}

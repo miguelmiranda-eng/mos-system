@@ -70,20 +70,19 @@ const Sidebar = ({
   const navItem = (isActive) => cn(
     "w-full flex items-center gap-3 px-3 py-[7px] transition-colors duration-100 text-[14px] font-medium rounded-sm",
     isActive
-      ? isDark ? "text-white" : "text-royal font-semibold"
-      : isDark ? "text-white/45 hover:text-white/80" : "text-neutral-500 hover:text-neutral-800"
+      ? isDark ? "text-foreground bg-white/5" : "text-royal font-semibold bg-royal/5"
+      : isDark ? "text-muted-foreground hover:text-foreground hover:bg-white/5" : "text-muted-foreground hover:text-foreground hover:bg-black/5"
   );
 
   const iconCls = (isActive) => cn(
     "flex-shrink-0 transition-colors",
     isActive
-      ? isDark ? "text-white/80" : "text-royal"
-      : isDark ? "text-white/25" : "text-neutral-400"
+      ? isDark ? "text-foreground" : "text-royal"
+      : isDark ? "text-muted-foreground/70" : "text-muted-foreground/70"
   );
 
   const sectionLabel = cn(
-    "text-[11px] font-bold uppercase tracking-[0.15em] px-3 pt-4 pb-1",
-    isDark ? "text-white/25" : "text-neutral-400"
+    "text-[11px] font-bold uppercase tracking-[0.15em] px-3 pt-4 pb-1 text-muted-foreground/70"
   );
 
   const isTablet = typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -99,15 +98,12 @@ const Sidebar = ({
       )}
 
       <aside
-        style={{ 
-          backgroundColor: isDark ? '#0d1e35' : (isMobile || isTablet) ? '#ffffff' : '#a8c5e8' 
-        }}
         className={cn(
-          "flex flex-col transition-all duration-300 border-r flex-shrink-0 overflow-hidden",
+          "flex flex-col transition-all duration-300 flex-shrink-0 overflow-hidden bg-card",
           (isMobile || isTablet)
             ? cn("fixed inset-y-0 left-0 z-[101] w-72 shadow-[20px_0_50px_rgba(0,0,0,0.15)] transform", isOpen ? "translate-x-0" : "-translate-x-full")
             : cn("relative z-50", isCollapsed ? "w-14" : "w-64"),
-          isDark ? "border-white/6" : (isMobile || isTablet) ? "border-neutral-200" : "border-blue-300"
+          "border-r border-border"
         )}
       >
         {/* Header */}
@@ -120,10 +116,10 @@ const Sidebar = ({
             onClick={() => navigate('/home')}
             className="text-left hover:opacity-70 transition-opacity leading-none"
           >
-            <span className={cn("text-[15px] font-bold tracking-tight block", isDark ? "text-white" : "text-navy")}>
+            <span className={cn("text-[15px] font-bold tracking-tight block text-foreground")}>
               MOS <span className="text-royal">System</span>
             </span>
-            <span className={cn("text-[11px] font-medium", isDark ? "text-white/35" : "text-neutral-400")}>
+            <span className={cn("text-[11px] font-medium text-muted-foreground")}>
               Prosper Mfg.
             </span>
           </button>

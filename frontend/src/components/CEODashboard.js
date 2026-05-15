@@ -215,10 +215,11 @@ const CEODashboard = () => {
     });
   }, [data]);
 
-  if (loading && !data) {
+  if (loading || !data) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
-        <Loader loading />
+        <Loader loading={loading} />
+        {!loading && !data && <p className="text-muted-foreground text-sm">{t('ceo_err_connection')}</p>}
       </div>
     );
   }
@@ -376,7 +377,7 @@ const CEODashboard = () => {
               <div className={`self-start sm:self-auto flex items-center gap-2 text-[9px] font-black uppercase tracking-widest px-4 py-2 rounded-xl border ${
                 isDark ? 'text-[#e94560] bg-[#e94560]/10 border-[#e94560]/20' : 'text-emerald-600 bg-emerald-500/5 border-emerald-500/10'
               }`}>
-                <TrendingUp className="w-3 h-3" /> {data.granularity === 'hour' ? t('ceo_units_hour') : t('ceo_units_day')}
+                <TrendingUp className="w-3 h-3" /> {data?.granularity === 'hour' ? t('ceo_units_hour') : t('ceo_units_day')}
               </div>
             </div>
             

@@ -1100,7 +1100,7 @@ export default function QCDashboard() {
   const clearFilters = () => { setSearch(''); setFilterSeverity(''); setDateFrom(''); setDateTo(''); setPage(1); };
   const hasFilters = search || filterSeverity || dateFrom || dateTo;
 
-  const base = isDark ? "bg-[#080f1a] text-white" : "bg-slate-50 text-navy";
+  const base = isDark ? "bg-black text-white" : "bg-slate-50 text-navy";
   const inputCls = cn(
     "px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors h-9",
     isDark ? "bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-royal" : "bg-white border-slate-200 text-navy placeholder:text-slate-400 focus:border-royal"
@@ -1111,7 +1111,7 @@ export default function QCDashboard() {
       <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
 
       {/* Header */}
-      <div className={cn("border-b px-6 py-4 flex items-center justify-between", isDark ? "bg-navy-dark border-white/8" : "bg-white border-slate-200 shadow-sm")}>
+      <div className={cn("px-6 py-4 flex items-center justify-between", isDark ? "bg-navy-dark border-none" : "border-b bg-white border-slate-200 shadow-sm")}>
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/dashboard')} className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-slate-100 text-slate-500")}>
             <ArrowLeft className="w-4 h-4" />

@@ -9,84 +9,119 @@
 /* -------------------------------------------------------------------------- */
 
 :root {
-  /* Primary Palette */
-  --navy: 215 68% 14%;      /* #0B1F3A */
-  --royal: 224 100% 56%;    /* #1E5BFF */
-  --light-gray: 210 20% 97%; /* #F5F7FA */
-  --dark-gray: 0 0% 10%;     /* #1A1A1A */
-  --white: 0 0% 100%;       /* #FFFFFF */
+  /* Legacy Custom Palette (kept for compatibility) */
+  --navy: 215 68% 14%;
+  --royal: 224 100% 56%;
+  --light-gray: 210 20% 97%;
+  --dark-gray: 0 0% 10%;
+  --white: 0 0% 100%;
 
-  /* Shadcn / Semantic Mapping */
-  --background: 218 40% 97%;  /* very faint blue-white */
-  --foreground: 0 0% 10%;
-
-  --card: 218 30% 99%;         /* cards almost white with blue whisper */
-  --card-foreground: 0 0% 10%;
+  /* Modern Light Theme (Harmonious High Contrast Zinc/Slate) */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
   
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 10%;
+  --popover-foreground: 240 10% 3.9%;
   
-  --primary: 224 100% 56%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
   
-  --secondary: 215 20% 90%;
-  --secondary-foreground: 215 68% 14%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
   
-  --muted: 215 15% 92%;
-  --muted-foreground: 215 15% 45%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
   
-  --accent: 215 20% 90%;
-  --accent-foreground: 215 68% 14%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
   
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
   
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 224 100% 56%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 221.2 83.2% 53.3%;
   
-  --radius: 2px;
+  --radius: 0.5rem;
 }
 
 .dark {
-  --background: 215 68% 14%;
-  --foreground: 210 20% 97%;
+  /* Modern Dark Theme (Harmonious High Contrast Zinc/Slate) */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
   
-  --card: 215 68% 10%;
-  --card-foreground: 210 20% 97%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
   
-  --popover: 215 68% 10%;
-  --popover-foreground: 210 20% 97%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
   
-  --primary: 224 100% 56%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
   
-  --secondary: 215 30% 20%;
-  --secondary-foreground: 210 20% 97%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
   
-  --muted: 215 30% 18%;
-  --muted-foreground: 215 20% 65%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
   
-  --accent: 215 30% 20%;
-  --accent-foreground: 210 20% 97%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
   
-  --destructive: 0 62% 30%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
   
-  --border: 215 30% 25%;
-  --input: 215 30% 25%;
-  --ring: 224 100% 56%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 217.2 91.2% 59.8%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 217.2 91.2% 59.8%;
+  }
 }
 
 /* Global Reset & Typography */
+html, body, #root {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  overflow: hidden;
+}
+
+html.dark, html.dark body, html.dark #root {
+  background-color: #050508 !important;
+}
+
 body {
-  margin: 0;
   font-family: 'Barlow', 'Inter', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  overflow-x: hidden;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -159,7 +194,7 @@ td.sticky, th.sticky {
 /* Light Mode: Base & State Colors (SOLID) */
 html:not(.dark) td.sticky, 
 html:not(.dark) th.sticky {
-  background-color: #ffffff !important;
+  background-color: #ffffff;
 }
 
 /* Hover state in light mode */
@@ -226,7 +261,7 @@ html:not(.dark) body {
 
 /* Sidebar — blanco con borde azul sutil */
 html:not(.dark) aside {
-  background: #ffffff !important;
+  background: #ffffff;
   border-right: 1px solid hsl(224 60% 90%) !important;
   box-shadow: 4px 0 16px hsl(224 100% 56% / 0.06) !important;
 }
@@ -234,7 +269,7 @@ html:not(.dark) aside {
 /* Header top bar */
 html:not(.dark) .dashboard-header,
 html:not(.dark) header {
-  background: #ffffff !important;
+  background: #ffffff;
   border-bottom: 1px solid hsl(224 50% 90%) !important;
   box-shadow: 0 2px 12px hsl(224 100% 56% / 0.07) !important;
 }
