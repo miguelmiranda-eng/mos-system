@@ -599,14 +599,13 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     colors = await db.wms_inventory.aggregate(color_pipeline).to_list(5000)
     locs = await db.wms_inventory.aggregate(loc_pipeline).to_list(5000)
 
-    # Customers list: Fetch directly from MOS Orders (client column)
-    cust_pipeline = [
-        {"$match": {"client": {"$nin": [None, "", " "]}}},
-        {"$group": {"_id": {"$toLower": "$client"}, "val": {"$first": "$client"}}},
-        {"$sort": {"_id": 1}}
-    ]
-    custs = await db.orders.aggregate(cust_pipeline).to_list(1000)
-    merged_customers = sorted(list(set([c["val"] for c in custs])))
+    # Customers list: Fetch from MOS Orders (client/customer columns) AND WMS Inventory
+    custs_mos = await db.orders.distinct("client", {"client": {"$nin": [None, "", " "]}})
+    custs_mos_2 = await db.orders.distinct("customer", {"customer": {"$nin": [None, "", " "]}})
+    custs_inv = await db.wms_inventory.distinct("customer", {"customer": {"$nin": [None, "", " "]}})
+    
+    all_custs = set(custs_mos + custs_mos_2 + custs_inv)
+    merged_customers = sorted([c for c in all_custs if c])
 
     return {
         "customers": merged_customers,
