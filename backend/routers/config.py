@@ -309,7 +309,7 @@ async def save_import_mapping(request: Request):
 @router.get("/admin/images-stats")
 async def images_stats(request: Request):
     user = await require_auth(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "supersu"):
         raise HTTPException(status_code=403, detail="Admin only")
     total = await db.file_uploads.count_documents({})
     batch_size = 10
@@ -319,7 +319,7 @@ async def images_stats(request: Request):
 @router.get("/admin/export-images/{batch_num}")
 async def export_images_batch(batch_num: int, request: Request):
     user = await require_auth(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "supersu"):
         raise HTTPException(status_code=403, detail="Admin only")
     batch_size = 10
     skip = batch_num * batch_size
@@ -329,7 +329,7 @@ async def export_images_batch(batch_num: int, request: Request):
 @router.post("/admin/import-images")
 async def import_images(request: Request):
     user = await require_auth(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "supersu"):
         raise HTTPException(status_code=403, detail="Admin only")
     body = await request.json()
     images = body.get("images", [])

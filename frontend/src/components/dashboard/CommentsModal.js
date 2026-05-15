@@ -357,7 +357,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
 
   const canModify = (comment) => {
     if (!currentUser) return false;
-    return comment.user_id === currentUser.user_id || currentUser.role === "admin";
+    return comment.user_id === currentUser.user_id || ['admin', 'supersu'].includes(currentUser.role);
   };
 
   const renderContent = (content) => {
@@ -504,7 +504,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
               if (c.parent_id) { (acc[c.parent_id] = acc[c.parent_id] || []).push(c); }
               return acc;
             }, {});
-            const isAdmin = currentUser?.role === 'admin';
+            const isAdmin = ['admin', 'supersu'].includes(currentUser?.role);
 
             const renderComment = (comment, isReply = false) => {
               const reactions = comment.reactions || {};

@@ -47,6 +47,9 @@ const UserManagementCenter = () => {
   const [customers, setCustomers] = useState([]);
   const [newCust, setNewCust] = useState('');
   const [inviteCust, setInviteCust] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+
+  const isSupersu = currentUser?.role === 'supersu';
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -73,6 +76,10 @@ const UserManagementCenter = () => {
   useEffect(() => {
     fetchUsers();
     fetchCustomers();
+    fetch(`${API}/auth/me`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setCurrentUser(u))
+      .catch(() => {});
   }, []);
 
   const handleCreateUser = async () => {
@@ -282,19 +289,27 @@ const UserManagementCenter = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol Inicial</label>
-                  <Select value={inviteRole} onValueChange={setInviteRole}>
-                    <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover border-border z-[300]">
-                      <SelectItem value="general">Usuario General</SelectItem>
-                      <SelectItem value="admin">Administrador</SelectItem>
-                      <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="operator">Operador</SelectItem>
-                      <SelectItem value="user">Usuario Estándar</SelectItem>
-                      <SelectItem value="ceo">CEO / Directivo</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {isSupersu ? (
+                    <Select value={inviteRole} onValueChange={setInviteRole}>
+                      <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-[300]">
+                        <SelectItem value="general">Usuario General</SelectItem>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="supersu">Super Usuario</SelectItem>
+                        <SelectItem value="picker">Picker / Almacén</SelectItem>
+                        <SelectItem value="operator">Operador</SelectItem>
+                        <SelectItem value="qc">Inspector QC</SelectItem>
+                        <SelectItem value="user">Usuario Estándar</SelectItem>
+                        <SelectItem value="ceo">CEO / Directivo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="w-full h-12 bg-secondary/30 border border-border rounded-xl px-4 flex items-center text-sm text-muted-foreground italic">
+                      General (solo supersu puede asignar roles)
+                    </div>
+                  )}
                 </div>
                 {inviteRole === 'customer' && (
                   <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
@@ -345,19 +360,27 @@ const UserManagementCenter = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol</label>
-                  <Select value={newRole} onValueChange={setNewRole}>
-                    <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover border-border z-[300]">
-                      <SelectItem value="general">Usuario General</SelectItem>
-                      <SelectItem value="admin">Administrador</SelectItem>
-                      <SelectItem value="picker">Picker / Almacén</SelectItem>
-                      <SelectItem value="operator">Operador</SelectItem>
-                      <SelectItem value="user">Usuario Estándar</SelectItem>
-                      <SelectItem value="ceo">CEO / Directivo</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {isSupersu ? (
+                    <Select value={newRole} onValueChange={setNewRole}>
+                      <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-[300]">
+                        <SelectItem value="general">Usuario General</SelectItem>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="supersu">Super Usuario</SelectItem>
+                        <SelectItem value="picker">Picker / Almacén</SelectItem>
+                        <SelectItem value="operator">Operador</SelectItem>
+                        <SelectItem value="qc">Inspector QC</SelectItem>
+                        <SelectItem value="user">Usuario Estándar</SelectItem>
+                        <SelectItem value="ceo">CEO / Directivo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="w-full h-12 bg-secondary/30 border border-border rounded-xl px-4 flex items-center text-sm text-muted-foreground italic">
+                      General (solo supersu puede asignar roles)
+                    </div>
+                  )}
                 </div>
                 {newRole === 'customer' && (
                    <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
@@ -430,6 +453,8 @@ const UserManagementCenter = () => {
                        {u.name || 'Sin Nombre'}
                        {u.auth_type === 'email' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black tracking-widest">EMAIL</span>}
                        {u.role === 'picker' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black tracking-widest">PICKER</span>}
+                       {u.role === 'supersu' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-black tracking-widest">SUPER USUARIO</span>}
+                       {u.role === 'qc' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black tracking-widest">INSPECTOR QC</span>}
                        {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">CLIENTE: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>
@@ -456,19 +481,27 @@ const UserManagementCenter = () => {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
-                      <SelectTrigger className="w-32 h-9 bg-secondary/50 border-border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:bg-secondary">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-popover border-border z-[300]">
-                        <SelectItem value="general">General</SelectItem>
-                        <SelectItem value="admin">Administrador</SelectItem>
-                        <SelectItem value="picker">Picker</SelectItem>
-                        <SelectItem value="operator">Operador</SelectItem>
-                        <SelectItem value="user">Usuario</SelectItem>
-                        <SelectItem value="ceo">CEO</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    {isSupersu ? (
+                      <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
+                        <SelectTrigger className="w-32 h-9 bg-secondary/50 border-border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:bg-secondary">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover border-border z-[300]">
+                          <SelectItem value="general">General</SelectItem>
+                          <SelectItem value="admin">Administrador</SelectItem>
+                          <SelectItem value="supersu">Super Usuario</SelectItem>
+                          <SelectItem value="picker">Picker</SelectItem>
+                          <SelectItem value="operator">Operador</SelectItem>
+                          <SelectItem value="qc">Inspector QC</SelectItem>
+                          <SelectItem value="user">Usuario</SelectItem>
+                          <SelectItem value="ceo">CEO</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="w-32 h-9 flex items-center px-3 bg-secondary/30 border border-border rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                        {u.role}
+                      </span>
+                    )}
 
                     <div className="flex bg-secondary/30 rounded-lg p-1 border border-border">
                        {u.auth_type === 'email' && (

@@ -1,6 +1,6 @@
 """Users management routes."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_admin, require_auth, log_activity, ADMIN_EMAILS
+from deps import db, require_admin, require_supersu, require_auth, log_activity, ADMIN_EMAILS
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api")
@@ -64,7 +64,9 @@ async def invite_user(request: Request):
     user = await require_admin(request)
     body = await request.json()
     email = body.get("email", "").strip().lower()
-    role = body.get("role", "general")
+    # Solo supersu puede asignar un rol distinto a "general"
+    requested_role = body.get("role", "general")
+    role = requested_role if user.get("role") == "supersu" else "general"
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
@@ -72,7 +74,7 @@ async def invite_user(request: Request):
     if existing:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
     new_user = {
-        "email": email, "name": email.split("@")[0], "picture": "", "role": role, 
+        "email": email, "name": email.split("@")[0], "picture": "", "role": role,
         "associated_customer": associated_customer,
         "invited_by": user, "created_at": datetime.now(timezone.utc).isoformat()
     }
@@ -82,7 +84,7 @@ async def invite_user(request: Request):
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(user_id: str, request: Request):
-    user = await require_admin(request)
+    user = await require_supersu(request)
     body = await request.json()
     new_role = body.get("role", "general")
     associated_customer = body.get("associated_customer", "")

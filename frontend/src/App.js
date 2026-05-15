@@ -147,7 +147,7 @@ const AuthCallback = () => {
               setUser(userData);
               // Small delay to ensure React state propagates before navigation
               await new Promise(r => setTimeout(r, 100));
-              if (userData.role === 'admin') {
+              if (['admin', 'supersu'].includes(userData.role)) {
                 navigate('/ceo-dashboard', { replace: true });
               } else if (userData.role === 'general') {
                 navigate('/dashboard', { replace: true });
@@ -252,7 +252,7 @@ const AdminRoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (user.role !== 'admin') {
+      } else if (!['admin', 'supersu'].includes(user.role)) {
         if (user.role === 'customer') {
           navigate('/wms', { replace: true });
         } else {
@@ -270,7 +270,7 @@ const AdminRoute = ({ children }) => {
     );
   }
 
-  if (!user || user.role !== 'admin') {
+  if (!user || !['admin', 'supersu'].includes(user.role)) {
     return null;
   }
 
@@ -293,7 +293,7 @@ const CEORoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (user.role !== 'admin') {
+      } else if (!['admin', 'supersu'].includes(user.role)) {
         navigate('/dashboard', { replace: true });
       }
     }
@@ -307,7 +307,7 @@ const CEORoute = ({ children }) => {
     );
   }
 
-  if (!user || (user.role !== 'admin' && user.role !== 'ceo')) {
+  if (!user || !['admin', 'supersu', 'ceo'].includes(user.role)) {
     return null;
   }
 
@@ -334,7 +334,7 @@ const LandingPage = () => {
     if (user && user.user_id) {
       if (user.role === 'operator' || user.role === 'picker') {
         navigate('/operator', { replace: true });
-      } else if (user.role === 'ceo') {
+      } else if (['admin', 'supersu', 'ceo'].includes(user.role)) {
         navigate('/ceo-dashboard', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });

@@ -170,7 +170,9 @@ async def admin_create_user(request: Request, response: Response):
     email = body.get("email", "").strip().lower()
     password = body.get("password", "")
     name = body.get("name", "").strip()
-    role = body.get("role", "user")
+    # Solo supersu puede asignar un rol distinto a "general"
+    requested_role = body.get("role", "general")
+    role = requested_role if admin.get("role") == "supersu" else "general"
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email invalido")

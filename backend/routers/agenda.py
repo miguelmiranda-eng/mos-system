@@ -20,7 +20,7 @@ CATEGORY_COLORS = {
 
 
 def _is_admin(user: dict) -> bool:
-    return user.get("role") in ("admin", "ceo")
+    return user.get("role") in ("admin", "ceo", "supersu")
 
 
 def _can_edit(user: dict, event: dict) -> bool:

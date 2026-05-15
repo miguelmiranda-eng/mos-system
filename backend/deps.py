@@ -409,21 +409,29 @@ async def require_auth(request: Request) -> Dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
+SUPER_ROLES = {"admin", "supersu"}
+
+async def require_supersu(request: Request) -> Dict:
+    user = await require_auth(request)
+    if user.get("role") != "supersu":
+        raise HTTPException(status_code=403, detail="Solo el Super Usuario puede realizar esta acción")
+    return user
+
 async def require_admin(request: Request) -> Dict:
     user = await require_auth(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in SUPER_ROLES:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 async def require_ceo(request: Request) -> Dict:
     user = await require_auth(request)
-    if user.get("role") not in ["admin", "ceo"]:
+    if user.get("role") not in {*SUPER_ROLES, "ceo"}:
         raise HTTPException(status_code=403, detail="CEO or Admin access required")
     return user
 
 async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
     user = await require_auth(request)
-    if user.get("role") not in allowed_roles and user.get("role") != "admin":
+    if user.get("role") not in allowed_roles and user.get("role") not in SUPER_ROLES:
         raise HTTPException(status_code=403, detail=f"Access denied for role: {user.get('role')}")
     return user
 

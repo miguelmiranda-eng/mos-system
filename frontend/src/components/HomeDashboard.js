@@ -83,7 +83,7 @@ const HomeDashboard = () => {
   const filteredSections = SECTIONS_DEFS.map(s => ({
     ...s,
     items: s.items.filter(item => {
-      const hasRole = !item.roles || item.roles.includes(user?.role);
+      const hasRole = !item.roles || item.roles.includes(user?.role) || user?.role === 'supersu';
       const matchesSearch = !search || 
         item.name.toLowerCase().includes(search.toLowerCase()) || 
         item.desc.toLowerCase().includes(search.toLowerCase());
