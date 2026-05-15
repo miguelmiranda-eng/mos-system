@@ -43,7 +43,9 @@ os.makedirs(SHIPPING_DIR, exist_ok=True)
 app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shipping_static")
 
 # General Static Files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+STATIC_DIR = ROOT_DIR / "static"
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
