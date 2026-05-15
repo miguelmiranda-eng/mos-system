@@ -40,7 +40,7 @@ const RESULTS = [
   { value: 'FAIL',        label: 'Rechazado',   icon: XCircle,      color: 'text-red-500',    activeBg: 'bg-red-500 text-white',     inactiveBg: 'bg-red-500/10 text-red-600 border border-red-500/30' },
 ];
 
-const WRITE_ROLES = ['admin', 'operator', 'qc'];
+const WRITE_ROLES = ['supersu', 'inspector_qc'];
 const RELEASE_ROLES = ['supersu', 'inspector_qc'];
 
 const EMPTY_FORM = {

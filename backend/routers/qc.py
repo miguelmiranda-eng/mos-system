@@ -7,7 +7,13 @@ import uuid, io, csv, re
 
 router = APIRouter(prefix="/api/qc")
 
-WRITE_ROLES = ["admin", "operator", "qc"]
+WRITE_ROLES = ["supersu", "inspector_qc"]
+async def require_qc_write(request: Request):
+    user = await require_auth(request)
+    if user.get("role") not in WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="Acceso denegado: solo SuperSU o Inspector de QC")
+    return user
+
 
 
 def now_iso():
@@ -266,7 +272,7 @@ async def release_order_lock(order_id: str, request: Request):
 
 @router.post("")
 async def create_qc_record(request: Request):
-    user = await require_role(request, WRITE_ROLES)
+    user = await require_qc_write(request)
     body = await request.json()
 
     order = None
@@ -338,7 +344,7 @@ async def create_qc_record(request: Request):
 
 @router.put("/{qc_id}")
 async def update_qc_record(qc_id: str, request: Request):
-    user = await require_role(request, WRITE_ROLES)
+    user = await require_qc_write(request)
     body = await request.json()
     existing = await db.qc_records.find_one({"qc_id": qc_id}, {"_id": 0})
     if not existing:
@@ -409,7 +415,7 @@ async def get_qc_history(qc_id: str, request: Request):
 
 @router.delete("/{qc_id}")
 async def delete_qc_record(qc_id: str, request: Request):
-    user = await require_role(request, WRITE_ROLES)
+    user = await require_qc_write(request)
     result = await db.qc_records.delete_one({"qc_id": qc_id})
     if result.deleted_count == 0:
         raise HTTPException(404, "QC record not found")
