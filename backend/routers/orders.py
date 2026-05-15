@@ -254,9 +254,9 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
                 # On updates, we always merge to ensure root-level visibility
                 update_data[k] = v
 
-    # QC Lock: block status/board changes on locked orders for non-supersu users
+    # QC Lock: block status/board changes on locked orders for non-supersu/inspector_qc users
     _LOCK_PROTECTED = {"production_status", "board"}
-    if existing.get("locked_by_qc") and user.get("role") not in ("admin", "supersu"):
+    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc"):
         if any(f in update_data for f in _LOCK_PROTECTED):
             raise HTTPException(status_code=403, detail="locked_by_qc")
 
@@ -346,7 +346,7 @@ async def move_order(order_id: str, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
-    if existing.get("locked_by_qc") and user.get("role") not in ("admin", "supersu"):
+    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="locked_by_qc")
     old_board = existing.get("board")
     if old_board == "CONTROL DE CALIDAD" and target_board != old_board:
@@ -437,8 +437,8 @@ async def bulk_move_orders(request: Request):
     original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1, "order_number": 1, "locked_by_qc": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
 
-    # Block non-supersu/admin if any order is locked by QC
-    if user.get("role") not in ("admin", "supersu"):
+    # Block non-supersu/inspector_qc if any order is locked by QC
+    if user.get("role") not in ("supersu", "inspector_qc"):
         locked = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("locked_by_qc")]
         if locked:
             raise HTTPException(status_code=403, detail=f"locked_by_qc:{','.join(locked)}")

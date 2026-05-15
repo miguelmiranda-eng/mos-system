@@ -269,12 +269,12 @@ const Dashboard = () => {
 
     const lockedOrders = orders.filter(o => orderIds.includes(o.order_id) && o.locked_by_qc);
     if (lockedOrders.length > 0) {
-      if (!isAdmin) {
+      if (!isQcAdmin) {
         toast.error(`🔒 ${lockedOrders.length} orden(es) bloqueada(s) por QC: ${lockedOrders.map(o => o.order_number).join(', ')}`);
         return;
       }
       const nums = lockedOrders.map(o => o.order_number).join(', ');
-      const ok = window.confirm(`⚠️ ADMIN: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
+      const ok = window.confirm(`⚠️ SUPERVISOR QC: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
       if (!ok) return;
     }
     await handleBulkMove(orderIds, targetBoard);

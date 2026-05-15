@@ -448,6 +448,11 @@ export const useOrders = (currentBoard, boardFilters) => {
       return;
     }
 
+    if (orderToUpdate?.locked_by_qc && ['production_status', 'board'].includes(field) && !['supersu', 'inspector_qc'].includes(user?.role)) {
+      toast.error('🔒 La orden está bloqueada por QC. Solo SuperSU o Inspector QC pueden editar su estatus o moverla.');
+      return;
+    }
+
     // Optimistic update: update local state immediately
     const updateFn = (prev) => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o);
     setOrders(updateFn);
