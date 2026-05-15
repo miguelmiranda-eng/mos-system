@@ -103,7 +103,7 @@ function renderRichContent(content, isDark) {
           <img
             src={src}
             alt="Evidencia"
-            className="max-w-full max-h-48 rounded-lg border border-white/10 cursor-pointer hover:opacity-90 transition-opacity shadow-lg"
+            className="max-w-full max-h-72 rounded-lg cursor-pointer hover:opacity-90 transition-opacity shadow-2xl"
             onClick={(e) => { e.stopPropagation(); window.open(src, '_blank'); }}
           />
         </div>
@@ -698,7 +698,7 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
             <div className="flex flex-wrap gap-2 py-2">
               {imagePreviews.map(img => (
                 <div key={img.id} className="relative group">
-                  <img src={img.data} alt="" className="w-20 h-20 object-cover rounded-lg border border-white/10" />
+                  <img src={img.data} alt="" className="w-20 h-20 object-cover rounded-lg shadow-md" />
                   <button type="button" onClick={() => removeImage(img.id)}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
                     <X className="w-3 h-3" />
@@ -1178,7 +1178,7 @@ export default function QCDashboard() {
         </div>
       </div>
 
-      <div className="flex-1 px-6 py-6 space-y-6 max-w-7xl mx-auto w-full">
+      <div className="flex-1 px-6 py-6 space-y-6 w-full">
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
