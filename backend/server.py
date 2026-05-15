@@ -42,10 +42,6 @@ SHIPPING_DIR = "uploads/shipping"
 os.makedirs(SHIPPING_DIR, exist_ok=True)
 app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shipping_static")
 
-# General Static Files
-os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logging.info(f"PROXY_CHECK: Incoming {request.method} {request.url}")
