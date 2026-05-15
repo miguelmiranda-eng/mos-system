@@ -599,13 +599,27 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     colors = await db.wms_inventory.aggregate(color_pipeline).to_list(5000)
     locs = await db.wms_inventory.aggregate(loc_pipeline).to_list(5000)
 
-    # Customers list: Fetch from MOS Orders (client/customer columns) AND WMS Inventory
-    custs_mos = await db.orders.distinct("client", {"client": {"$nin": [None, "", " "]}})
-    custs_mos_2 = await db.orders.distinct("customer", {"customer": {"$nin": [None, "", " "]}})
-    custs_inv = await db.wms_inventory.distinct("customer", {"customer": {"$nin": [None, "", " "]}})
+    # Customers list: Fetch ONLY from MOS Orders (client/customer columns)
+    # We use a set for case-insensitive deduplication
+    unique_clients = {}
     
-    all_custs = set(custs_mos + custs_mos_2 + custs_inv)
-    merged_customers = sorted([c for c in all_custs if c])
+    async for order in db.orders.find(
+        {"$or": [
+            {"client": {"$nin": [None, "", " "]}},
+            {"customer": {"$nin": [None, "", " "]}}
+        ]},
+        {"client": 1, "customer": 1, "_id": 0}
+    ):
+        # Check both fields as some orders might use one or the other
+        for field in ["client", "customer"]:
+            val = order.get(field)
+            if val and isinstance(val, str) and val.strip():
+                clean_val = val.strip()
+                # Store in dict using lower-case key to deduplicate case-insensitively
+                # but keep the original casing of the first one found
+                unique_clients[clean_val.lower()] = clean_val
+
+    merged_customers = sorted(unique_clients.values())
 
     return {
         "customers": merged_customers,
