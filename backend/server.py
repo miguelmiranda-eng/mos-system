@@ -33,19 +33,18 @@ app.add_middleware(
 )
 
 # Servir archivos estáticos de facturas
-UPLOAD_DIR = ROOT_DIR / "uploads" / "invoices"
+UPLOAD_DIR = "uploads/invoices"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/api/invoices/static", StaticFiles(directory=str(UPLOAD_DIR)), name="invoices_static")
+app.mount("/api/invoices/static", StaticFiles(directory=UPLOAD_DIR), name="invoices_static")
 
 # Shipping Uploads
-SHIPPING_DIR = ROOT_DIR / "uploads" / "shipping"
+SHIPPING_DIR = "uploads/shipping"
 os.makedirs(SHIPPING_DIR, exist_ok=True)
-app.mount("/api/shipping/static", StaticFiles(directory=str(SHIPPING_DIR)), name="shipping_static")
+app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shipping_static")
 
 # General Static Files
-STATIC_DIR = ROOT_DIR / "static"
-os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+os.makedirs("static", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
