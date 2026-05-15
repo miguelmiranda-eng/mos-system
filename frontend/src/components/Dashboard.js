@@ -256,7 +256,7 @@ const Dashboard = () => {
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
 
-  const isAdmin = ['admin', 'supersu'].includes(user?.role);
+  const isAdmin = ['admin', 'supersu', 'inspector_qc'].includes(user?.role);
 
   const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete) => {
     const qcBoardOrders = orders.filter(o => orderIds.includes(o.order_id) && o.board === 'CONTROL DE CALIDAD');

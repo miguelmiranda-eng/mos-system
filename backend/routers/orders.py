@@ -517,7 +517,7 @@ async def delete_order_link(order_id: str, link_index: int, request: Request):
 async def pin_comment(order_id: str, comment_id: str, request: Request):
     """Toggle the pinned state of a comment. Only admins can pin."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="Solo los administradores pueden anclar comentarios")
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
     if not comment:
@@ -650,7 +650,7 @@ async def update_comment(order_id: str, comment_id: str, request: Request):
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id}, {"_id": 0})
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu"):
+    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="Not allowed to edit this comment")
     await db.comments.update_one(
         {"comment_id": comment_id},
@@ -666,7 +666,7 @@ async def delete_comment(order_id: str, comment_id: str, request: Request):
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id}, {"_id": 0})
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu"):
+    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="Not allowed to delete this comment")
     await db.comments.delete_one({"comment_id": comment_id})
     await ws_manager.broadcast("order_change", {"action": "delete_comment", "order_id": order_id})
@@ -930,7 +930,7 @@ async def export_orders_complete(request: Request):
 async def import_orders_complete(request: Request):
     """Import orders with their comments and images."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="Admin only")
     body = await request.json()
     orders_data = body.get("orders", [])
@@ -994,7 +994,7 @@ async def import_orders_excel(
 ):
     """Import orders from an Excel file (.xlsx, .xls) with optional column mapping."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
         raise HTTPException(status_code=403, detail="Solo los administradores pueden importar Excel")
 
     try:

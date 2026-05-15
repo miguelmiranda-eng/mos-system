@@ -2049,7 +2049,7 @@ const MovementsModule = () => {
 const CycleCountModule = () => {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'supersu'].includes(user?.role);
+  const isAdmin = ['admin', 'supersu', 'inspector_qc'].includes(user?.role);
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);

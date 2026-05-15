@@ -252,7 +252,7 @@ const AdminRoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (!['admin', 'supersu'].includes(user.role)) {
+      } else if (!['admin', 'supersu', 'inspector_qc'].includes(user.role)) {
         if (user.role === 'customer') {
           navigate('/wms', { replace: true });
         } else {
@@ -270,7 +270,7 @@ const AdminRoute = ({ children }) => {
     );
   }
 
-  if (!user || !['admin', 'supersu'].includes(user.role)) {
+  if (!user || !['admin', 'supersu', 'inspector_qc'].includes(user.role)) {
     return null;
   }
 

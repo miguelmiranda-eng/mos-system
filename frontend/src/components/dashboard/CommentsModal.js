@@ -504,7 +504,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
               if (c.parent_id) { (acc[c.parent_id] = acc[c.parent_id] || []).push(c); }
               return acc;
             }, {});
-            const isAdmin = ['admin', 'supersu'].includes(currentUser?.role);
+            const isAdmin = ['admin', 'supersu', 'inspector_qc'].includes(currentUser?.role);
 
             const renderComment = (comment, isReply = false) => {
               const reactions = comment.reactions || {};

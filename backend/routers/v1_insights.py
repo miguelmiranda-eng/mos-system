@@ -22,7 +22,7 @@ def get_date_parts(date_str: str):
 
 @router.post("/upload-corrections")
 async def upload_corrections(request: Request, file: UploadFile = File(...)):
-    await require_role(request, ["admin", "angel"])
+    await require_role(request, ["admin", "angel", "inspector_qc"])
     
     try:
         contents = await file.read()
