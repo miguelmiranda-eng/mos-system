@@ -747,12 +747,12 @@ const ArtModule = () => {
                                   <button onClick={() => logWork(order, 'SEPARATION')} disabled={actionLoading === `${order.order_id}-SEPARATION`} className="w-10 h-10 bg-emerald-50 hover:bg-emerald-500 text-emerald-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-emerald-100">
                                     {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
                                   </button>
-                                ) : <div className="w-10 h-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center opacity-40"><CheckCircle2 className="w-4 h-4" /></div>}
+                                ) : <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center"><CheckCircle2 className="w-5 h-5" /></div>}
                                 {!order.art_neck_status ? (
                                   <button onClick={() => logWork(order, 'NECK')} disabled={actionLoading === `${order.order_id}-NECK`} className="w-10 h-10 bg-blue-50 hover:bg-blue-500 text-blue-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-blue-100">
                                     {actionLoading === `${order.order_id}-NECK` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
                                   </button>
-                                ) : <div className="w-10 h-10 bg-blue-500 text-white rounded-xl flex items-center justify-center opacity-40"><CheckCircle2 className="w-4 h-4" /></div>}
+                                ) : <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center"><CheckCircle2 className="w-5 h-5" /></div>}
                               </div>
                             </td>
                           );
