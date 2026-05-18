@@ -1107,7 +1107,7 @@ export default function QCDashboard() {
   );
 
   return (
-    <div className={cn("min-h-screen flex flex-col", base)}>
+    <div className={cn("h-screen overflow-y-auto flex flex-col pb-10", base)}>
       <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
 
       {/* Header */}
@@ -1281,9 +1281,9 @@ export default function QCDashboard() {
                           </td>
                           <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
-                          <td className="px-4 py-3">
+                           <td className="px-4 py-3">
                             <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
-                              {order.status || '—'}
+                              {order.production_status || order.status || '—'}
                             </span>
                           </td>
                           <td className={cn("px-4 py-3 font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>{order.quantity || '—'}</td>

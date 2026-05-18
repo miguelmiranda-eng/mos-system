@@ -115,7 +115,7 @@ async def get_unaudited_orders(request: Request):
     orders = await db.orders.find(
         query,
         {"_id": 0, "order_id": 1, "order_number": 1, "client": 1,
-         "quantity": 1, "job_title_a": 1, "status": 1, "created_at": 1}
+         "quantity": 1, "job_title_a": 1, "production_status": 1, "status": 1, "created_at": 1}
     ).sort("created_at", -1).to_list(500)
     return orders
 
