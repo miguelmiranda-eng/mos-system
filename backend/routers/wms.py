@@ -449,12 +449,25 @@ async def putaway_box(request: Request):
     location = body.get("location", "").strip()
     if not box_id or not location:
         raise HTTPException(400, "box_id y location requeridos")
-    box = await db.wms_boxes.find_one({"box_id": box_id})
-    if not box:
-        raise HTTPException(404, "Caja no encontrada")
+    
     loc = await db.wms_locations.find_one({"name": location})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")
+
+    box = await db.wms_boxes.find_one({"box_id": box_id})
+    if not box:
+        # Fallback: if it's a receiving_id, find all received boxes of that receiving event
+        if box_id.startswith("RCV_"):
+            boxes = await db.wms_boxes.find({"receiving_id": box_id}).to_list(1000)
+            if not boxes:
+                raise HTTPException(404, f"No se encontraron cajas para el Receiving ID: {box_id}")
+            for b in boxes:
+                old_loc = b.get("location")
+                await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored"}})
+                await log_movement(user, "putaway", {"box_id": b["box_id"], "from": old_loc, "to": location, "sku": b.get("sku"), "units": b.get("units")})
+            return {"message": f"Se ubicaron exitosamente {len(boxes)} cajas del receiving {box_id} en {location}", "box_id": box_id, "location": location}
+        raise HTTPException(404, "Caja no encontrada")
+        
     old_location = box.get("location")
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
