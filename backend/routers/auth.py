@@ -116,9 +116,23 @@ async def google_callback(code: str, response: Response):
         await db.users.insert_one(new_user)
         
     # 4. Create session and set cookie on the RedirectResponse
-    redirect_resp = RedirectResponse(f"{FRONTEND_URL}/dashboard")
-    await _create_session(user_id, redirect_resp)
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id, "session_token": session_token,
+        "expires_at": expires_at.isoformat(), "created_at": datetime.now(timezone.utc).isoformat()
+    })
     
+    redirect_resp = RedirectResponse(f"{FRONTEND_URL}/dashboard#session_token={session_token}")
+    redirect_resp.set_cookie(
+        key="session_token", 
+        value=session_token, 
+        httponly=True, 
+        secure=IS_PROD, 
+        samesite="none" if IS_PROD else "lax", 
+        path="/", 
+        max_age=7*24*60*60
+    )
     return redirect_resp
 
 @router.post("/session")
@@ -155,9 +169,10 @@ async def create_session(request: Request, response: Response):
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.update_one({"email": user_data["email"]}, {"$set": new_user}, upsert=True)
-    await _create_session(user_id, response)
+    session_token = await _create_session(user_id, response)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await log_activity(user, "login", {"method": "google_oauth"})
+    user["session_token"] = session_token
     return user
 
 # ==================== EMAIL/PASSWORD AUTH ====================
@@ -209,9 +224,10 @@ async def email_login(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Esta cuenta usa Google. Inicia sesion con Google.")
     if not bcrypt.verify(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Credenciales invalidas")
-    await _create_session(user["user_id"], response)
+    session_token = await _create_session(user["user_id"], response)
     await log_activity(user, "login", {"method": "email"})
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    safe_user["session_token"] = session_token
     return safe_user
 
 @router.post("/forgot-password")

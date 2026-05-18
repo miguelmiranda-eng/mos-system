@@ -11,6 +11,26 @@ import { Toaster } from "./components/ui/sonner";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Global fetch monkey-patch to send Authorization header for Safari / iPad cookie compatibility
+const originalFetch = window.fetch;
+window.fetch = async function (url, options = {}) {
+  try {
+    const stored = localStorage.getItem("mos_user");
+    if (stored) {
+      const userObj = JSON.parse(stored);
+      if (userObj && userObj.session_token) {
+        options.headers = {
+          ...options.headers,
+          "Authorization": `Bearer ${userObj.session_token}`
+        };
+      }
+    }
+  } catch (e) {
+    console.error("Fetch interceptor error:", e);
+  }
+  return originalFetch.call(this, url, options);
+};
+
 // Auth Context
 const AuthContext = createContext(null);
 
@@ -32,10 +52,35 @@ const AuthProvider = ({ children }) => {
       return;
     }
     
+    // Check if we have session_token in URL hash (workaround for Safari cookie policy on iPad)
+    const hash = window.location.hash;
+    const sessionTokenMatch = hash.match(/session_token=([^&]+)/);
+    let token = null;
+    if (sessionTokenMatch) {
+      token = sessionTokenMatch[1];
+      // Clean the hash so it doesn't clutter the URL
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    
     try {
-      const response = await fetch(`${API}/auth/me`, { credentials: 'include' });
+      const stored = localStorage.getItem("mos_user");
+      let storedUser = null;
+      try { storedUser = stored ? JSON.parse(stored) : null; } catch {}
+      const bearerToken = token || storedUser?.session_token;
+      
+      const fetchOptions = { credentials: 'include' };
+      if (bearerToken) {
+        fetchOptions.headers = {
+          "Authorization": `Bearer ${bearerToken}`
+        };
+      }
+
+      const response = await fetch(`${API}/auth/me`, fetchOptions);
       if (response.ok) {
         const userData = await response.json();
+        if (bearerToken) {
+          userData.session_token = bearerToken;
+        }
         setUser(userData);
       } else if (response.status === 401) {
         // Session expired or invalid — always clear and redirect to stop infinite loop
