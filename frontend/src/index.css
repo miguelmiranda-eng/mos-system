@@ -104,12 +104,19 @@
 }
 
 /* Global Reset & Typography */
-html, body, #root {
+html, body {
   margin: 0 !important;
   padding: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  overflow: hidden;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#root {
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 100vh !important;
+  display: flex;
+  flex-direction: column;
 }
 
 html.dark, html.dark body, html.dark #root {

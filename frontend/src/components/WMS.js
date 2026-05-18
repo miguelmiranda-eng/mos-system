@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, Fragment, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, Link2, ClipboardCheck, Zap,
   Factory, CheckCircle, History, ArrowLeft, Warehouse, Download, Plus, FileDown,
   Search, Loader2, Trash2, Printer, Tag, ScanLine, Box, X, ChevronDown, ChevronRight, Edit3,
-  Sun, Moon, Home, AlertTriangle, LayoutDashboard, ExternalLink, LogOut, Scissors, RefreshCw
+  Sun, Moon, Home, AlertTriangle, LayoutDashboard, ExternalLink, LogOut, Scissors, RefreshCw, ChevronUp
 } from "lucide-react";
 
 import SearchableSelect from "./SearchableSelect";
@@ -2045,6 +2045,93 @@ const MovementsModule = () => {
 };
 
 
+// ==================== PREFIX LOCATION INPUT ====================
+const PrefixLocationInput = ({ locations = [], value, onChange }) => {
+  const [query, setQuery] = useState(value || '');
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+
+  // Extract unique prefixes: take characters up to the first delimiter (-)
+  const uniquePrefixes = useMemo(() => {
+    const prefixSet = new Set();
+    locations.forEach(loc => {
+      const dashIdx = loc.indexOf('-');
+      const prefix = dashIdx !== -1 ? loc.slice(0, dashIdx) : loc;
+      prefixSet.add(prefix.toUpperCase());
+    });
+    return Array.from(prefixSet).sort();
+  }, [locations]);
+
+  // Filter suggestions based on what user typed
+  const suggestions = useMemo(() => {
+    if (!query.trim()) return uniquePrefixes.slice(0, 15);
+    const q = query.toUpperCase();
+    return uniquePrefixes.filter(p => p.startsWith(q)).slice(0, 10);
+  }, [query, uniquePrefixes]);
+
+  const handleInput = (val) => {
+    setQuery(val);
+    onChange(val);
+    setOpen(true);
+  };
+
+  const handleSelect = (prefix) => {
+    setQuery(prefix);
+    onChange(prefix);
+    setOpen(false);
+  };
+
+  // Count matching locations for the current prefix
+  const matchCount = useMemo(() => {
+    if (!query.trim()) return 0;
+    const q = query.toUpperCase();
+    return locations.filter(l => l.toUpperCase().startsWith(q)).length;
+  }, [query, locations]);
+
+  return (
+    <div className="relative" data-testid="cc-loc-prefix">
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={e => handleInput(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Ej: RP03, RP10..."
+          className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono font-bold uppercase placeholder:font-normal placeholder:normal-case"
+          autoComplete="off"
+        />
+        {query && matchCount > 0 && (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-black">
+            {matchCount} ubic.
+          </span>
+        )}
+      </div>
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+          <div className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground border-b border-border bg-secondary/30">
+            Prefijos disponibles
+          </div>
+          {suggestions.map(prefix => {
+            const cnt = locations.filter(l => l.toUpperCase().startsWith(prefix)).length;
+            return (
+              <button
+                key={prefix}
+                onMouseDown={() => handleSelect(prefix)}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-primary/10 hover:text-primary transition-colors text-left"
+              >
+                <span className="font-mono font-black">{prefix}</span>
+                <span className="text-[10px] text-muted-foreground">{cnt} ubicaciones</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ==================== CYCLE COUNT MODULE ====================
 const CycleCountModule = () => {
   const { t } = useLang();
@@ -2058,6 +2145,7 @@ const CycleCountModule = () => {
   const [saving, setSaving] = useState(false);
   const [options, setOptions] = useState({ customers: [], styles: [], locations: [] });
   const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
+  const [expandedLocations, setExpandedLocations] = useState({});
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(() => {}); }, []);
   useEffect(() => {
@@ -2201,46 +2289,57 @@ const CycleCountModule = () => {
         </div>
         {/* Lines by location */}
         <div className="space-y-3 max-h-[500px] overflow-y-auto">
-          {locations.map(loc => (
-            <div key={loc} className="border border-border rounded-lg overflow-hidden">
-              <div className="bg-secondary px-3 py-2 text-sm font-bold flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-primary" /> {loc}
-                <span className="text-xs text-muted-foreground ml-auto">{grouped[loc].filter(l => l.counted).length}/{grouped[loc].length}</span>
-              </div>
-              <div className="divide-y divide-border">
-                {grouped[loc].map(line => (
-                  <div key={line.line_id} className={`flex items-center gap-3 px-3 py-2 ${line.counted && line.discrepancy !== 0 ? 'bg-red-500/5' : line.counted ? 'bg-green-500/5' : ''}`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-mono font-bold">{line.style}</div>
-                      <div className="text-xs text-muted-foreground">{line.color} / {line.size}</div>
-                    </div>
-                    {isAdmin && (
-                      <div className="text-center w-20">
-                        <div className="text-xs text-muted-foreground">{t('wms_cc_system')}</div>
-                        <div className="text-sm font-bold">{line.system_qty}</div>
-                      </div>
-                    )}
-                    <div className="w-24">
-                      <div className="text-xs text-muted-foreground">{t('wms_cc_count')}</div>
-                      <input type="number" min="0" value={line.counted_qty ?? ''} onChange={e => handleInputChange(line.line_id, e.target.value)}
-                        className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono font-bold"
-                        disabled={selectedCount.status === 'approved'}
-                        data-testid={`cc-input-${line.line_id}`} />
-                    </div>
-                    {isAdmin && (
-                      <div className="w-16 text-center">
-                        {line.counted && (
-                          <span className={`text-sm font-bold ${line.discrepancy === 0 ? 'text-green-400' : line.discrepancy > 0 ? 'text-blue-400' : 'text-red-400'}`}>
-                            {line.discrepancy > 0 ? '+' : ''}{line.discrepancy}
-                          </span>
+          {locations.map(loc => {
+            const isExpanded = expandedLocations[loc];
+            return (
+              <div key={loc} className="border border-border rounded-lg overflow-hidden">
+                <div 
+                  className="bg-secondary px-3 py-2 text-sm font-bold flex items-center gap-2 cursor-pointer hover:bg-secondary/80 transition-colors"
+                  onClick={() => setExpandedLocations(prev => ({ ...prev, [loc]: !prev[loc] }))}
+                >
+                  <MapPin className="w-4 h-4 text-primary" /> {loc}
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {grouped[loc].filter(l => l.counted).length}/{grouped[loc].length}
+                  </span>
+                  {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-2" /> : <ChevronDown className="w-4 h-4 text-muted-foreground ml-2" />}
+                </div>
+                {isExpanded && (
+                  <div className="divide-y divide-border">
+                    {grouped[loc].map(line => (
+                      <div key={line.line_id} className={`flex items-center gap-3 px-3 py-2 ${line.counted && line.discrepancy !== 0 ? 'bg-red-500/5' : line.counted ? 'bg-green-500/5' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-mono font-bold">{line.style}</div>
+                          <div className="text-xs text-muted-foreground">{line.color} / {line.size}</div>
+                        </div>
+                        {isAdmin && (
+                          <div className="text-center w-20">
+                            <div className="text-xs text-muted-foreground">{t('wms_cc_system')}</div>
+                            <div className="text-sm font-bold">{line.system_qty}</div>
+                          </div>
+                        )}
+                        <div className="w-24">
+                          <div className="text-xs text-muted-foreground">{t('wms_cc_count')}</div>
+                          <input type="number" min="0" value={line.counted_qty ?? ''} onChange={e => handleInputChange(line.line_id, e.target.value)}
+                            className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono font-bold"
+                            disabled={selectedCount.status === 'approved'}
+                            data-testid={`cc-input-${line.line_id}`} />
+                        </div>
+                        {isAdmin && (
+                          <div className="w-16 text-center">
+                            {line.counted && (
+                              <span className={`text-sm font-bold ${line.discrepancy === 0 ? 'text-green-400' : line.discrepancy > 0 ? 'text-blue-400' : 'text-red-400'}`}>
+                                {line.discrepancy > 0 ? '+' : ''}{line.discrepancy}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {/* Actions */}
         {selectedCount.status !== 'approved' && (
@@ -2308,13 +2407,14 @@ const CycleCountModule = () => {
             <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_cc_filters')}</div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{t('wms_cc_loc_filter')}</label>
-                <SearchableSelect 
-                  options={options.locations} 
-                  value={form.location_filter} 
-                  onChange={val => setForm(p => ({ ...p, location_filter: val }))} 
-                  placeholder="Ej: RP10" 
-                  testId="cc-loc" 
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  {t('wms_cc_loc_filter')}
+                  <span className="ml-1 text-primary font-black">(prefijo)</span>
+                </label>
+                <PrefixLocationInput
+                  locations={options.locations}
+                  value={form.location_filter}
+                  onChange={val => setForm(p => ({ ...p, location_filter: val }))}
                 />
               </div>
               <div>
