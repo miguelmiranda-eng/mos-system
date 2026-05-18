@@ -24,7 +24,9 @@ def _is_admin(user: dict) -> bool:
 
 
 def _can_edit(user: dict, event: dict) -> bool:
-    """El dueño del evento o cualquier admin puede editar/eliminar."""
+    """El dueño del evento o cualquier admin puede editar/eliminar. Si es privado, SOLO el creador."""
+    if event.get("visibility") == "private":
+        return event.get("created_by") == user["user_id"]
     return event.get("created_by") == user["user_id"] or _is_admin(user)
 
 
@@ -72,18 +74,14 @@ async def get_events(
     user = await require_auth(request)
 
     # Visibility filter:
-    #   admin/ceo  → ve TODO
-    #   cualquier otro → ve eventos de equipo + sus propios eventos privados
-    if _is_admin(user):
-        vis_filter = {}
-    else:
-        vis_filter = {
-            "$or": [
-                {"visibility": "team"},
-                {"visibility": {"$exists": False}},   # legacy sin campo
-                {"created_by": user["user_id"]},
-            ]
-        }
+    #   Cualquier perfil (incluidos admins/ceo) → ve eventos de equipo + sus propios eventos privados
+    vis_filter = {
+        "$or": [
+            {"visibility": "team"},
+            {"visibility": {"$exists": False}},   # legacy sin campo
+            {"created_by": user["user_id"]},
+        ]
+    }
 
     query = {**vis_filter}
 
@@ -227,19 +225,16 @@ async def get_today_events(request: Request):
         ]
     }
 
-    if _is_admin(user):
-        query = date_q
-    else:
-        query = {
-            "$and": [
-                date_q,
-                {"$or": [
-                    {"visibility": "team"},
-                    {"visibility": {"$exists": False}},
-                    {"created_by": user["user_id"]},
-                ]},
-            ]
-        }
+    query = {
+        "$and": [
+            date_q,
+            {"$or": [
+                {"visibility": "team"},
+                {"visibility": {"$exists": False}},
+                {"created_by": user["user_id"]},
+            ]},
+        ]
+    }
 
     cursor = db.agenda_events.find(query, {"_id": 0}).sort("start_dt", 1)
     events = await cursor.to_list(length=100)

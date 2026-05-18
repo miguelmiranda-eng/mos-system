@@ -426,7 +426,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
   const isPrivate  = event.visibility === 'private';
   const isAdmin    = ['admin', 'ceo', 'supersu', 'inspector_qc'].includes(currentUser?.role);
   const isOwner    = currentUser?.user_id === event.created_by;
-  const canEdit    = isOwner || isAdmin;
+  const canEdit    = isPrivate ? isOwner : (isOwner || isAdmin);
 
   const fmtTime = (dt) => {
     try { return format(parseISO(dt), 'HH:mm'); } catch { return dt; }

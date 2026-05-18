@@ -429,7 +429,7 @@ const ArtModule = () => {
     <div className="min-h-screen bg-slate-50 font-barlow pb-20">
       {/* HEADER */}
       <header className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 md:py-6 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
+        <div className="max-w-[96%] xl:max-w-[1450px] mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
           <div className="flex items-center gap-3 md:gap-6">
             <button 
               onClick={() => navigate('/home')}
@@ -456,7 +456,7 @@ const ArtModule = () => {
 
       {/* TABS NAVIGATION */}
       <nav className="bg-white border-b border-slate-200 px-4 md:px-8 sticky top-[85px] md:top-[97px] z-30">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between py-3 md:py-4 gap-2 md:gap-0">
+        <div className="max-w-[96%] xl:max-w-[1450px] mx-auto flex flex-col md:flex-row items-start md:items-center justify-between py-3 md:py-4 gap-2 md:gap-0">
           <div className="flex gap-2 md:gap-4 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-hide">
             <button 
               onClick={() => setActiveTab('ops')}
@@ -581,7 +581,7 @@ const ArtModule = () => {
       </div>
     </nav>
 
-      <main className="max-w-7xl mx-auto px-3 md:px-8 mt-6 md:mt-10">
+      <main className="max-w-[96%] xl:max-w-[1450px] mx-auto px-3 md:px-8 mt-6 md:mt-10">
         {activeTab === 'ops' ? (
           <div className="space-y-10">
             {/* SEARCH BAR */}
@@ -621,7 +621,7 @@ const ArtModule = () => {
                         disabled={actionLoading}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${order.art_sep_status ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                       >
-                        {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Layers className="w-3 h-3" />}
+                        {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
                         {order.art_sep_status ? 'Separación Hecha' : 'Log Separación'}
                       </button>
                       <button 
@@ -629,7 +629,7 @@ const ArtModule = () => {
                         disabled={actionLoading}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${order.art_neck_status ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                       >
-                        {actionLoading === `${order.order_id}-NECK` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Tag className="w-3 h-3" />}
+                        {actionLoading === `${order.order_id}-NECK` ? <Loader2 size={12} className="animate-spin" /> : <Tag size={12} />}
                         {order.art_neck_status ? 'Neck Hecho' : 'Log Neck'}
                       </button>
                     </div>
@@ -651,8 +651,8 @@ const ArtModule = () => {
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Priorizado por entrega</span>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
-              <div className="max-h-[calc(100vh-350px)] md:max-h-[calc(100vh-450px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
+            <div className="bg-white border border-slate-200 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40 mb-10">
+              <div className="max-h-[calc(100vh-420px)] md:max-h-[calc(100vh-510px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200 pb-10">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 z-20 bg-white">
                     <tr className="bg-slate-50/80 backdrop-blur-sm border-b border-slate-100">
@@ -726,12 +726,12 @@ const ArtModule = () => {
                             </td>
                           );
                           if (colKey === 'job_title_a') return (
-                            <td key="job_title_a" className="py-4 px-6">
+                            <td key="job_title_a" className="py-4 px-6 max-w-[200px] truncate">
                               <EditableCell value={order.job_title_a} field="job_title_a" orderId={order.order_id} onUpdate={handleCellUpdate} type="link_desc" />
                             </td>
                           );
                           if (colKey === 'job_title_b') return (
-                            <td key="job_title_b" className="py-4 px-6">
+                            <td key="job_title_b" className="py-4 px-6 max-w-[200px] truncate">
                               <EditableCell value={order.job_title_b} field="job_title_b" orderId={order.order_id} onUpdate={handleCellUpdate} type="link_desc" />
                             </td>
                           );
@@ -742,17 +742,23 @@ const ArtModule = () => {
                           );
                           if (colKey === 'actions') return (
                             <td key="actions" className="py-4 px-6">
-                              <div className="flex gap-2 justify-center">
-                                {!order.art_sep_status ? (
-                                  <button onClick={() => logWork(order, 'SEPARATION')} disabled={actionLoading === `${order.order_id}-SEPARATION`} className="w-10 h-10 bg-emerald-50 hover:bg-emerald-500 text-emerald-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-emerald-100">
-                                    {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
-                                  </button>
-                                ) : <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center"><CheckCircle2 className="w-5 h-5" /></div>}
-                                {!order.art_neck_status ? (
-                                  <button onClick={() => logWork(order, 'NECK')} disabled={actionLoading === `${order.order_id}-NECK`} className="w-10 h-10 bg-blue-50 hover:bg-blue-500 text-blue-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-blue-100">
-                                    {actionLoading === `${order.order_id}-NECK` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
-                                  </button>
-                                ) : <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center"><CheckCircle2 className="w-5 h-5" /></div>}
+                              <div className="flex gap-3 justify-center">
+                                <div className="flex flex-col items-center gap-1">
+                                  {!order.art_sep_status ? (
+                                    <button onClick={() => logWork(order, 'SEPARATION')} disabled={actionLoading === `${order.order_id}-SEPARATION`} className="w-10 h-10 bg-emerald-50 hover:bg-emerald-500 text-emerald-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-emerald-100 shadow-sm">
+                                      {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 size={16} className="animate-spin" /> : <Layers size={16} />}
+                                    </button>
+                                  ) : <div className="w-10 h-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center shadow-md shadow-emerald-500/20"><CheckCircle2 size={18} strokeWidth={2.5} /></div>}
+                                  <span className="text-[8px] font-black tracking-widest uppercase text-emerald-600/70">Seps</span>
+                                </div>
+                                <div className="flex flex-col items-center gap-1">
+                                  {!order.art_neck_status ? (
+                                    <button onClick={() => logWork(order, 'NECK')} disabled={actionLoading === `${order.order_id}-NECK`} className="w-10 h-10 bg-blue-50 hover:bg-blue-500 text-blue-600 hover:text-white rounded-xl transition-all flex items-center justify-center border border-blue-100 shadow-sm">
+                                      {actionLoading === `${order.order_id}-NECK` ? <Loader2 size={16} className="animate-spin" /> : <Tag size={16} />}
+                                    </button>
+                                  ) : <div className="w-10 h-10 bg-blue-500 text-white rounded-xl flex items-center justify-center shadow-md shadow-blue-500/20"><CheckCircle2 size={18} strokeWidth={2.5} /></div>}
+                                  <span className="text-[8px] font-black tracking-widest uppercase text-blue-600/70">Neck</span>
+                                </div>
                               </div>
                             </td>
                           );
@@ -1030,8 +1036,8 @@ const ArtModule = () => {
             </div>
           </div>
 
-          <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40">
-            <div className="max-h-[calc(100vh-350px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
+          <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40 mb-10">
+            <div className="max-h-[calc(100vh-400px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200 pb-10">
               <table className="w-full text-left border-collapse">
                 <thead className="sticky top-0 z-20 bg-white">
                   <tr className="bg-blue-50/50 backdrop-blur-sm border-b border-blue-100">
@@ -1100,7 +1106,7 @@ const ArtModule = () => {
                             >
                                {order.screens ? (
                                  <div className="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center shadow-md shadow-emerald-500/20">
-                                    <CheckSquare className="w-3.5 h-3.5 text-white" />
+                                    <CheckSquare size={14} className="text-white" />
                                  </div>
                                ) : (
                                  <div className="w-5 h-5 rounded border-2 border-slate-200 bg-slate-50 hover:border-blue-400 hover:bg-blue-50"></div>
@@ -1118,7 +1124,7 @@ const ArtModule = () => {
                           <td key="ref_link" className="py-4 px-6">
                             {order.ref_link && (
                               <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white rounded-md text-[9px] font-black uppercase w-fit">
-                                <ExternalLink className="w-3 h-3" /> Abrir
+                                <ExternalLink size={12} /> Abrir
                               </a>
                             )}
                           </td>
@@ -1128,9 +1134,15 @@ const ArtModule = () => {
                         );
                         if (colKey === 'actions') return (
                           <td key="actions" className="py-4 px-6">
-                            <div className="flex gap-2 justify-center opacity-40 grayscale">
-                               <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center"><CheckCircle2 className="w-4 h-4" /></div>
-                               <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center"><CheckCircle2 className="w-4 h-4" /></div>
+                            <div className="flex gap-3 justify-center opacity-40 grayscale">
+                               <div className="flex flex-col items-center gap-1">
+                                 <div className="w-8 h-8 bg-emerald-500 text-white rounded-lg flex items-center justify-center shadow-md shadow-emerald-500/20"><CheckCircle2 size={14} strokeWidth={2.5} /></div>
+                                 <span className="text-[7px] font-black tracking-widest uppercase text-emerald-600/70">Seps</span>
+                               </div>
+                               <div className="flex flex-col items-center gap-1">
+                                 <div className="w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center shadow-md shadow-blue-500/20"><CheckCircle2 size={14} strokeWidth={2.5} /></div>
+                                 <span className="text-[7px] font-black tracking-widest uppercase text-blue-600/70">Neck</span>
+                               </div>
                             </div>
                           </td>
                         );
@@ -1174,8 +1186,8 @@ const ArtModule = () => {
             </div>
           </div>
 
-          <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden opacity-80 hover:opacity-100 transition-opacity">
-            <div className="max-h-[calc(100vh-350px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200">
+          <section className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden opacity-80 hover:opacity-100 transition-opacity mb-10">
+            <div className="max-h-[calc(100vh-400px)] overflow-auto scrollbar-thin scrollbar-thumb-slate-200 pb-10">
               <table className="w-full text-left border-collapse">
                 <thead className="sticky top-0 z-20 bg-white">
                   <tr className="bg-slate-50 border-b border-slate-100">
@@ -1207,7 +1219,7 @@ const ArtModule = () => {
                         );
                         if (colKey === 'screens') return (
                           <td key="screens" className="py-4 px-6 text-center">
-                            {order.screens ? <CheckCircle2 className="w-4 h-4 text-emerald-300 mx-auto" /> : <div className="w-4 h-4 rounded-full border border-slate-200 mx-auto" />}
+                            {order.screens ? <CheckCircle2 size={16} className="text-emerald-500 mx-auto" /> : <div className="w-4 h-4 rounded-full border border-slate-200 mx-auto" />}
                           </td>
                         );
                         if (colKey === 'artwork_status') return (
