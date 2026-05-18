@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ChevronRight,
   ChevronLeft,
@@ -21,7 +21,8 @@ import {
   CheckCircle,
   Receipt,
   Globe,
-  Folder
+  Folder,
+  Wrench
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -59,13 +60,22 @@ const Sidebar = ({
   isDark,
   isMobile,
   isOpen,
-  onClose
+  onClose,
+  showTrash = false,
+  showAnalytics = false
 }) => {
   const isPicker = userRole === 'picker';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
   const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
   const isAnyMachineActive = machineBoards.includes(currentBoard);
   const [isMachinesOpen, setIsMachinesOpen] = useState(isAnyMachineActive);
+  const [isToolsOpen, setIsToolsOpen] = useState(showTrash || showAnalytics);
+
+  useEffect(() => {
+    if (showTrash || showAnalytics) {
+      setIsToolsOpen(true);
+    }
+  }, [showTrash, showAnalytics]);
 
   const navItem = (isActive) => cn(
     "w-full flex items-center gap-3 px-3 py-[7px] transition-colors duration-100 text-[14px] font-medium rounded-sm",
@@ -218,50 +228,74 @@ const Sidebar = ({
               )}
             </nav>
 
-            {/* Tools */}
-            {(isOpen || !isCollapsed) && <p className={sectionLabel}>Herramientas</p>}
-            <nav className="px-2">
-              <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Smart Agenda" : ""}>
-                <CalendarDays size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Smart Agenda</span>}
-              </button>
-              <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Control de Calidad" : ""}>
-                <ShieldCheck size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Control de Calidad</span>}
-              </button>
-              <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Módulo de Arte" : ""}>
-                <Palette size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Módulo de Arte</span>}
-              </button>
-              <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Insights" : ""}>
-                <Sparkles size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Insights</span>}
-              </button>
-              <button onClick={() => { navigate('/shipping'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Envíos" : ""}>
-                <Truck size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Envíos</span>}
-              </button>
-              <button onClick={() => { navigate('/packing'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Packing List" : ""}>
-                <Box size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Packing List</span>}
-              </button>
-              <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Análisis" : ""}>
-                <BarChart3 size={15} className={iconCls(false)} />
-                {(isOpen || !isCollapsed) && <span>Análisis</span>}
-              </button>
-              <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Papelera" : ""}>
-                <div className="relative flex-shrink-0">
-                  <Trash2 size={15} className={iconCls(false)} />
-                  {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
-                </div>
-                {(isOpen || !isCollapsed) && <span className="flex-1 text-left">Papelera</span>}
-                {(isOpen || !isCollapsed) && trashCount > 0 && (
-                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
-                    {trashCount}
-                  </span>
-                )}
-              </button>
-            </nav>
+            {/* Tools Collapsible */}
+            {isCollapsed && !isMobile && (
+              <nav className="px-2 mt-4 border-t border-neutral-200/50 dark:border-white/5 pt-4">
+                <button
+                  onClick={() => { setIsCollapsed(false); setIsToolsOpen(true); }}
+                  className={navItem(showTrash || showAnalytics)}
+                  title="Herramientas"
+                >
+                  <Wrench size={15} className={iconCls(showTrash || showAnalytics)} />
+                </button>
+              </nav>
+            )}
+
+            {(isOpen || !isCollapsed) && (
+              <nav className="px-2 mt-4 border-t border-neutral-200/50 dark:border-white/5 pt-4">
+                <Collapsible open={isToolsOpen} onOpenChange={setIsToolsOpen} className="w-full">
+                  <CollapsibleTrigger asChild>
+                    <button className={navItem(showTrash || showAnalytics)}>
+                      <Wrench size={15} className={iconCls(showTrash || showAnalytics)} />
+                      <span className="flex-1 text-left">Herramientas</span>
+                      <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isToolsOpen && "rotate-180")} />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
+                    <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title="Smart Agenda">
+                      <CalendarDays size={15} className={iconCls(false)} />
+                      <span>Smart Agenda</span>
+                    </button>
+                    <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title="Control de Calidad">
+                      <ShieldCheck size={15} className={iconCls(false)} />
+                      <span>Control de Calidad</span>
+                    </button>
+                    <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title="Módulo de Arte">
+                      <Palette size={15} className={iconCls(false)} />
+                      <span>Módulo de Arte</span>
+                    </button>
+                    <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title="Insights">
+                      <Sparkles size={15} className={iconCls(false)} />
+                      <span>Insights</span>
+                    </button>
+                    <button onClick={() => { navigate('/shipping'); if (isMobile) onClose(); }} className={navItem(false)} title="Envíos">
+                      <Truck size={15} className={iconCls(false)} />
+                      <span>Envíos</span>
+                    </button>
+                    <button onClick={() => { navigate('/packing'); if (isMobile) onClose(); }} className={navItem(false)} title="Packing List">
+                      <Box size={15} className={iconCls(false)} />
+                      <span>Packing List</span>
+                    </button>
+                    <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(showAnalytics)} title="Análisis">
+                      <BarChart3 size={15} className={iconCls(showAnalytics)} />
+                      <span>Análisis</span>
+                    </button>
+                    <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(showTrash)} title="Papelera">
+                      <div className="relative flex-shrink-0">
+                        <Trash2 size={15} className={iconCls(showTrash)} />
+                        {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
+                      </div>
+                      <span className="flex-1 text-left">Papelera</span>
+                      {trashCount > 0 && (
+                        <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
+                          {trashCount}
+                        </span>
+                      )}
+                    </button>
+                  </CollapsibleContent>
+                </Collapsible>
+              </nav>
+            )}
 
             {/* Admin */}
             {isAdmin && (

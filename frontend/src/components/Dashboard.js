@@ -1126,6 +1126,8 @@ const Dashboard = () => {
         isMobile={isMobile || isTablet}
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
+        showTrash={showTrash}
+        showAnalytics={showAnalytics}
       />
 
       <div className={`relative flex-1 flex flex-col overflow-hidden transition-colors duration-300`}>
