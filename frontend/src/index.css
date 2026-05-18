@@ -347,3 +347,89 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 .animate-loading-bar-fast {
   animation: loading-bar-fast 1.5s infinite ease-in-out;
 }
+
+/* ─── High Contrast Form & Input Colors ───────────────────────────────────── */
+
+/* Login & Reset Password Form Inputs */
+input[data-testid="login-email-input"],
+input[data-testid="login-password-input"],
+input[data-testid="forgot-email-input"],
+input[data-testid="reset-password-input"],
+input[data-testid="reset-confirm-input"] {
+  background-color: rgba(15, 23, 42, 0.95) !important; /* solid, highly legible dark slate bg */
+  color: #ffffff !important; /* high contrast white text */
+  border: 1.5px solid rgba(255, 255, 255, 0.3) !important;
+}
+
+input[data-testid="login-email-input"]::placeholder,
+input[data-testid="login-password-input"]::placeholder,
+input[data-testid="forgot-email-input"]::placeholder,
+input[data-testid="reset-password-input"]::placeholder,
+input[data-testid="reset-confirm-input"]::placeholder {
+  color: rgba(255, 255, 255, 0.6) !important; /* clear white placeholder */
+}
+
+/* Autofill styling overrides to prevent browser from turning background white and making white text invisible */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: #ffffff !important;
+  transition: background-color 500000s ease-in-out 0s;
+  box-shadow: inset 0 0 20px 20px rgba(15, 23, 42, 0.95) !important;
+}
+
+/* Universal Modal & Dialog Input, Select, and Textarea Colors (System-Wide) */
+[role="dialog"] select,
+[role="dialog"] textarea,
+[role="dialog"] input,
+.max-w-lg select,
+.max-w-lg textarea,
+.max-w-lg input,
+.max-w-md select,
+.max-w-md textarea,
+.max-w-md input,
+.enterprise-drawer select,
+.enterprise-drawer textarea,
+.enterprise-drawer input {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+  border: 1.5px solid hsl(var(--border) / 0.8) !important;
+}
+
+[role="dialog"] select::placeholder,
+[role="dialog"] textarea::placeholder,
+[role="dialog"] input::placeholder,
+.max-w-lg select::placeholder,
+.max-w-lg textarea::placeholder,
+.max-w-lg input::placeholder,
+.max-w-md select::placeholder,
+.max-w-md textarea::placeholder,
+.max-w-md input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.7) !important;
+}
+
+/* Specific focus state for modal inputs */
+[role="dialog"] select:focus,
+[role="dialog"] textarea:focus,
+[role="dialog"] input:focus {
+  border-color: hsl(var(--primary)) !important;
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.15) !important;
+}
+
+/* Universal Select options rendering contrast */
+select option {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark select option {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+html:not(.dark) select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}

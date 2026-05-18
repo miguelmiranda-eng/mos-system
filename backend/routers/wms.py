@@ -109,6 +109,39 @@ async def delete_location(location_id: str, request: Request):
         raise HTTPException(404, "Ubicacion no encontrada")
     return {"message": "Ubicacion eliminada"}
 
+@router.put("/locations/{location_id}")
+async def update_location(location_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    new_name = body.get("name", "").strip().upper()
+    new_zone = body.get("zone", "").strip().upper()
+    
+    existing_loc = await db.wms_locations.find_one({"location_id": location_id})
+    if not existing_loc:
+        raise HTTPException(404, "Ubicación no encontrada")
+        
+    old_name = existing_loc.get("name")
+    
+    update_doc = {}
+    if new_name:
+        if new_name != old_name:
+            dup = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"}, "location_id": {"$ne": location_id}})
+            if dup:
+                raise HTTPException(400, f"La ubicación '{new_name}' ya existe")
+            update_doc["name"] = new_name
+    if new_zone:
+        update_doc["zone"] = new_zone
+        
+    if update_doc:
+        await db.wms_locations.update_one({"location_id": location_id}, {"$set": update_doc})
+        if "name" in update_doc:
+            await db.wms_inventory.update_many({"location": old_name}, {"$set": {"location": new_name}})
+            await db.wms_boxes.update_many({"location": old_name}, {"$set": {"location": new_name}})
+            await log_movement(user, "location_renamed", {"old_name": old_name, "new_name": new_name})
+            
+    updated_loc = await db.wms_locations.find_one({"location_id": location_id}, {"_id": 0})
+    return updated_loc
+
 @router.get("/locations/print")
 async def print_locations(request: Request, ids: str = "all"):
     """Generate a PDF for Zebra Label Printers (4x2 inch) for WMS locations."""
@@ -1088,6 +1121,16 @@ async def list_operators(request: Request):
     """List all users with role 'operator' or 'picker'."""
     await require_auth(request)
     operators = await db.users.find({"role": {"$in": ["operator", "picker"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
+    
+    # Inject Contador 1 alias / virtual user to encapsulate users
+    if not any(op.get("user_id") == "contador_1" or op.get("name") == "Contador 1" for op in operators):
+        operators.insert(0, {
+            "user_id": "contador_1",
+            "name": "Contador 1",
+            "email": "contador1@mos.system",
+            "role": "operator",
+            "active": True
+        })
     return operators
 
 @router.put("/pick-tickets/{ticket_id}/assign")
@@ -2044,21 +2087,24 @@ async def create_cycle_count(request: Request):
     style_filter = body.get("style_filter", "").strip()
     assigned_to = body.get("assigned_to", "").strip()
     assigned_to_name = body.get("assigned_to_name", "").strip()
+    is_general = body.get("is_general", False) or (not location_filter and not customer_filter and not style_filter)
 
     if not name:
         raise HTTPException(400, "Nombre del conteo requerido")
 
     # Build query to get inventory items for this count
     query = {}
-    if location_filter:
-        query["location"] = {"$regex": location_filter, "$options": "i"}
-    if customer_filter:
-        query["customer"] = {"$regex": f"^{customer_filter}$", "$options": "i"}
-    if style_filter:
-        query["style"] = {"$regex": f"^{style_filter}$", "$options": "i"}
+    if not is_general:
+        if location_filter:
+            # Prefix search for locations sharing the prefix
+            query["location"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
+        if customer_filter:
+            query["customer"] = {"$regex": f"^{customer_filter}$", "$options": "i"}
+        if style_filter:
+            query["style"] = {"$regex": f"^{style_filter}$", "$options": "i"}
 
-    # Get inventory items matching filters
-    items = await db.wms_inventory.find(query, {"_id": 0}).to_list(2000)
+    # Get inventory items matching filters - Increase limit to 50,000 for general counts
+    items = await db.wms_inventory.find(query, {"_id": 0}).to_list(50000)
     if not items:
         raise HTTPException(400, "No se encontraron items con los filtros proporcionados")
 
@@ -2083,9 +2129,10 @@ async def create_cycle_count(request: Request):
         "count_id": count_id,
         "name": name,
         "status": "pending",
-        "location_filter": location_filter,
-        "customer_filter": customer_filter,
-        "style_filter": style_filter,
+        "is_general": is_general,
+        "location_filter": location_filter if not is_general else "",
+        "customer_filter": customer_filter if not is_general else "",
+        "style_filter": style_filter if not is_general else "",
         "assigned_to": assigned_to or None,
         "assigned_to_name": assigned_to_name or None,
         "total_lines": len(count_lines),
@@ -2097,7 +2144,7 @@ async def create_cycle_count(request: Request):
     }
     await db.wms_cycle_counts.insert_one(count_doc)
     count_doc.pop("_id", None)
-    await log_movement(user, "cycle_count_created", {"count_id": count_id, "total_lines": len(count_lines)})
+    await log_movement(user, "cycle_count_created", {"count_id": count_id, "total_lines": len(count_lines), "is_general": is_general})
 
     if assigned_to:
         await ws_manager.broadcast("cycle_count_assigned", {
@@ -2192,6 +2239,17 @@ async def approve_cycle_count(count_id: str, request: Request):
     }})
     await log_movement(user, "cycle_count_approved", {"count_id": count_id, "adjustments": adjustments})
     return {"message": f"Conteo aprobado. {adjustments} ajustes aplicados al inventario.", "adjustments": adjustments}
+
+@router.delete("/cycle-counts/{count_id}")
+async def delete_cycle_count(count_id: str, request: Request):
+    """Admin deletes a cycle count."""
+    user = await require_admin(request)
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+    await db.wms_cycle_counts.delete_one({"count_id": count_id})
+    await log_movement(user, "cycle_count_deleted", {"count_id": count_id, "name": count.get("name")})
+    return {"message": "Conteo ciclico eliminado correctamente"}
 
 # ==================== QUICK INLINE UPDATES ====================
 

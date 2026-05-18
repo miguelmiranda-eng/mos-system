@@ -48,6 +48,12 @@ def invalidate_cache(prefix: str = None):
 async def list_operators(request: Request):
     await require_auth(request)
     operators = await db.operators.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+    if not any(op.get("operator_id") == "contador_1" or op.get("name") == "Contador 1" for op in operators):
+        operators.insert(0, {
+            "operator_id": "contador_1",
+            "name": "Contador 1",
+            "active": True
+        })
     return operators
 
 @router.post("/operators")

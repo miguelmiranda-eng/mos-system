@@ -208,187 +208,190 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className={cn(
-        'max-w-lg border shadow-2xl',
+        'max-w-lg border shadow-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden',
         isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-neutral-200 text-neutral-900',
       )}>
         {/* Color stripe */}
         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-lg" style={{ background: cat.color }} />
 
-        <DialogHeader>
+        <DialogHeader className="p-6 pb-3 border-b border-border/10 flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
             <span>{cat.emoji}</span>
             {initialData?.event_id ? 'Editar Evento' : 'Nuevo Evento'}
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 mt-1">
-          {/* Title */}
-          <div>
-            <label className={labelCls}>Título *</label>
-            <input
-              value={form.title}
-              onChange={e => set('title', e.target.value)}
-              placeholder="¿Qué tienes planeado?"
-              required
-              className={cn(inputCls, 'font-medium')}
-            />
-          </div>
-
-          {/* All-day toggle */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => set('all_day', !form.all_day)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all',
-                form.all_day
-                  ? 'bg-blue-600 border-blue-600 text-white'
-                  : isDark
-                    ? 'border-white/10 text-white/40 hover:text-white/70'
-                    : 'border-neutral-200 text-neutral-400 hover:text-neutral-700',
-              )}
-            >
-              <CalendarDays size={12} />
-              Todo el día
-            </button>
-          </div>
-
-          {/* Start / End */}
-          <div className="grid grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          {/* Scrollable form body */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {/* Title */}
             <div>
-              <label className={labelCls}>Inicio</label>
+              <label className={labelCls}>Título *</label>
               <input
-                type={form.all_day ? 'date' : 'datetime-local'}
-                value={form.all_day ? form.start_dt.slice(0, 10) : form.start_dt}
-                onChange={e => set('start_dt', form.all_day ? e.target.value + 'T00:00' : e.target.value)}
+                value={form.title}
+                onChange={e => set('title', e.target.value)}
+                placeholder="¿Qué tienes planeado?"
+                required
+                className={cn(inputCls, 'font-medium')}
+              />
+            </div>
+
+            {/* All-day toggle */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => set('all_day', !form.all_day)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all',
+                  form.all_day
+                    ? 'bg-blue-600 border-blue-600 text-white'
+                    : isDark
+                      ? 'border-white/10 text-white/40 hover:text-white/70'
+                      : 'border-neutral-200 text-neutral-400 hover:text-neutral-700',
+                )}
+              >
+                <CalendarDays size={12} />
+                Todo el día
+              </button>
+            </div>
+
+            {/* Start / End */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Inicio</label>
+                <input
+                  type={form.all_day ? 'date' : 'datetime-local'}
+                  value={form.all_day ? form.start_dt.slice(0, 10) : form.start_dt}
+                  onChange={e => set('start_dt', form.all_day ? e.target.value + 'T00:00' : e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Fin</label>
+                <input
+                  type={form.all_day ? 'date' : 'datetime-local'}
+                  value={form.all_day ? form.end_dt.slice(0, 10) : form.end_dt}
+                  onChange={e => set('end_dt', form.all_day ? e.target.value + 'T23:59' : e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            {/* Category / Priority */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Categoría</label>
+                <select value={form.category} onChange={e => set('category', e.target.value)} className={inputCls}>
+                  {CATEGORIES.map(c => (
+                    <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Prioridad</label>
+                <select value={form.priority} onChange={e => set('priority', e.target.value)} className={inputCls}>
+                  {PRIORITIES.map(p => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Status (only on edit) */}
+            {initialData?.event_id && (
+              <div>
+                <label className={labelCls}>Estado</label>
+                <select value={form.status} onChange={e => set('status', e.target.value)} className={inputCls}>
+                  {STATUS_OPTIONS.map(s => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Location */}
+            <div>
+              <label className={labelCls}><MapPin size={9} className="inline mr-1" />Ubicación</label>
+              <input
+                value={form.location}
+                onChange={e => set('location', e.target.value)}
+                placeholder="Sala de juntas, Zoom, Planta 2…"
                 className={inputCls}
               />
             </div>
+
+            {/* Assigned to */}
             <div>
-              <label className={labelCls}>Fin</label>
+              <label className={labelCls}><Users size={9} className="inline mr-1" />Asignado a</label>
               <input
-                type={form.all_day ? 'date' : 'datetime-local'}
-                value={form.all_day ? form.end_dt.slice(0, 10) : form.end_dt}
-                onChange={e => set('end_dt', form.all_day ? e.target.value + 'T23:59' : e.target.value)}
+                value={form.assigned_to}
+                onChange={e => set('assigned_to', e.target.value)}
+                placeholder="Nombre o email del responsable"
                 className={inputCls}
               />
             </div>
-          </div>
 
-          {/* Category / Priority */}
-          <div className="grid grid-cols-2 gap-3">
+            {/* Description */}
             <div>
-              <label className={labelCls}>Categoría</label>
-              <select value={form.category} onChange={e => set('category', e.target.value)} className={inputCls}>
-                {CATEGORIES.map(c => (
-                  <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+              <label className={labelCls}><AlignLeft size={9} className="inline mr-1" />Descripción</label>
+              <textarea
+                value={form.description}
+                onChange={e => set('description', e.target.value)}
+                placeholder="Detalles, agenda, notas previas…"
+                rows={3}
+                className={cn(inputCls, 'resize-none')}
+              />
+            </div>
+
+            {/* Recurrence */}
+            <div>
+              <label className={labelCls}><Repeat size={9} className="inline mr-1" />Repetición</label>
+              <select value={form.recurrence} onChange={e => set('recurrence', e.target.value)} className={inputCls}>
+                {RECURRENCE_OPTIONS.map(r => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
                 ))}
               </select>
             </div>
+
+            {/* Visibility toggle */}
             <div>
-              <label className={labelCls}>Prioridad</label>
-              <select value={form.priority} onChange={e => set('priority', e.target.value)} className={inputCls}>
-                {PRIORITIES.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
+              <label className={labelCls}>Visibilidad</label>
+              <div className={cn('flex rounded-lg border overflow-hidden', isDark ? 'border-white/10' : 'border-neutral-200')}>
+                <button
+                  type="button"
+                  onClick={() => set('visibility', 'team')}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-colors',
+                    form.visibility === 'team'
+                      ? 'bg-blue-600 text-white'
+                      : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50',
+                  )}
+                >
+                  <Globe size={12} /> Equipo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => set('visibility', 'private')}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-colors border-l',
+                    form.visibility === 'private'
+                      ? 'bg-violet-600 text-white border-violet-600'
+                      : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5 border-white/10' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50 border-neutral-200',
+                  )}
+                >
+                  <Lock size={12} /> Privado
+                </button>
+              </div>
+              <p className={cn('text-[10px] mt-1', isDark ? 'text-white/25' : 'text-neutral-400')}>
+                {form.visibility === 'private'
+                  ? 'Solo tú y los administradores pueden ver este evento.'
+                  : 'Visible para todos los miembros del equipo.'}
+              </p>
             </div>
-          </div>
-
-          {/* Status (only on edit) */}
-          {initialData?.event_id && (
-            <div>
-              <label className={labelCls}>Estado</label>
-              <select value={form.status} onChange={e => set('status', e.target.value)} className={inputCls}>
-                {STATUS_OPTIONS.map(s => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Location */}
-          <div>
-            <label className={labelCls}><MapPin size={9} className="inline mr-1" />Ubicación</label>
-            <input
-              value={form.location}
-              onChange={e => set('location', e.target.value)}
-              placeholder="Sala de juntas, Zoom, Planta 2…"
-              className={inputCls}
-            />
-          </div>
-
-          {/* Assigned to */}
-          <div>
-            <label className={labelCls}><Users size={9} className="inline mr-1" />Asignado a</label>
-            <input
-              value={form.assigned_to}
-              onChange={e => set('assigned_to', e.target.value)}
-              placeholder="Nombre o email del responsable"
-              className={inputCls}
-            />
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className={labelCls}><AlignLeft size={9} className="inline mr-1" />Descripción</label>
-            <textarea
-              value={form.description}
-              onChange={e => set('description', e.target.value)}
-              placeholder="Detalles, agenda, notas previas…"
-              rows={3}
-              className={cn(inputCls, 'resize-none')}
-            />
-          </div>
-
-          {/* Recurrence */}
-          <div>
-            <label className={labelCls}><Repeat size={9} className="inline mr-1" />Repetición</label>
-            <select value={form.recurrence} onChange={e => set('recurrence', e.target.value)} className={inputCls}>
-              {RECURRENCE_OPTIONS.map(r => (
-                <option key={r.id} value={r.id}>{r.label}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Visibility toggle */}
-          <div>
-            <label className={labelCls}>Visibilidad</label>
-            <div className={cn('flex rounded-lg border overflow-hidden', isDark ? 'border-white/10' : 'border-neutral-200')}>
-              <button
-                type="button"
-                onClick={() => set('visibility', 'team')}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-colors',
-                  form.visibility === 'team'
-                    ? 'bg-blue-600 text-white'
-                    : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50',
-                )}
-              >
-                <Globe size={12} /> Equipo
-              </button>
-              <button
-                type="button"
-                onClick={() => set('visibility', 'private')}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-colors border-l',
-                  form.visibility === 'private'
-                    ? 'bg-violet-600 text-white border-violet-600'
-                    : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5 border-white/10' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50 border-neutral-200',
-                )}
-              >
-                <Lock size={12} /> Privado
-              </button>
-            </div>
-            <p className={cn('text-[10px] mt-1', isDark ? 'text-white/25' : 'text-neutral-400')}>
-              {form.visibility === 'private'
-                ? 'Solo tú y los administradores pueden ver este evento.'
-                : 'Visible para todos los miembros del equipo.'}
-            </p>
           </div>
 
           {/* Footer actions */}
-          <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)' }}>
+          <div className="p-6 pt-4 border-t flex justify-end gap-2 flex-shrink-0" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)' }}>
             <button
               type="button"
               onClick={onClose}

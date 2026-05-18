@@ -2057,7 +2057,7 @@ const CycleCountModule = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [options, setOptions] = useState({ customers: [], styles: [], locations: [] });
-  const [form, setForm] = useState({ name: '', location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
+  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(() => {}); }, []);
   useEffect(() => {
@@ -2081,7 +2081,7 @@ const CycleCountModule = () => {
         const data = await res.json();
         toast.success(t('wms_cc_created', { count: data.total_lines }));
         setShowForm(false);
-        setForm({ name: '', location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
+        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error('Error de conexion'); }
@@ -2093,6 +2093,18 @@ const CycleCountModule = () => {
       const data = await fetcher(`/cycle-counts/${c.count_id}`);
       setSelectedCount(data);
     } catch { toast.error(t('wms_cc_load_err')); }
+  };
+
+  const handleDelete = async (countId, e) => {
+    e.stopPropagation();
+    if (!window.confirm(t('wms_cc_delete_conf') || '¿Está seguro de que desea eliminar este conteo cíclico?')) return;
+    try {
+      const res = await deleter(`/cycle-counts/${countId}`);
+      toast.success(res.message || 'Conteo cíclico eliminado correctamente');
+      load();
+    } catch {
+      toast.error('Error al eliminar conteo cíclico');
+    }
   };
 
   const saveProgress = async (countedItems) => {
@@ -2263,7 +2275,7 @@ const CycleCountModule = () => {
         </button>
       </div>
       {showForm && (
-        <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="cc-form">
+        <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-4 animate-in fade-in slide-in-from-top-4 duration-300" data-testid="cc-form">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_cc_name')}</label>
@@ -2277,32 +2289,50 @@ const CycleCountModule = () => {
               </select>
             </div>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_cc_filters')}</div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_cc_loc_filter')}</label>
-              <SearchableSelect 
-                options={options.locations} 
-                value={form.location_filter} 
-                onChange={val => setForm(p => ({ ...p, location_filter: val }))} 
-                placeholder="Ej: RP10" 
-                testId="cc-loc" 
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('client')}</label>
-              <SearchableSelect options={options.customers} value={form.customer_filter} onChange={val => setForm(p => ({ ...p, customer_filter: val }))} placeholder={t('all')} testId="cc-customer" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('style')}</label>
-              <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder={t('all')} testId="cc-style" />
+          
+          <div className="flex items-center gap-3 p-3 bg-card border border-border rounded-2xl">
+            <input 
+              type="checkbox" 
+              id="cc_is_general" 
+              checked={form.is_general} 
+              onChange={e => setForm(p => ({ ...p, is_general: e.target.checked, location_filter: '', customer_filter: '', style_filter: '' }))} 
+              className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 bg-background"
+              data-testid="cc-is-general"
+            />
+            <label htmlFor="cc_is_general" className="text-xs font-black uppercase tracking-widest text-primary cursor-pointer select-none">
+              Conteo General (Contar Todo el Inventario)
+            </label>
+          </div>
+
+          <div className={`space-y-2 transition-all duration-300 ${form.is_general ? 'opacity-40 pointer-events-none scale-[0.98]' : ''}`}>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_cc_filters')}</div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">{t('wms_cc_loc_filter')}</label>
+                <SearchableSelect 
+                  options={options.locations} 
+                  value={form.location_filter} 
+                  onChange={val => setForm(p => ({ ...p, location_filter: val }))} 
+                  placeholder="Ej: RP10" 
+                  testId="cc-loc" 
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">{t('client')}</label>
+                <SearchableSelect options={options.customers} value={form.customer_filter} onChange={val => setForm(p => ({ ...p, customer_filter: val }))} placeholder={t('all')} testId="cc-customer" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">{t('style')}</label>
+                <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder={t('all')} testId="cc-style" />
+              </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={handleCreate} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="cc-create">
+          
+          <div className="flex gap-2 pt-2">
+            <button onClick={handleCreate} disabled={loading} className="px-4 py-2.5 bg-primary text-black rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20" data-testid="cc-create">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />} {t('wms_create_cc')}
             </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
+            <button onClick={() => setShowForm(false)} className="px-5 py-2.5 bg-secondary text-foreground rounded-xl text-xs font-black uppercase tracking-widest hover:bg-secondary/80 transition-all">{t('cancel')}</button>
           </div>
         </div>
       )}
@@ -2316,10 +2346,10 @@ const CycleCountModule = () => {
           };
           
           return (
-            <button 
+            <div 
               key={c.count_id} 
               onClick={() => openCount(c)} 
-              className="group text-left border border-border/40 rounded-3xl bg-card/60 backdrop-blur-sm hover:border-primary/40 hover:bg-card transition-all relative overflow-hidden shadow-xl" 
+              className="cursor-pointer group text-left border border-border/40 rounded-3xl bg-card/60 backdrop-blur-sm hover:border-primary/40 hover:bg-card transition-all relative overflow-hidden shadow-xl" 
               data-testid={`cc-${c.count_id}`}
             >
               <div className={`h-1.5 w-full ${c.status === 'approved' ? 'bg-emerald-500' : c.status === 'completed' ? 'bg-blue-500' : 'bg-yellow-500'}`} />
@@ -2337,8 +2367,20 @@ const CycleCountModule = () => {
                       <h4 className="text-xs font-black uppercase tracking-tight text-foreground truncate max-w-[120px]">{c.name}</h4>
                     </div>
                   </div>
-                  <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${statusColors[c.status] || 'bg-secondary text-muted-foreground border-border/20'}`}>
-                    {c.status === 'approved' ? t('wms_status_approved') : c.status === 'completed' ? t('wms_status_completed') : t('wms_status_in_progress')}
+                  <div className="flex items-center gap-2">
+                    <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${statusColors[c.status] || 'bg-secondary text-muted-foreground border-border/20'}`}>
+                      {c.status === 'approved' ? t('wms_status_approved') : c.status === 'completed' ? t('wms_status_completed') : t('wms_status_in_progress')}
+                    </div>
+                    {isAdmin && (
+                      <button
+                        onClick={(e) => handleDelete(c.count_id, e)}
+                        className="p-1.5 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20"
+                        title={t('delete') || 'Eliminar'}
+                        data-testid={`delete-cc-${c.count_id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -2358,10 +2400,14 @@ const CycleCountModule = () => {
 
                 <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 border-t border-border/10 pt-3">
                   <span className="flex items-center gap-1"><History className="w-3 h-3" /> {new Date(c.created_at).toLocaleDateString()}</span>
-                  {c.location_filter && <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>}
+                  {c.is_general ? (
+                    <span className="text-emerald-400 font-black bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg flex items-center gap-1">Conteo General</span>
+                  ) : c.location_filter ? (
+                    <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>
+                  ) : null}
                 </div>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -2703,9 +2749,45 @@ const LocationsModule = () => {
     }
   };
 
+  const [editingLoc, setEditingLoc] = useState(null);
+
+  const handleUpdateLoc = async () => {
+    const name = editingLoc.name.trim().toUpperCase();
+    if (!name) { toast.error(t('wms_name_req') || 'Nombre requerido'); return; }
+    
+    if (locations.some(l => l.name.toUpperCase() === name && l.location_id !== editingLoc.location_id)) {
+      toast.error(`La ubicación '${name}' ya existe`);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/locations/${editingLoc.location_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, zone: editingLoc.zone.toUpperCase() }),
+        credentials: 'include'
+      });
+      if (res.ok) {
+        toast.success('Ubicación actualizada');
+        setEditingLoc(null);
+        load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al actualizar');
+      }
+    } catch {
+      toast.error(t('error_connection'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filtered = locations.filter(l => {
+    const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
     const matchesSearch = l.name.toLowerCase().includes(search.toLowerCase()) || 
-                         (l.zone || '').toLowerCase().includes(search.toLowerCase());
+                         (l.zone || '').toLowerCase().includes(search.toLowerCase()) ||
+                         summary.items.some(item => item.style.toLowerCase().includes(search.toLowerCase()));
     const matchesTab = activeTab === 'custom' ? l.is_custom === true : l.is_custom !== true;
     return matchesSearch && matchesTab;
   });
@@ -2864,6 +2946,13 @@ const LocationsModule = () => {
                             <Printer className="w-4 h-4" />
                           </button>
                           <button 
+                            onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
+                            className="p-2 text-muted-foreground hover:text-yellow-500 transition-all"
+                            title="Editar ubicación"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button 
                             onClick={() => handleDelete(l.location_id, l.name)}
                             className="p-2 text-muted-foreground hover:text-red-500 transition-all"
                             title="Eliminar ubicación"
@@ -2910,6 +2999,52 @@ const LocationsModule = () => {
           ));
         })()}
       </div>
+      {editingLoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md p-6 bg-card border border-border rounded-[2.5rem] shadow-2xl space-y-6 mx-4">
+            <div>
+              <h3 className="text-xl font-black uppercase tracking-tighter">Editar Ubicación</h3>
+              <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest opacity-60">Modificar parámetros de la ubicación</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">Nombre de Locación</label>
+                <input 
+                  value={editingLoc.name} 
+                  onChange={e => setEditingLoc(p => ({ ...p, name: e.target.value.toUpperCase() }))} 
+                  className="w-full px-4 py-3.5 bg-background border border-border rounded-2xl text-lg font-black font-mono focus:ring-4 focus:ring-primary/10 transition-all"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">Zona / Pasillo</label>
+                <input 
+                  value={editingLoc.zone} 
+                  onChange={e => setEditingLoc(p => ({ ...p, zone: e.target.value.toUpperCase() }))} 
+                  className="w-full px-4 py-3.5 bg-background border border-border rounded-2xl text-lg font-black focus:ring-4 focus:ring-primary/10 transition-all"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={handleUpdateLoc}
+                disabled={loading || !editingLoc.name}
+                className="flex-1 py-4 bg-primary text-black rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Guardar Cambios'}
+              </button>
+              <button 
+                onClick={() => setEditingLoc(null)}
+                className="flex-1 py-4 bg-secondary text-foreground rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-secondary/80 transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -3150,7 +3285,7 @@ export default function WMS() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col text-foreground">
+    <div className="h-screen bg-background flex flex-col text-foreground overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
         <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
       {/* Sidebar */}
