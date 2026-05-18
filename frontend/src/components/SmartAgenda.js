@@ -763,7 +763,18 @@ const SmartAgenda = () => {
 
   // ── Transform events for react-big-calendar ────────────────────────────
   const rbcEvents = useMemo(() => {
-    let list = [...events, ...googleEvents];
+    // Prevent rendering of duplicate events for Google-synced local events
+    const localGoogleEventIds = new Set(
+      events.map(e => e.google_event_id).filter(Boolean)
+    );
+
+    const uniqueGoogleEvents = googleEvents.filter(ge => {
+      // Extract Google ID to match local google_event_id reference
+      const gId = ge.event_id.replace(/^google_/, '');
+      return !localGoogleEventIds.has(gId);
+    });
+
+    let list = [...events, ...uniqueGoogleEvents];
     if (filterCat !== 'all') list = list.filter(e => e.category === filterCat);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();

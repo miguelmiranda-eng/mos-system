@@ -231,6 +231,14 @@ async def create_google_event(user_id: str, event_data: dict):
     service = await get_google_service(user_id)
     if not service: return None
     
+    # Dynamically fetch the primary calendar's timezone setting to match user local time
+    try:
+        calendar_info = service.calendars().get(calendarId='primary').execute()
+        tz = calendar_info.get('timeZone', 'UTC')
+    except Exception as e:
+        print(f"Error fetching Google calendar timezone: {e}")
+        tz = 'UTC'
+    
     g_event = {
         'summary': event_data['title'],
         'location': event_data.get('location', ''),
@@ -238,12 +246,12 @@ async def create_google_event(user_id: str, event_data: dict):
         'start': {
             'dateTime': event_data['start_dt'] + ":00" if "T" in event_data['start_dt'] else None,
             'date': event_data['start_dt'] if "T" not in event_data['start_dt'] else None,
-            'timeZone': 'UTC',
+            'timeZone': tz,
         },
         'end': {
             'dateTime': event_data['end_dt'] + ":00" if "T" in event_data['end_dt'] else None,
             'date': event_data['end_dt'] if "T" not in event_data['end_dt'] else None,
-            'timeZone': 'UTC',
+            'timeZone': tz,
         },
         'reminders': {'useDefault': True},
     }
@@ -260,6 +268,14 @@ async def update_google_event(user_id: str, google_event_id: str, event_data: di
     service = await get_google_service(user_id)
     if not service or not google_event_id: return False
     
+    # Dynamically fetch the primary calendar's timezone setting to match user local time
+    try:
+        calendar_info = service.calendars().get(calendarId='primary').execute()
+        tz = calendar_info.get('timeZone', 'UTC')
+    except Exception as e:
+        print(f"Error fetching Google calendar timezone: {e}")
+        tz = 'UTC'
+    
     g_event = {
         'summary': event_data.get('title'),
         'location': event_data.get('location', ''),
@@ -267,12 +283,12 @@ async def update_google_event(user_id: str, google_event_id: str, event_data: di
         'start': {
             'dateTime': event_data['start_dt'] + ":00" if "T" in event_data['start_dt'] else None,
             'date': event_data['start_dt'] if "T" not in event_data['start_dt'] else None,
-            'timeZone': 'UTC',
+            'timeZone': tz,
         },
         'end': {
             'dateTime': event_data['end_dt'] + ":00" if "T" in event_data['end_dt'] else None,
             'date': event_data['end_dt'] if "T" not in event_data['end_dt'] else None,
-            'timeZone': 'UTC',
+            'timeZone': tz,
         },
     }
     # Remove None values
