@@ -376,6 +376,42 @@ async def get_receiving(receiving_id: str, request: Request):
     doc["boxes"] = boxes
     return doc
 
+@router.delete("/receiving/{receiving_id}")
+async def delete_receiving(receiving_id: str, request: Request):
+    user = await require_auth(request)
+    doc = await db.wms_receiving.find_one({"receiving_id": receiving_id})
+    if not doc:
+        raise HTTPException(404, "Receiving no encontrado")
+    
+    # Revert inventory added by this receiving
+    boxes = await db.wms_boxes.find({"receiving_id": receiving_id}).to_list(1000)
+    for box in boxes:
+        box_style = box.get("style")
+        box_color = box.get("color")
+        box_size = box.get("size")
+        box_units = box.get("units", 0)
+        box_customer = box.get("customer")
+        box_location = box.get("location")
+        box_is_bpo = box.get("is_bpo", False)
+        
+        if box_style and box_units > 0:
+            await _update_inventory_enhanced(
+                box_style, box_color, box_size, box_units, 
+                "remove", box_customer, box_location, box_is_bpo
+            )
+            
+    box_ids = [b["box_id"] for b in boxes if "box_id" in b]
+    if box_ids:
+        await db.wms_tasks.delete_many({"lpn_id": {"$in": box_ids}})
+        await db.wms_boxes.delete_many({"receiving_id": receiving_id})
+        
+    await db.wms_receiving.delete_one({"receiving_id": receiving_id})
+    await log_movement(user, "deallocate", {
+        "receiving_id": receiving_id, 
+        "details": f"Eliminado registro de receiving y revertidas {len(boxes)} cajas"
+    })
+    return {"message": "Receiving eliminado y revertido exitosamente"}
+
 # ==================== BOXES ====================
 
 @router.get("/stocktakes")

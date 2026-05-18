@@ -183,6 +183,17 @@ const ReceivingModule = () => {
     pw.document.close();
   };
 
+  const handleDelete = async (receivingId) => {
+    if (!window.confirm(t('wms_confirm_delete_rcv') || '¿Está seguro de eliminar este registro? Se revertirá el inventario.')) return;
+    try {
+      await deleter(`/receiving/${receivingId}`);
+      toast.success(t('wms_rcv_deleted_success') || 'Registro de receiving eliminado exitosamente');
+      load();
+    } catch (e) {
+      toast.error('Error al eliminar el registro');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -342,6 +353,14 @@ const ReceivingModule = () => {
                     data-testid={`rcv-print-${r.receiving_id}`}
                   >
                     <Printer className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={() => handleDelete(r.receiving_id)} 
+                    className="p-2.5 text-muted-foreground hover:text-destructive rounded-xl hover:bg-destructive/10 transition-all" 
+                    title="Eliminar registro"
+                    data-testid={`rcv-delete-${r.receiving_id}`}
+                  >
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
               </div>
