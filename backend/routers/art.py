@@ -128,7 +128,7 @@ async def get_daily_art_stats(request: Request):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     match_query = {"date": today}
-    if IS_PROD and user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if IS_PROD and user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         match_query["user_id"] = user["user_id"]
 
     cursor = db.art_logs.find(match_query, {"_id": 0}).sort("timestamp", -1)
@@ -160,7 +160,7 @@ async def get_art_history(request: Request):
     
     # Base match query
     match_query = {"timestamp": {"$gte": thirty_days_ago}}
-    if IS_PROD and user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if IS_PROD and user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         match_query["user_id"] = user["user_id"]
 
     # Daily Aggregation (Last 14 days for the chart)

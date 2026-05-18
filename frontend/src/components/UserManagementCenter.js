@@ -300,7 +300,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="supersu">Super Usuario</SelectItem>
                         <SelectItem value="picker">Picker / Almacén</SelectItem>
                         <SelectItem value="operator">Operador</SelectItem>
-                        <SelectItem value="qc">Inspector QC</SelectItem>
+                        <SelectItem value="inspector_qc">Inspector QC</SelectItem>
                         <SelectItem value="user">Usuario Estándar</SelectItem>
                         <SelectItem value="ceo">CEO / Directivo</SelectItem>
                       </SelectContent>
@@ -371,7 +371,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="supersu">Super Usuario</SelectItem>
                         <SelectItem value="picker">Picker / Almacén</SelectItem>
                         <SelectItem value="operator">Operador</SelectItem>
-                        <SelectItem value="qc">Inspector QC</SelectItem>
+                        <SelectItem value="inspector_qc">Inspector QC</SelectItem>
                         <SelectItem value="user">Usuario Estándar</SelectItem>
                         <SelectItem value="ceo">CEO / Directivo</SelectItem>
                       </SelectContent>
@@ -454,7 +454,7 @@ const UserManagementCenter = () => {
                        {u.auth_type === 'email' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black tracking-widest">EMAIL</span>}
                        {u.role === 'picker' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black tracking-widest">PICKER</span>}
                        {u.role === 'supersu' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-black tracking-widest">SUPER USUARIO</span>}
-                       {u.role === 'qc' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black tracking-widest">INSPECTOR QC</span>}
+                       {(u.role === 'qc' || u.role === 'inspector_qc') && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black tracking-widest">INSPECTOR QC</span>}
                        {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">CLIENTE: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>
@@ -492,7 +492,7 @@ const UserManagementCenter = () => {
                           <SelectItem value="supersu">Super Usuario</SelectItem>
                           <SelectItem value="picker">Picker</SelectItem>
                           <SelectItem value="operator">Operador</SelectItem>
-                          <SelectItem value="qc">Inspector QC</SelectItem>
+                          <SelectItem value="inspector_qc">Inspector QC</SelectItem>
                           <SelectItem value="user">Usuario</SelectItem>
                           <SelectItem value="ceo">CEO</SelectItem>
                         </SelectContent>

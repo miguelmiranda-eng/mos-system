@@ -256,7 +256,7 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
 
     # QC Lock: block status/board changes on locked orders for non-supersu/inspector_qc users
     _LOCK_PROTECTED = {"production_status", "board"}
-    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc"):
+    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc", "qc"):
         if any(f in update_data for f in _LOCK_PROTECTED):
             raise HTTPException(status_code=403, detail="locked_by_qc")
 
@@ -276,7 +276,7 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     old_board = existing.get("board")
     new_board = update_data.get("board")
     if old_board == "CONTROL DE CALIDAD" and new_board and new_board != old_board:
-        if user.get("role") not in ("supersu", "inspector_qc"):
+        if user.get("role") not in ("supersu", "inspector_qc", "qc"):
             raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
 
     await db.orders.update_one({"order_id": order_id}, {"$set": update_data})
@@ -346,11 +346,11 @@ async def move_order(order_id: str, request: Request):
     existing = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
-    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc"):
+    if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="locked_by_qc")
     old_board = existing.get("board")
     if old_board == "CONTROL DE CALIDAD" and target_board != old_board:
-        if user.get("role") not in ("supersu", "inspector_qc"):
+        if user.get("role") not in ("supersu", "inspector_qc", "qc"):
             raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
     await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -438,12 +438,12 @@ async def bulk_move_orders(request: Request):
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
 
     # Block non-supersu/inspector_qc if any order is locked by QC
-    if user.get("role") not in ("supersu", "inspector_qc"):
+    if user.get("role") not in ("supersu", "inspector_qc", "qc"):
         locked = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("locked_by_qc")]
         if locked:
             raise HTTPException(status_code=403, detail=f"locked_by_qc:{','.join(locked)}")
 
-    if user.get("role") not in ("supersu", "inspector_qc"):
+    if user.get("role") not in ("supersu", "inspector_qc", "qc"):
         qc_board = [o.get("order_number", o["order_id"]) for o in original_orders if o.get("board") == "CONTROL DE CALIDAD"]
         if qc_board:
             raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
@@ -517,7 +517,7 @@ async def delete_order_link(order_id: str, link_index: int, request: Request):
 async def pin_comment(order_id: str, comment_id: str, request: Request):
     """Toggle the pinned state of a comment. Only admins can pin."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="Solo los administradores pueden anclar comentarios")
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id})
     if not comment:
@@ -650,7 +650,7 @@ async def update_comment(order_id: str, comment_id: str, request: Request):
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id}, {"_id": 0})
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="Not allowed to edit this comment")
     await db.comments.update_one(
         {"comment_id": comment_id},
@@ -666,7 +666,7 @@ async def delete_comment(order_id: str, comment_id: str, request: Request):
     comment = await db.comments.find_one({"comment_id": comment_id, "order_id": order_id}, {"_id": 0})
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if comment.get("user_id") != user["user_id"] and user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="Not allowed to delete this comment")
     await db.comments.delete_one({"comment_id": comment_id})
     await ws_manager.broadcast("order_change", {"action": "delete_comment", "order_id": order_id})
@@ -930,7 +930,7 @@ async def export_orders_complete(request: Request):
 async def import_orders_complete(request: Request):
     """Import orders with their comments and images."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="Admin only")
     body = await request.json()
     orders_data = body.get("orders", [])
@@ -994,7 +994,7 @@ async def import_orders_excel(
 ):
     """Import orders from an Excel file (.xlsx, .xls) with optional column mapping."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "supersu", "inspector_qc"):
+    if user.get("role") not in ("admin", "supersu", "inspector_qc", "qc"):
         raise HTTPException(status_code=403, detail="Solo los administradores pueden importar Excel")
 
     try:

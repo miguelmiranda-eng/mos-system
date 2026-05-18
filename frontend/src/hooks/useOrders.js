@@ -443,12 +443,12 @@ export const useOrders = (currentBoard, boardFilters) => {
     const user = JSON.parse(localStorage.getItem('mos_user') || '{}');
     const orderToUpdate = orders.find(o => o.order_id === orderId);
     
-    if (field === 'board' && orderToUpdate?.board === 'CONTROL DE CALIDAD' && !['supersu', 'inspector_qc'].includes(user?.role)) {
+    if (field === 'board' && orderToUpdate?.board === 'CONTROL DE CALIDAD' && !['supersu', 'inspector_qc', 'qc'].includes(user?.role)) {
       toast.error('🔒 La orden está en CONTROL DE CALIDAD. Solo SuperSU o Inspector QC pueden moverla.');
       return;
     }
 
-    if (orderToUpdate?.locked_by_qc && ['production_status', 'board'].includes(field) && !['supersu', 'inspector_qc'].includes(user?.role)) {
+    if (orderToUpdate?.locked_by_qc && ['production_status', 'board'].includes(field) && !['supersu', 'inspector_qc', 'qc'].includes(user?.role)) {
       toast.error('🔒 La orden está bloqueada por QC. Solo SuperSU o Inspector QC pueden editar su estatus o moverla.');
       return;
     }

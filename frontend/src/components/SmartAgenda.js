@@ -427,7 +427,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
   const recLabel   = RECURRENCE_OPTIONS.find(r => r.id === event.recurrence)?.label || '';
   const statusLabel = STATUS_OPTIONS.find(s => s.id === event.status)?.label || event.status;
   const isPrivate  = event.visibility === 'private';
-  const isAdmin    = ['admin', 'ceo', 'supersu', 'inspector_qc'].includes(currentUser?.role);
+  const isAdmin    = ['admin', 'ceo', 'supersu', 'inspector_qc', 'qc'].includes(currentUser?.role);
   const isOwner    = currentUser?.user_id === event.created_by;
   const canEdit    = isPrivate ? isOwner : (isOwner || isAdmin);
 
