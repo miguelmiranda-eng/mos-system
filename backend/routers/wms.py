@@ -424,7 +424,11 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
     if color: query["color"] = {"$regex": color, "$options": "i"}
     if size: query["size"] = {"$regex": size, "$options": "i"}
     if location: query["location"] = location
-    if status: query["status"] = status
+    if status:
+        if status == "received":
+            query["status"] = {"$in": ["received", "putaway_pending"]}
+        else:
+            query["status"] = status
     if state: query["state"] = state
     if po: query["po"] = {"$regex": po, "$options": "i"}
     boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
