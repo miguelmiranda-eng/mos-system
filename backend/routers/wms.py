@@ -415,6 +415,7 @@ async def delete_receiving(receiving_id: str, request: Request):
 # ==================== BOXES ====================
 
 @router.get("/stocktakes")
+@router.get("/boxes")
 async def list_boxes(request: Request, sku: str = "", color: str = "", size: str = "",
                      location: str = "", status: str = "", state: str = "", po: str = ""):
     await require_auth(request)
@@ -430,6 +431,7 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
     return boxes
 
 @router.get("/stocktakes/{box_id}")
+@router.get("/boxes/{box_id}")
 async def get_box(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
@@ -832,6 +834,7 @@ async def get_wms_order(order_id: str, request: Request):
 # ==================== ALLOCATION ====================
 
 
+@router.post("/allocations")
 @router.post("/stocktakes")
 async def create_allocation(request: Request):
     user = await require_auth(request)
