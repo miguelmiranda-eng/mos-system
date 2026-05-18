@@ -51,7 +51,7 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
       const color = getStatusColor(value) || (isDark ? { bg: '#374151', text: '#D1D5DB' } : { bg: '#F3F4F6', text: '#374151' });
       return <span className="px-2.5 py-1 rounded text-xs font-bold whitespace-nowrap" style={{ backgroundColor: color.bg, color: color.text }}>{value || '—'}</span>;
     }
-    return <span className="text-sm text-foreground/70">{value || '—'}</span>;
+    return <span className="text-sm font-medium text-foreground">{value || '—'}</span>;
   }
 
   // link_desc editing and display
@@ -194,7 +194,7 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
       className={`cursor-pointer min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
       {isSelectField ? <ColoredBadge value={value} isDark={isDark} /> :
        type === 'link' ? <span className="text-muted-foreground text-sm">+ {t('link')}</span> :
-       (value || <span className="text-muted-foreground">-</span>)}
+       (value ? <span className="text-foreground font-medium text-sm">{value}</span> : <span className="text-muted-foreground/50">-</span>)}
     </div>
   );
 };

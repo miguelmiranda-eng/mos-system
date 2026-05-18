@@ -887,7 +887,7 @@ const Dashboard = () => {
                   {order.board}
                 </span>
               )}
-              <span className="text-[10px] font-bold text-muted-foreground/50 truncate uppercase tracking-widest leading-none">
+              <span className="text-[10px] font-bold text-muted-foreground/80 truncate uppercase tracking-widest leading-none">
                 {order.client}
               </span>
             </div>
@@ -1649,7 +1649,7 @@ const Dashboard = () => {
                   <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-muted-foreground' : 'bg-gray-50 text-muted-foreground'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
@@ -1756,7 +1756,7 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-muted-foreground' : 'bg-gray-50 text-muted-foreground'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
                           <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
@@ -1901,7 +1901,7 @@ const Dashboard = () => {
                       </div>
                     );
                   })}
-                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-zinc-500/80' : 'bg-gray-50 text-gray-400'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
                   {renderTableBody()}
                 </div>
                 {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
