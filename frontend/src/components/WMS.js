@@ -34,9 +34,33 @@ const ReceivingModule = () => {
   const [form, setForm] = useState({
     customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '',
-    dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '',
+    boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '',
     is_bpo: false,
   });
+  const [printMode, setPrintMode] = useState('cajas'); // 'cajas' o 'piezas'
+  
+  const handlePiecesChange = (val) => {
+    const p = parseFloat(val) || 0;
+    const b = p / 72;
+    setForm(prev => ({ 
+      ...prev, 
+      pieces: val, 
+      boxes: val === '' ? '' : (Number.isInteger(b) ? b.toString() : b.toFixed(2)),
+      units: ''
+    }));
+  };
+
+  const handleBoxesChange = (val) => {
+    const b = parseFloat(val) || 0;
+    const p = b * 72;
+    setForm(prev => ({ 
+      ...prev, 
+      boxes: val, 
+      pieces: val === '' ? '' : (Number.isInteger(p) ? p.toString() : p.toFixed(2)),
+      units: ''
+    }));
+  };
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
@@ -91,29 +115,56 @@ const ReceivingModule = () => {
     }
   }, [form.style, form.color, form.size]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const totalUnits = parseInt(form.units) || ((parseInt(form.dozens) || 0) * 12 + (parseInt(form.pieces) || 0));
+  const totalUnits = parseInt(form.pieces) || parseInt(form.units) || 0;
 
   const handleSubmit = async () => {
     if (!form.style) { toast.error(t('wms_style_req')); return; }
     setLoading(true);
     try {
-      const payload = {
-        ...form,
-        units: totalUnits,
-        dozens: parseInt(form.dozens) || 0,
-        pieces: parseInt(form.pieces) || 0,
-      };
-      const res = await poster('/receiving', payload);
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
-        if (payload.is_bpo) {
-          handlePrintLabel(data);
-        }
+      if (editingId) {
+        // Edit Mode (Metadata only)
+        const payload = {
+          customer: form.customer, manufacturer: form.manufacturer, description: form.description,
+          country_of_origin: form.country_of_origin, fabric_content: form.fabric_content,
+          lot_number: form.lot_number, inv_location: form.inv_location
+        };
+        const res = await fetcher(`/receiving/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        toast.success(res?.message || 'Registro actualizado exitosamente');
         setShowForm(false);
-        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', dozens: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+        setEditingId(null);
+        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
         load();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+      } else {
+        // Create Mode
+        const totalPieces = parseInt(form.pieces) || 0;
+        const totalBoxes = Math.ceil(parseFloat(form.boxes) || 0);
+        
+        const items = [];
+        if (totalBoxes > 0) {
+          const fullBoxes = Math.floor(totalPieces / 72);
+          const remainder = totalPieces % 72;
+          if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: 72 });
+          if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
+        }
+
+        const payload = {
+          ...form,
+          units: totalPieces,
+          pieces: totalPieces,
+          items: items.length > 0 ? items : undefined
+        };
+        const res = await poster('/receiving', payload);
+        if (res.ok) {
+          const data = await res.json();
+          toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
+          if (payload.is_bpo) {
+            handlePrintLabel(data);
+          }
+          setShowForm(false);
+          setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+          load();
+        } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+      }
     } catch { toast.error(t('error_connection')); }
     finally { setLoading(false); }
   };
@@ -121,68 +172,101 @@ const ReceivingModule = () => {
   const handlePrintLabel = (r) => {
     const pw = window.open('', '_blank');
     if (!pw) { toast.error(t('wms_popup_err')); return; }
-    const dozens = r.dozens || 0;
-    const pieces = r.pieces || 0;
-    const units = r.total_units || r.units || (dozens * 12 + pieces);
-    pw.document.write(`<html><head><title>${t('wms_mod_receiving')} - ${r.receiving_id}</title>
+    
+    const boxes = r.boxes || [{ box_id: r.receiving_id, units: r.total_units }];
+    
+    let html = `<html><head><title>${t('wms_mod_receiving')} - ${r.receiving_id}</title>
       <style>
         @page { size: 4in 6in; margin: 5mm; }
-        body { font-family: Arial, sans-serif; margin: 0; padding: 10px; width: 3.6in; font-size: 11px; }
-        @media print { body { padding: 0; } }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; width: 3.6in; background: white; }
+        @media print { body { padding: 0; margin: 0; } }
+        .label-page { page-break-after: always; padding: 10px; height: 5.5in; box-sizing: border-box; }
+        .label-page:last-child { page-break-after: auto; }
         .row { display: flex; border-bottom: 1px solid #000; }
         .cell { padding: 4px 6px; border-right: 1px solid #000; }
         .cell:last-child { border-right: none; }
         .label { font-size: 8px; text-transform: uppercase; color: #666; display: block; }
         .value { font-size: 12px; font-weight: bold; }
         .table { border: 1px solid #000; border-collapse: collapse; width: 100%; margin-top: 6px; }
-      </style></head><body>
-      <div style="text-align:center;margin-bottom:6px">
-        <svg id="barcode"></svg>
-      </div>
-      <table class="table">
-        <tr class="row">
-          <td class="cell" style="width:60%"><span class="label">${t('wms_label_customer')}</span><span class="value">${r.customer || ''}</span></td>
-          <td class="cell" style="width:40%"><span class="label">${t('wms_label_po')}</span><span class="value">${r.po || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" style="width:60%"><span class="label">${t('wms_label_lot')}</span><span class="value">${r.lot_number || ''}</span></td>
-          <td class="cell" style="width:40%"><span class="label">${t('wms_label_location')}</span><span class="value">${r.inv_location || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" colspan="2"><span class="label">${t('wms_label_manufacturer')}</span><span class="value">${r.manufacturer || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_style')}</span><span class="value" style="font-size:16px">${r.style || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_sku')}</span><span class="value" style="font-family:monospace">${r.sku || r.style || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_color')}</span><span class="value">${r.color || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_size')}</span><span class="value" style="font-size:16px">${r.size || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" colspan="2"><span class="label">${t('wms_label_desc')}</span><span class="value">${r.description || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_coo')}</span><span class="value">${r.country_of_origin || ''}</span></td>
-          <td class="cell" style="width:50%"><span class="label">${t('wms_label_fabric')}</span><span class="value">${r.fabric_content || ''}</span></td>
-        </tr>
-        <tr class="row">
-          <td class="cell" style="width:33%"><span class="label">${t('wms_label_dozens')}</span><span class="value" style="font-size:16px">${dozens}</span></td>
-          <td class="cell" style="width:33%"><span class="label">${t('wms_label_pieces')}</span><span class="value" style="font-size:16px">${pieces}</span></td>
-          <td class="cell" style="width:34%"><span class="label">${t('wms_label_units')}</span><span class="value" style="font-size:18px;color:#000">${units}</span></td>
-        </tr>
-      </table>
-      <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
-        <span>${r.receiving_id}</span>
-        <span>${new Date(r.created_at).toLocaleDateString()}</span>
-        <span>${r.received_by_name || ''}</span>
-      </div>
-      <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
-      <script>try{JsBarcode("#barcode","${r.receiving_id}",{width:1.5,height:40,displayValue:true,fontSize:10,margin:0})}catch(e){}setTimeout(function(){window.print()},500);<\/script>
-    </body></html>`);
+      </style></head><body>`;
+      
+    boxes.forEach((box, idx) => {
+      html += `
+      <div class="label-page">
+        <div style="text-align:center;margin-bottom:6px">
+          <svg id="barcode-${idx}"></svg>
+        </div>
+        <table class="table">
+          <tr class="row">
+            <td class="cell" style="width:60%"><span class="label">${t('wms_label_customer')}</span><span class="value">${r.customer || ''}</span></td>
+            <td class="cell" style="width:40%"><span class="label">${t('wms_label_po')}</span><span class="value">${r.po || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:60%"><span class="label">${t('wms_label_lot')}</span><span class="value">${r.lot_number || ''}</span></td>
+            <td class="cell" style="width:40%"><span class="label">${t('wms_label_location')}</span><span class="value">${r.inv_location || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" colspan="2"><span class="label">${t('wms_label_manufacturer')}</span><span class="value">${r.manufacturer || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_style')}</span><span class="value" style="font-size:16px">${r.style || ''}</span></td>
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_sku')}</span><span class="value" style="font-family:monospace">${r.sku || r.style || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_color')}</span><span class="value">${r.color || ''}</span></td>
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_size')}</span><span class="value" style="font-size:16px">${r.size || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" colspan="2"><span class="label">${t('wms_label_desc')}</span><span class="value">${r.description || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_coo')}</span><span class="value">${r.country_of_origin || ''}</span></td>
+            <td class="cell" style="width:50%"><span class="label">${t('wms_label_fabric')}</span><span class="value">${r.fabric_content || ''}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px;color:#000">${box.units}</span></td>
+          </tr>
+        </table>
+        <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
+          <span>${box.box_id}</span>
+          <span>${idx + 1} of ${boxes.length}</span>
+          <span>${r.received_by_name || ''}</span>
+        </div>
+      </div>`;
+    });
+    
+    html += `
+      <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+      <script>
+        try {
+          ${boxes.map((box, idx) => `
+            JsBarcode("#barcode-${idx}", "${box.box_id}", {
+              width: 1.5, height: 40, displayValue: true, fontSize: 10, margin: 0
+            });
+          `).join('\n')}
+          setTimeout(function(){window.print()}, 800);
+        } catch(e) {}
+      </script>
+    </body></html>`;
+    
+    pw.document.write(html);
     pw.document.close();
   };
-
+  const handleEdit = (r) => {
+    setEditingId(r.receiving_id);
+    setForm({
+      customer: r.customer || '', manufacturer: r.manufacturer || '', style: r.style || '', color: r.color || '', size: r.size || '',
+      description: r.description || '', country_of_origin: r.country_of_origin || '', fabric_content: r.fabric_content || '',
+      boxes: '', pieces: r.total_units || '', units: '', lot_number: r.lot_number || '', sku: r.sku || '', inv_location: r.inv_location || '',
+      is_bpo: r.is_bpo || false,
+    });
+    setShowForm(true);
+    // Scroll to form smoothly
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 100);
+  };
+  
   const handleDelete = async (receivingId) => {
     if (!window.confirm(t('wms_confirm_delete_rcv') || '¿Está seguro de eliminar este registro? Se revertirá el inventario.')) return;
     try {
@@ -201,7 +285,7 @@ const ReceivingModule = () => {
           {t('wms_recent_entries')}: {records.length}
         </div>
         <button 
-          onClick={() => setShowForm(!showForm)} 
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false }); setShowForm(!showForm); }} 
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
           data-testid="new-receiving-btn"
         >
@@ -227,15 +311,15 @@ const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('style')}</label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" />
+              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('color')}</label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" />
+              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('size')}</label>
-              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-size">
+              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId}>
                 <option value="">{t('select_placeholder')}</option>
                 {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -255,22 +339,43 @@ const ReceivingModule = () => {
               <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" />
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('dozens')}</label>
-              <input type="number" placeholder="0" value={form.dozens} onChange={e => setForm(p => ({ ...p, dozens: e.target.value, units: '' }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-dozens" />
+              <label className="text-xs text-muted-foreground mb-1 block">Modo</label>
+              <div className="flex gap-2 bg-background border border-border rounded p-1">
+                <button 
+                  onClick={() => !editingId && setPrintMode('cajas')} 
+                  disabled={!!editingId}
+                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'cajas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  Por Cajas
+                </button>
+                <button 
+                  onClick={() => !editingId && setPrintMode('piezas')} 
+                  disabled={!!editingId}
+                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'piezas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  Por Piezas
+                </button>
+              </div>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('pieces_label')}</label>
-              <input type="number" placeholder="0" value={form.pieces} onChange={e => setForm(p => ({ ...p, pieces: e.target.value, units: '' }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-pieces" />
+              <label className="text-xs text-muted-foreground mb-1 block">Cajas (1 = 72 Pcs)</label>
+              <input type="number" placeholder="0" value={form.boxes} onChange={e => handleBoxesChange(e.target.value)} disabled={!!editingId || printMode === 'piezas'} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed" />
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Total Piezas</label>
+              <input type="number" placeholder="0" value={form.pieces} onChange={e => handlePiecesChange(e.target.value)} disabled={!!editingId || printMode === 'cajas'} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{t('wms_qty_auto')}</label>
-              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-bold" data-testid="rcv-units" />
+              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-bold" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{t('sku')} (auto)</label>
-              <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" data-testid="rcv-sku" />
+              <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -294,7 +399,7 @@ const ReceivingModule = () => {
           </div>
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {t('wms_receive_btn')}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : t('wms_receive_btn')}
             </button>
             <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
@@ -346,6 +451,13 @@ const ReceivingModule = () => {
                 </div>
                 
                 <div className="flex items-center gap-2 h-10 border-l border-border/40 pl-4">
+                  <button 
+                    onClick={() => handleEdit(r)} 
+                    className="p-2.5 text-muted-foreground hover:text-amber-500 rounded-xl hover:bg-amber-500/10 transition-all shadow-none hover:shadow-lg shadow-amber-500/20" 
+                    title="Editar Detalles"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </button>
                   <button 
                     onClick={() => handlePrintLabel(r)} 
                     className="p-2.5 text-muted-foreground hover:text-primary rounded-xl hover:bg-primary/10 transition-all shadow-none hover:shadow-lg shadow-primary/20" 
@@ -460,6 +572,7 @@ const PutawayModule = () => {
   const [locations, setLocations] = useState([]);
   const [pendingBoxes, setPendingBoxes] = useState([]);
   const [boxDetails, setBoxDetails] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
@@ -919,6 +1032,7 @@ const AllocationModule = () => {
   const [inventory, setInventory] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState('');
   const [items, setItems] = useState([{ sku: '', color: '', size: '', qty: '', maxQty: 0 }]);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const loadAllocations = useCallback(() => { fetcher('/allocations').then(setAllocations).catch(() => {}); }, []);
@@ -1071,6 +1185,7 @@ const PickingModule = () => {
   const [showForm, setShowForm] = useState(false);
   const [incidentTicket, setIncidentTicket] = useState(null);
   const [editingTicket, setEditingTicket] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
@@ -2160,6 +2275,7 @@ const CycleCountModule = () => {
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
   const [operators, setOperators] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [options, setOptions] = useState({ customers: [], styles: [], locations: [] });
@@ -2546,6 +2662,7 @@ const CycleCountModule = () => {
 const DirectedWorkModule = () => {
   const { t } = useLang();
   const [task, setTask] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [scan, setScan] = useState('');
@@ -2725,6 +2842,7 @@ const DirectedWorkModule = () => {
 const AsnModule = () => {
   const { t } = useLang();
   const [asns, setAsns] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const loadAsns = useCallback(async () => {
@@ -2805,6 +2923,7 @@ const AsnModule = () => {
 const LocationsModule = () => {
   const { t } = useLang();
   const [locations, setLocations] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [search, setSearch] = useState('');
@@ -3181,6 +3300,7 @@ const InventoryModuleWrapper = () => <InventoryModule {..._wmsInventoryModulePro
 const NeckCuttingModule = () => {
   const { t } = useLang();
   const [orders, setOrders] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {

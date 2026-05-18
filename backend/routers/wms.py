@@ -59,40 +59,32 @@ async def list_locations(request: Request):
     # 1. Fetch all locations
     locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
     
-    # 2. Fetch inventory summary (only items with stock)
-    inventory_records = await db.wms_inventory.find(
-        {"units_on_hand": {"$gt": 0}},
-        {"_id": 0, "style": 1, "color": 1, "size": 1, "units_on_hand": 1, "location": 1}
-    ).to_list(10000)
+    # 2. & 3. Fetch and map inventory to locations via Aggregation (highly scalable, no row limit)
+    pipeline = [
+        {"$match": {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}},
+        {"$group": {
+            "_id": {"location": "$location", "style": "$style"},
+            "style_units": {"$sum": "$units_on_hand"}
+        }},
+        {"$group": {
+            "_id": "$_id.location",
+            "total_units": {"$sum": "$style_units"},
+            "skus_count": {"$sum": 1},
+            "items": {"$push": {"style": {"$ifNull": ["$_id.style", "N/A"]}, "units": "$style_units"}}
+        }}
+    ]
     
-    # 3. Map inventory to locations
+    cursor = db.wms_inventory.aggregate(pipeline)
     loc_summary = {}
-    for inv in inventory_records:
-        loc_name = inv.get("location")
-        if not loc_name: continue
-        
-        if loc_name not in loc_summary:
-            loc_summary[loc_name] = {
-                "total_units": 0,
-                "skus_count": 0,
-                "items": [] # Top items summary
-            }
-        
-        loc_summary[loc_name]["total_units"] += inv.get("units_on_hand", 0)
-        
-        # Add to items if not already there (compact summary)
-        style = inv.get("style", "N/A")
-        # Find if this style is already in the summary list for this location
-        existing = next((item for item in loc_summary[loc_name]["items"] if item["style"] == style), None)
-        if existing:
-            existing["units"] += inv.get("units_on_hand", 0)
-        else:
-            if len(loc_summary[loc_name]["items"]) < 5: # Limit summary to top 5 styles
-                loc_summary[loc_name]["items"].append({
-                    "style": style,
-                    "units": inv.get("units_on_hand", 0)
-                })
-            loc_summary[loc_name]["skus_count"] += 1
+    async for doc in cursor:
+        loc_name = doc["_id"]
+        # Limit top items to 5, sorted by highest volume
+        items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
+        loc_summary[loc_name] = {
+            "total_units": doc["total_units"],
+            "skus_count": doc["skus_count"],
+            "items": items
+        }
 
     # 4. Merge summary into locations list
     for loc in locs:
@@ -336,6 +328,7 @@ async def create_receiving(request: Request):
         "total_units": total_units, "is_bpo": is_bpo,
         "received_by": user.get("user_id"), "received_by_name": user.get("name", ""),
         "created_at": now_iso(),
+        "boxes": [{"box_id": b["box_id"], "units": b["units"]} for b in box_docs]
     }
     await db.wms_receiving.insert_one(receiving_doc)
     await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo})
@@ -375,6 +368,41 @@ async def get_receiving(receiving_id: str, request: Request):
     boxes = await db.wms_boxes.find({"receiving_id": receiving_id}, {"_id": 0}).to_list(500)
     doc["boxes"] = boxes
     return doc
+
+@router.put("/receiving/{receiving_id}")
+async def update_receiving(receiving_id: str, request: Request):
+    user = await require_auth(request)
+    body = await request.json()
+    
+    # Extract only metadata fields (no quantity/sku changes allowed here to protect inventory integrity)
+    update_data = {}
+    for field in ["customer", "manufacturer", "description", "country_of_origin", "fabric_content", "lot_number", "inv_location"]:
+        if field in body:
+            update_data[field] = body[field].strip()
+            
+    if not update_data:
+        return {"message": "Nada que actualizar"}
+        
+    doc = await db.wms_receiving.find_one({"receiving_id": receiving_id})
+    if not doc:
+        raise HTTPException(404, "Receiving no encontrado")
+        
+    # Update the receiving record
+    await db.wms_receiving.update_one({"receiving_id": receiving_id}, {"$set": update_data})
+    
+    # Also update the boxes
+    box_update = {}
+    if "customer" in update_data: box_update["customer"] = update_data["customer"]
+    if "manufacturer" in update_data: box_update["manufacturer"] = update_data["manufacturer"]
+    if "lot_number" in update_data: box_update["lot_number"] = update_data["lot_number"]
+    if "country_of_origin" in update_data: box_update["coo"] = update_data["country_of_origin"]
+    if "inv_location" in update_data: box_update["location"] = update_data["inv_location"]
+    
+    if box_update:
+        await db.wms_boxes.update_many({"receiving_id": receiving_id}, {"$set": box_update})
+        
+    await log_movement(user, "receiving_update", {"receiving_id": receiving_id, "updated_fields": list(update_data.keys())})
+    return {"message": "Registro actualizado exitosamente"}
 
 @router.delete("/receiving/{receiving_id}")
 async def delete_receiving(receiving_id: str, request: Request):
@@ -440,10 +468,44 @@ async def get_box(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
+        # Fallback: if it's a receiving ID, return the first box associated with this receiving
+        if box_id.upper().startswith("RCV_"):
+            box = await db.wms_boxes.find_one({"receiving_id": box_id.lower()}, {"_id": 0})
+            if box:
+                box = dict(box)
+                box["box_id"] = box_id
+                return box
         raise HTTPException(404, "Caja no encontrada")
     return box
 
 # ==================== PUTAWAY ====================
+
+async def _move_box_inventory(box, old_loc, new_loc):
+    if old_loc == new_loc:
+        return
+    sku = box.get("style") or box.get("sku")
+    color = box.get("color") or ""
+    size = box.get("size") or ""
+    qty = box.get("units") or 0
+    customer = box.get("customer") or ""
+    is_bpo = box.get("is_bpo", False)
+    
+    # 1. Deduct from old location in wms_inventory (only if old_loc exists)
+    if old_loc:
+        old_inv = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": old_loc})
+        if old_inv:
+            new_qty = max(0, old_inv.get("units_on_hand", 0) - qty)
+            if new_qty == 0:
+                await db.wms_inventory.delete_one({"_id": old_inv["_id"]})
+            else:
+                await db.wms_inventory.update_one({"_id": old_inv["_id"]}, {"$set": {"units_on_hand": new_qty, "updated_at": now_iso()}})
+            
+    # 2. Add to new location in wms_inventory
+    await db.wms_inventory.update_one(
+        {"sku": sku, "color": color, "size": size, "location": new_loc},
+        {"$inc": {"units_on_hand": qty}, "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}},
+        upsert=True
+    )
 
 @router.post("/putaway")
 async def putaway_box(request: Request):
@@ -461,20 +523,22 @@ async def putaway_box(request: Request):
     box = await db.wms_boxes.find_one({"box_id": box_id})
     if not box:
         # Fallback: if it's a receiving_id, find all received boxes of that receiving event
-        if box_id.startswith("RCV_"):
-            boxes = await db.wms_boxes.find({"receiving_id": box_id}).to_list(1000)
+        if box_id.upper().startswith("RCV_"):
+            boxes = await db.wms_boxes.find({"receiving_id": box_id.lower()}).to_list(1000)
             if not boxes:
                 raise HTTPException(404, f"No se encontraron cajas para el Receiving ID: {box_id}")
             for b in boxes:
                 old_loc = b.get("location")
                 await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored"}})
                 await log_movement(user, "putaway", {"box_id": b["box_id"], "from": old_loc, "to": location, "sku": b.get("sku"), "units": b.get("units")})
+                await _move_box_inventory(b, old_loc, location)
             return {"message": f"Se ubicaron exitosamente {len(boxes)} cajas del receiving {box_id} en {location}", "box_id": box_id, "location": location}
         raise HTTPException(404, "Caja no encontrada")
         
     old_location = box.get("location")
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
+    await _move_box_inventory(box, old_location, location)
     return {"message": f"Caja {box_id} ubicada en {location}", "box_id": box_id, "location": location}
 
 @router.post("/putaway/bulk")
@@ -487,8 +551,12 @@ async def putaway_bulk(request: Request):
         box_id = a.get("box_id", "").strip()
         location = a.get("location", "").strip()
         if box_id and location:
-            await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
-            results.append({"box_id": box_id, "location": location})
+            box = await db.wms_boxes.find_one({"box_id": box_id})
+            if box:
+                old_loc = box.get("location")
+                await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
+                await _move_box_inventory(box, old_loc, location)
+                results.append({"box_id": box_id, "location": location})
     await log_movement(user, "putaway_bulk", {"count": len(results)})
     return {"message": f"{len(results)} cajas ubicadas", "results": results}
 
