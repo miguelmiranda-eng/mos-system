@@ -1136,11 +1136,47 @@ async def get_inventory_field_options(request: Request):
     ]
     descs = await db.wms_inventory.aggregate(desc_pipeline).to_list(500)
     countries = await db.wms_inventory.aggregate(country_pipeline).to_list(500)
-    fabrics = await db.wms_inventory.aggregate(fabric_pipeline).to_list(500)
+
+    # Fabric: merge from wms_inventory + wms_receiving + standard seed list
+    fabrics_inv = await db.wms_inventory.aggregate(fabric_pipeline).to_list(500)
+    fabrics_rcv = await db.wms_receiving.aggregate(fabric_pipeline).to_list(500)
+
+    FABRIC_SEED = [
+        "100% COTTON", "100% POLYESTER", "100% NYLON", "100% RAYON",
+        "50% COTTON / 50% POLYESTER", "60% COTTON / 40% POLYESTER",
+        "65% POLYESTER / 35% COTTON", "52% COTTON / 48% POLYESTER",
+        "90% COTTON / 10% POLYESTER", "80% COTTON / 20% POLYESTER",
+        "95% COTTON / 5% SPANDEX", "97% COTTON / 3% SPANDEX",
+        "95% POLYESTER / 5% SPANDEX", "88% POLYESTER / 12% SPANDEX",
+        "100% COMBED COTTON", "100% RING-SPUN COTTON",
+        "50% POLYESTER / 25% COTTON / 25% RAYON",
+        "60% COTTON / 40% RAYON", "55% HEMP / 45% COTTON",
+        "100% LINEN", "100% BAMBOO", "100% MODAL",
+    ]
+
+    seen = set()
+    all_fabrics = []
+    for f in fabrics_inv:
+        key = f["val"].strip().upper()
+        if key not in seen:
+            seen.add(key)
+            all_fabrics.append(key)
+    for f in fabrics_rcv:
+        key = f["val"].strip().upper()
+        if key not in seen:
+            seen.add(key)
+            all_fabrics.append(key)
+    for seed in FABRIC_SEED:
+        key = seed.strip().upper()
+        if key not in seen:
+            seen.add(key)
+            all_fabrics.append(key)
+    all_fabrics.sort()
+
     return {
         "descriptions": [d["val"] for d in descs],
         "countries": [c["val"] for c in countries],
-        "fabrics": [f["val"] for f in fabrics]
+        "fabrics": all_fabrics
     }
 
 @router.get("/pick-tickets")
