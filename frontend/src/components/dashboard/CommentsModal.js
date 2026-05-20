@@ -454,10 +454,10 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
           {showAddLink && (
             <div className="bg-secondary/30 border border-border rounded-lg p-3 mb-2 space-y-2" data-testid="add-link-form">
               <input type="url" value={newLinkUrl} onChange={(e) => setNewLinkUrl(e.target.value)}
-                placeholder="https://..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="link-url-input" />
+                placeholder="https://..." style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-1.5 text-sm" data-testid="link-url-input" />
               <input type="text" value={newLinkDesc} onChange={(e) => setNewLinkDesc(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleAddLink(); }}
-                placeholder="Descripcion del enlace..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="link-desc-input" />
+                placeholder="Descripcion del enlace..." style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-1.5 text-sm" data-testid="link-desc-input" />
               <div className="flex justify-end gap-2">
                 <button onClick={() => { setShowAddLink(false); setNewLinkUrl(''); setNewLinkDesc(''); }}
                   className="px-3 py-1 text-xs text-muted-foreground hover:text-foreground">Cancelar</button>
@@ -571,7 +571,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                   {editingId === comment.comment_id ? (
                     <div className="space-y-2">
                       <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)}
-                        className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none" />
+                        style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-2 text-sm resize-none" />
                       <div className="flex justify-end gap-2">
                         <button onClick={() => setEditingId(null)} className="px-2 py-1 text-[10px]">Cancelar</button>
                         <button onClick={() => handleEditComment(comment.comment_id)} className="px-3 py-1 text-[10px] bg-primary text-primary-foreground rounded">Guardar</button>
@@ -722,7 +722,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <div className="flex-1 relative">
               <textarea ref={textareaRef} value={newComment} onChange={handleCommentChange} onKeyDown={handleCommentKeyDown}
                 placeholder={`${t('write_comment')} (usa @ para mencionar)`}
-                className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none h-16" data-testid="comment-input" />
+                style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-2 text-sm resize-none h-16" data-testid="comment-input" />
               {/* @mention dropdown */}
               {mentionQuery !== null && filteredUsers.length > 0 && (
                 <div className="absolute bottom-full left-0 mb-1 w-64 max-h-48 overflow-y-auto bg-popover border border-border rounded-lg shadow-xl z-50" data-testid="mention-dropdown">

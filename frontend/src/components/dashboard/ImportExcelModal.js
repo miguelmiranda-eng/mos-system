@@ -318,7 +318,8 @@ export const ImportExcelModal = ({ isOpen, onClose, onImportSuccess }) => {
                       <select
                         value={mapping[field.key] || ''}
                         onChange={(e) => setMapping(prev => ({ ...prev, [field.key]: e.target.value }))}
-                        className="w-full bg-secondary/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/30 outline-none hover:border-primary/40 transition-all appearance-none cursor-pointer"
+                        style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
+                        className="w-full border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/30 outline-none hover:border-primary/40 transition-all appearance-none cursor-pointer"
                         disabled={loading}
                       >
                         <option value="">{t('no_import')}</option>

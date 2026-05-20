@@ -219,7 +219,8 @@ export const NewOrderForm = ({
           <input 
             type="date" value={value} onChange={(e) => set(key, e.target.value)}
             disabled={isPreview}
-            className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" />
+            style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
+            className="w-full border border-border rounded px-3 py-1.5 h-9 text-sm" />
         </div>
       );
     }
@@ -246,8 +247,9 @@ export const NewOrderForm = ({
           <textarea 
             value={value} onChange={(e) => set(key, e.target.value)}
             disabled={isPreview}
+            style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
             placeholder={isPreview ? "Area de notas..." : "Notas adicionales..."}
-            className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground resize-none h-20" />
+            className="w-full border border-border rounded px-3 py-2 text-sm resize-none h-20" />
         </div>
       );
     }
@@ -260,11 +262,13 @@ export const NewOrderForm = ({
           <input 
             type="url" value={parsed.url} onChange={(e) => set(key, { ...parsed, url: e.target.value })}
             disabled={isPreview}
-            placeholder="https://..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-9 text-sm text-foreground" />
+            style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
+            placeholder="https://..." className="w-full border border-border rounded px-3 py-1.5 h-9 text-sm mt-1" />
           <input 
             type="text" value={parsed.desc} onChange={(e) => set(key, { ...parsed, desc: e.target.value })}
             disabled={isPreview}
-            placeholder="Descripcion..." className="w-full bg-secondary border border-border rounded px-3 py-1.5 h-8 text-xs text-foreground mt-1" />
+            style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
+            placeholder="Descripcion..." className="w-full border border-border rounded px-3 py-1.5 h-8 text-xs mt-1" />
         </div>
       );
     }
@@ -287,7 +291,9 @@ export const NewOrderForm = ({
             placeholder={col.type === 'link' ? 'https://...' : ''}
             readOnly={isReadOnly}
             disabled={isPreview}
-            className={`w-full bg-secondary border rounded px-3 py-1.5 h-9 text-sm text-foreground ${isReadOnly ? 'opacity-70 cursor-not-allowed bg-muted/30' : ''} ${
+            autoComplete="off"
+            style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
+            className={`w-full border rounded px-3 py-1.5 h-9 text-sm ${isReadOnly ? 'opacity-70 cursor-not-allowed bg-muted/30' : ''} ${
               key === 'order_number' && duplicateWarning 
                 ? (duplicateWarning.in_trash ? 'border-yellow-500 ring-1 ring-yellow-500/30' : 'border-destructive ring-1 ring-destructive/30') 
                 : 'border-border'

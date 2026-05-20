@@ -38,7 +38,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
         <div className="space-y-4 mt-4">
           <div className="space-y-2">
             <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('name')}</label>
-            <input type="text" value={columnName} onChange={(e) => setColumnName(e.target.value)} placeholder={t('column_name_placeholder')} className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground" data-testid="column-name-input" />
+            <input type="text" value={columnName} onChange={(e) => setColumnName(e.target.value)} placeholder={t('column_name_placeholder')} style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-2 text-sm" data-testid="column-name-input" />
           </div>
           <div className="space-y-2">
             <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('column_type')}</label>
@@ -58,7 +58,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
           {columnType === 'formula' && (
             <div className="space-y-2 p-3 bg-secondary/30 rounded border border-border">
               <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('formula')}</label>
-              <input type="text" value={formula} onChange={(e) => setFormula(e.target.value)} placeholder={t('formula_placeholder')} className="w-full bg-secondary border border-border rounded px-3 py-2 text-sm text-foreground font-mono" data-testid="formula-input" />
+              <input type="text" value={formula} onChange={(e) => setFormula(e.target.value)} placeholder={t('formula_placeholder')} style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-2 text-sm font-mono" data-testid="formula-input" />
               <p className="text-xs text-muted-foreground">{t('formula_help')}</p>
             </div>
           )}
@@ -79,7 +79,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
                 <input id="new-status-color" type="color" value={newStatusColor} onChange={(e) => setNewStatusColor(e.target.value)} className="hidden" />
                 <input type="text" value={newStatusVal} onChange={(e) => setNewStatusVal(e.target.value)} onKeyDown={(e) => {
                   if (e.key === 'Enter' && newStatusVal.trim()) { setStatusOptions([...statusOptions, { value: newStatusVal.trim(), color: newStatusColor }]); setNewStatusVal(''); }
-                }} placeholder={t('new_status_placeholder')} className="flex-1 bg-secondary border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid="status-option-input" />
+                }} placeholder={t('new_status_placeholder')} style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="flex-1 border border-border rounded px-3 py-1.5 text-sm" data-testid="status-option-input" />
                 <button onClick={() => { if (newStatusVal.trim()) { setStatusOptions([...statusOptions, { value: newStatusVal.trim(), color: newStatusColor }]); setNewStatusVal(''); }}} className="px-3 bg-secondary border border-border rounded hover:bg-secondary/80"><Plus className="w-4 h-4" /></button>
               </div>
             </div>

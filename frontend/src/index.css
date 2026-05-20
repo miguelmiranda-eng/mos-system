@@ -357,6 +357,34 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 
 /* ─── High Contrast Form & Input Colors ───────────────────────────────────── */
 
+/* 
+  GLOBAL INPUT FIX: Force all inputs/textareas/selects to respect theme colors.
+  Browsers (especially Chrome) override bg/color with their native input styles.
+  This rule re-establishes theme control without relying on Tailwind utility classes alone.
+  Login inputs are excluded — they have dedicated overrides below.
+*/
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="range"]):not([data-testid="login-email-input"]):not([data-testid="login-password-input"]):not([data-testid="forgot-email-input"]):not([data-testid="reset-password-input"]):not([data-testid="reset-confirm-input"]),
+textarea,
+select:not(.shadcn-select) {
+  background-color: hsl(var(--secondary)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Placeholder text should remain muted */
+input::placeholder,
+textarea::placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+  opacity: 1;
+}
+
+/* Light mode override: slightly lighter background for better contrast */
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="range"]):not([data-testid="login-email-input"]):not([data-testid="login-password-input"]):not([data-testid="forgot-email-input"]):not([data-testid="reset-password-input"]):not([data-testid="reset-confirm-input"]),
+html:not(.dark) textarea,
+html:not(.dark) select:not(.shadcn-select) {
+  background-color: hsl(var(--secondary)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
 /* Login & Reset Password Form Inputs */
 input[data-testid="login-email-input"],
 input[data-testid="login-password-input"],
@@ -394,6 +422,7 @@ input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
   -webkit-text-fill-color: hsl(var(--foreground)) !important;
   transition: background-color 500000s ease-in-out 0s;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--secondary)) inset !important;
   box-shadow: 0 0 0px 1000px hsl(var(--secondary)) inset !important;
 }
 
