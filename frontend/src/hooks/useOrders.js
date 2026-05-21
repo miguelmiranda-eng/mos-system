@@ -2,86 +2,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { useLang } from "../contexts/LanguageContext";
 import { API, DEFAULT_COLUMNS, STATUS_COLORS, getActionLabels } from "../lib/constants";
+import { apiFetch } from "../lib/http";
+
+// Re-export so existing consumers keep their import path working
+export { apiFetch };
 
 const WS_URL = (() => {
   const base = process.env.REACT_APP_BACKEND_URL || '';
   return base.replace(/^http/, 'ws') + '/api/ws';
 })();
 
-// Simple local cache to prevent frontend request flooding
-const reqCache = new Map();
-const reqPromises = new Map();
-
 // Persistent memory for board data to make switching instant
 const boardDataCache = {};
 const lastFetchedTime = {};
-
-export const apiFetch = async (url, options = {}) => {
-  const isGet = !options.method || options.method === 'GET';
-  
-  if (isGet) {
-    const cacheKey = url;
-    const now = Date.now();
-    
-    // 1. Check TTL cache (5 seconds)
-    if (reqCache.has(cacheKey)) {
-      const { data, timestamp } = reqCache.get(cacheKey);
-      if (now - timestamp < 5000) {
-        return data.clone();
-      } else {
-        reqCache.delete(cacheKey);
-      }
-    }
-    
-    // 2. Check if request is already in-flight (Promise deduplication)
-    if (reqPromises.has(cacheKey)) {
-      const res = await reqPromises.get(cacheKey);
-      return res.clone();
-    }
-    
-    // 3. Make the actual request
-    const fetchPromise = fetch(url, { credentials: 'include', ...options });
-    reqPromises.set(cacheKey, fetchPromise);
-    
-    try {
-      const res = await fetchPromise;
-      if (res.status === 401) {
-        console.warn('[apiFetch] 401 detected — session expired');
-        localStorage.removeItem('mos_user');
-        window.location.href = '/';
-        throw new Error('SESSION_EXPIRED');
-      }
-      
-      if (res.ok) {
-        reqCache.set(cacheKey, { data: res.clone(), timestamp: Date.now() });
-      }
-      return res;
-    } finally {
-      reqPromises.delete(cacheKey);
-    }
-  }
-
-  // Non-GET requests (mutations) bypass cache completely
-  const res = await fetch(url, { credentials: 'include', ...options });
-  if (res.status === 401) {
-    console.warn('[apiFetch] 401 detected — session expired');
-    localStorage.removeItem('mos_user');
-    window.location.href = '/';
-    throw new Error('SESSION_EXPIRED');
-  }
-  
-  // Clear related caches on mutation
-  if (!isGet) {
-    const urlStr = url.toString();
-    if (urlStr.includes('/orders')) {
-      for (const key of reqCache.keys()) {
-        if (key.includes('/orders')) reqCache.delete(key);
-      }
-    }
-  }
-  
-  return res;
-};
 
 export const useOrders = (currentBoard, boardFilters) => {
   const { t } = useLang();
