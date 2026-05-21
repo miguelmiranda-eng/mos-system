@@ -1092,6 +1092,7 @@ const Dashboard = () => {
     });
     return sortedEntries.map(([dateKey, groupOrders]) => {
       const isCollapsed = !!collapsedGroups[dateKey];
+      const totalQty = groupOrders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
       return (
         <React.Fragment key={dateKey}>
           <div style={{ gridColumn: '1 / -1' }} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`} data-testid={`date-group-${dateKey}`}>
@@ -1100,6 +1101,9 @@ const Dashboard = () => {
               <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
               {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
               <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
+              <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${isDark ? 'bg-primary/20 text-primary' : 'bg-blue-100 text-blue-700'}`}>
+                {totalQty.toLocaleString()} pcs
+              </span>
             </button>
           </div>
           {!isCollapsed && groupOrders.map(renderOrderRow)}
