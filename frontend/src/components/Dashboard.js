@@ -827,7 +827,7 @@ const Dashboard = () => {
         {/* Selection Checkbox */}
         <div
           data-order-id={order.order_id}
-          className={`py-4 px-2 sticky left-0 z-[30] border-r border-b border-border/5 ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`py-2 px-2 sticky left-0 z-[30] border-r border-b border-border/5 flex items-center justify-center ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <input
             type="checkbox"
@@ -838,57 +838,50 @@ const Dashboard = () => {
         </div>
 
         {/* Quick Actions (Sticky Column 2) */}
-        <div className={`py-4 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
+        <div className={`py-2 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <div className="flex flex-col gap-1 items-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary relative" title={t('comments')}>
-              <MessageSquare className="w-3 h-3" />
+              <MessageSquare className="w-4 h-4" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
             {isAdmin && (
-              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-3 h-3" /></button>
+              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-4 h-4" /></button>
             )}
           </div>
         </div>
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`py-4 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
-          style={{ width: 160, minWidth: 160, maxWidth: 160 }}
+          className={`py-2 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order flex items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          style={{ width: 200, minWidth: 200, maxWidth: 200 }}
           onClick={() => setDetailsOrder(order)}
         >
-          <div className="flex flex-col gap-1.5 min-w-0">
-            {/* Row 1: Order Number + Priority */}
-            <div className="flex items-center gap-2">
-              <span className={`font-black text-xl tracking-tighter truncate ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
+          <div className="flex items-center gap-2 min-w-0 w-full">
+            {/* Order number (left, takes available space) */}
+            <div className="flex flex-col gap-1 min-w-0 flex-1">
+              <span className={`font-black text-lg tracking-tight leading-none whitespace-nowrap ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
                 {order.order_number}
               </span>
+              {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
+                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                  {order.board}
+                </span>
+              )}
             </div>
 
-            {/* Row 2: Art Status Identifiers (Prominent) */}
-            <div className="flex gap-1.5">
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${order.art_sep_status
-                ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30'
-                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
-                }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
-                SEP
-              </span>
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[9px] font-black border tracking-wider transition-all ${order.art_neck_status
+            {/* SEP / NECK badges stacked vertically (right) */}
+            <div className="flex flex-col gap-0.5 items-end shrink-0 mr-1">
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none ${order.art_neck_status
                 ? 'bg-blue-500/20 text-blue-500 border-blue-500/30'
                 : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
                 }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
                 NECK
               </span>
-            </div>
-
-            {/* Row 3: Board & Client */}
-            <div className="flex flex-col gap-0.5 mt-0.5">
-              {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
-                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white mb-1" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
-                  {order.board}
-                </span>
-              )}
-              <span className="text-[10px] font-bold text-muted-foreground/80 truncate uppercase tracking-widest leading-none">
-                {order.client}
+              <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none ${order.art_sep_status
+                ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30'
+                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
+                }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
+                SEP
               </span>
             </div>
           </div>
@@ -1646,7 +1639,7 @@ const Dashboard = () => {
               <>
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
-                  gridTemplateColumns: `48px 48px 160px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`,
+                  gridTemplateColumns: `48px 48px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`,
                   minWidth: '100%',
                   width: 'max-content'
                 }}>
@@ -1655,7 +1648,7 @@ const Dashboard = () => {
                   <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 160, minWidth: 160, maxWidth: 160 }}>
+                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
