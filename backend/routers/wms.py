@@ -3,6 +3,10 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, Fil
 from fastapi.responses import StreamingResponse
 from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
 from ws_manager import ws_manager
+from wms_constants import (
+    BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
+    TaskType, TaskStatus, PickDestination, MovementType,
+)
 from datetime import datetime, timezone, timedelta
 import uuid, io, json, logging, re
 
@@ -24,6 +28,14 @@ async def log_movement(user, movement_type, details):
         "user_name": user.get("name", user.get("email", "")),
         "created_at": now_iso(),
     })
+
+async def notify_badge_change(badge: str = "all"):
+    """Tell connected WMS clients that a sidebar badge count may have changed.
+    Frontend listens for `wms_badge_changed` and refreshes counts."""
+    try:
+        await ws_manager.broadcast("wms_badge_changed", {"badge": badge})
+    except Exception as e:
+        logger.warning(f"Failed to broadcast badge change: {e}")
 
 # ==================== LOCATIONS ====================
 
@@ -52,14 +64,25 @@ async def create_location(request: Request):
     return loc
 
 @router.get("/locations")
-async def list_locations(request: Request):
-    """List all locations with an aggregated summary of inventory stored in each."""
+async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 3000):
+    """List locations. Query params:
+      - summary=false → skip the expensive inventory aggregation (use for dropdowns)
+      - skip / limit  → paginate. Hard-capped at 3000 to prevent runaway responses.
+    """
     await require_auth(request)
-    
-    # 1. Fetch all locations
-    locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
-    
-    # 2. & 3. Fetch and map inventory to locations via Aggregation (highly scalable, no row limit)
+
+    # Clamp pagination to safe range
+    skip = max(0, skip)
+    limit = max(1, min(limit, 3000))
+
+    # 1. Fetch locations page
+    locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
+
+    # 2. Optionally skip the expensive aggregation (dropdowns don't need it)
+    if not summary:
+        return locs
+
+    # 3. Aggregate inventory per location
     pipeline = [
         {"$match": {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}},
         {"$group": {
@@ -73,7 +96,7 @@ async def list_locations(request: Request):
             "items": {"$push": {"style": {"$ifNull": ["$_id.style", "N/A"]}, "units": "$style_units"}}
         }}
     ]
-    
+
     cursor = db.wms_inventory.aggregate(pipeline)
     loc_summary = {}
     async for doc in cursor:
@@ -88,8 +111,8 @@ async def list_locations(request: Request):
 
     # 4. Merge summary into locations list
     for loc in locs:
-        summary = loc_summary.get(loc["name"], {"total_units": 0, "skus_count": 0, "items": []})
-        loc["inventory_summary"] = summary
+        summary_val = loc_summary.get(loc["name"], {"total_units": 0, "skus_count": 0, "items": []})
+        loc["inventory_summary"] = summary_val
 
     return locs
 
@@ -351,6 +374,7 @@ async def create_receiving(request: Request):
         })
 
     receiving_doc.pop("_id", None)
+    await notify_badge_change("putaway")
     return receiving_doc
 
 @router.get("/receiving")
@@ -438,6 +462,7 @@ async def delete_receiving(receiving_id: str, request: Request):
         "receiving_id": receiving_id, 
         "details": f"Eliminado registro de receiving y revertidas {len(boxes)} cajas"
     })
+    await notify_badge_change("putaway")
     return {"message": "Receiving eliminado y revertido exitosamente"}
 
 # ==================== BOXES ====================
@@ -532,13 +557,15 @@ async def putaway_box(request: Request):
                 await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored"}})
                 await log_movement(user, "putaway", {"box_id": b["box_id"], "from": old_loc, "to": location, "sku": b.get("sku"), "units": b.get("units")})
                 await _move_box_inventory(b, old_loc, location)
+            await notify_badge_change("putaway")
             return {"message": f"Se ubicaron exitosamente {len(boxes)} cajas del receiving {box_id} en {location}", "box_id": box_id, "location": location}
         raise HTTPException(404, "Caja no encontrada")
-        
+
     old_location = box.get("location")
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
     await _move_box_inventory(box, old_location, location)
+    await notify_badge_change("putaway")
     return {"message": f"Caja {box_id} ubicada en {location}", "box_id": box_id, "location": location}
 
 @router.post("/putaway/bulk")
@@ -558,6 +585,7 @@ async def putaway_bulk(request: Request):
                 await _move_box_inventory(box, old_loc, location)
                 results.append({"box_id": box_id, "location": location})
     await log_movement(user, "putaway_bulk", {"count": len(results)})
+    await notify_badge_change("putaway")
     return {"message": f"{len(results)} cajas ubicadas", "results": results}
 
 # ==================== INVENTORY ====================
@@ -1111,9 +1139,12 @@ async def create_pick_ticket(request: Request):
         await db.wms_pick_tickets.insert_one(ticket_doc)
         ticket_doc.pop("_id", None)
         await log_movement(user, "pick_ticket_created", {"ticket_id": ticket_id, "order_number": ticket_doc.get("order_number", "")})
+        await notify_badge_change("picking")
         return ticket_doc
     else:
-        return await internal_create_picking_ticket(body, user)
+        result = await internal_create_picking_ticket(body, user)
+        await notify_badge_change("picking")
+        return result
 
 @router.get("/inventory/field-options")
 async def get_inventory_field_options(request: Request):
@@ -1530,9 +1561,10 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     }})
     await db.orders.update_one({"order_id": ticket.get("order_id")}, {"$set": {"wms_status": "picked"}})
     await log_movement(user, "pick_confirmed", {
-        "ticket_id": target_id, 
+        "ticket_id": target_id,
         "items_confirmed": len(confirmed_lines) if confirmed_lines else "auto"
     })
+    await notify_badge_change("picking")
     return {"message": "Pick confirmado", "ticket_id": target_id}
 
 @router.put("/pick-tickets/{ticket_id}/edit")
@@ -1779,6 +1811,7 @@ async def deliver_to_production(request: Request):
     )
         
     await log_movement(user, "neck_cut_delivery", {"order_number": order_number, "qty": delivered_count})
+    await notify_badge_change("neck_cutting")
     return {"message": f"Entrega a producción exitosa: {delivered_count} piezas", "order_number": order_number}
 
 # ==================== FINISHED GOODS ====================
@@ -2314,6 +2347,7 @@ async def create_cycle_count(request: Request):
             "name": name
         })
 
+    await notify_badge_change("cycle_count")
     return count_doc
 
 @router.get("/cycle-counts")
@@ -2398,6 +2432,7 @@ async def approve_cycle_count(count_id: str, request: Request):
         "adjustments": adjustments
     }})
     await log_movement(user, "cycle_count_approved", {"count_id": count_id, "adjustments": adjustments})
+    await notify_badge_change("cycle_count")
     return {"message": f"Conteo aprobado. {adjustments} ajustes aplicados al inventario.", "adjustments": adjustments}
 
 @router.delete("/cycle-counts/{count_id}")
@@ -2409,6 +2444,7 @@ async def delete_cycle_count(count_id: str, request: Request):
         raise HTTPException(404, "Conteo no encontrado")
     await db.wms_cycle_counts.delete_one({"count_id": count_id})
     await log_movement(user, "cycle_count_deleted", {"count_id": count_id, "name": count.get("name")})
+    await notify_badge_change("cycle_count")
     return {"message": "Conteo ciclico eliminado correctamente"}
 
 # ==================== QUICK INLINE UPDATES ====================
@@ -2523,4 +2559,5 @@ async def complete_task(task_id: str, request: Request):
     })
     
     await log_movement(user, "task_completed", {"task_id": task_id, "type": task["task_type"]})
+    await notify_badge_change("all")
     return {"message": "Task successfully executed"}
