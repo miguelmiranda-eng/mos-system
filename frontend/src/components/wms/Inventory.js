@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { toast } from "sonner";
 import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
@@ -18,18 +18,59 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [historyFor, setHistoryFor] = useState(null); // { style, color, size }
   const [historyData, setHistoryData] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Progressive loading state
+  const [totalRows, setTotalRows] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 100;
+  const CHUNK_DELAY_MS = 1500; // breathe between chunks so the UI doesn't freeze
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(logLoadError('data')); }, []);
-  const load = useCallback(() => {
-    const params = new URLSearchParams();
+
+  // Build the query params common to every chunk
+  const buildBaseParams = useCallback(() => {
+    const params = new URLSearchParams({ paginated: 'true', limit: String(PAGE_SIZE) });
     if (search) params.set('style', search);
     if (customerFilter) params.set('customer', customerFilter);
     if (categoryFilter) params.set('category', categoryFilter);
-    fetcher(`/inventory?${params.toString()}`).then(setInventory).catch(logLoadError('data'));
+    return params;
+  }, [search, customerFilter, categoryFilter]);
+
+  // Cancellation token: increments whenever filters change so old chunks bail
+  const loadGenRef = useRef(0);
+
+  const load = useCallback(() => {
+    const myGen = ++loadGenRef.current;
+    setInventory([]);
+    setTotalRows(0);
+    setLoadingMore(true);
+
+    const fetchChunk = async (skip) => {
+      const params = buildBaseParams();
+      params.set('skip', String(skip));
+      try {
+        const data = await fetcher(`/inventory?${params.toString()}`);
+        if (myGen !== loadGenRef.current) return; // stale, filters changed
+        const items = data.items || [];
+        setInventory(prev => [...prev, ...items]);
+        setTotalRows(data.total || 0);
+        if (data.has_more) {
+          setTimeout(() => fetchChunk(skip + PAGE_SIZE), CHUNK_DELAY_MS);
+        } else {
+          setLoadingMore(false);
+        }
+      } catch (err) {
+        if (myGen === loadGenRef.current) setLoadingMore(false);
+        logLoadError('inventory chunk')(err);
+      }
+    };
+
+    fetchChunk(0);
+
     const summaryParams = new URLSearchParams();
     if (customerFilter) summaryParams.set('customer', customerFilter);
     fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(logLoadError('data'));
-  }, [search, customerFilter, categoryFilter]);
+  }, [buildBaseParams, customerFilter]);
+
   useEffect(() => { load(); loadFilters(); }, [load, loadFilters]);
 
   const exportExcel = () => window.open(`${API}/export/inventory`, '_blank');
@@ -289,8 +330,19 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           )}
         </div>
       </div>
-      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40 text-right mt-2">
-        {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
+      <div className="flex items-center justify-end gap-3 mt-2">
+        {loadingMore && totalRows > 0 && (
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-500">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Cargando {inventory.length.toLocaleString()} / {totalRows.toLocaleString()}
+            <div className="w-24 h-1 bg-secondary/60 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 transition-all" style={{ width: `${totalRows > 0 ? (inventory.length / totalRows) * 100 : 0}%` }} />
+            </div>
+          </div>
+        )}
+        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">
+          {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
+        </div>
       </div>
 
       {/* History Modal */}

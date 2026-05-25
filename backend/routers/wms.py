@@ -841,7 +841,17 @@ async def _update_inventory(sku, color, size, qty, operation="add", location="")
     await _update_inventory_enhanced(sku, color, size, qty, operation, location=location)
 
 @router.get("/inventory")
-async def get_inventory(request: Request, sku: str = "", color: str = "", size: str = "", location: str = "", customer: str = "", category: str = "", style: str = ""):
+async def get_inventory(
+    request: Request,
+    sku: str = "", color: str = "", size: str = "", location: str = "",
+    customer: str = "", category: str = "", style: str = "",
+    paginated: bool = False, skip: int = 0, limit: int = 5000,
+):
+    """List inventory rows.
+      - Default (legacy): returns bare array, all rows up to 5000.
+      - paginated=true   : returns { items, total, has_more } with skip/limit.
+                            Allows the UI to load in chunks without freezing.
+    """
     await require_auth(request)
     query = {}
     if sku: query["sku"] = {"$regex": sku, "$options": "i"}
@@ -854,10 +864,16 @@ async def get_inventory(request: Request, sku: str = "", color: str = "", size: 
     elif category:
         query["category"] = {"$regex": category, "$options": "i"}
     if location: query["location"] = {"$regex": location, "$options": "i"}
-    
+
+    skip = max(0, skip)
+    limit = max(1, min(limit, 5000))
+
     # Use aggregation to project/alias for frontend compatibility
     pipeline = [
         {"$match": query},
+        {"$sort": {"sku": 1}},
+        {"$skip": skip},
+        {"$limit": limit},
         {"$project": {
             "_id": 0,
             "sku": 1,
@@ -879,10 +895,14 @@ async def get_inventory(request: Request, sku: str = "", color: str = "", size: 
             "units_on_hand": 1,
             "units_allocated": 1,
         }},
-        {"$sort": {"sku": 1}}
     ]
-    inventory = await db.wms_inventory.aggregate(pipeline).to_list(5000)
-    return inventory
+    inventory = await db.wms_inventory.aggregate(pipeline).to_list(limit)
+
+    if not paginated:
+        return inventory
+
+    total = await db.wms_inventory.count_documents(query)
+    return {"items": inventory, "total": total, "has_more": (skip + len(inventory)) < total}
 
 @router.get("/inventory/filters")
 async def inventory_filters_v2(request: Request):
@@ -1469,15 +1489,29 @@ async def get_inventory_field_options(request: Request):
     }
 
 @router.get("/pick-tickets")
-async def list_pick_tickets(request: Request, status: str = ""):
+async def list_pick_tickets(
+    request: Request,
+    status: str = "",
+    paginated: bool = False, skip: int = 0, limit: int = 1000,
+):
+    """List pick tickets.
+      - Default (legacy): bare array, up to 1000 newest.
+      - paginated=true   : { items, total, has_more } using skip/limit.
+        Virtual tickets (orders without a ticket) are only added when
+        paginated=false OR when skip=0, to keep pagination semantics clean.
+    """
     await require_auth(request)
     query = {"status": status} if status else {}
-    
+
+    skip = max(0, skip)
+    limit = max(1, min(limit, 1000))
+
     # Unified aggregation to get tickets + order info in one go
     pipeline = [
         {"$match": query},
         {"$sort": {"created_at": -1}},
-        {"$limit": 1000},
+        {"$skip": skip},
+        {"$limit": limit},
         {"$lookup": {
             "from": "orders",
             "localField": "order_number",
@@ -1492,8 +1526,8 @@ async def list_pick_tickets(request: Request, status: str = ""):
             "order_data": 0
         }}
     ]
-    
-    real_tickets = await db.wms_pick_tickets.aggregate(pipeline).to_list(1000)
+
+    real_tickets = await db.wms_pick_tickets.aggregate(pipeline).to_list(limit)
     
     # Process job titles and other order info
     for rt in real_tickets:
@@ -1505,8 +1539,9 @@ async def list_pick_tickets(request: Request, status: str = ""):
             if not rt.get("customer"): rt["customer"] = oi.get("client") or oi.get("branding")
             
     # --- VIRTUAL TICKETS LOGIC ---
-    # Automatically include orders in SCHEDULING or BLANKS that don't have a ticket yet
-    if not status or status == "pending":
+    # Automatically include orders in SCHEDULING or BLANKS that don't have a ticket yet.
+    # When paginated, only include them on the first page (skip=0) to keep cursor semantics.
+    if (not status or status == "pending") and (not paginated or skip == 0):
         existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
         
         virtual_query = {
@@ -1543,7 +1578,13 @@ async def list_pick_tickets(request: Request, status: str = ""):
     # Sort the combined list by created_at descending so newest orders/tickets appear first
     real_tickets.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
-    return real_tickets
+    if not paginated:
+        return real_tickets
+
+    total = await db.wms_pick_tickets.count_documents(query)
+    # has_more is based on real tickets only; virtual tickets are computed every call
+    has_more = (skip + len(real_tickets)) < total
+    return {"items": real_tickets, "total": total, "has_more": has_more}
 
 @router.post("/pick-tickets/{ticket_id}/incidents")
 async def report_incident(ticket_id: str, request: Request):

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
@@ -46,7 +46,40 @@ export const PickingModule = () => {
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
   const [form, setForm] = useState(emptyForm);
 
-  const loadTickets = useCallback(() => { fetcher('/pick-tickets').then(setTickets).catch(logLoadError('data')); }, []);
+  // Progressive ticket loading state
+  const [ticketsTotal, setTicketsTotal] = useState(0);
+  const [loadingMoreTickets, setLoadingMoreTickets] = useState(false);
+  const TICKETS_PAGE_SIZE = 50;
+  const TICKETS_CHUNK_DELAY_MS = 1500;
+  const loadGenRef = useRef(0);
+
+  const loadTickets = useCallback(() => {
+    const myGen = ++loadGenRef.current;
+    setTickets([]);
+    setTicketsTotal(0);
+    setLoadingMoreTickets(true);
+
+    const fetchChunk = async (skip) => {
+      const params = new URLSearchParams({ paginated: 'true', limit: String(TICKETS_PAGE_SIZE), skip: String(skip) });
+      try {
+        const data = await fetcher(`/pick-tickets?${params.toString()}`);
+        if (myGen !== loadGenRef.current) return;
+        const items = data.items || [];
+        setTickets(prev => [...prev, ...items]);
+        setTicketsTotal(data.total || 0);
+        if (data.has_more) {
+          setTimeout(() => fetchChunk(skip + TICKETS_PAGE_SIZE), TICKETS_CHUNK_DELAY_MS);
+        } else {
+          setLoadingMoreTickets(false);
+        }
+      } catch (err) {
+        if (myGen === loadGenRef.current) setLoadingMoreTickets(false);
+        logLoadError('pick-tickets chunk')(err);
+      }
+    };
+
+    fetchChunk(0);
+  }, []);
   const loadOrders = useCallback(() => { fetcher('/orders').then(setOrders).catch(logLoadError('data')); }, []);
   const loadOperators = useCallback(() => { fetcher('/operators').then(setOperators).catch(logLoadError('data')); }, []);
   const loadStats = useCallback(() => { fetcher('/pick-tickets/stats').then(setStats).catch(logLoadError('data')); }, []);
@@ -442,6 +475,17 @@ export const PickingModule = () => {
           </button>
         </div>
       </div>
+
+      {/* Progressive load indicator */}
+      {loadingMoreTickets && ticketsTotal > 0 && (
+        <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 px-3 py-2 rounded-xl">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Cargando tickets {tickets.length.toLocaleString()} / {ticketsTotal.toLocaleString()}
+          <div className="flex-1 h-1 bg-secondary/60 rounded-full overflow-hidden max-w-xs">
+            <div className="h-full bg-indigo-400 transition-all" style={{ width: `${ticketsTotal > 0 ? (tickets.length / ticketsTotal) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
 
       {/* Search Bar */}
       <div className="relative">
