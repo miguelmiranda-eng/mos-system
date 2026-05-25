@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { MapPin, ScanLine, Loader2, ClipboardCheck, Plus, Printer, Box, Package, ChevronRight } from "lucide-react";
+import { MapPin, ScanLine, Loader2, ClipboardCheck, Plus, Printer, Box, Package, ChevronRight, X, Keyboard } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 import { BoxStatus } from "./constants";
@@ -17,6 +17,11 @@ export const PutawayModule = () => {
   const [searching, setSearching] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
   const [showNewLoc, setShowNewLoc] = useState(false);
+  // Scannable location input: default ON, fallback to manual select if toggled
+  const [manualMode, setManualMode] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  // When a scan resolves to a valid location, store the match here to show overlay
+  const [pendingConfirm, setPendingConfirm] = useState(null);
 
   const loadLocations = useCallback(() => { fetcher('/locations?summary=false').then(setLocations).catch(logLoadError('data')); }, []);
   const loadPending = useCallback(() => { fetcher(`/boxes?status=${BoxStatus.RECEIVED}`).then(setPendingBoxes).catch(logLoadError('data')); }, []);
@@ -40,19 +45,21 @@ export const PutawayModule = () => {
     return () => clearTimeout(timer);
   }, [boxId, fetchBoxDetails]);
 
-  const handlePutaway = async () => {
-    if (!boxId || !location) { toast.error(t('wms_box_loc_req')); return; }
+  const handlePutaway = async (overrideLocation) => {
+    const targetLoc = overrideLocation || location;
+    if (!boxId || !targetLoc) { toast.error(t('wms_box_loc_req')); return; }
     setLoading(true);
     try {
-      const payload = { box_id: boxId, location };
+      const payload = { box_id: boxId, location: targetLoc };
       if (boxDetails && boxDetails.po) {
         payload.po = boxDetails.po; // Enviar PO posiblemente editado
       }
       const res = await poster('/putaway', payload);
       if (res.ok) {
-        toast.success(t('wms_box_located', { boxId, location }));
+        toast.success(t('wms_box_located', { boxId, location: targetLoc }));
         setBoxId('');
         setBoxDetails(null);
+        setLocation('');
         loadPending();
       }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
@@ -65,6 +72,32 @@ export const PutawayModule = () => {
     const res = await poster('/locations', newLoc);
     if (res.ok) { toast.success(t('wms_loc_created')); setNewLoc({ name: '', zone: '', type: 'rack' }); setShowNewLoc(false); loadLocations(); }
     else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+  };
+
+  // Scanner submission: validate against known locations, then show confirm overlay
+  const handleScanSubmit = (e) => {
+    if (e) e.preventDefault();
+    const raw = scanInput.trim().toUpperCase();
+    if (!raw) return;
+    const match = locations.find(l => l.name.toUpperCase() === raw);
+    if (!match) {
+      toast.error(`Ubicación "${raw}" no existe`);
+      setScanInput('');
+      return;
+    }
+    if (!boxId) {
+      toast.error('Primero escanea una caja');
+      return;
+    }
+    setPendingConfirm(match);
+  };
+
+  const confirmPutaway = async () => {
+    if (!pendingConfirm) return;
+    const locName = pendingConfirm.name;
+    setPendingConfirm(null);
+    setScanInput('');
+    await handlePutaway(locName);
   };
 
   return (
@@ -88,15 +121,48 @@ export const PutawayModule = () => {
             <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
             {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />}
           </div>
-          <select value={location} onChange={e => setLocation(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="putaway-loc-select">
-            <option value="">{t('wms_select_location')}</option>
-            {locations.map(l => <option key={l.location_id} value={l.name}>{l.name} {l.zone ? `(${l.zone})` : ''}</option>)}
-          </select>
+          {/* Location: scannable input by default, manual <select> fallback */}
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+              {manualMode ? 'Seleccionar manual' : 'Escanear ubicación'}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setManualMode(m => !m); setScanInput(''); setLocation(''); }}
+              className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center gap-1"
+            >
+              <Keyboard className="w-3 h-3" /> {manualMode ? 'Usar scanner' : 'Escribir manualmente'}
+            </button>
+          </div>
+
+          {manualMode ? (
+            <select value={location} onChange={e => setLocation(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="putaway-loc-select">
+              <option value="">{t('wms_select_location')}</option>
+              {locations.map(l => <option key={l.location_id} value={l.name}>{l.name} {l.zone ? `(${l.zone})` : ''}</option>)}
+            </select>
+          ) : (
+            <form onSubmit={handleScanSubmit}>
+              <div className="relative">
+                <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary" />
+                <input
+                  type="text"
+                  value={scanInput}
+                  onChange={e => setScanInput(e.target.value.toUpperCase())}
+                  placeholder="Escanea ubicación destino (Enter para confirmar)"
+                  autoComplete="off"
+                  className="w-full pl-10 pr-3 py-2 bg-background border border-primary/30 rounded text-sm text-foreground font-mono focus:ring-2 focus:ring-primary/30"
+                  data-testid="putaway-loc-scan"
+                />
+              </div>
+            </form>
+          )}
+
           <button
-            onClick={handlePutaway}
-            disabled={loading || !boxId || !location}
+            onClick={() => handlePutaway()}
+            disabled={loading || !boxId || !location || !manualMode}
             className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
             data-testid="putaway-submit"
+            title={!manualMode ? 'En modo scanner se confirma vía overlay' : ''}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
             {t('wms_locate_btn')}
@@ -198,6 +264,59 @@ export const PutawayModule = () => {
           {pendingBoxes.length === 0 && <div className="text-center text-muted-foreground text-xs py-4">{t('wms_all_located')}</div>}
         </div>
       </div>
+
+      {/* Confirm overlay (shown after a valid location scan) */}
+      {pendingConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-primary/40 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary">
+                <ScanLine className="w-5 h-5" />
+                <h3 className="font-black uppercase tracking-widest text-sm">Confirmar Putaway</h3>
+              </div>
+              <button onClick={() => setPendingConfirm(null)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={loading}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-secondary/40 rounded-2xl p-4 space-y-3 border border-border/20">
+              <div>
+                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest mb-1">Caja</div>
+                <div className="font-mono font-black text-primary">{boxId}</div>
+                {boxDetails?.sku && <div className="text-[11px] text-muted-foreground font-bold mt-1">{boxDetails.sku} · {boxDetails.units} pcs</div>}
+              </div>
+              <div className="border-t border-border/20 pt-3">
+                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest mb-1">Ubicación destino</div>
+                <div className="font-mono font-black text-emerald-400 text-lg">{pendingConfirm.name}</div>
+                <div className="text-[11px] text-muted-foreground font-bold uppercase tracking-widest mt-1">
+                  {pendingConfirm.zone || 'SIN ZONA'}
+                  {pendingConfirm.inventory_summary?.total_units > 0 && (
+                    <span className="ml-2 text-amber-400">· Ya ocupada: {pendingConfirm.inventory_summary.total_units} pcs</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={confirmPutaway}
+                disabled={loading}
+                className="flex-1 py-3 bg-emerald-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+                Confirmar
+              </button>
+              <button
+                onClick={() => setPendingConfirm(null)}
+                disabled={loading}
+                className="flex-1 py-3 bg-secondary text-foreground font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-secondary/80 transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
