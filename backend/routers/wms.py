@@ -574,18 +574,35 @@ async def create_receiving(request: Request):
     receiving_doc.pop("_id", None)
     await notify_badge_change("putaway")
 
-    # ASN reconciliation (warning-permissive: never blocks, surfaces mismatches in response)
+    # ASN reconciliation (warning-permissive: never blocks, surfaces mismatches in response).
+    # Two modes:
+    #   1. asn_line_no provided -> all received qty decrements that exact line
+    #      (operator confirmed which line they're receiving; style is irrelevant)
+    #   2. asn_line_no missing  -> fall back to style-based match per part_number
     asn_warnings: list[dict] = []
     asn_ref = body.get("asn_reference", "").strip()
+    asn_line_no_raw = body.get("asn_line_no")
+    try:
+        asn_line_no = int(asn_line_no_raw) if asn_line_no_raw not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        asn_line_no = None
+
     if asn_ref and box_docs:
-        received_by_pn: dict[str, int] = {}
-        for b in box_docs:
-            key = (b.get("style") or b.get("sku") or "").strip().upper()
-            if not key:
-                continue
-            received_by_pn[key] = received_by_pn.get(key, 0) + int(b.get("units", 0) or 0)
+        total_units_received = sum(int(b.get("units", 0) or 0) for b in box_docs)
         try:
-            asn_result = await _apply_receiving_to_asn(asn_ref, received_by_pn, user)
+            if asn_line_no is not None:
+                asn_result = await _apply_receiving_to_asn(
+                    asn_ref, {}, user, target_line_no=asn_line_no,
+                    target_qty=total_units_received,
+                )
+            else:
+                received_by_pn: dict[str, int] = {}
+                for b in box_docs:
+                    key = (b.get("style") or b.get("sku") or "").strip().upper()
+                    if not key:
+                        continue
+                    received_by_pn[key] = received_by_pn.get(key, 0) + int(b.get("units", 0) or 0)
+                asn_result = await _apply_receiving_to_asn(asn_ref, received_by_pn, user)
             asn_warnings = asn_result.get("mismatched", [])
         except Exception as e:
             logger.exception(f"ASN reconciliation failed for {asn_ref}: {e}")
@@ -2706,38 +2723,72 @@ async def import_asn(
     }
 
 
-async def _apply_receiving_to_asn(asn_id: str, received_by_pn: dict[str, int], user: dict) -> dict:
-    """Increment qty_received per part_number on the matching ASN.
+async def _apply_receiving_to_asn(
+    asn_id: str,
+    received_by_pn: dict,
+    user: dict,
+    target_line_no: int | None = None,
+    target_qty: int = 0,
+) -> dict:
+    """Increment qty_received on an ASN.
+
+    Two modes:
+      - target_line_no provided: increment that exact line by target_qty. The
+        received_by_pn dict is ignored. Used when the operator explicitly
+        picked which ASN line they're receiving (style vocabulary may not match).
+      - target_line_no None: increment per part_number using received_by_pn.
+        Lines not in the ASN come back as mismatched.
+
     Returns {matched: [...], mismatched: [...]} for caller to surface warnings.
-    Mongo standalone (no transactions) — we do one read + one update_one with
-    a positional operator per matched part. Idempotency isn't critical because
-    each receiving event is a one-shot user action.
     """
     result = {"matched": [], "mismatched": []}
-    if not asn_id or not received_by_pn:
+    if not asn_id:
         return result
 
     asn = await db.wms_asn.find_one({"asn_id": asn_id})
     if not asn:
-        # Caller's choice was "warning permisivo": don't block, just flag
-        result["mismatched"] = [{"part_number": pn, "qty": q, "reason": "asn_not_found"}
-                                for pn, q in received_by_pn.items()]
+        if target_line_no is not None:
+            result["mismatched"] = [{"line_no": target_line_no, "qty": target_qty, "reason": "asn_not_found"}]
+        else:
+            result["mismatched"] = [{"part_number": pn, "qty": q, "reason": "asn_not_found"}
+                                    for pn, q in received_by_pn.items()]
         return result
 
-    items_by_pn = {it.get("part_number", "").upper(): it for it in asn.get("items", [])}
-    for pn, qty in received_by_pn.items():
-        pn_u = pn.upper()
-        if pn_u in items_by_pn:
-            await db.wms_asn.update_one(
-                {"asn_id": asn_id, "items.part_number": pn_u},
-                {"$inc": {"items.$.qty_received": int(qty)}},
-            )
-            result["matched"].append({"part_number": pn_u, "qty": qty})
-        else:
+    if target_line_no is not None:
+        # Direct line-level decrement — bypasses style matching entirely
+        line = next((it for it in asn.get("items", []) if it.get("line_no") == target_line_no), None)
+        if line is None:
             result["mismatched"].append({
-                "part_number": pn_u, "qty": qty,
-                "reason": "part_not_in_asn",
+                "line_no": target_line_no, "qty": target_qty,
+                "reason": "line_not_in_asn",
             })
+        elif target_qty > 0:
+            await db.wms_asn.update_one(
+                {"asn_id": asn_id, "items.line_no": target_line_no},
+                {"$inc": {"items.$.qty_received": int(target_qty)}},
+            )
+            result["matched"].append({
+                "line_no": target_line_no,
+                "part_number": line.get("part_number"),
+                "qty": target_qty,
+            })
+    else:
+        if not received_by_pn:
+            return result
+        items_by_pn = {it.get("part_number", "").upper(): it for it in asn.get("items", [])}
+        for pn, qty in received_by_pn.items():
+            pn_u = pn.upper()
+            if pn_u in items_by_pn:
+                await db.wms_asn.update_one(
+                    {"asn_id": asn_id, "items.part_number": pn_u},
+                    {"$inc": {"items.$.qty_received": int(qty)}},
+                )
+                result["matched"].append({"part_number": pn_u, "qty": qty})
+            else:
+                result["mismatched"].append({
+                    "part_number": pn_u, "qty": qty,
+                    "reason": "part_not_in_asn",
+                })
 
     # Recalculate status
     fresh = await db.wms_asn.find_one({"asn_id": asn_id}, {"items": 1})

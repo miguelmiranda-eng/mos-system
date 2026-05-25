@@ -70,14 +70,12 @@ export const ReceivingModule = () => {
     it => (it.qty_received || 0) < (it.qty_expected || 0)
   );
 
+  // Only marks the ASN line as the reconciliation target — does NOT autofill
+  // the form, because the ASN vocabulary (e.g. country "DOM") doesn't match
+  // the Receiving dropdowns (e.g. "REPUBLICA DOMINICANA"). The operator types
+  // their own values; the backend uses asn_line_no to decrement directly.
   const pickAsnLine = (line) => {
     setSelectedAsnLine(line.line_no);
-    setForm(p => ({
-      ...p,
-      style: line.part_number || p.style,
-      description: line.description || p.description,
-      country_of_origin: line.country || p.country_of_origin,
-    }));
   };
 
   const clearAsnLine = () => {
@@ -185,7 +183,8 @@ export const ReceivingModule = () => {
           ...form,
           units: totalPieces,
           pieces: totalPieces,
-          items: items.length > 0 ? items : undefined
+          items: items.length > 0 ? items : undefined,
+          asn_line_no: selectedAsnLine,  // optional — when set, backend decrements that exact line
         };
         const res = await poster('/receiving', payload);
         if (res.ok) {
@@ -197,6 +196,7 @@ export const ReceivingModule = () => {
             const reasons = warns.map(w => {
               if (w.reason === 'asn_not_found') return `ASN no encontrado`;
               if (w.reason === 'part_not_in_asn') return `${w.part_number} no en ASN`;
+              if (w.reason === 'line_not_in_asn') return `Línea ${w.line_no} ya no existe en el ASN`;
               return w.reason || 'mismatch';
             });
             toast.warning(`ASN ${form.asn_reference}: ${reasons.join(', ')}`, { duration: 6000 });
@@ -512,7 +512,7 @@ export const ReceivingModule = () => {
                     <div className="flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-indigo-400" />
                       <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para autollenar
+                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para matchear este recibo
                       </span>
                     </div>
                     {selectedAsnLine != null && (
