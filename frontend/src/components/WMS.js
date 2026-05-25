@@ -4,7 +4,7 @@ import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
-  ScanLine, X, ChevronRight, Home,
+  ScanLine, X, ChevronRight, Settings,
   Sun, Moon, LayoutDashboard, LogOut, Scissors,
 } from "lucide-react";
 
@@ -74,7 +74,7 @@ export default function WMS() {
   const associatedCustomer = currentUser?.associated_customer || '';
 
   const MODULES = [
-    { id: 'home', label: 'MOS Home', icon: Home, color: 'text-primary', desc: 'Resumen del almacén y atajos rápidos' },
+    { id: 'home', label: 'Configuración WMS', icon: Settings, color: 'text-primary', desc: 'Catálogos editables para los dropdowns de Receiving / Picking' },
     { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },

@@ -1,31 +1,71 @@
 import { useState, useEffect, useCallback } from "react";
-import {
-  Package, MapPin, ClipboardCheck, ClipboardList, BarChart3,
-  Loader2, Plus, Printer, History, ArrowRight,
-} from "lucide-react";
+import { toast } from "sonner";
+import { Loader2, Plus, Trash2, Tag, MapPin, Layers } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, logLoadError, useWms } from "./lib";
+import { fetcher, poster, deleter, logLoadError } from "./lib";
 
-export const HomeModule = ({ onNavigate }) => {
+const SECTIONS = [
+  { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
+  { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+  { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+];
+
+export const HomeModule = () => {
   const { t } = useLang();
-  const { badges } = useWms();
-  const [summary, setSummary] = useState(null);
+  const [catalogs, setCatalogs] = useState({ descriptions: [], countries: [], fabrics: [] });
   const [loading, setLoading] = useState(true);
+  const [drafts, setDrafts] = useState({ descriptions: '', countries: '', fabrics: '' });
+  const [saving, setSaving] = useState(null); // 'descriptions' | 'countries' | 'fabrics' | null
+  const [deleting, setDeleting] = useState(null); // catalog_id being deleted
 
   const load = useCallback(async () => {
     try {
-      const data = await fetcher('/home/summary');
-      setSummary(data);
-    } catch (err) { logLoadError('home summary')(err); }
+      const data = await fetcher('/catalogs');
+      setCatalogs({
+        descriptions: data.descriptions || [],
+        countries: data.countries || [],
+        fabrics: data.fabrics || [],
+      });
+    } catch (err) { logLoadError('catalogs')(err); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Re-fetch when any badge changes — picks up real-time updates
-  useEffect(() => { load(); }, [badges.putaway, badges.picking, badges.cycle_count, badges.neck_cutting]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleAdd = async (type) => {
+    const value = drafts[type]?.trim();
+    if (!value) { toast.error('Escribe un valor'); return; }
+    setSaving(type);
+    try {
+      const res = await poster('/catalogs', { type, value });
+      if (res.ok) {
+        toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
+        setDrafts(prev => ({ ...prev, [type]: '' }));
+        load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al agregar');
+      }
+    } catch (err) {
+      logLoadError('add catalog')(err);
+      toast.error('Error de conexión');
+    } finally { setSaving(null); }
+  };
 
-  if (loading && !summary) {
+  const handleDelete = async (catalog_id, value) => {
+    if (!window.confirm(`¿Eliminar "${value}" del catálogo?\n(No afecta registros existentes)`)) return;
+    setDeleting(catalog_id);
+    try {
+      await deleter(`/catalogs/${catalog_id}`);
+      toast.success('Eliminado');
+      load();
+    } catch (err) {
+      logLoadError('delete catalog')(err);
+      toast.error('Error al eliminar');
+    } finally { setDeleting(null); }
+  };
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -33,104 +73,85 @@ export const HomeModule = ({ onNavigate }) => {
     );
   }
 
-  const s = summary || {};
-  const cards = [
-    { key: 'units', label: 'Unidades en inventario', value: s.inventory_units?.toLocaleString() || 0, sub: `${s.inventory_skus || 0} SKUs`, icon: Package, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-    { key: 'occupancy', label: 'Ocupación ubicaciones', value: `${s.occupancy_pct || 0}%`, sub: `${s.locations_occupied || 0} / ${s.locations_total || 0}`, icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-    { key: 'putaway', label: 'Pendientes putaway', value: s.pending_putaway || 0, sub: 'cajas por ubicar', icon: ClipboardCheck, color: 'text-purple-400', bg: 'bg-purple-500/10', target: 'putaway' },
-    { key: 'picking', label: 'Pick tickets pending', value: s.pending_picking || 0, sub: 'por procesar', icon: ClipboardList, color: 'text-indigo-400', bg: 'bg-indigo-500/10', target: 'picking' },
-    { key: 'counts', label: 'Conteos activos', value: s.active_counts || 0, sub: 'en proceso', icon: BarChart3, color: 'text-lime-400', bg: 'bg-lime-500/10', target: 'cycle_count' },
-  ];
-
-  const quickActions = [
-    { label: 'Recibir caja', icon: Plus, target: 'receiving', color: 'bg-blue-500' },
-    { label: 'Crear pick ticket', icon: ClipboardList, target: 'picking', color: 'bg-indigo-500' },
-    { label: 'Imprimir etiquetas', icon: Printer, target: 'locations', color: 'bg-emerald-500' },
-  ];
-
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {cards.map(c => {
-          const Icon = c.icon;
-          const Card = c.target ? 'button' : 'div';
+      <div className="bg-card/40 border border-border/20 rounded-2xl p-5">
+        <h2 className="text-sm font-black uppercase tracking-widest text-foreground mb-1">Catálogos maestros</h2>
+        <p className="text-xs text-muted-foreground">
+          Valores que aparecen en los desplegables de Receiving. Los que escribe el usuario
+          inline también se mezclan automáticamente — esto es solo para curar/pre-poblar.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {SECTIONS.map(section => {
+          const Icon = section.icon;
+          const items = catalogs[section.type] || [];
           return (
-            <Card
-              key={c.key}
-              onClick={c.target ? () => onNavigate?.(c.target) : undefined}
-              className={`border border-border/40 rounded-3xl p-4 bg-card/60 backdrop-blur-sm shadow-xl flex flex-col items-start gap-2 text-left transition-all ${c.target ? 'cursor-pointer hover:scale-[1.02] hover:border-primary/40' : ''}`}
-            >
-              <div className={`w-10 h-10 rounded-2xl ${c.bg} flex items-center justify-center`}>
-                <Icon className={`w-5 h-5 ${c.color}`} />
-              </div>
-              <div className={`text-2xl font-black tabular-nums tracking-tighter ${c.color}`}>{c.value}</div>
-              <div className="text-[10px] text-muted-foreground font-black uppercase tracking-widest opacity-60 leading-tight">{c.label}</div>
-              <div className="text-[10px] text-muted-foreground/60 font-bold">{c.sub}</div>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Quick actions */}
-      <div className="bg-card/40 border border-border/20 rounded-2xl p-4">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mb-3">Acciones rápidas</div>
-        <div className="flex flex-wrap gap-3">
-          {quickActions.map(a => {
-            const Icon = a.icon;
-            return (
-              <button
-                key={a.label}
-                onClick={() => onNavigate?.(a.target)}
-                className={`flex items-center gap-2 px-5 py-3 ${a.color} text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 active:scale-95 transition-all shadow-lg`}
-              >
-                <Icon className="w-4 h-4" />
-                {a.label}
-                <ArrowRight className="w-3 h-3 opacity-60" />
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Recent activity */}
-      <div className="bg-card/60 border border-border/20 rounded-3xl p-6 shadow-2xl">
-        <div className="flex items-center gap-2 mb-4">
-          <History className="w-4 h-4 text-slate-400" />
-          <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Actividad reciente</h3>
-          <button
-            onClick={() => onNavigate?.('movements')}
-            className="ml-auto text-[10px] font-bold text-primary hover:underline uppercase tracking-widest"
-          >
-            Ver todo →
-          </button>
-        </div>
-        {(s.recent_movements || []).length === 0 ? (
-          <div className="text-center py-8 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
-            Sin actividad reciente
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {(s.recent_movements || []).map(m => (
-              <div key={m.movement_id} className="flex items-center justify-between py-2 border-b border-border/10 last:border-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-[10px] font-black uppercase bg-secondary/60 px-2 py-0.5 rounded text-muted-foreground tracking-widest">
-                    {m.type?.replace(/_/g, ' ')}
-                  </span>
-                  <span className="text-xs font-bold text-foreground/80 truncate">
-                    {m.details?.box_id || m.details?.ticket_id || m.details?.order_number || m.details?.receiving_id || '—'}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/60 truncate">
-                    {m.user_name || 'System'}
-                  </span>
+            <div key={section.type} className={`border ${section.border} rounded-3xl bg-card/60 backdrop-blur-sm shadow-xl flex flex-col`}>
+              {/* Header */}
+              <div className="p-5 border-b border-border/10 flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-2xl ${section.bg} flex items-center justify-center`}>
+                  <Icon className={`w-5 h-5 ${section.color}`} />
                 </div>
-                <span className="text-[10px] text-muted-foreground/40 font-mono tabular-nums flex-shrink-0">
-                  {new Date(m.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-black uppercase tracking-tighter text-sm">{section.label}</h3>
+                  <p className="text-[10px] text-muted-foreground font-bold opacity-60 leading-tight">{section.desc}</p>
+                </div>
+                <span className="text-[10px] font-black tabular-nums bg-secondary/60 px-2 py-1 rounded-lg text-muted-foreground">
+                  {items.length}
                 </span>
               </div>
-            ))}
-          </div>
-        )}
+
+              {/* Add new */}
+              <div className="p-4 border-b border-border/10 flex gap-2">
+                <input
+                  type="text"
+                  value={drafts[section.type]}
+                  onChange={e => setDrafts(p => ({ ...p, [section.type]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
+                  placeholder="Nuevo valor…"
+                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30"
+                  data-testid={`cat-input-${section.type}`}
+                />
+                <button
+                  onClick={() => handleAdd(section.type)}
+                  disabled={saving === section.type || !drafts[section.type]?.trim()}
+                  className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1 transition-all disabled:opacity-40 ${section.bg} ${section.color}`}
+                  data-testid={`cat-add-${section.type}`}
+                >
+                  {saving === section.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  Agregar
+                </button>
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-auto max-h-[400px] custom-scrollbar">
+                {items.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                    Sin valores curados
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-border/10">
+                    {items.map(item => (
+                      <li key={item.catalog_id} className="flex items-center justify-between px-4 py-2 hover:bg-secondary/30 transition-colors group">
+                        <span className="text-sm font-bold text-foreground truncate">{item.value}</span>
+                        <button
+                          onClick={() => handleDelete(item.catalog_id, item.value)}
+                          disabled={deleting === item.catalog_id}
+                          className="p-1.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
+                          data-testid={`cat-delete-${item.catalog_id}`}
+                        >
+                          {deleting === item.catalog_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

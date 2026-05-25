@@ -29,6 +29,56 @@ async def log_movement(user, movement_type, details):
         "created_at": now_iso(),
     })
 
+async def get_sku_movement_history(style: str, color: str = "", size: str = "", limit: int = 200):
+    """Return movements that touch a given SKU dimension, newest first.
+
+    wms_movements have heterogeneous shapes — sometimes the SKU is in
+    details.sku, sometimes in details.style, sometimes only the box_id
+    is present (in which case we resolve via wms_boxes). This handles
+    all three.
+    """
+    # Direct match in details
+    or_clauses = [
+        {"details.style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+        {"details.sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+    ]
+
+    # Indirect match: find boxes with this SKU, then look up movements by their box_id
+    box_query = {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}}
+    if color:
+        box_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+    if size:
+        box_query["size"] = size
+    matching_box_ids = await db.wms_boxes.distinct("box_id", box_query)
+    if matching_box_ids:
+        or_clauses.append({"details.box_id": {"$in": matching_box_ids}})
+
+    movements = await db.wms_movements.find({"$or": or_clauses}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+
+    # Optional secondary filter on color/size when present in details
+    if color or size:
+        filtered = []
+        for m in movements:
+            d = m.get("details", {})
+            if color and d.get("color") and d.get("color").lower() != color.lower():
+                continue
+            if size and d.get("size") and d.get("size") != size:
+                continue
+            filtered.append(m)
+        return filtered
+    return movements
+
+
+@router.get("/inventory/history")
+async def inventory_history(request: Request, style: str = "", color: str = "", size: str = "", limit: int = 200):
+    """Audit trail for a specific SKU dimension (style + optional color/size)."""
+    await require_auth(request)
+    if not style:
+        raise HTTPException(400, "style requerido")
+    movements = await get_sku_movement_history(style, color, size, limit)
+    return {"style": style, "color": color, "size": size, "count": len(movements), "movements": movements}
+
+
 async def notify_badge_change(badge: str = "all"):
     """Tell connected WMS clients that a sidebar badge count may have changed.
     Frontend listens for `wms_badge_changed` and refreshes counts."""
@@ -38,44 +88,58 @@ async def notify_badge_change(badge: str = "all"):
         logger.warning(f"Failed to broadcast badge change: {e}")
 
 
-# ==================== HOME DASHBOARD ====================
+# ==================== CATALOG OPTIONS (admin-managed dropdown values) ====================
 
-@router.get("/home/summary")
-async def home_summary(request: Request):
-    """One-shot dashboard summary for the WMS Home module.
-    Combines counts that would otherwise need 5+ separate requests."""
+CATALOG_TYPES = {"descriptions", "countries", "fabrics"}
+
+@router.get("/catalogs")
+async def list_catalogs(request: Request):
+    """Return admin-curated dropdown values, grouped by type."""
     await require_auth(request)
+    docs = await db.wms_catalog_options.find({}, {"_id": 0}).sort([("type", 1), ("value", 1)]).to_list(2000)
+    grouped = {t: [] for t in CATALOG_TYPES}
+    for d in docs:
+        grouped.setdefault(d.get("type"), []).append(d)
+    return grouped
 
-    # Total inventory units
-    inv_agg = await db.wms_inventory.aggregate([
-        {"$group": {"_id": None, "total_units": {"$sum": "$units_on_hand"}, "total_skus": {"$sum": 1}}}
-    ]).to_list(1)
-    inv = inv_agg[0] if inv_agg else {"total_units": 0, "total_skus": 0}
-
-    # Locations: total active + how many have any inventory
-    total_locations = await db.wms_locations.count_documents({"active": True})
-    occupied = len(await db.wms_inventory.distinct("location", {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}))
-    occupancy_pct = round((occupied / total_locations * 100), 1) if total_locations > 0 else 0
-
-    # Pending counts (mirror the badge endpoints)
-    pending_putaway = await db.wms_boxes.count_documents({"status": "received"})
-    pending_picking = await db.wms_pick_tickets.count_documents({"status": "pending"})
-    active_counts = await db.wms_cycle_counts.count_documents({"status": "in_progress"})
-
-    # Recent activity (last 5 movements)
-    recent_raw = await db.wms_movements.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
-
-    return {
-        "inventory_units": inv.get("total_units", 0),
-        "inventory_skus": inv.get("total_skus", 0),
-        "locations_total": total_locations,
-        "locations_occupied": occupied,
-        "occupancy_pct": occupancy_pct,
-        "pending_putaway": pending_putaway,
-        "pending_picking": pending_picking,
-        "active_counts": active_counts,
-        "recent_movements": recent_raw,
+@router.post("/catalogs")
+async def add_catalog_option(request: Request):
+    """Add a value to a catalog. Case-insensitive dedupe per type."""
+    user = await require_auth(request)
+    body = await request.json()
+    ctype = (body.get("type") or "").strip()
+    value = (body.get("value") or "").strip()
+    if ctype not in CATALOG_TYPES:
+        raise HTTPException(400, f"type debe ser uno de {sorted(CATALOG_TYPES)}")
+    if not value:
+        raise HTTPException(400, "value es obligatorio")
+    # Case-insensitive dedupe
+    existing = await db.wms_catalog_options.find_one({
+        "type": ctype,
+        "value": {"$regex": f"^{re.escape(value)}$", "$options": "i"}
+    })
+    if existing:
+        raise HTTPException(400, f"'{value}' ya existe en {ctype}")
+    doc = {
+        "catalog_id": gen_id("cat"),
+        "type": ctype,
+        "value": value,
+        "created_at": now_iso(),
+        "created_by_name": user.get("name") or user.get("email", ""),
     }
+    await db.wms_catalog_options.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@router.delete("/catalogs/{catalog_id}")
+async def delete_catalog_option(catalog_id: str, request: Request):
+    """Remove a value from a catalog. Does NOT alter existing inventory/receiving rows."""
+    await require_auth(request)
+    res = await db.wms_catalog_options.delete_one({"catalog_id": catalog_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Opción no encontrada")
+    return {"message": "Opción eliminada"}
+
 
 # ==================== LOCATIONS ====================
 
@@ -1254,11 +1318,37 @@ async def get_inventory_field_options(request: Request):
         if key not in seen:
             seen.add(key)
             all_fabrics.append(key)
+
+    # Merge admin-curated catalog values (case-insensitive)
+    catalog_docs = await db.wms_catalog_options.find({}, {"_id": 0, "type": 1, "value": 1}).to_list(2000)
+    catalog_by_type = {"descriptions": [], "countries": [], "fabrics": []}
+    for d in catalog_docs:
+        if d.get("type") in catalog_by_type:
+            catalog_by_type[d["type"]].append(d.get("value", ""))
+
+    def merge_unique(base_list, extras):
+        s = {v.strip().upper() for v in base_list}
+        for x in extras:
+            k = (x or "").strip().upper()
+            if k and k not in s:
+                s.add(k)
+                base_list.append(x)
+        return base_list
+
+    descs_list = [d["val"] for d in descs]
+    countries_list = [c["val"] for c in countries]
+
+    merge_unique(descs_list, catalog_by_type["descriptions"])
+    merge_unique(countries_list, catalog_by_type["countries"])
+    merge_unique(all_fabrics, catalog_by_type["fabrics"])
+
     all_fabrics.sort()
+    descs_list.sort(key=lambda x: x.lower())
+    countries_list.sort(key=lambda x: x.lower())
 
     return {
-        "descriptions": [d["val"] for d in descs],
-        "countries": [c["val"] for c in countries],
+        "descriptions": descs_list,
+        "countries": countries_list,
         "fabrics": all_fabrics
     }
 
