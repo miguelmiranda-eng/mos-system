@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
@@ -60,6 +60,29 @@ export const ReceivingModule = () => {
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   const [openAsns, setOpenAsns] = useState([]);
+  const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
+
+  // The full ASN doc currently selected in the form (null if the typed value
+  // doesn't match any known open ASN — we only show the line picker when we
+  // can resolve the ASN against what we already loaded).
+  const selectedAsnDoc = openAsns.find(a => a.asn_id === form.asn_reference) || null;
+  const pendingAsnLines = (selectedAsnDoc?.items || []).filter(
+    it => (it.qty_received || 0) < (it.qty_expected || 0)
+  );
+
+  const pickAsnLine = (line) => {
+    setSelectedAsnLine(line.line_no);
+    setForm(p => ({
+      ...p,
+      style: line.part_number || p.style,
+      description: line.description || p.description,
+      country_of_origin: line.country || p.country_of_origin,
+    }));
+  };
+
+  const clearAsnLine = () => {
+    setSelectedAsnLine(null);
+  };
 
   const load = useCallback(() => { fetcher('/receiving').then(setRecords).catch(logLoadError('data')); }, []);
   useEffect(() => { load(); }, [load]);
@@ -137,7 +160,7 @@ export const ReceivingModule = () => {
         setShowForm(false);
         setEditingId(null);
         setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
-        setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
+        setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
         load();
       } else {
         // Create Mode
@@ -183,7 +206,7 @@ export const ReceivingModule = () => {
           }
           setShowForm(false);
           setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
-          setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
+          setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
           fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
           load();
         } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
@@ -320,7 +343,7 @@ export const ReceivingModule = () => {
           {t('wms_recent_entries')}: {records.length}
         </div>
         <button
-          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setShowForm(!showForm); }}
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setShowForm(!showForm); }}
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
           data-testid="new-receiving-btn"
         >
@@ -472,7 +495,7 @@ export const ReceivingModule = () => {
                 list="rcv-asn-list"
                 placeholder="N° de ASN (opcional)"
                 value={form.asn_reference}
-                onChange={e => setForm(p => ({ ...p, asn_reference: e.target.value.trim() }))}
+                onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono"
                 data-testid="rcv-asn"
                 disabled={!!editingId}
@@ -482,6 +505,68 @@ export const ReceivingModule = () => {
                   <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
                 ))}
               </datalist>
+              {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
+              {selectedAsnDoc && !editingId && (
+                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30 border-b border-border/20">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para autollenar
+                      </span>
+                    </div>
+                    {selectedAsnLine != null && (
+                      <button
+                        type="button"
+                        onClick={clearAsnLine}
+                        className="flex items-center gap-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="w-3 h-3" /> Limpiar
+                      </button>
+                    )}
+                  </div>
+                  {pendingAsnLines.length === 0 ? (
+                    <div className="px-3 py-3 text-[11px] text-muted-foreground italic">
+                      Este ASN ya no tiene líneas pendientes — puedes recibir manualmente sin matchear.
+                    </div>
+                  ) : (
+                    <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border/10">
+                      {pendingAsnLines.map(line => {
+                        const remaining = (line.qty_expected || 0) - (line.qty_received || 0);
+                        const isSel = selectedAsnLine === line.line_no;
+                        return (
+                          <button
+                            key={line.line_no}
+                            type="button"
+                            onClick={() => pickAsnLine(line)}
+                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-all ${isSel ? 'bg-primary/10' : 'hover:bg-secondary/30'}`}
+                          >
+                            <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSel ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
+                              {isSel && <CheckCircle2 className="w-3 h-3" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="font-mono font-black text-primary">{line.part_number}</span>
+                                {line.country && <span className="text-[10px] font-bold uppercase text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">{line.country}</span>}
+                                {line.brand && <span className="text-[10px] font-bold uppercase text-muted-foreground">{line.brand}</span>}
+                              </div>
+                              {line.description && (
+                                <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={line.description}>
+                                  {line.description}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="text-xs font-black tabular-nums">{remaining.toLocaleString()}</div>
+                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">pendientes</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
