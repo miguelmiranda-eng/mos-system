@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
-  ScanLine, X, ChevronRight, Settings,
+  ScanLine, X, ChevronRight, Settings, Loader2,
   Sun, Moon, LayoutDashboard, LogOut, Scissors,
 } from "lucide-react";
 
@@ -12,7 +12,7 @@ import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms } from "./wms/lib";
+import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
 import { HomeModule } from "./wms/Home";
@@ -55,6 +55,11 @@ export default function WMS() {
   const { t } = useLang();
   const [activeModule, setActiveModule] = useState('home');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Short transient flag shown the moment the user clicks a different module
+  // so the content area doesn't look frozen until the new module's first paint.
+  const [moduleSwitching, setModuleSwitching] = useState(false);
+  const isFirstModuleRender = useRef(true);
+  const httpBusy = useHttpBusy();
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
@@ -72,6 +77,14 @@ export default function WMS() {
   }, []);
 
   const associatedCustomer = currentUser?.associated_customer || '';
+
+  // Show "switching…" spinner for 200ms whenever the active module changes
+  useEffect(() => {
+    if (isFirstModuleRender.current) { isFirstModuleRender.current = false; return; }
+    setModuleSwitching(true);
+    const t = setTimeout(() => setModuleSwitching(false), 200);
+    return () => clearTimeout(t);
+  }, [activeModule]);
 
   const MODULES = [
     { id: 'home', label: 'Configuración WMS', icon: Settings, color: 'text-primary', desc: 'Catálogos editables para los dropdowns de Receiving / Picking' },
@@ -295,6 +308,12 @@ export default function WMS() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto custom-scrollbar relative">
+        {/* Global progress bar — visible whenever HTTP requests are in flight or module is switching */}
+        {(httpBusy || moduleSwitching) && (
+          <div className="sticky top-0 z-[60] h-0.5 overflow-hidden pointer-events-none">
+            <div className="h-full w-full bg-gradient-to-r from-primary/0 via-primary to-primary/0 animate-[wms-progress_1.2s_linear_infinite]" />
+          </div>
+        )}
         {/* Module Header Overlay */}
         <div className="sticky top-0 z-10 p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
           {(() => {
@@ -330,9 +349,18 @@ export default function WMS() {
           })()}
         </div>
 
-        {/* Component Content */}
+        {/* Component Content — key forces remount on module switch, plus fade-in */}
         <div className="p-6 pt-2">
-          {renderActiveModule(activeModule, { associatedCustomer, setActiveModule })}
+          {moduleSwitching ? (
+            <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-150">
+              <Loader2 className="w-10 h-10 animate-spin text-primary" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-3">Cargando módulo…</span>
+            </div>
+          ) : (
+            <div key={activeModule} className="animate-in fade-in duration-200">
+              {renderActiveModule(activeModule, { associatedCustomer, setActiveModule })}
+            </div>
+          )}
         </div>
         <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
       </main>

@@ -1,6 +1,13 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/http";
+import { apiFetch, onHttpBusyChange } from "../../lib/http";
+
+// True while any HTTP request is in flight. Lets components show a busy hint.
+export const useHttpBusy = () => {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => onHttpBusyChange(count => setBusy(count > 0)), []);
+  return busy;
+};
 
 // ─── API constants ───────────────────────────────────────────────────────────
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;

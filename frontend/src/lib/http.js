@@ -10,6 +10,16 @@ const handleAuthExpiry = () => {
   window.location.href = '/';
 };
 
+// ─── In-flight request counter ───────────────────────────────────────────────
+// Lets the UI show a global "system busy" indicator without each caller
+// wiring up its own loading state.
+let pendingCount = 0;
+const busyListeners = new Set();
+const notifyBusy = () => busyListeners.forEach(fn => { try { fn(pendingCount); } catch {} });
+export const onHttpBusyChange = (fn) => { busyListeners.add(fn); return () => busyListeners.delete(fn); };
+const bump = () => { pendingCount += 1; notifyBusy(); };
+const unbump = () => { pendingCount = Math.max(0, pendingCount - 1); notifyBusy(); };
+
 /**
  * Wrapper around fetch with:
  *  - 5s TTL cache on GET responses
@@ -42,7 +52,8 @@ export const apiFetch = async (url, options = {}) => {
     }
 
     // 3. Make the actual request
-    const fetchPromise = fetch(url, { credentials: 'include', ...options });
+    bump();
+    const fetchPromise = fetch(url, { credentials: 'include', ...options }).finally(unbump);
     reqPromises.set(cacheKey, fetchPromise);
 
     try {
@@ -62,7 +73,13 @@ export const apiFetch = async (url, options = {}) => {
   }
 
   // Non-GET requests (mutations) bypass cache entirely
-  const res = await fetch(url, { credentials: 'include', ...options });
+  bump();
+  let res;
+  try {
+    res = await fetch(url, { credentials: 'include', ...options });
+  } finally {
+    unbump();
+  }
   if (res.status === 401) {
     handleAuthExpiry();
     throw new Error('SESSION_EXPIRED');
