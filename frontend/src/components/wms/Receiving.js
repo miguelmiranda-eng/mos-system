@@ -5,6 +5,8 @@ import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
 
+const STANDARD_UNITS_PER_BOX = 72;
+
 export const ReceivingModule = () => {
   const { t } = useLang();
   const [records, setRecords] = useState([]);
@@ -16,10 +18,15 @@ export const ReceivingModule = () => {
     is_bpo: false,
   });
   const [printMode, setPrintMode] = useState('cajas'); // 'cajas' o 'piezas'
+  // boxMode: 'standard' = 72 fijos. 'custom' = unitsPerBox configurable.
+  const [boxMode, setBoxMode] = useState('standard');
+  const [unitsPerBox, setUnitsPerBox] = useState(STANDARD_UNITS_PER_BOX);
+
+  const effectiveUpb = boxMode === 'standard' ? STANDARD_UNITS_PER_BOX : Math.max(1, parseInt(unitsPerBox) || 1);
 
   const handlePiecesChange = (val) => {
     const p = parseFloat(val) || 0;
-    const b = p / 72;
+    const b = p / effectiveUpb;
     setForm(prev => ({
       ...prev,
       pieces: val,
@@ -30,7 +37,7 @@ export const ReceivingModule = () => {
 
   const handleBoxesChange = (val) => {
     const b = parseFloat(val) || 0;
-    const p = b * 72;
+    const p = b * effectiveUpb;
     setForm(prev => ({
       ...prev,
       boxes: val,
@@ -38,6 +45,15 @@ export const ReceivingModule = () => {
       units: ''
     }));
   };
+
+  // When units_per_box changes (custom mode), recompute pieces from current boxes
+  useEffect(() => {
+    if (boxMode === 'custom' && form.boxes !== '') {
+      const b = parseFloat(form.boxes) || 0;
+      const p = b * effectiveUpb;
+      setForm(prev => ({ ...prev, pieces: Number.isInteger(p) ? p.toString() : p.toFixed(2) }));
+    }
+  }, [effectiveUpb, boxMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
@@ -111,6 +127,7 @@ export const ReceivingModule = () => {
         setShowForm(false);
         setEditingId(null);
         setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+        setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
         load();
       } else {
         // Create Mode
@@ -119,10 +136,16 @@ export const ReceivingModule = () => {
 
         const items = [];
         if (totalBoxes > 0) {
-          const fullBoxes = Math.floor(totalPieces / 72);
-          const remainder = totalPieces % 72;
-          if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: 72 });
-          if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
+          if (boxMode === 'custom') {
+            // All boxes share the same custom units_per_box, no remainder splitting
+            items.push({ size: form.size, boxes: totalBoxes, units_per_box: effectiveUpb });
+          } else {
+            // Standard: 72-unit boxes + 1 remainder box if needed
+            const fullBoxes = Math.floor(totalPieces / STANDARD_UNITS_PER_BOX);
+            const remainder = totalPieces % STANDARD_UNITS_PER_BOX;
+            if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: STANDARD_UNITS_PER_BOX });
+            if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
+          }
         }
 
         const payload = {
@@ -140,6 +163,7 @@ export const ReceivingModule = () => {
           }
           setShowForm(false);
           setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+          setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
           load();
         } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
       }
@@ -230,7 +254,7 @@ export const ReceivingModule = () => {
     pw.document.write(html);
     pw.document.close();
   };
-  const handleEdit = (r) => {
+  const handleEdit = async (r) => {
     setEditingId(r.receiving_id);
     setForm({
       customer: r.customer || '', manufacturer: r.manufacturer || '', style: r.style || '', color: r.color || '', size: r.size || '',
@@ -238,6 +262,18 @@ export const ReceivingModule = () => {
       boxes: '', pieces: r.total_units || '', units: '', lot_number: r.lot_number || '', sku: r.sku || '', inv_location: r.inv_location || '',
       is_bpo: r.is_bpo || false,
     });
+    // Infer box mode from existing boxes (custom if first box's units != standard)
+    try {
+      const detail = await fetcher(`/receiving/${r.receiving_id}`);
+      const firstBox = detail?.boxes?.[0];
+      if (firstBox && firstBox.units && firstBox.units !== STANDARD_UNITS_PER_BOX) {
+        setBoxMode('custom');
+        setUnitsPerBox(firstBox.units);
+      } else {
+        setBoxMode('standard');
+        setUnitsPerBox(STANDARD_UNITS_PER_BOX);
+      }
+    } catch (err) { logLoadError('receiving detail')(err); }
     setShowForm(true);
     // Scroll to form smoothly
     setTimeout(() => {
@@ -263,7 +299,7 @@ export const ReceivingModule = () => {
           {t('wms_recent_entries')}: {records.length}
         </div>
         <button
-          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false }); setShowForm(!showForm); }}
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setShowForm(!showForm); }}
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
           data-testid="new-receiving-btn"
         >
@@ -317,11 +353,50 @@ export const ReceivingModule = () => {
               <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" />
             </div>
           </div>
+          {/* Box capacity mode (standard 72 vs custom) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Modo</label>
+            <div className="md:col-span-2">
+              <label className="text-xs text-muted-foreground mb-1 block">Tipo de Caja</label>
               <div className="flex gap-2 bg-background border border-border rounded p-1">
                 <button
+                  type="button"
+                  onClick={() => !editingId && setBoxMode('standard')}
+                  disabled={!!editingId}
+                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${boxMode === 'standard' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  data-testid="rcv-box-std"
+                >
+                  Estándar ({STANDARD_UNITS_PER_BOX} pcs)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => !editingId && setBoxMode('custom')}
+                  disabled={!!editingId}
+                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${boxMode === 'custom' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  data-testid="rcv-box-custom"
+                >
+                  Personalizado
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Piezas por caja</label>
+              <input
+                type="number"
+                min="1"
+                value={boxMode === 'standard' ? STANDARD_UNITS_PER_BOX : unitsPerBox}
+                onChange={e => setUnitsPerBox(e.target.value)}
+                disabled={!!editingId || boxMode === 'standard'}
+                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="rcv-units-per-box"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Entrada</label>
+              <div className="flex gap-2 bg-background border border-border rounded p-1">
+                <button
+                  type="button"
                   onClick={() => !editingId && setPrintMode('cajas')}
                   disabled={!!editingId}
                   className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'cajas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -329,6 +404,7 @@ export const ReceivingModule = () => {
                   Por Cajas
                 </button>
                 <button
+                  type="button"
                   onClick={() => !editingId && setPrintMode('piezas')}
                   disabled={!!editingId}
                   className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'piezas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -338,7 +414,7 @@ export const ReceivingModule = () => {
               </div>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Cajas (1 = 72 Pcs)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">Cajas (1 = {effectiveUpb} Pcs)</label>
               <input type="number" placeholder="0" value={form.boxes} onChange={e => handleBoxesChange(e.target.value)} disabled={!!editingId || printMode === 'piezas'} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed" />
             </div>
             <div>
