@@ -43,7 +43,7 @@ export const PickingModule = () => {
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
-  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
+  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
   const [form, setForm] = useState(emptyForm);
 
   const loadTickets = useCallback(() => { fetcher('/pick-tickets').then(setTickets).catch(logLoadError('data')); }, []);
@@ -104,7 +104,7 @@ export const PickingModule = () => {
       order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
       style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
       assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '',
-      destination: t.destination || PickDestination.PRODUCTION, board_category: t.board_category || 'UNSET', sizes: sizesObj
+      destination: t.destination || PickDestination.PRODUCTION, board_category: t.board_category || 'UNSET', strategy: t.strategy || 'default', sizes: sizesObj
     });
     setSizeLocations(t.size_locations || {});
     if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
@@ -509,6 +509,20 @@ export const PickingModule = () => {
               <select value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} className="w-full px-3 py-2 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded text-sm font-bold focus:ring-1 focus:ring-pink-500">
                 <option value={PickDestination.PRODUCTION}>Producción Directa</option>
                 <option value={PickDestination.NECK_CUTTING}>Corte de Neck</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-wider text-indigo-400 font-black block mb-1">Estrategia de picking</label>
+              <select
+                value={form.strategy}
+                onChange={e => setForm(p => ({ ...p, strategy: e.target.value }))}
+                className="w-full px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded text-sm font-bold focus:ring-1 focus:ring-indigo-500"
+                data-testid="pick-strategy"
+                title="Cómo ordenar las ubicaciones que ve el operador"
+              >
+                <option value="default">Default (sistema)</option>
+                <option value="proximity">Por cercanía (mismo pasillo)</option>
+                <option value="origin">Por país de origen</option>
               </select>
             </div>
           </div>

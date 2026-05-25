@@ -1125,6 +1125,34 @@ async def delete_allocation(allocation_id: str, request: Request):
 
 # ==================== PICK TICKETS ====================
 
+# Valid picking strategies — keep in sync with frontend Picking.js dropdown
+PICK_STRATEGIES = {"default", "proximity", "origin"}
+
+def _location_sort_key_proximity(loc_obj: dict):
+    """Sort by location-name prefix (everything before first '-'), then full name.
+    Groups RP01-* together, then RP02-*, etc."""
+    name = (loc_obj.get("location") or "").upper()
+    prefix = name.split("-", 1)[0] if "-" in name else name
+    return (prefix, name)
+
+def _location_sort_key_origin(loc_obj: dict):
+    """Group by country_of_origin first, then by location name."""
+    coo = (loc_obj.get("country_of_origin") or "").upper() or "ZZZ"  # unknowns last
+    name = (loc_obj.get("location") or "").upper()
+    return (coo, name)
+
+def apply_picking_strategy(size_locations: dict, strategy: str) -> dict:
+    """Reorder the `locations` array inside each size of size_locations
+    according to the chosen strategy. Default keeps backend's existing order."""
+    if strategy not in {"proximity", "origin"} or not size_locations:
+        return size_locations
+    key_fn = _location_sort_key_proximity if strategy == "proximity" else _location_sort_key_origin
+    for sz_data in size_locations.values():
+        if isinstance(sz_data, dict) and "locations" in sz_data:
+            sz_data["locations"].sort(key=key_fn)
+    return size_locations
+
+
 async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     """
     Internal function to create a pick ticket.
@@ -1167,6 +1195,12 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
                     l["percentage"] = round((l["available"] / total_sz_avail) * 100) if total_sz_avail > 0 else 0
                 size_locations[sz] = {"locations": locs, "total_available": total_sz_avail}
 
+    # Apply picking strategy (proximity / origin / default)
+    strategy = data.get("strategy", "default")
+    if strategy not in PICK_STRATEGIES:
+        strategy = "default"
+    size_locations = apply_picking_strategy(size_locations, strategy)
+
     assigned_to = data.get("assigned_to", "").strip()
     assigned_to_name = data.get("assigned_to_name", "").strip()
 
@@ -1181,6 +1215,7 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
         "quantity": int(data.get("quantity", 0)),
         "sizes": sizes,
         "size_locations": size_locations,
+        "strategy": strategy,
         "total_pick_qty": total_qty,
         "status": "pending",
         "board_category": data.get("board_category", "UNSET"),
@@ -1737,10 +1772,15 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
             update["picking_status"] = "unassigned"
             update["assigned_at"] = None
 
-    # Re-lookup locations if style/color changed
+    # Allow updating the picking strategy
+    if "strategy" in body and body["strategy"] in PICK_STRATEGIES:
+        update["strategy"] = body["strategy"]
+
+    # Re-lookup locations if style/color changed (also re-apply strategy if changed)
     new_style = update.get("style", ticket.get("style", ""))
     new_color = update.get("color", ticket.get("color", ""))
-    if "style" in update or "color" in update:
+    needs_relookup = "style" in update or "color" in update
+    if needs_relookup:
         size_locations = {}
         new_sizes = update.get("sizes", ticket.get("sizes", {}))
         for sz, qty in new_sizes.items():
@@ -1756,6 +1796,10 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
                 l["percentage"] = round((l["available"] / total_sz_avail) * 100) if total_sz_avail > 0 else 0
             size_locations[sz] = {"locations": locs, "total_available": total_sz_avail}
         update["size_locations"] = size_locations
+    # Re-apply strategy if it changed (use freshly-built or existing size_locations)
+    if "strategy" in update:
+        target = update.get("size_locations") or ticket.get("size_locations") or {}
+        update["size_locations"] = apply_picking_strategy(target, update["strategy"])
 
     update["updated_at"] = now_iso()
     update["updated_by"] = user.get("user_id")
