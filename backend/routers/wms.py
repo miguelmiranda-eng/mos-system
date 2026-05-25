@@ -2488,6 +2488,23 @@ async def get_asn_detail(asn_id: str, request: Request):
     ).sort("created_at", -1).to_list(5000)
     return {"asn": asn, "boxes": boxes}
 
+@router.delete("/asn/{asn_id}")
+async def delete_asn(asn_id: str, request: Request):
+    """Delete an ASN. Received boxes are kept (their asn_reference becomes
+    informational only) so historical traceability is preserved."""
+    user = await require_auth(request)
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+    if not asn:
+        raise HTTPException(404, f"ASN {asn_id} no encontrado")
+    boxes_count = await db.wms_boxes.count_documents({"asn_reference": asn_id})
+    await db.wms_asn.delete_one({"asn_id": asn_id})
+    await log_movement(user, MovementType.ASN_IMPORTED, {
+        "asn_id": asn_id, "deleted": True,
+        "po_number": asn.get("po_number"),
+        "had_boxes": boxes_count,
+    })
+    return {"status": "deleted", "asn_id": asn_id, "boxes_kept": boxes_count}
+
 @router.post("/asn/import")
 async def import_asn(
     request: Request,

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { FileDown, Loader2, X, Package, Search, AlertTriangle } from "lucide-react";
+import { FileDown, Loader2, X, Package, Search, AlertTriangle, Trash2 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, logLoadError } from "./lib";
+import { API, fetcher, deleter, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STATUS_STYLES = {
@@ -95,6 +95,23 @@ export const AsnModule = () => {
     } finally { setLoading(false); }
   };
 
+  const handleDelete = async (asnId, opts = {}) => {
+    const a = asns.find(x => x.asn_id === asnId);
+    const totalRcv = (a?.items || []).reduce((s, i) => s + (i.qty_received || 0), 0);
+    const msg = totalRcv > 0
+      ? `El ASN ${asnId} tiene ${totalRcv.toLocaleString()} pzs ya recibidas. Las cajas no se eliminan, solo se pierde el vínculo con el ASN.\n\n¿Eliminar de todos modos?`
+      : `¿Eliminar el ASN ${asnId}?`;
+    if (!window.confirm(msg)) return;
+    try {
+      await deleter(`/asn/${encodeURIComponent(asnId)}`);
+      toast.success(`ASN ${asnId} eliminado`);
+      if (opts.closeDetail) { setDetailFor(null); setDetailData(null); }
+      loadAsns();
+    } catch (err) {
+      toast.error("No se pudo eliminar el ASN");
+    }
+  };
+
   const openDetail = async (asnId) => {
     setDetailFor(asnId);
     setDetailLoading(true);
@@ -149,12 +166,23 @@ export const AsnModule = () => {
           const pct = totalExp > 0 ? Math.min(100, Math.round((totalRcv / totalExp) * 100)) : 0;
           const sd = STATUS_STYLES[a.status] || STATUS_STYLES[AsnStatus.PENDING];
           return (
-            <button
+            <div
               key={a.asn_id}
               onClick={() => openDetail(a.asn_id)}
-              className="text-left p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:bg-card hover:border-primary/30 transition-all shadow-sm"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter') openDetail(a.asn_id); }}
+              className="group relative text-left p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:bg-card hover:border-primary/30 transition-all shadow-sm cursor-pointer"
             >
-              <div className="flex justify-between items-start mb-4">
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDelete(a.asn_id); }}
+                className="absolute top-3 right-3 p-2 rounded-xl text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
+                title="Eliminar ASN"
+                data-testid={`asn-delete-${a.asn_id}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <div className="flex justify-between items-start mb-4 pr-8">
                 <div className="min-w-0">
                   <div className="text-[10px] font-black uppercase text-primary tracking-widest">ASN {a.asn_id}</div>
                   <div className="text-lg font-black uppercase tracking-tight leading-tight truncate">{a.vendor || '—'}</div>
@@ -181,7 +209,7 @@ export const AsnModule = () => {
                   <span className="text-foreground">{a.created_at ? new Date(a.created_at).toLocaleDateString() : '—'}</span>
                 </div>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -276,9 +304,19 @@ export const AsnModule = () => {
                   )}
                 </div>
               </div>
-              <button onClick={() => { setDetailFor(null); setDetailData(null); }} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => handleDelete(detailFor, { closeDetail: true })}
+                  className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                  title="Eliminar ASN"
+                  data-testid="asn-detail-delete"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+                <button onClick={() => { setDetailFor(null); setDetailData(null); }} className="p-2 hover:bg-secondary rounded-lg transition-all">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar">
