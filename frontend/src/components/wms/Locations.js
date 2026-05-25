@@ -235,6 +235,18 @@ export const LocationsModule = () => {
                     {grouped[zone].length} {t('wms_locations') || 'UBICACIONES'}
                   </span>
                 </h3>
+                <button
+                  onClick={() => {
+                    if (window.confirm(`¿Imprimir todas las ${grouped[zone].length} ubicaciones de zona "${zone}"?`)) {
+                      window.open(`${API}/locations/print?zone=${encodeURIComponent(zone)}`, '_blank');
+                    }
+                  }}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-500 border border-emerald-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                  title={`Imprimir todas las etiquetas de zona ${zone}`}
+                >
+                  <Printer className="w-3 h-3" />
+                  Imprimir Zona
+                </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">

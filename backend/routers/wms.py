@@ -198,10 +198,15 @@ async def update_location(location_id: str, request: Request):
     return updated_loc
 
 @router.get("/locations/print")
-async def print_locations(request: Request, ids: str = "all"):
-    """Generate a PDF for Zebra Label Printers (4x2 inch) for WMS locations."""
+async def print_locations(request: Request, ids: str = "all", zone: str = ""):
+    """Generate a PDF for Zebra Label Printers (4x2 inch) for WMS locations.
+    Selection precedence (first match wins):
+      - zone=X   → all locations in that zone
+      - ids=A,B  → explicit list of location_ids
+      - ids=all  → every location (default)
+    """
     await require_auth(request)
-    
+
     from reportlab.lib.pagesizes import landscape
     from reportlab.lib.units import inch
     from reportlab.pdfgen import canvas
@@ -210,7 +215,10 @@ async def print_locations(request: Request, ids: str = "all"):
     from reportlab.graphics import renderPDF
 
     # 1. Fetch locations
-    if ids == "all":
+    if zone:
+        zone_query = {"zone": {"$regex": f"^{re.escape(zone)}$", "$options": "i"}}
+        locs = await db.wms_locations.find(zone_query, {"_id": 0}).sort("name", 1).to_list(3000)
+    elif ids == "all":
         locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).to_list(3000)
     else:
         id_list = ids.split(",")
