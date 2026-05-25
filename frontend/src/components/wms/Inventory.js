@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3 } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
 
@@ -15,6 +15,9 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [importing, setImporting] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [groupByCustomer, setGroupByCustomer] = useState(false);
+  const [historyFor, setHistoryFor] = useState(null); // { style, color, size }
+  const [historyData, setHistoryData] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(logLoadError('data')); }, []);
   const load = useCallback(() => {
@@ -46,6 +49,25 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
     } catch { toast.error(t('error_connection')); }
     finally { setImporting(false); e.target.value = ''; }
+  };
+
+  const openHistory = async (inv) => {
+    const key = { style: inv.style || inv.sku, color: inv.color || '', size: inv.size || '' };
+    setHistoryFor(key);
+    setHistoryData(null);
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({ style: key.style });
+      if (key.color) params.set('color', key.color);
+      if (key.size) params.set('size', key.size);
+      const data = await fetcher(`/inventory/history?${params.toString()}`);
+      setHistoryData(data);
+    } catch (err) {
+      logLoadError('inventory history')(err);
+      toast.error('Error al cargar historial');
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   return (
@@ -173,6 +195,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
                 <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_available')}</th>
+                <th className="p-4 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Historial</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/10">
@@ -187,7 +210,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 ).map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-secondary/30">
-                      <td colSpan="10" className="p-3">
+                      <td colSpan="11" className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
                           <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
@@ -216,6 +239,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                         <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
                           {(inv.available || 0).toLocaleString()}
                         </td>
+                        <td className="p-4 text-center">
+                          <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
+                            <History className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </Fragment>
@@ -242,6 +270,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
                       {(inv.available || 0).toLocaleString()}
                     </td>
+                    <td className="p-4 text-center">
+                      <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
+                        <History className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -259,6 +292,90 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40 text-right mt-2">
         {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
       </div>
+
+      {/* History Modal */}
+      {historyFor && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
+                  <History className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-black uppercase tracking-tighter text-sm truncate">Historial de movimientos</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold truncate">
+                    <span className="text-primary font-mono">{historyFor.style}</span>
+                    {historyFor.color && <> · {historyFor.color}</>}
+                    {historyFor.size && <> · {historyFor.size}</>}
+                    {historyData && <> · {historyData.count} movimientos</>}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setHistoryFor(null)} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                </div>
+              ) : !historyData?.movements?.length ? (
+                <div className="text-center py-20 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                  Sin movimientos registrados para este SKU
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-secondary/40 sticky top-0">
+                    <tr>
+                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
+                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tipo</th>
+                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Detalles</th>
+                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
+                      <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cantidad</th>
+                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Usuario</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/10">
+                    {historyData.movements.map((m, i) => {
+                      const d = m.details || {};
+                      // Heuristic sign: receiving / putaway = +, pick / shipment / deduct = -
+                      const negativeTypes = new Set(['pick_confirmed', 'shipment', 'neck_cut_delivery', 'deallocate']);
+                      const positiveTypes = new Set(['receiving', 'putaway', 'putaway_bulk', 'cycle_count_approved']);
+                      const sign = negativeTypes.has(m.type) ? '-' : positiveTypes.has(m.type) ? '+' : '';
+                      const qty = d.units ?? d.qty ?? d.total_units ?? d.items_confirmed ?? '';
+                      return (
+                        <tr key={m.movement_id || i} className="hover:bg-secondary/20 transition-colors">
+                          <td className="p-3 text-[11px] font-mono text-muted-foreground/80 whitespace-nowrap">
+                            {new Date(m.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="p-3">
+                            <span className="text-[10px] font-black uppercase bg-secondary/60 px-2 py-1 rounded text-foreground tracking-widest whitespace-nowrap">
+                              {m.type?.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="p-3 text-[11px] text-foreground/80 font-mono truncate max-w-[200px]">
+                            {d.box_id || d.ticket_id || d.receiving_id || d.count_id || d.order_number || '—'}
+                          </td>
+                          <td className="p-3 text-[11px] font-mono text-emerald-400">
+                            {d.to || d.location || d.inv_location || '—'}
+                          </td>
+                          <td className={`p-3 text-right font-mono font-black tabular-nums ${sign === '-' ? 'text-red-400' : sign === '+' ? 'text-emerald-400' : 'text-foreground'}`}>
+                            {qty !== '' ? `${sign}${qty}` : '—'}
+                          </td>
+                          <td className="p-3 text-[11px] text-muted-foreground truncate max-w-[120px]">{m.user_name || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
