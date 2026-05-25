@@ -158,11 +158,16 @@ export const PutawayModule = () => {
           )}
 
           <button
-            onClick={() => handlePutaway()}
+            onClick={() => {
+              if (!boxId || !location) { toast.error(t('wms_box_loc_req')); return; }
+              const match = locations.find(l => l.name === location);
+              if (!match) { toast.error(`Ubicación "${location}" no encontrada`); return; }
+              setPendingConfirm(match);
+            }}
             disabled={loading || !boxId || !location || !manualMode}
             className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
             data-testid="putaway-submit"
-            title={!manualMode ? 'En modo scanner se confirma vía overlay' : ''}
+            title={!manualMode ? 'En modo scanner se confirma vía overlay' : 'Abrirá confirmación antes de aplicar'}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
             {t('wms_locate_btn')}
