@@ -4,7 +4,7 @@ import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
-  ScanLine, X, ChevronRight,
+  ScanLine, X, ChevronRight, Home,
   Sun, Moon, LayoutDashboard, LogOut, Scissors,
 } from "lucide-react";
 
@@ -15,6 +15,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms } from "./wms/lib";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
+import { HomeModule } from "./wms/Home";
 import { ReceivingModule } from "./wms/Receiving";
 import { PutawayModule } from "./wms/Putaway";
 import { InventoryModule } from "./wms/Inventory";
@@ -32,6 +33,7 @@ export { useWms };
 
 const renderActiveModule = (moduleId, ctx) => {
   switch (moduleId) {
+    case 'home':         return <HomeModule onNavigate={ctx.setActiveModule} />;
     case 'directed':     return <DirectedWorkModule />;
     case 'dashboard':    return <InventoryDashboard customer={ctx.associatedCustomer} apiBase={API} />;
     case 'receiving':    return <ReceivingModule />;
@@ -51,7 +53,7 @@ const renderActiveModule = (moduleId, ctx) => {
 export default function WMS() {
   const navigate = useNavigate();
   const { t } = useLang();
-  const [activeModule, setActiveModule] = useState('directed');
+  const [activeModule, setActiveModule] = useState('home');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
   const isDark = theme === 'dark';
@@ -72,6 +74,7 @@ export default function WMS() {
   const associatedCustomer = currentUser?.associated_customer || '';
 
   const MODULES = [
+    { id: 'home', label: 'MOS Home', icon: Home, color: 'text-primary', desc: 'Resumen del almacén y atajos rápidos' },
     { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
@@ -111,10 +114,12 @@ export default function WMS() {
 
   const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges }), [badges, loadBadges]);
 
-  // Forzar Dashboard para el rol customer y asegurar cliente filtrado
+  // Forzar módulo inicial según rol (customer=dashboard, picker=directed)
   useEffect(() => {
     if (currentUser?.role === 'customer') {
       setActiveModule('dashboard');
+    } else if (currentUser?.role === 'picker') {
+      setActiveModule('directed');
     }
   }, [currentUser]);
 
@@ -327,7 +332,7 @@ export default function WMS() {
 
         {/* Component Content */}
         <div className="p-6 pt-2">
-          {renderActiveModule(activeModule, { associatedCustomer })}
+          {renderActiveModule(activeModule, { associatedCustomer, setActiveModule })}
         </div>
         <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
       </main>

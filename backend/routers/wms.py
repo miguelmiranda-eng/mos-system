@@ -37,6 +37,46 @@ async def notify_badge_change(badge: str = "all"):
     except Exception as e:
         logger.warning(f"Failed to broadcast badge change: {e}")
 
+
+# ==================== HOME DASHBOARD ====================
+
+@router.get("/home/summary")
+async def home_summary(request: Request):
+    """One-shot dashboard summary for the WMS Home module.
+    Combines counts that would otherwise need 5+ separate requests."""
+    await require_auth(request)
+
+    # Total inventory units
+    inv_agg = await db.wms_inventory.aggregate([
+        {"$group": {"_id": None, "total_units": {"$sum": "$units_on_hand"}, "total_skus": {"$sum": 1}}}
+    ]).to_list(1)
+    inv = inv_agg[0] if inv_agg else {"total_units": 0, "total_skus": 0}
+
+    # Locations: total active + how many have any inventory
+    total_locations = await db.wms_locations.count_documents({"active": True})
+    occupied = len(await db.wms_inventory.distinct("location", {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}))
+    occupancy_pct = round((occupied / total_locations * 100), 1) if total_locations > 0 else 0
+
+    # Pending counts (mirror the badge endpoints)
+    pending_putaway = await db.wms_boxes.count_documents({"status": "received"})
+    pending_picking = await db.wms_pick_tickets.count_documents({"status": "pending"})
+    active_counts = await db.wms_cycle_counts.count_documents({"status": "in_progress"})
+
+    # Recent activity (last 5 movements)
+    recent_raw = await db.wms_movements.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
+
+    return {
+        "inventory_units": inv.get("total_units", 0),
+        "inventory_skus": inv.get("total_skus", 0),
+        "locations_total": total_locations,
+        "locations_occupied": occupied,
+        "occupancy_pct": occupancy_pct,
+        "pending_putaway": pending_putaway,
+        "pending_picking": pending_picking,
+        "active_counts": active_counts,
+        "recent_movements": recent_raw,
+    }
+
 # ==================== LOCATIONS ====================
 
 @router.post("/locations")
