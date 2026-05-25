@@ -2333,95 +2333,175 @@ async def export_inventory(request: Request):
 
 # ==================== ASN (Advanced Shipping Notice) ====================
 
-# Column maps per sheet type. Indexes are 0-based (openpyxl iter_rows order).
-# RAW MATERIAL layout: B=PO, C=Part#, D=Description, F=Qty, N=Country, O=Brand
-# EQUIPMENT layout:    B=Container, D=Part#, E=Description, G=Qty, S=Country, I=Brand
-_ASN_SHEET_LAYOUTS = {
-    "raw": {
-        "header_row": 5,        # row with English headers
-        "data_start": 7,
-        "po": 1,                # col B
-        "part_number": 2,       # col C
-        "description": 3,       # col D
-        "qty": 5,               # col F
-        "country": 13,          # col N
-        "brand": 14,            # col O
-    },
-    "equipment": {
-        "header_row": 5,
-        "data_start": 7,
-        "po": 2,                # col C "Entry number"
-        "part_number": 3,       # col D
-        "description": 4,       # col E
-        "qty": 6,               # col G
-        "country": 18,          # col S
-        "brand": 8,             # col I
-    },
+# Field -> list of header keywords (lowercase, accent-free). A column matches
+# a field if any of the field's keywords appears in the normalized header text.
+# Both R5 (English) and R6 (Spanish) headers are merged per column before
+# matching, so a column with just the Spanish label still resolves correctly.
+_ASN_HEADER_KEYWORDS = {
+    "part_number":  ["part number", "no. de parte", "numero de parte", "no de parte", "n de parte", "style", "sku", "pn"],
+    "description":  ["description", "descripcion espanol", "descripcion ingles", "english description", "descripcion"],
+    "qty":          ["qty", "quantity", "cantidad"],
+    "country":      ["country", "pais origen", "pais de origen", "country of origin", "coo"],
+    "brand":        ["brand", "marca"],
+    "po":           ["po number", "entry number", "numero de entrada", "numeor de entrada", "po"],
 }
+# Required fields — if any is missing after detection the import refuses.
+_ASN_REQUIRED_FIELDS = ("part_number", "qty")
+
+def _normalize_header(s) -> str:
+    """Lowercase, strip accents, collapse whitespace, drop punctuation."""
+    if s is None:
+        return ""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(s))
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    t = t.lower()
+    # Replace common separators with spaces; drop other punctuation
+    out = []
+    for ch in t:
+        if ch.isalnum() or ch == " ":
+            out.append(ch)
+        elif ch in "-_/.,:;":
+            out.append(" ")
+    return " ".join("".join(out).split())
 
 def _detect_sheet_kind(name: str) -> str | None:
+    """Return a label for the sheet kind, or None if it's not a packing-list sheet.
+    The kind is informational only — column detection is name-based per sheet."""
     n = (name or "").upper()
     if "RAW MATERIAL" in n or "MATERIA PRIMA" in n:
         return "raw"
     if "EQUIPMENT" in n or "EQUIPO" in n:
         return "equipment"
     if "FINISHED GOODS" in n or "PRODUCTO TERM" in n or "PRODUCTOTERM" in n:
-        return "raw"  # FG uses same layout as RAW in this template family
+        return "finished_goods"
     return None
 
 def _find_asn_number(ws) -> str:
     """Scan top-left region for a cell labelled 'ASN' and return the neighbour value."""
-    for r in range(1, 8):
-        for c in range(1, 16):
+    for r in range(1, 12):
+        for c in range(1, 20):
             v = ws.cell(row=r, column=c).value
             if v is None:
                 continue
             if str(v).strip().upper() == "ASN":
-                # Look to the right
                 for dc in range(1, 5):
                     rv = ws.cell(row=r, column=c + dc).value
                     if rv not in (None, ""):
                         return str(rv).strip()
     return ""
 
-def _parse_packing_list(ws, kind: str) -> tuple[list[dict], str]:
-    """Return (items, po_number) from a worksheet using the layout for `kind`."""
-    layout = _ASN_SHEET_LAYOUTS[kind]
+def _detect_columns(ws, scan_rows: int = 15) -> tuple[dict[str, int], int]:
+    """Find the header row and map field -> 0-based column index by header name.
+
+    Strategy:
+      1. For each row in 1..scan_rows, score how many fields can be located in
+         that row's cells.
+      2. Take the best row. If the next row also has hits, merge them column-
+         wise (bilingual templates put English + Spanish on consecutive rows).
+      3. Resolve each field to a column index using the field's keyword list.
+
+    Returns (column_map, data_start_row). data_start_row = best + 1 (or +2 if
+    we merged with the row below).
+    """
+    max_col = min(ws.max_column or 50, 50)
+    # Per-row, per-field: which column matched (or -1)
+    per_row: list[dict[str, int]] = []
+    for r in range(1, scan_rows + 1):
+        row_map: dict[str, int] = {}
+        for c in range(1, max_col + 1):
+            text = _normalize_header(ws.cell(row=r, column=c).value)
+            if not text:
+                continue
+            for field, kws in _ASN_HEADER_KEYWORDS.items():
+                if field in row_map:
+                    continue  # first match wins per row
+                if any(kw in text for kw in kws):
+                    row_map[field] = c - 1  # 0-based for openpyxl iter_rows tuples
+                    break
+        per_row.append(row_map)
+
+    # Pick the row with the most field hits
+    best_row, best_score = 0, 0
+    for i, rm in enumerate(per_row):
+        score = sum(1 for f in _ASN_HEADER_KEYWORDS if f in rm)
+        if score > best_score:
+            best_row, best_score = i, score
+
+    if best_score == 0:
+        return {}, 0
+
+    merged = dict(per_row[best_row])
+    data_start = best_row + 1 + 1  # 1-based row right after header
+
+    # If the next row also hits any field not in best_row, merge it (bilingual)
+    if best_row + 1 < len(per_row):
+        for f, c in per_row[best_row + 1].items():
+            merged.setdefault(f, c)
+        if per_row[best_row + 1]:
+            data_start = best_row + 2 + 1
+
+    return merged, data_start
+
+def _parse_packing_list(ws) -> tuple[list[dict], str, dict[str, int]]:
+    """Return (items, po_number, detected_column_map) from a worksheet.
+
+    Column detection is by header name (see _detect_columns) so layout shifts
+    across vendor revisions don't break the parse — as long as the header text
+    is recognizable.
+    """
+    col_map, data_start = _detect_columns(ws)
+    missing = [f for f in _ASN_REQUIRED_FIELDS if f not in col_map]
+    if missing:
+        raise HTTPException(
+            400,
+            f"No se detectaron columnas obligatorias: {', '.join(missing)}. "
+            "Revisa que los encabezados del archivo incluyan al menos "
+            "'Part Number' y 'Qty'/'Cantidad'."
+        )
+
+    pn_col = col_map["part_number"]
+    qty_col = col_map["qty"]
+
+    def cell_at(row, field):
+        c = col_map.get(field)
+        if c is None or c >= len(row) or row[c] is None:
+            return ""
+        return str(row[c]).strip()
+
     items: list[dict] = []
     po_number = ""
     line_no = 0
-    for row in ws.iter_rows(min_row=layout["data_start"], values_only=True):
+    for row in ws.iter_rows(min_row=data_start, values_only=True):
         if not row:
             continue
-        pn_raw = row[layout["part_number"]] if layout["part_number"] < len(row) else None
+        if pn_col >= len(row):
+            continue
+        pn_raw = row[pn_col]
         if pn_raw is None:
             continue
         pn = str(pn_raw).strip()
         if not pn or pn.upper() == "TOTAL":
             continue
-        qty_raw = row[layout["qty"]] if layout["qty"] < len(row) else 0
         try:
-            qty = int(float(qty_raw or 0))
+            qty = int(float(row[qty_col] if qty_col < len(row) and row[qty_col] is not None else 0))
         except (TypeError, ValueError):
             qty = 0
         if qty <= 0:
             continue
-        if not po_number and layout["po"] < len(row) and row[layout["po"]]:
-            po_number = str(row[layout["po"]]).strip()
+        if not po_number:
+            po_number = cell_at(row, "po")
         line_no += 1
         items.append({
             "line_no": line_no,
             "part_number": pn.upper(),
-            "description": (str(row[layout["description"]]).strip()
-                            if layout["description"] < len(row) and row[layout["description"]] else ""),
+            "description": cell_at(row, "description"),
             "qty_expected": qty,
             "qty_received": 0,
-            "country": (str(row[layout["country"]]).strip().upper()
-                        if layout["country"] < len(row) and row[layout["country"]] else ""),
-            "brand": (str(row[layout["brand"]]).strip().upper()
-                      if layout["brand"] < len(row) and row[layout["brand"]] else ""),
+            "country": cell_at(row, "country").upper(),
+            "brand": cell_at(row, "brand").upper(),
         })
-    return items, po_number
+    return items, po_number, col_map
 
 
 @router.post("/asn")
@@ -2524,6 +2604,14 @@ async def import_asn(
     except Exception as e:
         raise HTTPException(400, f"No se pudo leer el archivo: {e}")
 
+    # Helper: convert 0-based col index to Excel letter for the UI
+    def _col_letter(idx: int) -> str:
+        n, s = idx + 1, ""
+        while n > 0:
+            n, r = divmod(n - 1, 26)
+            s = chr(65 + r) + s
+        return s
+
     # Phase 1: inspect
     if not sheet_name:
         sheets = []
@@ -2533,18 +2621,23 @@ async def import_asn(
                 continue
             ws = wb[sn]
             asn_num = _find_asn_number(ws)
-            # Count candidate data rows (skip Total)
-            layout = _ASN_SHEET_LAYOUTS[kind]
+            col_map, data_start = _detect_columns(ws)
             count = 0
-            for row in ws.iter_rows(min_row=layout["data_start"], values_only=True):
-                pn = row[layout["part_number"]] if row and layout["part_number"] < len(row) else None
-                if pn and str(pn).strip().upper() != "TOTAL":
-                    count += 1
+            if "part_number" in col_map:
+                pn_col = col_map["part_number"]
+                for row in ws.iter_rows(min_row=data_start, values_only=True):
+                    if not row or pn_col >= len(row):
+                        continue
+                    pn = row[pn_col]
+                    if pn and str(pn).strip().upper() != "TOTAL":
+                        count += 1
             sheets.append({
                 "name": sn,
                 "kind": kind,
                 "detected_asn_id": asn_num,
                 "row_count": count,
+                "detected_columns": {f: _col_letter(c) for f, c in col_map.items()},
+                "missing_required": [f for f in _ASN_REQUIRED_FIELDS if f not in col_map],
             })
         if not sheets:
             raise HTTPException(400, "No se encontraron hojas compatibles (RAW MATERIAL / EQUIPMENT / FINISHED GOODS)")
@@ -2553,8 +2646,7 @@ async def import_asn(
     # Phase 2: import the chosen sheet
     if sheet_name not in wb.sheetnames:
         raise HTTPException(400, f"Hoja '{sheet_name}' no existe en el archivo")
-    kind = _detect_sheet_kind(sheet_name)
-    if not kind:
+    if not _detect_sheet_kind(sheet_name):
         raise HTTPException(400, f"Hoja '{sheet_name}' no es de un tipo soportado")
 
     ws = wb[sheet_name]
@@ -2565,7 +2657,7 @@ async def import_asn(
     if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
         raise HTTPException(409, f"ASN {asn_id} ya existe en el sistema")
 
-    items, po_number = _parse_packing_list(ws, kind)
+    items, po_number, col_map = _parse_packing_list(ws)
     if not items:
         raise HTTPException(400, "No se encontraron lineas con cantidad > 0 en la hoja")
 
@@ -2587,10 +2679,12 @@ async def import_asn(
     }
     await db.wms_asn.insert_one(doc)
 
+    detected_columns = {f: _col_letter(c) for f, c in col_map.items()}
     await log_movement(user, MovementType.ASN_IMPORTED, {
         "asn_id": asn_id, "po_number": po_number,
         "items": len(items), "sheet": sheet_name,
         "total_qty": sum(it["qty_expected"] for it in items),
+        "detected_columns": detected_columns,
     })
 
     return {
@@ -2600,6 +2694,7 @@ async def import_asn(
         "vendor": vendor,
         "items_count": len(items),
         "total_qty_expected": sum(it["qty_expected"] for it in items),
+        "detected_columns": detected_columns,
     }
 
 

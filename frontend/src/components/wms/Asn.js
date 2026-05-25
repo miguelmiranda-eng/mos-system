@@ -55,8 +55,10 @@ export const AsnModule = () => {
       }
       const data = await res.json();
       if (data.action === "select_sheet") {
-        // Prefer a sheet with detected ASN# and rows > 0
-        const best = data.sheets.find(s => s.detected_asn_id && s.row_count > 0)
+        // Prefer a sheet that has all required columns + ASN# + rows
+        const usable = data.sheets.filter(s => (s.missing_required || []).length === 0);
+        const best = usable.find(s => s.detected_asn_id && s.row_count > 0)
+                  || usable[0]
                   || data.sheets[0];
         setChosenSheet(best?.name || "");
         setSheetChoices(data);
@@ -254,6 +256,20 @@ export const AsnModule = () => {
                         <span>ASN: <b className="text-foreground">{s.detected_asn_id || '—'}</b></span>
                         <span>líneas: <b className="text-foreground">{s.row_count}</b></span>
                       </div>
+                      {s.detected_columns && Object.keys(s.detected_columns).length > 0 && (
+                        <div className="text-[10px] text-muted-foreground/80 mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono">
+                          {Object.entries(s.detected_columns).map(([f, col]) => (
+                            <span key={f}>
+                              <span className="uppercase">{f}</span>=<b className="text-foreground">{col}</b>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {(s.missing_required || []).length > 0 && (
+                        <div className="flex items-center gap-1 text-[10px] text-red-400 mt-1">
+                          <AlertTriangle className="w-3 h-3" /> Faltan columnas: {(s.missing_required || []).join(', ')}
+                        </div>
+                      )}
                       {!s.detected_asn_id && (
                         <div className="flex items-center gap-1 text-[10px] text-amber-400 mt-1">
                           <AlertTriangle className="w-3 h-3" /> No se detectó número de ASN en esta hoja
