@@ -63,3 +63,11 @@ class MovementType:
     CYCLE_COUNT_APPROVED = "cycle_count_approved"
     CYCLE_COUNT_DELETED = "cycle_count_deleted"
     BULK_RELOCATION = "bulk_relocation"
+    ASN_IMPORTED = "asn_imported"
+    ASN_RECEIPT = "asn_receipt"
+
+
+class AsnStatus:
+    PENDING = "pending"          # Nothing received yet
+    PARTIAL = "partial"          # Some items received, more expected
+    RECEIVED = "received"        # All expected qty has been received

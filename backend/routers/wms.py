@@ -5,7 +5,7 @@ from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTI
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
-    TaskType, TaskStatus, PickDestination, MovementType,
+    TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
 )
 from datetime import datetime, timezone, timedelta
 import uuid, io, json, logging, re
@@ -572,6 +572,25 @@ async def create_receiving(request: Request):
 
     receiving_doc.pop("_id", None)
     await notify_badge_change("putaway")
+
+    # ASN reconciliation (warning-permissive: never blocks, surfaces mismatches in response)
+    asn_warnings: list[dict] = []
+    asn_ref = body.get("asn_reference", "").strip()
+    if asn_ref and box_docs:
+        received_by_pn: dict[str, int] = {}
+        for b in box_docs:
+            key = (b.get("style") or b.get("sku") or "").strip().upper()
+            if not key:
+                continue
+            received_by_pn[key] = received_by_pn.get(key, 0) + int(b.get("units", 0) or 0)
+        try:
+            asn_result = await _apply_receiving_to_asn(asn_ref, received_by_pn, user)
+            asn_warnings = asn_result.get("mismatched", [])
+        except Exception as e:
+            logger.exception(f"ASN reconciliation failed for {asn_ref}: {e}")
+            asn_warnings = [{"reason": "reconcile_error", "detail": str(e)}]
+
+    receiving_doc["asn_warnings"] = asn_warnings
     return receiving_doc
 
 @router.get("/receiving")
@@ -2314,35 +2333,140 @@ async def export_inventory(request: Request):
 
 # ==================== ASN (Advanced Shipping Notice) ====================
 
+# Column maps per sheet type. Indexes are 0-based (openpyxl iter_rows order).
+# RAW MATERIAL layout: B=PO, C=Part#, D=Description, F=Qty, N=Country, O=Brand
+# EQUIPMENT layout:    B=Container, D=Part#, E=Description, G=Qty, S=Country, I=Brand
+_ASN_SHEET_LAYOUTS = {
+    "raw": {
+        "header_row": 5,        # row with English headers
+        "data_start": 7,
+        "po": 1,                # col B
+        "part_number": 2,       # col C
+        "description": 3,       # col D
+        "qty": 5,               # col F
+        "country": 13,          # col N
+        "brand": 14,            # col O
+    },
+    "equipment": {
+        "header_row": 5,
+        "data_start": 7,
+        "po": 2,                # col C "Entry number"
+        "part_number": 3,       # col D
+        "description": 4,       # col E
+        "qty": 6,               # col G
+        "country": 18,          # col S
+        "brand": 8,             # col I
+    },
+}
+
+def _detect_sheet_kind(name: str) -> str | None:
+    n = (name or "").upper()
+    if "RAW MATERIAL" in n or "MATERIA PRIMA" in n:
+        return "raw"
+    if "EQUIPMENT" in n or "EQUIPO" in n:
+        return "equipment"
+    if "FINISHED GOODS" in n or "PRODUCTO TERM" in n or "PRODUCTOTERM" in n:
+        return "raw"  # FG uses same layout as RAW in this template family
+    return None
+
+def _find_asn_number(ws) -> str:
+    """Scan top-left region for a cell labelled 'ASN' and return the neighbour value."""
+    for r in range(1, 8):
+        for c in range(1, 16):
+            v = ws.cell(row=r, column=c).value
+            if v is None:
+                continue
+            if str(v).strip().upper() == "ASN":
+                # Look to the right
+                for dc in range(1, 5):
+                    rv = ws.cell(row=r, column=c + dc).value
+                    if rv not in (None, ""):
+                        return str(rv).strip()
+    return ""
+
+def _parse_packing_list(ws, kind: str) -> tuple[list[dict], str]:
+    """Return (items, po_number) from a worksheet using the layout for `kind`."""
+    layout = _ASN_SHEET_LAYOUTS[kind]
+    items: list[dict] = []
+    po_number = ""
+    line_no = 0
+    for row in ws.iter_rows(min_row=layout["data_start"], values_only=True):
+        if not row:
+            continue
+        pn_raw = row[layout["part_number"]] if layout["part_number"] < len(row) else None
+        if pn_raw is None:
+            continue
+        pn = str(pn_raw).strip()
+        if not pn or pn.upper() == "TOTAL":
+            continue
+        qty_raw = row[layout["qty"]] if layout["qty"] < len(row) else 0
+        try:
+            qty = int(float(qty_raw or 0))
+        except (TypeError, ValueError):
+            qty = 0
+        if qty <= 0:
+            continue
+        if not po_number and layout["po"] < len(row) and row[layout["po"]]:
+            po_number = str(row[layout["po"]]).strip()
+        line_no += 1
+        items.append({
+            "line_no": line_no,
+            "part_number": pn.upper(),
+            "description": (str(row[layout["description"]]).strip()
+                            if layout["description"] < len(row) and row[layout["description"]] else ""),
+            "qty_expected": qty,
+            "qty_received": 0,
+            "country": (str(row[layout["country"]]).strip().upper()
+                        if layout["country"] < len(row) and row[layout["country"]] else ""),
+            "brand": (str(row[layout["brand"]]).strip().upper()
+                      if layout["brand"] < len(row) and row[layout["brand"]] else ""),
+        })
+    return items, po_number
+
+
 @router.post("/asn")
 async def create_asn(request: Request):
+    """Manual ASN creation. Caller supplies asn_id; we don't auto-generate so the
+    physical packing-list number stays as the source of truth."""
     user = await require_auth(request)
     body = await request.json()
-    asn_id = gen_id("asn")
-    
+
+    asn_id = str(body.get("asn_id", "")).strip()
+    if not asn_id:
+        raise HTTPException(400, "asn_id requerido (numero del packing list)")
+
     items = body.get("items", [])
     if not items:
         raise HTTPException(400, "El ASN debe contener al menos un item")
-        
+
+    if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
+        raise HTTPException(409, f"ASN {asn_id} ya existe")
+
     normalized_items = []
-    for it in items:
+    for idx, it in enumerate(items, start=1):
+        qty = int(it.get("qty_expected", it.get("quantity", 0)) or 0)
         normalized_items.append({
-            "sku": str(it.get("sku", "")).strip().upper(),
-            "color": str(it.get("color", "")).strip().upper(),
-            "size": str(it.get("size", "")).strip().upper(),
-            "quantity": int(it.get("quantity", 0))
+            "line_no": idx,
+            "part_number": str(it.get("part_number", it.get("sku", ""))).strip().upper(),
+            "description": str(it.get("description", "")).strip(),
+            "qty_expected": qty,
+            "qty_received": 0,
+            "country": str(it.get("country", "")).strip().upper(),
+            "brand": str(it.get("brand", "")).strip().upper(),
         })
-        
+
     doc = {
         "asn_id": asn_id,
-        "vendor": body.get("vendor", "").strip().upper(),
+        "po_number": str(body.get("po_number", "")).strip(),
+        "vendor": str(body.get("vendor", "")).strip().upper(),
         "expected_date": body.get("expected_date", ""),
+        "source_sheet": "",
+        "source_file": "",
         "items": normalized_items,
-        "status": "pending",
+        "status": AsnStatus.PENDING,
         "created_at": now_iso(),
-        "created_by": user.get("user_id")
+        "created_by": user.get("user_id"),
     }
-    
     await db.wms_asn.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -2350,49 +2474,178 @@ async def create_asn(request: Request):
 @router.get("/asn")
 async def list_asn(request: Request):
     await require_auth(request)
-    return await db.wms_asn.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return await db.wms_asn.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+@router.get("/asn/{asn_id}")
+async def get_asn_detail(asn_id: str, request: Request):
+    """Return ASN doc + all boxes received against it (newest first)."""
+    await require_auth(request)
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+    if not asn:
+        raise HTTPException(404, f"ASN {asn_id} no encontrado")
+    boxes = await db.wms_boxes.find(
+        {"asn_reference": asn_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(5000)
+    return {"asn": asn, "boxes": boxes}
 
 @router.post("/asn/import")
-async def import_asn(request: Request, file: UploadFile = File(...)):
+async def import_asn(
+    request: Request,
+    file: UploadFile = File(...),
+    sheet_name: str | None = None,
+):
+    """Two-phase import:
+       - Phase 1 (no sheet_name): inspect the file and return its sheets + detected
+         ASN# per sheet so the user can choose which to import.
+       - Phase 2 (with sheet_name): parse that sheet and persist.
+    """
     user = await require_auth(request)
     import openpyxl
     contents = await file.read()
-    wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        raise HTTPException(400, "Archivo vacio")
-        
-    headers = [str(h).strip() for h in rows[0]]
-    col_map = {h: i for i, h in enumerate(headers)}
-    
-    def get(row, name):
-        idx = col_map.get(name)
-        if idx is None or idx >= len(row): return ""
-        return str(row[idx]).strip() if row[idx] is not None else ""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo leer el archivo: {e}")
 
-    items = []
-    for row in rows[1:]:
-        sku = get(row, "SKU").upper() or get(row, "Style").upper()
-        if not sku: continue
-        items.append({
-            "sku": sku,
-            "color": get(row, "Color").upper(),
-            "size": get(row, "Size").upper(),
-            "quantity": int(float(get(row, "Quantity") or 0))
-        })
-        
+    # Phase 1: inspect
+    if not sheet_name:
+        sheets = []
+        for sn in wb.sheetnames:
+            kind = _detect_sheet_kind(sn)
+            if not kind:
+                continue
+            ws = wb[sn]
+            asn_num = _find_asn_number(ws)
+            # Count candidate data rows (skip Total)
+            layout = _ASN_SHEET_LAYOUTS[kind]
+            count = 0
+            for row in ws.iter_rows(min_row=layout["data_start"], values_only=True):
+                pn = row[layout["part_number"]] if row and layout["part_number"] < len(row) else None
+                if pn and str(pn).strip().upper() != "TOTAL":
+                    count += 1
+            sheets.append({
+                "name": sn,
+                "kind": kind,
+                "detected_asn_id": asn_num,
+                "row_count": count,
+            })
+        if not sheets:
+            raise HTTPException(400, "No se encontraron hojas compatibles (RAW MATERIAL / EQUIPMENT / FINISHED GOODS)")
+        return {"action": "select_sheet", "filename": file.filename, "sheets": sheets}
+
+    # Phase 2: import the chosen sheet
+    if sheet_name not in wb.sheetnames:
+        raise HTTPException(400, f"Hoja '{sheet_name}' no existe en el archivo")
+    kind = _detect_sheet_kind(sheet_name)
+    if not kind:
+        raise HTTPException(400, f"Hoja '{sheet_name}' no es de un tipo soportado")
+
+    ws = wb[sheet_name]
+    asn_id = _find_asn_number(ws)
+    if not asn_id:
+        raise HTTPException(400, "No se encontro el numero de ASN en la hoja (celda contigua al label 'ASN')")
+
+    if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
+        raise HTTPException(409, f"ASN {asn_id} ya existe en el sistema")
+
+    items, po_number = _parse_packing_list(ws, kind)
+    if not items:
+        raise HTTPException(400, "No se encontraron lineas con cantidad > 0 en la hoja")
+
+    # Vendor: most common brand wins, fallback to first
+    brands = [it["brand"] for it in items if it.get("brand")]
+    vendor = max(set(brands), key=brands.count) if brands else ""
+
     doc = {
-        "asn_id": gen_id("asn"),
-        "vendor": "EXCEL_IMPORT",
+        "asn_id": asn_id,
+        "po_number": po_number,
+        "vendor": vendor,
         "expected_date": now_iso(),
+        "source_sheet": sheet_name,
+        "source_file": file.filename or "",
         "items": items,
-        "status": "pending",
+        "status": AsnStatus.PENDING,
         "created_at": now_iso(),
-        "created_by": user.get("user_id")
+        "created_by": user.get("user_id"),
     }
     await db.wms_asn.insert_one(doc)
-    return {"status": "success", "asn_id": doc["asn_id"], "items_count": len(items)}
+
+    await log_movement(user, MovementType.ASN_IMPORTED, {
+        "asn_id": asn_id, "po_number": po_number,
+        "items": len(items), "sheet": sheet_name,
+        "total_qty": sum(it["qty_expected"] for it in items),
+    })
+
+    return {
+        "status": "success",
+        "asn_id": asn_id,
+        "po_number": po_number,
+        "vendor": vendor,
+        "items_count": len(items),
+        "total_qty_expected": sum(it["qty_expected"] for it in items),
+    }
+
+
+async def _apply_receiving_to_asn(asn_id: str, received_by_pn: dict[str, int], user: dict) -> dict:
+    """Increment qty_received per part_number on the matching ASN.
+    Returns {matched: [...], mismatched: [...]} for caller to surface warnings.
+    Mongo standalone (no transactions) — we do one read + one update_one with
+    a positional operator per matched part. Idempotency isn't critical because
+    each receiving event is a one-shot user action.
+    """
+    result = {"matched": [], "mismatched": []}
+    if not asn_id or not received_by_pn:
+        return result
+
+    asn = await db.wms_asn.find_one({"asn_id": asn_id})
+    if not asn:
+        # Caller's choice was "warning permisivo": don't block, just flag
+        result["mismatched"] = [{"part_number": pn, "qty": q, "reason": "asn_not_found"}
+                                for pn, q in received_by_pn.items()]
+        return result
+
+    items_by_pn = {it.get("part_number", "").upper(): it for it in asn.get("items", [])}
+    for pn, qty in received_by_pn.items():
+        pn_u = pn.upper()
+        if pn_u in items_by_pn:
+            await db.wms_asn.update_one(
+                {"asn_id": asn_id, "items.part_number": pn_u},
+                {"$inc": {"items.$.qty_received": int(qty)}},
+            )
+            result["matched"].append({"part_number": pn_u, "qty": qty})
+        else:
+            result["mismatched"].append({
+                "part_number": pn_u, "qty": qty,
+                "reason": "part_not_in_asn",
+            })
+
+    # Recalculate status
+    fresh = await db.wms_asn.find_one({"asn_id": asn_id}, {"items": 1})
+    items = fresh.get("items", []) if fresh else []
+    total_exp = sum(it.get("qty_expected", 0) for it in items)
+    total_rcv = sum(it.get("qty_received", 0) for it in items)
+    if total_rcv <= 0:
+        new_status = AsnStatus.PENDING
+    elif total_rcv >= total_exp and all(
+        it.get("qty_received", 0) >= it.get("qty_expected", 0) for it in items
+    ):
+        new_status = AsnStatus.RECEIVED
+    else:
+        new_status = AsnStatus.PARTIAL
+
+    update = {"status": new_status}
+    if new_status == AsnStatus.RECEIVED:
+        update["received_at"] = now_iso()
+    await db.wms_asn.update_one({"asn_id": asn_id}, {"$set": update})
+
+    await log_movement(user, MovementType.ASN_RECEIPT, {
+        "asn_id": asn_id,
+        "received_by_pn": received_by_pn,
+        "mismatched": result["mismatched"],
+        "new_status": new_status,
+    })
+
+    return result
 
 # ==================== SUPERVISOR OVERRIDES ====================
 

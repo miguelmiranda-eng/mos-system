@@ -4,6 +4,7 @@ import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory } from "lucide
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
+import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
 
@@ -15,7 +16,7 @@ export const ReceivingModule = () => {
     customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '',
     boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '',
-    is_bpo: false,
+    is_bpo: false, asn_reference: '',
   });
   const [printMode, setPrintMode] = useState('cajas'); // 'cajas' o 'piezas'
   // boxMode: 'standard' = 72 fijos. 'custom' = unitsPerBox configurable.
@@ -58,6 +59,7 @@ export const ReceivingModule = () => {
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
+  const [openAsns, setOpenAsns] = useState([]);
 
   const load = useCallback(() => { fetcher('/receiving').then(setRecords).catch(logLoadError('data')); }, []);
   useEffect(() => { load(); }, [load]);
@@ -70,6 +72,9 @@ export const ReceivingModule = () => {
     fetcher('/inventory/field-options').then(data => {
       setFieldOptions({ descriptions: data.descriptions || [], countries: data.countries || [], fabrics: data.fabrics || [] });
     }).catch(logLoadError('data'));
+    fetcher('/asn').then(data => {
+      setOpenAsns((data || []).filter(a => a.status !== AsnStatus.RECEIVED));
+    }).catch(logLoadError('ASNs'));
   }, []);
 
   const loadOptions = useCallback(async (customer, manufacturer, style) => {
@@ -131,7 +136,7 @@ export const ReceivingModule = () => {
         toast.success(res?.message || 'Registro actualizado exitosamente');
         setShowForm(false);
         setEditingId(null);
-        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
         setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
         load();
       } else {
@@ -163,12 +168,23 @@ export const ReceivingModule = () => {
         if (res.ok) {
           const data = await res.json();
           toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
+          // Surface ASN reconciliation warnings (warning-permissive: never blocks).
+          const warns = data.asn_warnings || [];
+          if (warns.length > 0) {
+            const reasons = warns.map(w => {
+              if (w.reason === 'asn_not_found') return `ASN no encontrado`;
+              if (w.reason === 'part_not_in_asn') return `${w.part_number} no en ASN`;
+              return w.reason || 'mismatch';
+            });
+            toast.warning(`ASN ${form.asn_reference}: ${reasons.join(', ')}`, { duration: 6000 });
+          }
           if (payload.is_bpo) {
             handlePrintLabel(data);
           }
           setShowForm(false);
-          setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false });
+          setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
           setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX);
+          fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
           load();
         } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
       }
@@ -304,7 +320,7 @@ export const ReceivingModule = () => {
           {t('wms_recent_entries')}: {records.length}
         </div>
         <button
-          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setShowForm(!showForm); }}
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setShowForm(!showForm); }}
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
           data-testid="new-receiving-btn"
         >
@@ -445,8 +461,30 @@ export const ReceivingModule = () => {
               <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" />
             </div>
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_location') || 'Ubicación'}</label>
+              <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">ASN (Packing List)</label>
+              <input
+                list="rcv-asn-list"
+                placeholder="N° de ASN (opcional)"
+                value={form.asn_reference}
+                onChange={e => setForm(p => ({ ...p, asn_reference: e.target.value.trim() }))}
+                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono"
+                data-testid="rcv-asn"
+                disabled={!!editingId}
+              />
+              <datalist id="rcv-asn-list">
+                {openAsns.map(a => (
+                  <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
+                ))}
+              </datalist>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
-            <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value.toUpperCase() }))} className="px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
             <label className="flex items-center gap-2 cursor-pointer p-2 bg-background/50 border border-border rounded-lg group hover:border-primary/50 transition-all">
               <input
                 type="checkbox"

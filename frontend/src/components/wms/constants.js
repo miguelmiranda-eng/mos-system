@@ -27,6 +27,12 @@ export const CycleCountStatus = Object.freeze({
   APPROVED: "approved",
 });
 
+export const AsnStatus = Object.freeze({
+  PENDING: "pending",
+  PARTIAL: "partial",
+  RECEIVED: "received",
+});
+
 export const TaskType = Object.freeze({
   PUTAWAY: "putaway",
   CROSS_DOCK: "cross_dock",
