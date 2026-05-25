@@ -62,3 +62,4 @@ class MovementType:
     CYCLE_COUNT_CREATED = "cycle_count_created"
     CYCLE_COUNT_APPROVED = "cycle_count_approved"
     CYCLE_COUNT_DELETED = "cycle_count_deleted"
+    BULK_RELOCATION = "bulk_relocation"

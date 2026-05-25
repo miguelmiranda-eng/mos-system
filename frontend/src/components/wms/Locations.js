@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search } from "lucide-react";
+import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster } from "./lib";
+import { API, fetcher, poster, logLoadError } from "./lib";
 
 export const LocationsModule = () => {
   const { t } = useLang();
@@ -13,6 +13,9 @@ export const LocationsModule = () => {
   const [search, setSearch] = useState('');
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
   const [activeTab, setActiveTab] = useState('custom'); // 'custom' or 'system'
+  // Bulk-move state: { from: locObj, to: '' } when modal is open
+  const [moveBulk, setMoveBulk] = useState(null);
+  const [movingBulk, setMovingBulk] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -103,6 +106,29 @@ export const LocationsModule = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBulkMove = async () => {
+    if (!moveBulk || !moveBulk.to?.trim()) { toast.error('Selecciona ubicación destino'); return; }
+    const dst = moveBulk.to.trim().toUpperCase();
+    const src = moveBulk.from.name;
+    if (dst === src.toUpperCase()) { toast.error('La ubicación destino debe ser distinta'); return; }
+    setMovingBulk(true);
+    try {
+      const res = await poster('/move-location', { from: src, to: dst });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(data.message || 'Stock movido');
+        setMoveBulk(null);
+        load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al mover');
+      }
+    } catch (err) {
+      logLoadError('bulk move')(err);
+      toast.error('Error de conexión');
+    } finally { setMovingBulk(false); }
   };
 
   const filtered = locations.filter(l => {
@@ -279,6 +305,15 @@ export const LocationsModule = () => {
                           >
                             <Printer className="w-4 h-4" />
                           </button>
+                          {!isEmpty && (
+                            <button
+                              onClick={() => setMoveBulk({ from: l, to: '' })}
+                              className="p-2 text-muted-foreground hover:text-blue-400 transition-all"
+                              title={`Mover todo el contenido de ${l.name} a otra ubicación`}
+                            >
+                              <ArrowRightLeft className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
                             className="p-2 text-muted-foreground hover:text-yellow-500 transition-all"
@@ -333,6 +368,69 @@ export const LocationsModule = () => {
           ));
         })()}
       </div>
+      {moveBulk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-md p-6 bg-card border border-blue-500/40 rounded-[2.5rem] shadow-2xl space-y-5 mx-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                  <ArrowRightLeft className="w-5 h-5 text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black uppercase tracking-tighter">Mover todo el stock</h3>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest opacity-60">Bulk relocation</p>
+                </div>
+              </div>
+              <button onClick={() => setMoveBulk(null)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={movingBulk}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-secondary/40 rounded-2xl p-4 border border-border/20">
+              <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest mb-1">Origen</div>
+              <div className="font-mono font-black text-red-400 text-lg">{moveBulk.from.name}</div>
+              <div className="text-[11px] text-muted-foreground font-bold mt-1">
+                {moveBulk.from.inventory_summary?.skus_count || 0} SKUs · {(moveBulk.from.inventory_summary?.total_units || 0).toLocaleString()} unidades
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2 mb-1 block">Ubicación destino</label>
+              <input
+                value={moveBulk.to}
+                onChange={e => setMoveBulk(m => ({ ...m, to: e.target.value.toUpperCase() }))}
+                placeholder="Ej: A-02-01"
+                className="w-full px-4 py-3 bg-background border border-border rounded-2xl text-lg font-black font-mono focus:ring-4 focus:ring-blue-500/20"
+                data-testid="bulk-move-dst"
+                autoFocus
+              />
+              <p className="text-[10px] text-muted-foreground/60 mt-2 px-2">
+                La ubicación destino debe existir. Si ya tiene el mismo SKU, las unidades se sumarán.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleBulkMove}
+                disabled={movingBulk || !moveBulk.to?.trim()}
+                className="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                data-testid="bulk-move-confirm"
+              >
+                {movingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
+                Mover
+              </button>
+              <button
+                onClick={() => setMoveBulk(null)}
+                disabled={movingBulk}
+                className="flex-1 py-3 bg-secondary text-foreground rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-secondary/80 transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingLoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-md p-6 bg-card border border-border rounded-[2.5rem] shadow-2xl space-y-6 mx-4">

@@ -220,6 +220,87 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
 
     return locs
 
+@router.post("/move-location")
+async def move_location_bulk(request: Request):
+    """Move ALL inventory from one location to another in one operation.
+    Body: { from: str, to: str }. Both must already exist. Performs:
+      1. wms_boxes.update_many({location: from}, {location: to})
+      2. wms_inventory: handles duplicate SKUs at the destination by merging
+         (sum units_on_hand + units_allocated + total_boxes, delete source row).
+      3. Single 'bulk_relocation' movement logged with totals.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    src = (body.get("from") or "").strip().upper()
+    dst = (body.get("to") or "").strip().upper()
+    if not src or not dst:
+        raise HTTPException(400, "from y to son obligatorios")
+    if src == dst:
+        raise HTTPException(400, "from y to no pueden ser iguales")
+
+    # Both locations must exist
+    src_loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(src)}$", "$options": "i"}})
+    dst_loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}})
+    if not src_loc:
+        raise HTTPException(404, f"Ubicación origen '{src}' no encontrada")
+    if not dst_loc:
+        raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
+
+    # 1. Bulk move boxes (no merge logic needed; box_id is unique)
+    box_res = await db.wms_boxes.update_many(
+        {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}},
+        {"$set": {"location": dst}}
+    )
+    boxes_moved = box_res.modified_count
+
+    # 2. Inventory: merge per SKU at destination
+    src_rows = await db.wms_inventory.find(
+        {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}, "units_on_hand": {"$gt": 0}}
+    ).to_list(5000)
+    units_moved = 0
+    skus_moved = 0
+    for row in src_rows:
+        sku = row.get("sku") or row.get("style")
+        color = row.get("color", "")
+        size = row.get("size", "")
+        on_hand = row.get("units_on_hand", 0)
+        allocated = row.get("units_allocated", 0)
+        boxes_cnt = row.get("total_boxes", 0)
+
+        # Look for existing row at destination
+        existing = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": dst
+        })
+        if existing:
+            await db.wms_inventory.update_one(
+                {"_id": existing["_id"]},
+                {"$inc": {"units_on_hand": on_hand, "units_allocated": allocated, "total_boxes": boxes_cnt},
+                 "$set": {"updated_at": now_iso()}}
+            )
+            await db.wms_inventory.delete_one({"_id": row["_id"]})
+        else:
+            await db.wms_inventory.update_one(
+                {"_id": row["_id"]},
+                {"$set": {"location": dst, "updated_at": now_iso()}}
+            )
+        units_moved += on_hand
+        skus_moved += 1
+
+    await log_movement(user, MovementType.BULK_RELOCATION, {
+        "from": src, "to": dst,
+        "boxes_moved": boxes_moved,
+        "skus_moved": skus_moved,
+        "units_moved": units_moved,
+    })
+    await notify_badge_change("all")
+
+    return {
+        "message": f"Movidas {skus_moved} SKUs ({units_moved} unidades, {boxes_moved} cajas) de {src} a {dst}",
+        "from": src, "to": dst,
+        "skus_moved": skus_moved, "units_moved": units_moved, "boxes_moved": boxes_moved,
+    }
+
+
 @router.delete("/locations/{location_id}")
 async def delete_location(location_id: str, request: Request):
     user = await require_auth(request)
