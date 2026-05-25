@@ -249,6 +249,10 @@ async def create_receiving(request: Request):
 
     if not style:
         raise HTTPException(400, "Style requerido")
+    if not country_of_origin:
+        raise HTTPException(400, "País de origen (country_of_origin) es obligatorio")
+    if not fabric_content:
+        raise HTTPException(400, "Contenido / fabric_content es obligatorio")
 
     # Auto-generate SKU if not provided
     if not sku and style:

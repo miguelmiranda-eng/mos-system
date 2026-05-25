@@ -113,6 +113,11 @@ export const ReceivingModule = () => {
 
   const handleSubmit = async () => {
     if (!form.style) { toast.error(t('wms_style_req')); return; }
+    // Required fields enforced only on CREATE; editing legacy records is allowed
+    if (!editingId) {
+      if (!form.country_of_origin?.trim()) { toast.error('País de origen es obligatorio'); return; }
+      if (!form.fabric_content?.trim()) { toast.error('Contenido / Fabric es obligatorio'); return; }
+    }
     setLoading(true);
     try {
       if (editingId) {
@@ -345,12 +350,20 @@ export const ReceivingModule = () => {
               <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('country_of_origin')}</label>
-              <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>}
+              </label>
+              <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
+                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" />
+              </div>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('fabric_content')}</label>
-              <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>}
+              </label>
+              <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
+                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" />
+              </div>
             </div>
           </div>
           {/* Box capacity mode (standard 72 vs custom) */}
