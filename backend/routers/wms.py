@@ -1,5 +1,6 @@
 """WMS (Warehouse Management System) routes."""
-from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
+from typing import Optional
 from fastapi.responses import StreamingResponse
 from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
 from ws_manager import ws_manager
@@ -2589,7 +2590,7 @@ async def delete_asn(asn_id: str, request: Request):
 async def import_asn(
     request: Request,
     file: UploadFile = File(...),
-    sheet_name: str | None = None,
+    sheet_name: Optional[str] = Query(default=None),
 ):
     """Two-phase import:
        - Phase 1 (no sheet_name): inspect the file and return its sheets + detected
@@ -2598,11 +2599,18 @@ async def import_asn(
     """
     user = await require_auth(request)
     import openpyxl
-    contents = await file.read()
+    try:
+        contents = await file.read()
+    except Exception as e:
+        logger.exception("ASN import: failed to read uploaded file")
+        raise HTTPException(400, f"No se pudo leer el archivo subido: {e}")
+    if not contents:
+        raise HTTPException(400, "Archivo vacio o no recibido")
     try:
         wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
     except Exception as e:
-        raise HTTPException(400, f"No se pudo leer el archivo: {e}")
+        logger.exception("ASN import: openpyxl could not open workbook")
+        raise HTTPException(400, f"No se pudo leer el archivo Excel: {e}")
 
     # Helper: convert 0-based col index to Excel letter for the UI
     def _col_letter(idx: int) -> str:

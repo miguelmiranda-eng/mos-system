@@ -36,6 +36,20 @@ export const AsnModule = () => {
 
   useEffect(() => { loadAsns(); }, [loadAsns]);
 
+  // Render FastAPI's "detail" field as a string: it can be a plain string, a
+  // single validation error object, or an array of validation errors. Passing
+  // an object/array directly into <Toaster/> renders an object as a React
+  // child → React error #31 → black screen. Always coerce to string.
+  const errMsg = (detail, fallback) => {
+    if (!detail) return fallback;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail.map(d => (d && d.msg) ? `${(d.loc || []).join('.')}: ${d.msg}` : String(d)).join(' · ');
+    }
+    if (detail && typeof detail === "object" && detail.msg) return detail.msg;
+    try { return JSON.stringify(detail); } catch { return fallback; }
+  };
+
   // Phase 1: inspect file → get available sheets
   const handleFilePick = async (e) => {
     const file = e.target.files[0];
@@ -49,7 +63,8 @@ export const AsnModule = () => {
       const res = await fetch(`${API}/asn/import`, { method: "POST", body: fd, credentials: "include" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "Error al leer el archivo");
+        console.error("[ASN inspect] failed", res.status, err);
+        toast.error(`Error ${res.status}: ${errMsg(err.detail, "no se pudo leer el archivo")}`);
         setPendingFile(null);
         return;
       }
@@ -68,6 +83,7 @@ export const AsnModule = () => {
         loadAsns();
       }
     } catch (err) {
+      console.error("[ASN inspect] connection error", err);
       toast.error("Error de conexión");
       setPendingFile(null);
     } finally { setLoading(false); }
@@ -84,7 +100,8 @@ export const AsnModule = () => {
       const res = await fetch(url, { method: "POST", body: fd, credentials: "include" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.detail || "Error al importar");
+        console.error("[ASN import] failed", res.status, data);
+        toast.error(`Error ${res.status}: ${errMsg(data.detail, "no se pudo importar")}`);
         return;
       }
       toast.success(`ASN ${data.asn_id} importado · ${data.items_count} líneas · ${data.total_qty_expected} pzs`);
@@ -93,6 +110,7 @@ export const AsnModule = () => {
       setChosenSheet("");
       loadAsns();
     } catch (err) {
+      console.error("[ASN import] connection error", err);
       toast.error("Error de conexión");
     } finally { setLoading(false); }
   };
