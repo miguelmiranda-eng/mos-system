@@ -1,6 +1,6 @@
 """Auth routes: session, me, logout, email/password auth."""
 from fastapi import APIRouter, HTTPException, Request, Response
-from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS
+from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS, SUPERSU_EMAILS
 from datetime import datetime, timezone, timedelta
 from passlib.hash import bcrypt
 from fastapi.responses import RedirectResponse
@@ -12,7 +12,17 @@ logger = logging.getLogger(__name__)
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 
-from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS, IS_PROD
+def _resolve_role(email: str, existing_role: str = "user") -> str:
+    """Permanent role assignment by email. SUPERSU wins over ADMIN, which wins
+    over whatever was previously persisted."""
+    e = (email or "").lower()
+    if e in {s.lower() for s in SUPERSU_EMAILS}:
+        return "supersu"
+    if e in {s.lower() for s in ADMIN_EMAILS}:
+        return "admin"
+    return existing_role or "user"
+
+from deps import db, get_current_user, require_auth, require_admin, log_activity, ADMIN_EMAILS, SUPERSU_EMAILS, IS_PROD  # noqa: F811
 
 # Direct Google OAuth Config
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
@@ -101,13 +111,13 @@ async def google_callback(code: str, response: Response):
     existing_user = await db.users.find_one({"email": email})
     if existing_user:
         user_id = existing_user["user_id"]
-        role = "admin" if email in ADMIN_EMAILS else existing_user.get("role", "user")
+        role = _resolve_role(email, existing_user.get("role", "user"))
         await db.users.update_one({"email": email}, {"$set": {
             "name": name, "picture": picture, "role": role, "auth_type": "google"
         }})
     else:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        role = "admin" if email in ADMIN_EMAILS else "user"
+        role = _resolve_role(email)
         new_user = {
             "user_id": user_id, "email": email, "name": name,
             "picture": picture, "role": role, "auth_type": "google",
@@ -153,13 +163,13 @@ async def create_session(request: Request, response: Response):
     email = user_data["email"]
     # ... rest of the legacy logic kept as is ...
     user_id = f"user_{uuid.uuid4().hex[:12]}"
-    role = "admin" if user_data["email"] in ADMIN_EMAILS else "user"
+    role = _resolve_role(user_data["email"])
     existing_user = await db.users.find_one({"email": user_data["email"]}, {"_id": 0})
     if existing_user:
         user_id = existing_user["user_id"]
         await db.users.update_one({"user_id": user_id}, {"$set": {
             "name": user_data["name"], "picture": user_data.get("picture"),
-            "role": "admin" if user_data["email"] in ADMIN_EMAILS else existing_user.get("role", "user"),
+            "role": _resolve_role(user_data["email"], existing_user.get("role", "user")),
             "auth_type": "google"
         }})
     else:
@@ -188,6 +198,9 @@ async def admin_create_user(request: Request, response: Response):
     # Solo supersu puede asignar un rol distinto a "general"
     requested_role = body.get("role", "general")
     role = requested_role if admin.get("role") == "supersu" else "general"
+    # Permanent supersu emails always win, regardless of what was requested
+    if email in {s.lower() for s in SUPERSU_EMAILS}:
+        role = "supersu"
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email invalido")
@@ -224,6 +237,11 @@ async def email_login(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Esta cuenta usa Google. Inicia sesion con Google.")
     if not bcrypt.verify(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Credenciales invalidas")
+    # Permanent supersu enforcement: fix the role on the spot so the response
+    # already reflects the correct role (not only on the next /me roundtrip).
+    if email in {s.lower() for s in SUPERSU_EMAILS} and user.get("role") != "supersu":
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"role": "supersu"}})
+        user["role"] = "supersu"
     session_token = await _create_session(user["user_id"], response)
     await log_activity(user, "login", {"method": "email"})
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}

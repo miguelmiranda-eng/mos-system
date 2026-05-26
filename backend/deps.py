@@ -38,6 +38,12 @@ if not db_name:
 db = client[db_name]
 
 # Config
+# Emails that MUST always have the "supersu" role. Enforced on every login AND
+# every authenticated request (see get_current_user), so the role cannot be
+# downgraded accidentally via the admin UI.
+SUPERSU_EMAILS = [
+    "miguel.miranda@prosper-mfg.com",
+]
 ADMIN_EMAILS = [
     "miguel.miranda@prosper-mfg.com",
     "200492miguel.miranda@gmail.com"
@@ -401,6 +407,16 @@ async def get_current_user(request: Request) -> Optional[Dict]:
     if expires_at < datetime.now(timezone.utc):
         return None
     user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+    if user and user.get("email", "").lower() in {e.lower() for e in SUPERSU_EMAILS}:
+        # Force the supersu role for emails in the permanent supersu list.
+        # If the persisted role drifted, write it back so future reads stay
+        # consistent and the admin UI reflects the truth.
+        if user.get("role") != "supersu":
+            await db.users.update_one(
+                {"user_id": session["user_id"]},
+                {"$set": {"role": "supersu"}},
+            )
+            user["role"] = "supersu"
     return user
 
 async def require_auth(request: Request) -> Dict:
