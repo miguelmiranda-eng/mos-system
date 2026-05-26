@@ -164,44 +164,79 @@ export const ReceivingModule = () => {
   // maps to Receiving's manufacturer; ASN doc-level customer maps to
   // Receiving's customer; fabric is embedded inside the description text)
   // so we look up each field against the actually-loaded dropdown options
-  // and only fill when we can prove a match.
+  // first. If no match is found, we fall back to the raw ASN value — that
+  // way the field is visible and the operator can adjust, rather than
+  // staying mysteriously blank.
   const pickAsnLine = async (line) => {
     setSelectedAsnLine(line.line_no);
 
-    const updates = { style: line.part_number || form.style };
+    // pick(needle, haystack, opts) -> {value, source: 'match'|'raw'|''}
+    const pick = (needle, haystack, opts) => {
+      const matched = findInOptions(needle, haystack, opts);
+      if (matched) return { value: matched, source: 'match' };
+      if (needle) return { value: String(needle).trim(), source: 'raw' };
+      return { value: '', source: '' };
+    };
 
-    // Field-options dropdowns (country / description / fabric) are loaded
-    // once at mount, so we can match against them synchronously.
-    const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
-    if (country) updates.country_of_origin = country;
-    const description = findInOptions(line.description, fieldOptions.descriptions);
-    if (description) updates.description = description;
-    const fabric = findInOptions(line.fabric_content, fieldOptions.fabrics);
-    if (fabric) updates.fabric_content = fabric;
+    const updates = {};
+    const log = []; // human summary of what happened, surfaced as toast
+
+    // Style: literal — same identifier on both sides
+    if (line.part_number) {
+      updates.style = line.part_number;
+      log.push('Style ← ASN');
+    }
+
+    const country = pick(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
+    if (country.value) {
+      updates.country_of_origin = country.value;
+      log.push(`País ${country.source === 'match' ? '✓' : '⚠ crudo'}`);
+    }
+
+    const description = pick(line.description, fieldOptions.descriptions);
+    if (description.value) {
+      updates.description = description.value;
+      log.push(`Descripción ${description.source === 'match' ? '✓' : '⚠ crudo'}`);
+    }
+
+    const fabric = pick(line.fabric_content, fieldOptions.fabrics);
+    if (fabric.value) {
+      updates.fabric_content = fabric.value;
+      log.push(`Tela ${fabric.source === 'match' ? '✓' : '⚠ crudo'}`);
+    }
 
     // Customer first — picked from doc-level "Cliente:" extracted at import.
-    const customer = findInOptions(selectedAsnDoc?.customer, options.customers);
-    if (customer) updates.customer = customer;
+    const customer = pick(selectedAsnDoc?.customer, options.customers);
+    if (customer.value) {
+      updates.customer = customer.value;
+      log.push(`Cliente ${customer.source === 'match' ? '✓' : '⚠ crudo'}`);
+    }
 
-    // Manufacturer comes from the ASN line's brand. Needs the customer's
-    // manufacturer list, which is cascading: refetch before matching so we
-    // don't miss a manufacturer that exists only under this customer.
-    const effectiveCustomer = customer || form.customer;
-    let manufacturer = '';
+    // Manufacturer comes from the ASN line's brand. If we autofilled a
+    // customer that exists in the cascade, refetch that customer's
+    // manufacturer list first so the smart match has the right haystack.
+    const effectiveCustomer = customer.value || form.customer;
+    let manufacturerHaystack = options.manufacturers || [];
     if (effectiveCustomer) {
       try {
         const data = await fetcher(`/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}`);
         setOptions(prev => ({ ...prev, ...data }));
-        manufacturer = findInOptions(line.brand, data.manufacturers || []);
+        manufacturerHaystack = data.manufacturers || [];
       } catch (err) {
-        manufacturer = findInOptions(line.brand, options.manufacturers);
+        // Fall back to whatever we already had
       }
-    } else {
-      manufacturer = findInOptions(line.brand, options.manufacturers);
     }
-    if (manufacturer) updates.manufacturer = manufacturer;
+    const manufacturer = pick(line.brand, manufacturerHaystack);
+    if (manufacturer.value) {
+      updates.manufacturer = manufacturer.value;
+      log.push(`Fabricante ${manufacturer.source === 'match' ? '✓' : '⚠ crudo'}`);
+    }
 
     setForm(p => ({ ...p, ...updates }));
+
+    if (log.length > 0) {
+      toast.success(`Autollenado: ${log.join(' · ')}`, { duration: 4000 });
+    }
   };
 
   const clearAsnLine = () => {
