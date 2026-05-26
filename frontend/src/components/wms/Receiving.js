@@ -8,6 +8,95 @@ import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
 
+// ISO3 country code -> list of likely full-name variants found in dropdowns.
+// Order matters: first hit in the actual dropdown wins. Add codes as needed.
+const COUNTRY_ISO3 = Object.freeze({
+  DOM: ['REPUBLICA DOMINICANA', 'REPÚBLICA DOMINICANA', 'DOMINICAN REPUBLIC', 'REP. DOMINICANA'],
+  NIC: ['NICARAGUA'],
+  HTI: ['HAITI', 'HAITÍ'],
+  HAI: ['HAITI', 'HAITÍ'],
+  MEX: ['MEXICO', 'MÉXICO'],
+  USA: ['ESTADOS UNIDOS', 'UNITED STATES', 'EE.UU.', 'EEUU'],
+  GTM: ['GUATEMALA'],
+  HND: ['HONDURAS'],
+  SLV: ['EL SALVADOR'],
+  CRI: ['COSTA RICA'],
+  PAN: ['PANAMA', 'PANAMÁ'],
+  COL: ['COLOMBIA'],
+  PER: ['PERU', 'PERÚ'],
+  ECU: ['ECUADOR'],
+  CHN: ['CHINA'],
+  IND: ['INDIA'],
+  BGD: ['BANGLADESH'],
+  VNM: ['VIETNAM'],
+  PAK: ['PAKISTAN', 'PAKISTÁN'],
+  IDN: ['INDONESIA'],
+  KHM: ['CAMBOYA', 'CAMBODIA'],
+  TUR: ['TURQUIA', 'TURQUÍA', 'TURKEY'],
+});
+
+// Find the best match for `needle` inside `haystack` (string[]).
+// Strategy: ISO3 country lookup (if opts.iso3 supplied and needle is 3 letters)
+// -> exact case-insensitive -> haystack item contains needle ->
+// needle contains haystack item (with min length safeguard).
+// Returns the original-cased haystack item, or empty string when no match.
+const findInOptions = (needle, haystack = [], opts = {}) => {
+  if (!needle || !Array.isArray(haystack) || haystack.length === 0) return '';
+  const n = String(needle).trim().toUpperCase();
+  if (!n) return '';
+
+  // 1. ISO3 country code: try each known full-name variant
+  if (opts.iso3 && n.length === 3 && opts.iso3[n]) {
+    for (const cand of opts.iso3[n]) {
+      const c = cand.toUpperCase();
+      const found = haystack.find(h => String(h).toUpperCase() === c);
+      if (found) return found;
+    }
+    for (const cand of opts.iso3[n]) {
+      const c = cand.toUpperCase();
+      const found = haystack.find(h => {
+        const hu = String(h).toUpperCase();
+        return hu.includes(c) || c.includes(hu);
+      });
+      if (found) return found;
+    }
+  }
+
+  // 2. Exact (case-insensitive)
+  const exact = haystack.find(h => String(h).toUpperCase() === n);
+  if (exact) return exact;
+
+  // 3. Haystack item contains needle
+  const contains = haystack.find(h => String(h).toUpperCase().includes(n));
+  if (contains) return contains;
+
+  // 4. Needle contains haystack item (when haystack item is at least 4 chars
+  //    to avoid spurious matches on short abbreviations)
+  const reverse = haystack.find(h => {
+    const hu = String(h).toUpperCase();
+    return hu.length >= 4 && n.includes(hu);
+  });
+  if (reverse) return reverse;
+
+  // 5. Token overlap — last resort for free-form text like descriptions.
+  //    Tokenize both, require >= 50% of needle's non-trivial tokens to be in
+  //    the candidate. Pick the candidate with the most overlap.
+  const STOP = new Set(['DE', 'DEL', 'LA', 'EL', 'PARA', 'CON', 'Y', 'O', 'A', 'EN', 'POR']);
+  const tokenize = (s) => String(s).toUpperCase().split(/[^A-Z0-9%]+/).filter(t => t.length >= 2 && !STOP.has(t));
+  const needleTokens = tokenize(n);
+  if (needleTokens.length >= 3) {
+    let bestItem = '', bestScore = 0;
+    for (const h of haystack) {
+      const hTokens = new Set(tokenize(h));
+      const overlap = needleTokens.filter(t => hTokens.has(t)).length;
+      if (overlap > bestScore) { bestScore = overlap; bestItem = h; }
+    }
+    if (bestScore >= Math.ceil(needleTokens.length * 0.5)) return bestItem;
+  }
+
+  return '';
+};
+
 export const ReceivingModule = () => {
   const { t } = useLang();
   const [records, setRecords] = useState([]);
@@ -70,12 +159,29 @@ export const ReceivingModule = () => {
     it => (it.qty_received || 0) < (it.qty_expected || 0)
   );
 
-  // Only marks the ASN line as the reconciliation target — does NOT autofill
-  // the form, because the ASN vocabulary (e.g. country "DOM") doesn't match
-  // the Receiving dropdowns (e.g. "REPUBLICA DOMINICANA"). The operator types
-  // their own values; the backend uses asn_line_no to decrement directly.
+  // Smart autofill from ASN line. The two vocabularies don't agree literally
+  // (ASN has ISO3 "DOM", dropdowns have "REPUBLICA DOMINICANA"; brands map
+  // approximately to customers; descriptions vary in wording) so we look up
+  // each field against the actually-loaded dropdown options and only fill
+  // when we can prove a match.
   const pickAsnLine = (line) => {
     setSelectedAsnLine(line.line_no);
+
+    const updates = { style: line.part_number || form.style };
+    const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
+    if (country) updates.country_of_origin = country;
+    const description = findInOptions(line.description, fieldOptions.descriptions);
+    if (description) updates.description = description;
+    const customer = findInOptions(line.brand, options.customers);
+    if (customer) updates.customer = customer;
+
+    setForm(p => ({ ...p, ...updates }));
+
+    // Refresh cascading dropdowns (manufacturers/styles/colors) when the
+    // customer was autofilled, so they reflect the chosen customer.
+    if (customer && customer !== form.customer) {
+      loadOptions(customer, '', '');
+    }
   };
 
   const clearAsnLine = () => {
@@ -512,7 +618,7 @@ export const ReceivingModule = () => {
                     <div className="flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-indigo-400" />
                       <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para matchear este recibo
+                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
                       </span>
                     </div>
                     {selectedAsnLine != null && (
