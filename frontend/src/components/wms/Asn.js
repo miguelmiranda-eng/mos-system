@@ -272,6 +272,7 @@ export const AsnModule = () => {
                       <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-x-3">
                         <span className="uppercase tracking-wider">tipo: {s.kind}</span>
                         <span>ASN: <b className="text-foreground">{s.detected_asn_id || '—'}</b></span>
+                        <span>cliente: <b className="text-foreground">{s.detected_customer || '—'}</b></span>
                         <span>líneas: <b className="text-foreground">{s.row_count}</b></span>
                       </div>
                       {s.detected_columns && Object.keys(s.detected_columns).length > 0 && (

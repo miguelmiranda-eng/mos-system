@@ -160,28 +160,48 @@ export const ReceivingModule = () => {
   );
 
   // Smart autofill from ASN line. The two vocabularies don't agree literally
-  // (ASN has ISO3 "DOM", dropdowns have "REPUBLICA DOMINICANA"; brands map
-  // approximately to customers; descriptions vary in wording) so we look up
-  // each field against the actually-loaded dropdown options and only fill
-  // when we can prove a match.
-  const pickAsnLine = (line) => {
+  // (ASN has ISO3 "DOM", dropdowns have "REPUBLICA DOMINICANA"; ASN brand
+  // maps to Receiving's manufacturer; ASN doc-level customer maps to
+  // Receiving's customer; fabric is embedded inside the description text)
+  // so we look up each field against the actually-loaded dropdown options
+  // and only fill when we can prove a match.
+  const pickAsnLine = async (line) => {
     setSelectedAsnLine(line.line_no);
 
     const updates = { style: line.part_number || form.style };
+
+    // Field-options dropdowns (country / description / fabric) are loaded
+    // once at mount, so we can match against them synchronously.
     const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
     if (country) updates.country_of_origin = country;
     const description = findInOptions(line.description, fieldOptions.descriptions);
     if (description) updates.description = description;
-    const customer = findInOptions(line.brand, options.customers);
+    const fabric = findInOptions(line.fabric_content, fieldOptions.fabrics);
+    if (fabric) updates.fabric_content = fabric;
+
+    // Customer first — picked from doc-level "Cliente:" extracted at import.
+    const customer = findInOptions(selectedAsnDoc?.customer, options.customers);
     if (customer) updates.customer = customer;
 
-    setForm(p => ({ ...p, ...updates }));
-
-    // Refresh cascading dropdowns (manufacturers/styles/colors) when the
-    // customer was autofilled, so they reflect the chosen customer.
-    if (customer && customer !== form.customer) {
-      loadOptions(customer, '', '');
+    // Manufacturer comes from the ASN line's brand. Needs the customer's
+    // manufacturer list, which is cascading: refetch before matching so we
+    // don't miss a manufacturer that exists only under this customer.
+    const effectiveCustomer = customer || form.customer;
+    let manufacturer = '';
+    if (effectiveCustomer) {
+      try {
+        const data = await fetcher(`/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}`);
+        setOptions(prev => ({ ...prev, ...data }));
+        manufacturer = findInOptions(line.brand, data.manufacturers || []);
+      } catch (err) {
+        manufacturer = findInOptions(line.brand, options.manufacturers);
+      }
+    } else {
+      manufacturer = findInOptions(line.brand, options.manufacturers);
     }
+    if (manufacturer) updates.manufacturer = manufacturer;
+
+    setForm(p => ({ ...p, ...updates }));
   };
 
   const clearAsnLine = () => {

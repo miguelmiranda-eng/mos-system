@@ -2409,6 +2409,71 @@ def _find_asn_number(ws) -> str:
                         return str(rv).strip()
     return ""
 
+_LABEL_DENYLIST = {
+    "PACKING LIST", "BILL OF MATERIALS", "RAW MATERIAL", "EQUIPMENT",
+    "FINISHED GOODS", "MATERIA PRIMA", "EQUIPO", "PRODUCTO TERMINADO",
+    "RAW MATERIALS",
+}
+
+def _find_label_value(ws, *label_aliases, rows=8, max_cols=20, scan_right=6, max_gap=3) -> str:
+    """Find a header label (e.g. 'Cliente:') anywhere in the top of the sheet
+    and return the value next to it. Stops after `max_gap` consecutive blanks
+    so we don't latch onto an unrelated heading further down the row."""
+    aliases = {a.strip().upper().rstrip(':') for a in label_aliases}
+    for r in range(1, rows + 1):
+        for c in range(1, max_cols + 1):
+            v = ws.cell(row=r, column=c).value
+            if v is None:
+                continue
+            key = str(v).strip().upper().rstrip(':')
+            if key not in aliases:
+                continue
+            blanks = 0
+            for dc in range(1, scan_right + 1):
+                rv = ws.cell(row=r, column=c + dc).value
+                if rv in (None, ""):
+                    blanks += 1
+                    if blanks >= max_gap:
+                        break
+                    continue
+                blanks = 0
+                text = str(rv).strip()
+                if not text:
+                    continue
+                upper = text.upper().rstrip(':')
+                if text.endswith(':') or upper in aliases or upper in _LABEL_DENYLIST:
+                    continue  # adjacent cell is another label, not a value
+                return text
+    return ""
+
+# Patterns like "100% DE ALGODÓN", "50% ALGODON", "50% POLIESTER".
+# Captures the percentage word + the material word (with common diacritics).
+_FABRIC_PATTERN = re.compile(
+    r"\d+\s*%\s*(?:DE\s+)?[A-ZÁÉÍÓÚÑ/]+(?:\s+[A-ZÁÉÍÓÚÑ/]+)?",
+    re.IGNORECASE,
+)
+_STOP_FABRIC_WORDS = {"DE", "DEL", "LA", "EL", "PARA", "CON", "Y"}
+
+def _extract_fabric_from_description(desc: str) -> str:
+    """Pull fabric composition out of a free-form description.
+    Examples:
+      'CAMISETA ... 100% DE ALGODON'           -> '100% ALGODON'
+      'CAMISETA ... 50% ALGODON, 50% POLIESTER' -> '50% ALGODON, 50% POLIESTER'
+    Returns '' when no percentage pattern is found.
+    """
+    if not desc:
+        return ""
+    text = str(desc).upper()
+    matches = _FABRIC_PATTERN.findall(text)
+    cleaned = []
+    for m in matches:
+        # Normalise: drop "DE" connector, collapse whitespace, strip trailing slash/comma
+        parts = [p for p in re.split(r"\s+", m) if p and p.upper() != "DE"]
+        result = " ".join(parts).rstrip("/,. ")
+        if result:
+            cleaned.append(result)
+    return ", ".join(cleaned)
+
 def _detect_columns(ws, scan_rows: int = 15) -> tuple[dict[str, int], int]:
     """Find the header row and map field -> 0-based column index by header name.
 
@@ -2510,10 +2575,12 @@ def _parse_packing_list(ws) -> tuple[list[dict], str, dict[str, int]]:
         if not po_number:
             po_number = cell_at(row, "po")
         line_no += 1
+        desc = cell_at(row, "description")
         items.append({
             "line_no": line_no,
             "part_number": pn.upper(),
-            "description": cell_at(row, "description"),
+            "description": desc,
+            "fabric_content": _extract_fabric_from_description(desc),
             "qty_expected": qty,
             "qty_received": 0,
             "country": cell_at(row, "country").upper(),
@@ -2660,6 +2727,7 @@ async def import_asn(
                 "name": sn,
                 "kind": kind,
                 "detected_asn_id": asn_num,
+                "detected_customer": _find_label_value(ws, "Cliente", "Client", "Customer"),
                 "row_count": count,
                 "detected_columns": {f: _col_letter(c) for f, c in col_map.items()},
                 "missing_required": [f for f in _ASN_REQUIRED_FIELDS if f not in col_map],
@@ -2690,9 +2758,13 @@ async def import_asn(
     brands = [it["brand"] for it in items if it.get("brand")]
     vendor = max(set(brands), key=brands.count) if brands else ""
 
+    # Customer: pulled from the "Cliente:" label at the top of the sheet
+    customer = _find_label_value(ws, "Cliente", "Client", "Customer")
+
     doc = {
         "asn_id": asn_id,
         "po_number": po_number,
+        "customer": customer,
         "vendor": vendor,
         "expected_date": now_iso(),
         "source_sheet": sheet_name,
