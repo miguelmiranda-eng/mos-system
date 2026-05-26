@@ -839,71 +839,79 @@ const Dashboard = () => {
 
         {/* Quick Actions (Sticky Column 2) */}
         <div className={`py-2 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-          <div className="flex flex-col gap-1 items-center">
-            <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary relative" title={t('comments')}>
-              <MessageSquare className="w-4 h-4" />
+          <div className="flex flex-col gap-2.5 items-center">
+            <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
+              <MessageSquare className="w-5 h-5" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
             {isAdmin && (
-              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-muted-foreground hover:text-primary" title="Historial Extendido"><ClipboardList className="w-4 h-4" /></button>
+              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title="Historial Extendido">
+                <ClipboardList className="w-5 h-5" />
+              </button>
             )}
           </div>
         </div>
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`py-2 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 cursor-pointer group/order flex items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`py-2 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 200, minWidth: 200, maxWidth: 200 }}
-          onClick={() => setDetailsOrder(order)}
         >
-          <div className="flex items-center gap-2 min-w-0 w-full">
-            {/* Order number (left, takes available space) */}
-            <div className="flex flex-col gap-1 min-w-0 flex-1">
-              <span className={`font-black text-lg tracking-tight leading-none whitespace-nowrap ${isSearchMatch ? 'text-primary' : 'text-foreground'}`}>
-                {order.order_number}
+          {/* Order number (centered, large, bold) */}
+          <div className="flex flex-col items-center justify-center w-full min-w-0">
+            <span className={`font-black text-xl tracking-tight leading-none text-slate-800 dark:text-slate-100 ${isSearchMatch ? 'text-primary' : ''}`}>
+              {order.order_number}
+            </span>
+            {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
+              <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white mt-1" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                {order.board}
               </span>
-              {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
-                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
-                  {order.board}
-                </span>
-              )}
-            </div>
+            )}
+          </div>
 
-            {/* TWIN / SEP / NECK badges stacked vertically (right) */}
-            <div className="flex flex-col gap-0.5 items-end shrink-0 mr-1">
-              {order.twin_order_number && (
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      const res = await fetch(`${API}/orders/${encodeURIComponent(order.twin_order_number)}`, { credentials: 'include' });
-                      if (!res.ok) { toast.error(`Twin ${order.twin_order_number} no encontrada`); return; }
-                      const twin = await res.json();
-                      if (twin.board) setCurrentBoard(twin.board);
-                      setHighlightedOrderId(twin.order_id);
-                      toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
-                    } catch { toast.error('Error buscando la orden gemela'); }
-                  }}
-                  className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none bg-fuchsia-500/20 text-fuchsia-500 border-fuchsia-500/30 hover:bg-fuchsia-500 hover:text-white cursor-pointer"
-                  title={`Twin: ${order.twin_order_number} — click para ir`}
-                >
-                  TWIN
-                </button>
-              )}
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none ${order.art_neck_status
-                ? 'bg-blue-500/20 text-blue-500 border-blue-500/30'
-                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
-                }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
-                NECK
+          {/* TWIN / NECK / SEP badges horizontal row (centered) */}
+          <div className="flex flex-row items-center justify-center gap-1.5 mt-2 w-full shrink-0">
+            {/* TWIN Badge */}
+            {order.twin_order_number ? (
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const res = await fetch(`${API}/orders/${encodeURIComponent(order.twin_order_number)}`, { credentials: 'include' });
+                    if (!res.ok) { toast.error(`Twin ${order.twin_order_number} no encontrada`); return; }
+                    const twin = await res.json();
+                    if (twin.board) setCurrentBoard(twin.board);
+                    setHighlightedOrderId(twin.order_id);
+                    toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
+                  } catch { toast.error('Error buscando la orden gemela'); }
+                }}
+                className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
+                title={`Twin: ${order.twin_order_number} — click para ir`}
+              >
+                TWIN
+              </button>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
+                TWIN
               </span>
-              <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none ${order.art_sep_status
-                ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30'
-                : 'bg-secondary/40 text-muted-foreground/20 border-border/5'
-                }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
-                SEP
-              </span>
-            </div>
+            )}
+
+            {/* NECK Badge */}
+            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none border transition-all ${order.art_neck_status
+              ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/20'
+              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
+              NECK
+            </span>
+
+            {/* SEP Badge */}
+            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none border transition-all ${order.art_sep_status
+              ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/20'
+              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
+              SEP
+            </span>
           </div>
         </div>
 
