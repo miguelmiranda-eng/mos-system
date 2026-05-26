@@ -159,23 +159,21 @@ export const ReceivingModule = () => {
     it => (it.qty_received || 0) < (it.qty_expected || 0)
   );
 
-  // Smart autofill from ASN line. STRICT: only fills a field when the ASN
-  // value can be matched to an entry that already exists in the operator's
-  // dropdown. No-match means the field stays empty so the operator can
-  // type/pick it from the catalog rather than being shown a foreign value.
-  // Style is the one exception: it's a literal identifier shared between
-  // both systems, so it always copies from the ASN line.
+  // Smart autofill from ASN line. STRICT: every field — including Style —
+  // only fills when the ASN value resolves to an entry that already exists
+  // in the operator's dropdown. No-match leaves the field empty so it never
+  // ends up in the inventory record as a foreign string.
+  //
+  // Customer / manufacturer / style are cascading: a manufacturer only
+  // appears under its customer, and a style only under its customer +
+  // manufacturer. So we refetch the cascade after each level resolves,
+  // and run the next match against the freshly-loaded list.
   const pickAsnLine = async (line) => {
     setSelectedAsnLine(line.line_no);
 
     const updates = {};
     const matched = [];
     const skipped = [];
-
-    if (line.part_number) {
-      updates.style = line.part_number;
-      matched.push('Style');
-    }
 
     const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
     if (country) { updates.country_of_origin = country; matched.push('País'); }
@@ -189,29 +187,44 @@ export const ReceivingModule = () => {
     if (fabric) { updates.fabric_content = fabric; matched.push('Tela'); }
     else if (line.fabric_content) skipped.push('Tela');
 
+    // Customer first (top of the cascade)
     const customer = findInOptions(selectedAsnDoc?.customer, options.customers);
     if (customer) { updates.customer = customer; matched.push('Cliente'); }
     else if (selectedAsnDoc?.customer) skipped.push('Cliente');
 
-    // Manufacturer comes from the ASN line's brand. Cascading dropdown: if
-    // a customer was autofilled, refetch its manufacturer list first.
     const effectiveCustomer = customer || form.customer;
     let manufacturerHaystack = options.manufacturers || [];
+    let stylesHaystack = options.styles || [];
     if (effectiveCustomer) {
       try {
         const data = await fetcher(`/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}`);
         setOptions(prev => ({ ...prev, ...data }));
-        manufacturerHaystack = data.manufacturers || [];
-      } catch (err) { /* keep previous haystack */ }
+        manufacturerHaystack = data.manufacturers || manufacturerHaystack;
+        stylesHaystack = data.styles || stylesHaystack;
+      } catch (err) { /* keep previous haystacks */ }
     }
+
     const manufacturer = findInOptions(line.brand, manufacturerHaystack);
     if (manufacturer) { updates.manufacturer = manufacturer; matched.push('Fabricante'); }
     else if (line.brand) skipped.push('Fabricante');
 
+    // Refetch styles for the customer + manufacturer combo, then match Style
+    const effectiveManufacturer = manufacturer || form.manufacturer;
+    if (effectiveCustomer && effectiveManufacturer) {
+      try {
+        const data2 = await fetcher(
+          `/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}&manufacturer=${encodeURIComponent(effectiveManufacturer)}`
+        );
+        setOptions(prev => ({ ...prev, ...data2 }));
+        stylesHaystack = data2.styles || stylesHaystack;
+      } catch (err) { /* keep previous haystack */ }
+    }
+    const style = findInOptions(line.part_number, stylesHaystack);
+    if (style) { updates.style = style; matched.push('Style'); }
+    else if (line.part_number) skipped.push('Style');
+
     setForm(p => ({ ...p, ...updates }));
 
-    // One toast that tells the operator both what was filled and which
-    // fields were left blank because the ASN value isn't in their catalog.
     if (matched.length || skipped.length) {
       const parts = [];
       if (matched.length) parts.push(`✓ ${matched.join(', ')}`);
