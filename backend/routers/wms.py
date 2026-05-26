@@ -2937,6 +2937,7 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
 
     now = now_iso()
     inventory_docs = []
+    box_docs = []
     locations_set = set()
     skipped = 0
 
@@ -3006,8 +3007,8 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
     # Clear old data (WMS 2.0 Fresh Start)
     await db.wms_inventory.delete_many({})
     await db.wms_boxes.delete_many({})
-
-    await db.wms_inventory.delete_many({})
+    await db.wms_tasks.delete_many({})
+    await db.wms_allocations.delete_many({})
     if inventory_docs:
         batch_size = 1000
         for i in range(0, len(inventory_docs), batch_size):
