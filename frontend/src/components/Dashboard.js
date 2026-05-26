@@ -869,8 +869,28 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* SEP / NECK badges stacked vertically (right) */}
+            {/* TWIN / SEP / NECK badges stacked vertically (right) */}
             <div className="flex flex-col gap-0.5 items-end shrink-0 mr-1">
+              {order.twin_order_number && (
+                <button
+                  type="button"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const res = await fetch(`${API}/orders/${encodeURIComponent(order.twin_order_number)}`, { credentials: 'include' });
+                      if (!res.ok) { toast.error(`Twin ${order.twin_order_number} no encontrada`); return; }
+                      const twin = await res.json();
+                      if (twin.board) setCurrentBoard(twin.board);
+                      setHighlightedOrderId(twin.order_id);
+                      toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
+                    } catch { toast.error('Error buscando la orden gemela'); }
+                  }}
+                  className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none bg-fuchsia-500/20 text-fuchsia-500 border-fuchsia-500/30 hover:bg-fuchsia-500 hover:text-white cursor-pointer"
+                  title={`Twin: ${order.twin_order_number} — click para ir`}
+                >
+                  TWIN
+                </button>
+              )}
               <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-black border tracking-wider transition-all leading-none ${order.art_neck_status
                 ? 'bg-blue-500/20 text-blue-500 border-blue-500/30'
                 : 'bg-secondary/40 text-muted-foreground/20 border-border/5'

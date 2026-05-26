@@ -497,6 +497,97 @@ async def add_order_link(order_id: str, request: Request):
     await ws_manager.broadcast("order_change", {"action": "add_link", "order_id": order_id})
     return link
 
+@router.post("/{order_id}/twin")
+async def pair_order_twin(order_id: str, request: Request):
+    """Pair this order with another order as 'twins' (same parameters,
+    different order numbers). Writes twin_order_number on BOTH sides so
+    either order shows the link. If either side already had a twin, that
+    previous link is broken so we don't end up with stale references."""
+    user = await require_auth(request)
+    body = await request.json()
+    twin_number = (body.get("twin_order_number") or "").strip()
+    if not twin_number:
+        raise HTTPException(status_code=400, detail="twin_order_number requerido")
+
+    me = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not me:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if (me.get("order_number") or "").strip() == twin_number:
+        raise HTTPException(status_code=400, detail="Una orden no puede ser gemela de si misma")
+
+    twin = await db.orders.find_one(
+        {"order_number": twin_number, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0}
+    )
+    if not twin:
+        raise HTTPException(status_code=404, detail=f"No se encontro una orden activa con numero {twin_number}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # If either side already pointed at a different order, clear that stale back-reference
+    prev_my_twin = (me.get("twin_order_number") or "").strip()
+    if prev_my_twin and prev_my_twin != twin_number:
+        await db.orders.update_one(
+            {"order_number": prev_my_twin, "twin_order_number": me.get("order_number")},
+            {"$set": {"twin_order_number": None, "updated_at": now_iso}},
+        )
+    prev_their_twin = (twin.get("twin_order_number") or "").strip()
+    if prev_their_twin and prev_their_twin != (me.get("order_number") or ""):
+        await db.orders.update_one(
+            {"order_number": prev_their_twin, "twin_order_number": twin.get("order_number")},
+            {"$set": {"twin_order_number": None, "updated_at": now_iso}},
+        )
+
+    await db.orders.update_one(
+        {"order_id": order_id},
+        {"$set": {"twin_order_number": twin_number, "updated_at": now_iso}},
+    )
+    await db.orders.update_one(
+        {"order_id": twin["order_id"]},
+        {"$set": {"twin_order_number": me.get("order_number") or "", "updated_at": now_iso}},
+    )
+
+    await log_activity(user, "pair_twin", {
+        "order_id": order_id,
+        "order_number": me.get("order_number"),
+        "twin_order_number": twin_number,
+    })
+    await ws_manager.broadcast("order_change", {
+        "action": "twin_paired",
+        "boards": list({me.get("board"), twin.get("board")} - {None}),
+    })
+    return {"status": "paired", "twin_order_number": twin_number, "twin_board": twin.get("board")}
+
+@router.delete("/{order_id}/twin")
+async def unpair_order_twin(order_id: str, request: Request):
+    """Break the twin link on both sides."""
+    user = await require_auth(request)
+    me = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not me:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    twin_number = (me.get("twin_order_number") or "").strip()
+    if not twin_number:
+        return {"status": "noop"}
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"order_id": order_id},
+        {"$set": {"twin_order_number": None, "updated_at": now_iso}},
+    )
+    # Clear the back-reference only when it actually points at this order, to
+    # avoid accidentally breaking a re-paired twin's link.
+    await db.orders.update_one(
+        {"order_number": twin_number, "twin_order_number": me.get("order_number")},
+        {"$set": {"twin_order_number": None, "updated_at": now_iso}},
+    )
+    await log_activity(user, "unpair_twin", {
+        "order_id": order_id,
+        "order_number": me.get("order_number"),
+        "former_twin": twin_number,
+    })
+    await ws_manager.broadcast("order_change", {"action": "twin_unpaired"})
+    return {"status": "unpaired"}
+
 @router.delete("/{order_id}/links/{link_index}")
 async def delete_order_link(order_id: str, link_index: int, request: Request):
     await require_auth(request)

@@ -55,7 +55,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
     } catch { /* silent */ } finally { setCheckingDuplicate(false); }
   }, []);
 
-  const handleSubmit = async (formData, sizes) => {
+  const handleSubmit = async (formData, sizes, extras = {}) => {
     if (duplicateWarning && !duplicateWarning.in_trash) {
       toast.error(`No se puede crear: La orden ya existe en ${duplicateWarning.board}`);
       return;
@@ -64,7 +64,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
     try {
       const INT_FIELDS = new Set(['quantity']);
       const payload = {};
-      
+
       Object.entries(formData).forEach(([key, value]) => {
         if (INT_FIELDS.has(key)) {
           payload[key] = value === '' || value === null ? 0 : parseInt(value, 10) || 0;
@@ -72,7 +72,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
           payload[key] = value === '' ? null : value;
         }
       });
-      
+
       const cleanSizes = {};
       Object.entries(sizes).forEach(([s, v]) => { if (v) cleanSizes[s] = parseInt(v) || 0; });
       if (Object.keys(cleanSizes).length > 0) payload.sizes = cleanSizes;
@@ -81,8 +81,40 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         credentials: 'include', body: JSON.stringify(payload)
       });
-      if (res.ok) { const order = await res.json(); onCreate(order); onClose(); toast.success(t('order_created')); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('order_create_err')); }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || t('order_create_err'));
+        return;
+      }
+      const order = await res.json();
+
+      // Twin pairing — runs after the order exists so we have its order_id.
+      // Failure here doesn't roll back the order; we surface a warning and
+      // let the operator retry/link manually.
+      if (extras.twinOrderNumber) {
+        try {
+          const tres = await fetch(`${API}/orders/${order.order_id}/twin`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ twin_order_number: extras.twinOrderNumber }),
+          });
+          if (tres.ok) {
+            const tdata = await tres.json();
+            order.twin_order_number = tdata.twin_order_number;
+            toast.success(`Orden creada · vinculada como gemela de ${tdata.twin_order_number}`);
+          } else {
+            const terr = await tres.json().catch(() => ({}));
+            toast.warning(`Orden creada pero no se pudo vincular: ${terr.detail || 'error'}`);
+          }
+        } catch {
+          toast.warning('Orden creada pero el vinculo de gemela fallo (revisar conexion)');
+        }
+      } else {
+        toast.success(t('order_created'));
+      }
+
+      onCreate(order);
+      onClose();
     } catch { toast.error(t('order_create_err')); } finally { setLoading(false); }
   };
 

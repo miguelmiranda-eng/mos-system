@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { 
-  Plus, Loader2, AlertTriangle, Link2, 
+import {
+  Plus, Loader2, AlertTriangle, Link2,
   FileSearch, CheckCircle2, PackageSearch,
-  Zap, Info, ExternalLink, X, Tag
+  Zap, Info, ExternalLink, X, Tag, Users
 } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
@@ -40,6 +40,32 @@ export const NewOrderForm = ({
   // Pre-Order Linkage State
   const [checkingDesign, setCheckingDesign] = useState(false);
   const [linkedPreorderId, setLinkedPreorderId] = useState(null);
+
+  // Twin (gemela) pairing state — fires AFTER order creation in onSubmit
+  const [twinEnabled, setTwinEnabled] = useState(false);
+  const [twinOrderNumber, setTwinOrderNumber] = useState("");
+  const [twinStatus, setTwinStatus] = useState(null); // {found: bool, board?, message?}
+  const [twinChecking, setTwinChecking] = useState(false);
+
+  const handleTwinCheck = async () => {
+    const num = twinOrderNumber.trim();
+    if (!num) { setTwinStatus(null); return; }
+    setTwinChecking(true);
+    try {
+      const res = await fetch(`${API}/orders/check-number?order_number=${encodeURIComponent(num)}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.exists && !data.in_trash) {
+          setTwinStatus({ found: true, board: data.order?.board });
+        } else if (data.exists && data.in_trash) {
+          setTwinStatus({ found: false, message: 'Esa orden esta en la papelera' });
+        } else {
+          setTwinStatus({ found: false, message: 'No existe una orden activa con ese numero' });
+        }
+      }
+    } catch { setTwinStatus({ found: false, message: 'Error de conexion' }); }
+    finally { setTwinChecking(false); }
+  };
 
   const handlePrintavoAnalyze = async () => {
     if (!printavoUrl.trim()) {
@@ -476,6 +502,78 @@ export const NewOrderForm = ({
             )}
           </div>
 
+          {/* Twin (gemela) Linkage Section */}
+          <div className="bg-fuchsia-500/5 border border-fuchsia-500/20 rounded-2xl p-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+              <Users className="w-16 h-16 text-fuchsia-500" />
+            </div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-fuchsia-500/20 flex items-center justify-center text-fuchsia-500 shadow-inner">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Orden Gemela (Twin)</h3>
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60">Marca esta orden como gemela de otra existente</p>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={twinEnabled}
+                  onChange={(e) => {
+                    setTwinEnabled(e.target.checked);
+                    if (!e.target.checked) { setTwinOrderNumber(''); setTwinStatus(null); }
+                  }}
+                  disabled={isPreview}
+                  className="w-4 h-4 cursor-pointer"
+                />
+                <span className="text-[10px] font-black uppercase tracking-widest text-fuchsia-500">
+                  {twinEnabled ? 'Activado' : 'Activar'}
+                </span>
+              </label>
+            </div>
+            {twinEnabled && (
+              <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fuchsia-500/60" />
+                    <input
+                      type="text"
+                      value={twinOrderNumber}
+                      onChange={(e) => { setTwinOrderNumber(e.target.value); setTwinStatus(null); }}
+                      onBlur={handleTwinCheck}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTwinCheck(); } }}
+                      placeholder="Numero de la orden gemela"
+                      disabled={isPreview}
+                      className="w-full bg-background border border-fuchsia-500/30 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTwinCheck}
+                    disabled={twinChecking || !twinOrderNumber.trim() || isPreview}
+                    className="px-6 py-2.5 bg-fuchsia-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                  >
+                    {twinChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Verificar'}
+                  </button>
+                </div>
+                {twinStatus?.found && (
+                  <div className="flex items-center gap-2 text-[10px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/30">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Orden encontrada en <span className="text-emerald-600">{twinStatus.board}</span> — se vinculara al crear
+                  </div>
+                )}
+                {twinStatus && !twinStatus.found && (
+                  <div className="flex items-center gap-2 text-[10px] font-black text-destructive uppercase tracking-widest bg-destructive/10 px-3 py-2 rounded-lg border border-destructive/30">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {twinStatus.message}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Section: Order Info */}
           <div className="space-y-6">
             {rows.map((row, i) => (
@@ -538,9 +636,9 @@ export const NewOrderForm = ({
             <button onClick={onClose} className="px-6 py-2.5 text-xs font-black uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-xl transition-all">
               {t('cancel')}
             </button>
-            <button 
-              onClick={() => onSubmit(formData, sizes)} 
-              disabled={loading || (duplicateWarning && !duplicateWarning.in_trash) || checkingDuplicate} 
+            <button
+              onClick={() => onSubmit(formData, sizes, { twinOrderNumber: twinEnabled && twinStatus?.found ? twinOrderNumber.trim() : null })}
+              disabled={loading || (duplicateWarning && !duplicateWarning.in_trash) || checkingDuplicate || (twinEnabled && (!twinOrderNumber.trim() || !twinStatus?.found))}
               className={`px-8 py-3 rounded-xl font-black uppercase tracking-widest text-xs flex items-center gap-3 transition-all shadow-lg active:scale-95 ${
                 (duplicateWarning && !duplicateWarning.in_trash)
                   ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-50 grayscale' 
