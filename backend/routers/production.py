@@ -2,7 +2,8 @@
 from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY
 from ws_manager import ws_manager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import zoneinfo
 import uuid, os, asyncio, time
 import resend
 from typing import Any
@@ -165,21 +166,18 @@ async def get_production_summary(request: Request, date_from: str = None, date_t
 
     query = {}
     if date_from or date_to:
-        from datetime import datetime, timezone, timedelta
-        UTC_OFFSET = 7  # hours behind UTC (Arizona MST = UTC-7)
+        tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
         dt_query = {}
         if date_from:
-            # Local midnight (00:00 local) = 07:00 UTC same day
-            dt_start = datetime.strptime(date_from, "%Y-%m-%d").replace(
-                hour=0, minute=0, second=0, tzinfo=timezone.utc
-            ) + timedelta(hours=UTC_OFFSET)
-            dt_query["$gte"] = dt_start.isoformat()
+            dt = datetime.strptime(date_from, "%Y-%m-%d")
+            local_start = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz)
+            utc_start = local_start.astimezone(timezone.utc)
+            dt_query["$gte"] = utc_start.isoformat()
         if date_to:
-            # Local end of day (23:59:59 local) = next day 06:59:59 UTC
-            dt_end = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59, tzinfo=timezone.utc
-            ) + timedelta(hours=UTC_OFFSET)
-            dt_query["$lte"] = dt_end.isoformat()
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            local_end = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz)
+            utc_end = local_end.astimezone(timezone.utc)
+            dt_query["$lte"] = utc_end.isoformat()
         query["created_at"] = dt_query
 
     pipeline = [
@@ -277,7 +275,19 @@ async def _compute_capacity_plan():
     if machine_order_ids:
         pipeline_daily = [
             {"$match": {"order_id": {"$in": machine_order_ids}}},
-            {"$group": {"_id": {"machine": "$machine", "date": {"$substr": ["$created_at", 0, 10]}}, "daily_produced": {"$sum": "$quantity_produced"}}},
+            {"$group": {
+                "_id": {
+                    "machine": "$machine", 
+                    "date": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": {"$toDate": "$created_at"},
+                            "timezone": "America/Tijuana"
+                        }
+                    }
+                }, 
+                "daily_produced": {"$sum": "$quantity_produced"}
+            }},
             {"$group": {"_id": "$_id.machine", "active_days": {"$sum": 1}, "avg_daily_production": {"$avg": "$daily_produced"}, "max_daily_production": {"$max": "$daily_produced"}}}
         ]
     stats_map = {}
@@ -361,42 +371,47 @@ async def get_capacity_plan(request: Request):
 
 def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
     from datetime import timedelta, datetime, timezone
-    now = datetime.now(timezone.utc)
-    UTC_OFFSET = 7  # hours behind UTC (Arizona MST = UTC-7)
+    import zoneinfo
+    
+    tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
     query = {}
     
     if preset:
         if preset == 'today':
-            local_now = now - timedelta(hours=UTC_OFFSET)
+            local_now = datetime.now(tijuana_tz)
             local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-            utc_start = local_start + timedelta(hours=UTC_OFFSET)
+            utc_start = local_start.astimezone(timezone.utc)
             query["created_at"] = {"$gte": utc_start.isoformat()}
         elif preset == 'yesterday':
-            local_now = now - timedelta(hours=UTC_OFFSET)
+            local_now = datetime.now(tijuana_tz)
             local_yesterday = local_now - timedelta(days=1)
-            start = local_yesterday.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=UTC_OFFSET)
-            end = local_now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=UTC_OFFSET)
+            start = local_yesterday.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+            end = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
             query["created_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
         elif preset == 'week':
-            start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-            query["created_at"] = {"$gte": start.isoformat()}
+            local_now = datetime.now(tijuana_tz)
+            local_start = (local_now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+            utc_start = local_start.astimezone(timezone.utc)
+            query["created_at"] = {"$gte": utc_start.isoformat()}
         elif preset == 'month':
-            start = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
-            query["created_at"] = {"$gte": start.isoformat()}
+            local_now = datetime.now(tijuana_tz)
+            local_start = (local_now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+            utc_start = local_start.astimezone(timezone.utc)
+            query["created_at"] = {"$gte": utc_start.isoformat()}
 
     # Fallback to date_from/date_to if query is still empty or forced
     if not query.get("created_at") and (date_from or date_to):
         date_q = {}
         if date_from:
-            dt_start = datetime.strptime(date_from, "%Y-%m-%d").replace(
-                hour=0, minute=0, second=0, tzinfo=timezone.utc
-            ) + timedelta(hours=UTC_OFFSET)
-            date_q["$gte"] = dt_start.isoformat()
+            dt = datetime.strptime(date_from, "%Y-%m-%d")
+            local_start = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz)
+            utc_start = local_start.astimezone(timezone.utc)
+            date_q["$gte"] = utc_start.isoformat()
         if date_to:
-            dt_end = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59, tzinfo=timezone.utc
-            ) + timedelta(hours=UTC_OFFSET)
-            date_q["$lte"] = dt_end.isoformat()
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            local_end = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz)
+            utc_end = local_end.astimezone(timezone.utc)
+            date_q["$lte"] = utc_end.isoformat()
         if date_q:
             query["created_at"] = date_q
     return query
@@ -472,7 +487,13 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
             ],
             "by_day": [
                 {"$group": {
-                    "_id": {"$substr": ["$created_at", 0, 10]},
+                    "_id": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": {"$toDate": "$created_at"},
+                            "timezone": "America/Tijuana"
+                        }
+                    },
                     "produced": {"$sum": "$quantity_produced"}
                 }},
                 {"$sort": {"_id": 1}},
@@ -559,17 +580,41 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         else: granularity = "day"
     
     # Separate aggregation for trend to keep it clean
-    substr_len = 13 if granularity == "hour" else 10
+    fmt = "%Y-%m-%dT%H" if granularity == "hour" else "%Y-%m-%d"
     trend_pipeline = [
         {"$match": query},
         {"$group": {
-            "_id": {"$substr": ["$created_at", 0, substr_len]},
+            "_id": {
+                "$dateToString": {
+                    "format": fmt,
+                    "date": {"$toDate": "$created_at"},
+                    "timezone": "America/Tijuana"
+                }
+            },
             "produced": {"$sum": "$quantity_produced"}
         }},
         {"$sort": {"_id": 1}}
     ]
     trend_results = await db.production_logs.aggregate(trend_pipeline).to_list(1000)
     trend_data = [{"label": r["_id"], "produced": r["produced"]} for r in trend_results]
+
+    # Compute hourly_trend explicitly for ProductionScreen.js and tests
+    hourly_pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": {
+                "$dateToString": {
+                    "format": "%Y-%m-%dT%H:00:00",
+                    "date": {"$toDate": "$created_at"},
+                    "timezone": "America/Tijuana"
+                }
+            },
+            "produced": {"$sum": "$quantity_produced"}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    hourly_results = await db.production_logs.aggregate(hourly_pipeline).to_list(1000)
+    hourly_trend = [{"hour": r["_id"], "produced": r["produced"]} for r in hourly_results]
 
     # Distinct filters
     distinct_machines = sorted([m["machine"] for m in machines_data if m["machine"] != "?"])
@@ -604,6 +649,7 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         "by_machine": machines_data, "by_operator": operators_data,
         "by_shift": shifts_data, "by_client": clients_data,
         "by_po": po_data, "by_day": by_day_data, "trend_data": trend_data, "granularity": granularity,
+        "hourly_trend": hourly_trend,
         "by_production_status": prod_status_data,
         "filters": {"machines": distinct_machines, "operators": distinct_operators, "clients": distinct_clients},
         "logs": result.get("recent_logs", [])
