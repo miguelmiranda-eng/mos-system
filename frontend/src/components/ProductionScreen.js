@@ -25,6 +25,7 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
   const [filterOperator, setFilterOperator] = useState('');
   const [filterClient, setFilterClient] = useState('');
   const [filterOrder, setFilterOrder] = useState('');
+  const [filterShift, setFilterShift] = useState('');
   const [activeChart, setActiveChart] = useState('machine');
   const [reportDate, setReportDate] = useState('');
   const [reportShift, setReportShift] = useState('');
@@ -41,10 +42,11 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
       if (filterOperator) params.set('operator', filterOperator);
       if (filterClient) params.set('client', filterClient);
       if (filterOrder) params.set('order_number', filterOrder);
+      if (filterShift) params.set('shift', filterShift);
       const res = await fetch(`${API}/production-analytics?${params}`, { credentials: 'include' });
       if (res.ok) setData(await res.json());
     } catch { toast.error('Error cargando analytics'); } finally { setLoading(false); }
-  }, [preset, dateFrom, dateTo, filterMachine, filterOperator, filterClient, filterOrder]);
+  }, [preset, dateFrom, dateTo, filterMachine, filterOperator, filterClient, filterOrder, filterShift]);
 
   useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
 
@@ -123,10 +125,14 @@ const ProductionScreen = ({ onClose, isDark = true }) => {
         {/* Filters */}
         <div className={`rounded-lg border p-3 ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white border-gray-200'}`} data-testid="analytics-filters">
           <div className="flex items-center gap-2 mb-2"><Filter className="w-4 h-4 text-primary" /><span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Filtros</span></div>
-          <div className="grid grid-cols-6 gap-2">
+          <div className="grid grid-cols-7 gap-2">
             <Select value={preset} onValueChange={setPreset}>
               <SelectTrigger className="h-8 text-xs bg-secondary border-border" data-testid="preset-select"><SelectValue /></SelectTrigger>
               <SelectContent className="bg-popover border-border z-[1001]">{PRESETS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={filterShift || 'all'} onValueChange={v => setFilterShift(v === 'all' ? '' : v)}>
+              <SelectTrigger className="h-8 text-xs bg-secondary border-border" data-testid="filter-shift"><SelectValue placeholder="Turno" /></SelectTrigger>
+              <SelectContent className="bg-popover border-border z-[1001]"><SelectItem value="all">Todos los turnos</SelectItem><SelectItem value="TURNO 1">TURNO 1</SelectItem><SelectItem value="TURNO 2">TURNO 2</SelectItem><SelectItem value="TURNO 3">TURNO 3</SelectItem></SelectContent>
             </Select>
             {preset === 'custom' && <>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs px-2 bg-secondary border border-border rounded text-foreground" data-testid="date-from" />

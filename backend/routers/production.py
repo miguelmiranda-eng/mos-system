@@ -416,13 +416,14 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
             query["created_at"] = date_q
     return query
 
-async def _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number):
+async def _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number, shift: str = None):
 
     query = _get_preset_query(preset, date_from, date_to)
     if machine: query["machine"] = machine
     if operator: query["operator"] = {"$regex": operator, "$options": "i"}
     if client: query["client"] = {"$regex": client, "$options": "i"}
     if order_number: query["order_number"] = {"$regex": order_number, "$options": "i"}
+    if shift: query["shift"] = shift
     
     # Use aggregation for heavy lifting
     pipeline = [
@@ -658,13 +659,13 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
     return response_data
 
 @router.get("/production-analytics")
-async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None):
+async def get_production_analytics(request: Request, date_from: str = None, date_to: str = None, preset: str = None, machine: str = None, operator: str = None, client: str = None, order_number: str = None, shift: str = None):
     api_key = request.query_params.get("api_key")
     if api_key != MASTER_API_KEY:
         await require_auth(request)
     
 
-    cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}"
+    cache_key = f"prod_analytics_{preset}_{date_from}_{date_to}_{machine}_{operator}_{client}_{order_number}_{shift}"
     cached = get_cached(cache_key)
     if cached is not None: return cached
 
@@ -676,7 +677,7 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         if cached is not None: return cached
 
         try:
-            result = await _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number)
+            result = await _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number, shift)
         except Exception as e:
             import traceback
             logger.error(f"production-analytics crash: {traceback.format_exc()}")

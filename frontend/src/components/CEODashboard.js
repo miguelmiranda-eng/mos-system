@@ -80,6 +80,7 @@ const CEODashboard = () => {
   const [period, setPeriod] = useState('week'); // today, week, month, custom
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [shiftFilter, setShiftFilter] = useState('');
 
   const fetchAnalytics = async (p = period) => {
     setLoading(true);
@@ -87,6 +88,9 @@ const CEODashboard = () => {
       let url = `${API}/production-analytics?preset=${p}`;
       if (p === 'custom' && dateFrom && dateTo) {
         url = `${API}/production-analytics?date_from=${dateFrom}&date_to=${dateTo}`;
+      }
+      if (shiftFilter) {
+        url += `&shift=${encodeURIComponent(shiftFilter)}`;
       }
       const res = await fetch(url, { credentials: 'include' });
       if (res.ok) {
@@ -157,7 +161,7 @@ const CEODashboard = () => {
 
   useEffect(() => {
     fetchAnalytics();
-  }, [period]);
+  }, [period, shiftFilter]);
 
   const stats = useMemo(() => {
     if (!data) return [];
@@ -302,6 +306,23 @@ const CEODashboard = () => {
                     }`}
                   >
                     {p === 'today' ? t('ceo_today') : p === 'week' ? t('ceo_week') : t('ceo_month')}
+                  </button>
+                ))}
+              </div>
+
+              {/* Shift Filter */}
+              <div className="flex items-center gap-1 p-1 rounded-2xl border bg-black/20 border-white/5 w-full sm:w-auto">
+                {['', 'TURNO 1', 'TURNO 2', 'TURNO 3'].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setShiftFilter(s)}
+                    className={`flex-1 sm:flex-none px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-300 ${
+                      shiftFilter === s 
+                        ? (isDark ? 'bg-blue-500 text-white shadow-xl' : 'bg-emerald-600 text-white shadow-xl')
+                        : (isDark ? 'text-muted-foreground hover:text-white' : 'text-emerald-700/60 hover:text-emerald-700')
+                    }`}
+                  >
+                    {s === '' ? (lang === 'es' ? 'Todos' : 'All') : s.replace('TURNO ', 'T')}
                   </button>
                 ))}
               </div>
