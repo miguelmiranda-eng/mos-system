@@ -14,6 +14,13 @@ import uuid, io, json, logging, re
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
 
+# In-process cache for the expensive inventory_summary aggregation in /locations.
+# 30s TTL is enough to absorb the burst of N users opening the Ubicaciones screen
+# at the same time without serving data that's perceptibly stale.
+_LOC_SUMMARY_CACHE = {"data": None, "ts": 0.0}
+_LOC_SUMMARY_TTL = 30.0
+
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -169,55 +176,56 @@ async def create_location(request: Request):
     return loc
 
 @router.get("/locations")
-async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 3000):
+async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 5000):
     """List locations. Query params:
       - summary=false → skip the expensive inventory aggregation (use for dropdowns)
-      - skip / limit  → paginate. Hard-capped at 3000 to prevent runaway responses.
+      - skip / limit  → paginate. Hard-capped at 5000 to prevent runaway responses.
     """
     await require_auth(request)
 
-    # Clamp pagination to safe range
     skip = max(0, skip)
-    limit = max(1, min(limit, 3000))
+    limit = max(1, min(limit, 5000))
 
-    # 1. Fetch locations page
     locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
 
-    # 2. Optionally skip the expensive aggregation (dropdowns don't need it)
     if not summary:
         return locs
 
-    # 3. Aggregate inventory per location
-    pipeline = [
-        {"$match": {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}},
-        {"$group": {
-            "_id": {"location": "$location", "style": "$style"},
-            "style_units": {"$sum": "$units_on_hand"}
-        }},
-        {"$group": {
-            "_id": "$_id.location",
-            "total_units": {"$sum": "$style_units"},
-            "skus_count": {"$sum": 1},
-            "items": {"$push": {"style": {"$ifNull": ["$_id.style", "N/A"]}, "units": "$style_units"}}
-        }}
-    ]
+    import time
+    now = time.monotonic()
+    cached = _LOC_SUMMARY_CACHE.get("data")
+    if cached is not None and (now - _LOC_SUMMARY_CACHE["ts"]) < _LOC_SUMMARY_TTL:
+        loc_summary = cached
+    else:
+        pipeline = [
+            {"$match": {"units_on_hand": {"$gt": 0}, "location": {"$nin": [None, ""]}}},
+            {"$group": {
+                "_id": {"location": "$location", "style": "$style"},
+                "style_units": {"$sum": "$units_on_hand"}
+            }},
+            {"$group": {
+                "_id": "$_id.location",
+                "total_units": {"$sum": "$style_units"},
+                "skus_count": {"$sum": 1},
+                "items": {"$push": {"style": {"$ifNull": ["$_id.style", "N/A"]}, "units": "$style_units"}}
+            }}
+        ]
+        cursor = db.wms_inventory.aggregate(pipeline)
+        loc_summary = {}
+        async for doc in cursor:
+            items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
+            loc_summary[doc["_id"]] = {
+                "total_units": doc["total_units"],
+                "skus_count": doc["skus_count"],
+                "items": items,
+            }
+        _LOC_SUMMARY_CACHE["data"] = loc_summary
+        _LOC_SUMMARY_CACHE["ts"] = now
 
-    cursor = db.wms_inventory.aggregate(pipeline)
-    loc_summary = {}
-    async for doc in cursor:
-        loc_name = doc["_id"]
-        # Limit top items to 5, sorted by highest volume
-        items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
-        loc_summary[loc_name] = {
-            "total_units": doc["total_units"],
-            "skus_count": doc["skus_count"],
-            "items": items
-        }
-
-    # 4. Merge summary into locations list
     for loc in locs:
-        summary_val = loc_summary.get(loc["name"], {"total_units": 0, "skus_count": 0, "items": []})
-        loc["inventory_summary"] = summary_val
+        loc["inventory_summary"] = loc_summary.get(
+            loc["name"], {"total_units": 0, "skus_count": 0, "items": []}
+        )
 
     return locs
 

@@ -16,6 +16,12 @@ export const LocationsModule = () => {
   // Bulk-move state: { from: locObj, to: '' } when modal is open
   const [moveBulk, setMoveBulk] = useState(null);
   const [movingBulk, setMovingBulk] = useState(false);
+  // Progressive rendering: with thousands of system locations, painting every
+  // card up front lags the browser. Show this many zones at a time and let the
+  // user request more. Reset when the search/tab changes.
+  const ZONES_PER_PAGE = 8;
+  const [visibleZones, setVisibleZones] = useState(ZONES_PER_PAGE);
+  useEffect(() => { setVisibleZones(ZONES_PER_PAGE); }, [search, activeTab]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -243,6 +249,11 @@ export const LocationsModule = () => {
           }, {});
 
           const sortedZones = Object.keys(grouped).sort();
+          // When searching, the filter already narrows the set down, so render
+          // all matches. Otherwise paint progressively.
+          const isSearching = search.trim().length > 0;
+          const zonesToRender = isSearching ? sortedZones : sortedZones.slice(0, visibleZones);
+          const hiddenZoneCount = sortedZones.length - zonesToRender.length;
 
           if (filtered.length === 0) return (
             <div className="py-20 text-center bg-secondary/10 rounded-[3rem] border-2 border-dashed border-border/20">
@@ -251,7 +262,8 @@ export const LocationsModule = () => {
             </div>
           );
 
-          return sortedZones.map(zone => (
+          return (<>
+          {zonesToRender.map(zone => (
             <div key={zone} className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="h-6 w-1 bg-primary rounded-full shadow-[0_0_10px_rgba(255,193,7,0.5)]" />
@@ -365,7 +377,18 @@ export const LocationsModule = () => {
                 })}
               </div>
             </div>
-          ));
+          ))}
+          {hiddenZoneCount > 0 && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={() => setVisibleZones(v => v + ZONES_PER_PAGE)}
+                className="px-6 py-3 bg-primary/10 hover:bg-primary hover:text-black text-primary border border-primary/30 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
+              >
+                Mostrar más zonas ({hiddenZoneCount} restantes)
+              </button>
+            </div>
+          )}
+          </>);
         })()}
       </div>
       {moveBulk && (
