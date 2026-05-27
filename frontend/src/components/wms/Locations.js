@@ -287,90 +287,81 @@ export const LocationsModule = () => {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="rounded-2xl border border-border/30 overflow-hidden bg-card/20">
+                <div className="grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/50 bg-secondary/20 border-b border-border/30">
+                  <span>Ubicación</span>
+                  <span className="text-right">Inventario</span>
+                  <span className="text-right">SKUs</span>
+                  <span>Items (top 5)</span>
+                  <span className="text-right">Acciones</span>
+                </div>
                 {grouped[zone].map(l => {
                   const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
                   const isEmpty = summary.total_units === 0;
-
                   return (
                     <div
                       key={l.location_id}
-                      className={`group p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:border-primary/40 transition-all hover:scale-[1.02] hover:shadow-xl relative flex flex-col ${activeTab === 'system' ? 'border-l-4 border-l-indigo-500/50' : ''}`}
+                      className={`grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 items-center border-b border-border/10 hover:bg-secondary/30 transition-colors border-l-2 ${isEmpty ? 'border-l-transparent opacity-60' : (activeTab === 'system' ? 'border-l-indigo-500/40' : 'border-l-primary/40')}`}
                     >
-                      <div className="flex items-start justify-between mb-4 gap-2">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-12 h-12 flex-shrink-0 rounded-2xl flex items-center justify-center transition-all ${isEmpty ? 'bg-secondary/20 text-muted-foreground/30' : 'bg-primary/10 text-primary shadow-inner shadow-primary/10'}`}>
-                            <MapPin className="w-6 h-6" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-mono font-black text-xl tracking-tighter text-foreground leading-none truncate">{l.name}</div>
-                            <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-0.5">{zone}</div>
-                          </div>
-                        </div>
-
-                        {/* Acciones - Ahora integradas en el flex para no encimarse */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 pt-1">
-                          <button
-                            onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
-                            className="p-2 text-muted-foreground hover:text-primary transition-all"
-                            title="Imprimir etiqueta"
-                          >
-                            <Printer className="w-4 h-4" />
-                          </button>
-                          {!isEmpty && (
-                            <button
-                              onClick={() => setMoveBulk({ from: l, to: '' })}
-                              className="p-2 text-muted-foreground hover:text-blue-400 transition-all"
-                              title={`Mover todo el contenido de ${l.name} a otra ubicación`}
-                            >
-                              <ArrowRightLeft className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
-                            className="p-2 text-muted-foreground hover:text-yellow-500 transition-all"
-                            title="Editar ubicación"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(l.location_id, l.name)}
-                            className="p-2 text-muted-foreground hover:text-red-500 transition-all"
-                            title="Eliminar ubicación"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${isEmpty ? 'text-muted-foreground/40' : 'text-primary'}`} />
+                        <span className="font-mono font-black text-sm tracking-tighter truncate" title={l.name}>{l.name}</span>
                       </div>
-
-                      {/* Resumen de Inventario */}
-                      <div className="flex-1 mt-2 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40">Inventario</span>
-                          <span className={`text-xs font-black tabular-nums ${isEmpty ? 'text-muted-foreground/30' : 'text-emerald-500'}`}>
-                            {summary.total_units} PCS
-                          </span>
-                        </div>
-
-                        {!isEmpty ? (
-                          <div className="space-y-1.5 p-3 bg-black/10 rounded-2xl border border-white/5">
+                      <span className={`text-right font-mono font-black text-sm tabular-nums ${isEmpty ? 'text-muted-foreground/40' : 'text-emerald-500'}`}>
+                        {(summary.total_units || 0).toLocaleString()}
+                      </span>
+                      <span className="text-right text-xs font-bold tabular-nums text-muted-foreground">
+                        {summary.skus_count || 0}
+                      </span>
+                      <div className="text-[10px] font-mono truncate" title={summary.items.map(it => `${it.style}: ${it.units}`).join(' · ')}>
+                        {isEmpty ? (
+                          <span className="text-muted-foreground/40 italic uppercase tracking-widest">Vacío</span>
+                        ) : (
+                          <>
                             {summary.items.map((item, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-[10px] font-bold">
-                                <span className="truncate text-foreground/80 pr-2">{item.style}</span>
-                                <span className="text-muted-foreground tabular-nums">{item.units}</span>
-                              </div>
+                              <span key={idx}>
+                                <span className="text-foreground/90 font-bold">{item.style}</span>
+                                <span className="text-muted-foreground/70"> ({item.units})</span>
+                                {idx < summary.items.length - 1 ? <span className="text-muted-foreground/30"> · </span> : null}
+                              </span>
                             ))}
                             {summary.skus_count > 5 && (
-                              <div className="pt-1.5 mt-1.5 border-t border-white/5 text-[9px] font-black text-center text-primary/40 uppercase tracking-tighter">
-                                + {summary.skus_count - 5} {t('more') || 'MÁS'} SKUS
-                              </div>
+                              <span className="text-primary/60 font-black ml-1">+{summary.skus_count - 5}</span>
                             )}
-                          </div>
-                        ) : (
-                          <div className="py-4 text-center border border-dashed border-border/20 rounded-2xl">
-                            <span className="text-[10px] font-bold text-muted-foreground/20 uppercase tracking-widest">Vacio</span>
-                          </div>
+                          </>
                         )}
+                      </div>
+                      <div className="flex items-center justify-end gap-0.5">
+                        <button
+                          onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
+                          className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-all"
+                          title="Imprimir etiqueta"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
+                        {!isEmpty && (
+                          <button
+                            onClick={() => setMoveBulk({ from: l, to: '' })}
+                            className="p-1.5 text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 rounded-md transition-all"
+                            title={`Mover todo el contenido de ${l.name} a otra ubicación`}
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
+                          className="p-1.5 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded-md transition-all"
+                          title="Editar ubicación"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(l.location_id, l.name)}
+                          className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
+                          title="Eliminar ubicación"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );

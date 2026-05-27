@@ -308,12 +308,13 @@ export default function WMS() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto custom-scrollbar relative">
-        {/* Global progress bar — visible whenever HTTP requests are in flight or module is switching */}
-        {(httpBusy || moduleSwitching) && (
-          <div className="sticky top-0 z-[60] h-0.5 overflow-hidden pointer-events-none">
-            <div className="h-full w-full bg-gradient-to-r from-primary/0 via-primary to-primary/0 animate-[wms-progress_1.2s_linear_infinite]" />
-          </div>
-        )}
+        {/* Global progress bar — always reserves its 2px row to prevent layout
+            shift when HTTP requests start/finish; the inner bar fades in/out. */}
+        <div className="sticky top-0 z-[60] h-0.5 overflow-hidden pointer-events-none">
+          <div
+            className={`h-full w-full bg-gradient-to-r from-primary/0 via-primary to-primary/0 animate-[wms-progress_1.2s_linear_infinite] transition-opacity duration-150 ${(httpBusy || moduleSwitching) ? 'opacity-100' : 'opacity-0'}`}
+          />
+        </div>
         {/* Module Header Overlay */}
         <div className="sticky top-0 z-10 p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
           {(() => {
