@@ -2936,7 +2936,7 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
         return str(row[idx]).strip() if isinstance(default, str) else row[idx]
 
     now = now_iso()
-    inventory_docs = []
+    inventory_by_key = {}
     box_docs = []
     locations_set = set()
     skipped = 0
@@ -2959,29 +2959,38 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
         if inv_loc:
             locations_set.add(inv_loc)
 
-        inventory_id = f"inv_{uuid.uuid4().hex[:12]}"
-        inventory_docs.append({
-            "inventory_id": inventory_id,
-            "customer": get(row, 'CustomerID', '').strip().upper(),
-            "style": style,
-            "sku": style,
-            "color": color,
-            "size": size,
-            "size_header": get(row, 'SizeHeader', '').strip().upper(),
-            "manufacturer": get(row, 'Manufacturer', '').strip().upper(),
-            "description": description,
-            "category": get(row, 'Category', '').strip().upper(),
-            "country_of_origin": coo,
-            "fabric_content": get(row, 'FabricContent', '').strip().upper(),
-            "import_number": get(row, 'ImportNumber', ''),
-            "po": get(row, 'PO', ''),
-            "bpo": get(row, 'BPO', ''),
-            "location": inv_loc,
-            "total_boxes": total_boxes,
-            "units_on_hand": total_units,
-            "units_allocated": 0,
-            "updated_at": now
-        })
+        key = (style, color, size, inv_loc)
+        if key not in inventory_by_key:
+            inventory_id = f"inv_{uuid.uuid4().hex[:12]}"
+            inventory_by_key[key] = {
+                "inventory_id": inventory_id,
+                "customer": get(row, 'CustomerID', '').strip().upper(),
+                "style": style,
+                "sku": style,
+                "color": color,
+                "size": size,
+                "size_header": get(row, 'SizeHeader', '').strip().upper(),
+                "manufacturer": get(row, 'Manufacturer', '').strip().upper(),
+                "description": description,
+                "category": get(row, 'Category', '').strip().upper(),
+                "country_of_origin": coo,
+                "fabric_content": get(row, 'FabricContent', '').strip().upper(),
+                "import_number": get(row, 'ImportNumber', ''),
+                "po": get(row, 'PO', ''),
+                "bpo": get(row, 'BPO', ''),
+                "location": inv_loc,
+                "total_boxes": 0,
+                "units_on_hand": 0,
+                "units_allocated": 0,
+                "updated_at": now
+            }
+
+        # Accumulate quantities
+        inventory_by_key[key]["total_boxes"] += total_boxes
+        inventory_by_key[key]["units_on_hand"] += total_units
+
+        # Retrieve the consolidated inventory_id for the boxes
+        inventory_id = inventory_by_key[key]["inventory_id"]
 
         # Generate LPNs (boxes) for this line item
         if total_boxes > 0:
@@ -3003,6 +3012,8 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
                     "coo": coo,
                     "created_at": now
                 })
+
+    inventory_docs = list(inventory_by_key.values())
 
     # Clear old data (WMS 2.0 Fresh Start)
     await db.wms_inventory.delete_many({})
