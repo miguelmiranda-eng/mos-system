@@ -369,10 +369,27 @@ async def get_capacity_plan(request: Request):
 
 # ==================== PRODUCTION ANALYTICS ====================
 
+_TIJUANA_TZ = zoneinfo.ZoneInfo("America/Tijuana")
+
+
+def _iso_utc_to_tijuana(value: str, length: int = 19) -> str:
+    """Convert a stored UTC ISO timestamp to a Tijuana-local string for reports."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local = dt.astimezone(_TIJUANA_TZ)
+        return local.strftime("%Y-%m-%d %H:%M:%S")[:length]
+    except (ValueError, TypeError):
+        return str(value)[:length].replace("T", " ")
+
+
 def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
     from datetime import timedelta, datetime, timezone
     import zoneinfo
-    
+
     tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
     query = {}
     
@@ -855,7 +872,7 @@ async def _generate_excel_report(logs, summary, filters):
         ws.write(0, i, h, header_fmt)
         ws.set_column(i, i, 16)
     for row, l in enumerate(logs, 1):
-        ws.write(row, 0, l.get("created_at", "")[:19].replace("T", " "), cell_fmt)
+        ws.write(row, 0, _iso_utc_to_tijuana(l.get("created_at", ""), 19), cell_fmt)
         ws.write(row, 1, l.get("order_number", ""), cell_fmt)
         ws.write(row, 2, l.get("client", ""), cell_fmt)
         ws.write(row, 3, l.get("machine", ""), cell_fmt)
@@ -991,7 +1008,7 @@ async def _generate_pdf_report(logs, summary, filters):
     data = [headers]
     for l in logs:
         data.append([
-            l.get("created_at", "")[:16].replace("T", " "),
+            _iso_utc_to_tijuana(l.get("created_at", ""), 16),
             l.get("order_number", ""), l.get("client", "")[:15],
             l.get("machine", "").replace("MAQUINA", "M"), l.get("operator", l.get("user_name", ""))[:15],
             l.get("shift", ""), 
