@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { MapPin, ScanLine, Loader2, ClipboardCheck, Plus, Printer, Box, Package, ChevronRight, X, Keyboard } from "lucide-react";
+import { MapPin, ScanLine, Loader2, ClipboardCheck, Box, Package, ChevronRight, X, Keyboard } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 import { BoxStatus } from "./constants";
@@ -15,8 +15,6 @@ export const PutawayModule = () => {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
-  const [showNewLoc, setShowNewLoc] = useState(false);
   // Scannable location input: default ON, fallback to manual select if toggled
   const [manualMode, setManualMode] = useState(false);
   const [scanInput, setScanInput] = useState('');
@@ -67,13 +65,6 @@ export const PutawayModule = () => {
     finally { setLoading(false); }
   };
 
-  const handleCreateLoc = async () => {
-    if (!newLoc.name) { toast.error(t('wms_name_req')); return; }
-    const res = await poster('/locations', newLoc);
-    if (res.ok) { toast.success(t('wms_loc_created')); setNewLoc({ name: '', zone: '', type: 'rack' }); setShowNewLoc(false); loadLocations(); }
-    else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-  };
-
   // Scanner submission: validate against known locations, then show confirm overlay
   const handleScanSubmit = (e) => {
     if (e) e.preventDefault();
@@ -107,12 +98,6 @@ export const PutawayModule = () => {
           <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
           {t('wms_mod_putaway')}
         </div>
-        <button
-          onClick={() => setShowNewLoc(!showNewLoc)}
-          className="px-4 py-2 bg-secondary text-foreground border border-border/40 rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:bg-secondary/80 shadow-lg"
-        >
-          <MapPin className="w-4 h-4 text-primary" /> {showNewLoc ? t('close') : `+ ${t('wms_new_loc_btn') || t('add')}`}
-        </button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
@@ -205,48 +190,6 @@ export const PutawayModule = () => {
           )}
         </div>
       </div>
-        <div className="border border-border rounded-lg p-4 bg-card space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-bold text-foreground flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> {t('wms_locations')} ({locations.length})</div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}
-                className="text-[10px] font-black uppercase tracking-widest text-emerald-500 hover:text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-lg transition-all"
-                title="Imprimir todas las ubicaciones"
-              >
-                <Printer className="w-3 h-3" /> Imprimir Todo
-              </button>
-              <button onClick={() => setShowNewLoc(!showNewLoc)} className="text-xs text-primary hover:underline flex items-center gap-1">
-                <Plus className="w-3 h-3" /> {t('add')}
-              </button>
-            </div>
-          </div>
-          {showNewLoc && (
-            <div className="flex gap-2">
-              <input placeholder={t('wms_loc_name_placeholder')} value={newLoc.name} onChange={e => setNewLoc(p => ({ ...p, name: e.target.value }))} className="flex-1 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
-              <input placeholder={t('wms_zone')} value={newLoc.zone} onChange={e => setNewLoc(p => ({ ...p, zone: e.target.value }))} className="w-20 px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" />
-              <button onClick={handleCreateLoc} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm">{t('wms_create_btn')}</button>
-            </div>
-          )}
-          <div className="max-h-40 overflow-auto space-y-1 pr-1 custom-scrollbar">
-            {locations.map(l => (
-              <div key={l.location_id} className="flex items-center justify-between px-2 py-1.5 text-xs bg-secondary/50 rounded group hover:bg-secondary transition-colors">
-                <div className="flex flex-col">
-                  <span className="font-mono font-bold text-foreground">{l.name}</span>
-                  <span className="text-[9px] text-muted-foreground uppercase font-black tracking-tighter">{l.zone || 'SIN ZONA'}</span>
-                </div>
-                <button
-                  onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
-                  className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-primary/20 rounded text-primary transition-all"
-                  title="Imprimir etiqueta"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
         <div className="border border-border/20 rounded-3xl p-6 bg-card/40 backdrop-blur-sm shadow-xl space-y-4">
           <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60 flex items-center gap-2">
           <Package className="w-4 h-4" /> {t('wms_unlocated_mat')}

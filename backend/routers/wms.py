@@ -609,7 +609,11 @@ async def create_receiving(request: Request):
                     "sku": sku or style, "color": color, "size": item_size,
                     "units": units_per_box, "seq_num": seq, "location": inv_location,
                     "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
-                    "lpn_id": box_id, "coo": country_of_origin, "lot_number": lot_number,
+                    "lpn_id": box_id, "coo": country_of_origin,
+                    "country_of_origin": country_of_origin,
+                    "fabric_content": fabric_content,
+                    "description": description,
+                    "lot_number": lot_number,
                     "asn_reference": body.get("asn_reference", "").strip(),
                     "created_at": now_iso(),
                 })
@@ -622,7 +626,11 @@ async def create_receiving(request: Request):
             "sku": sku or style, "color": color, "size": size,
             "units": total_units, "qty": total_units, "seq_num": seq, "location": inv_location,
             "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
-            "lpn_id": box_id, "coo": country_of_origin, "lot_number": lot_number,
+            "lpn_id": box_id, "coo": country_of_origin,
+            "country_of_origin": country_of_origin,
+            "fabric_content": fabric_content,
+            "description": description,
+            "lot_number": lot_number,
             "asn_reference": body.get("asn_reference", "").strip(),
             "created_at": now_iso(),
         })
@@ -681,12 +689,26 @@ async def create_receiving(request: Request):
     await db.wms_receiving.insert_one(receiving_doc)
     await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo})
     
-    # Update inventory
+    # Update inventory — pass through the receiving metadata so the inventory
+    # row mirrors what the operator captured (Cliente, Manufacturer, COO, etc.).
+    meta = {
+        "manufacturer": manufacturer,
+        "description": description,
+        "country_of_origin": country_of_origin,
+        "fabric_content": fabric_content,
+    }
     if items:
         for item in items:
-            await _update_inventory_enhanced(style, color, item.get("size"), int(item.get("boxes", 1)) * int(item.get("units_per_box", 1)), "add", customer, inv_location, is_bpo)
+            await _update_inventory_enhanced(
+                style, color, item.get("size"),
+                int(item.get("boxes", 1)) * int(item.get("units_per_box", 1)),
+                "add", customer, inv_location, is_bpo, **meta,
+            )
     else:
-        await _update_inventory_enhanced(style, color, size, total_units, "add", customer, inv_location, is_bpo)
+        await _update_inventory_enhanced(
+            style, color, size, total_units, "add",
+            customer, inv_location, is_bpo, **meta,
+        )
 
     # Ensure location exists
     inv_location_upper = inv_location.upper()
@@ -951,17 +973,48 @@ async def putaway_bulk(request: Request):
 
 # ==================== INVENTORY ====================
 
-async def _update_inventory_enhanced(sku, color, size, qty, operation, customer="", location="", is_bpo=False):
-    key = {"sku": sku, "color": color or "", "size": size or "", "location": location or ""}
-    inv = await db.wms_inventory.find_one(key)
-    # FALLBACK: Excel-imported inventory may have sku='None' with real value in 'style'
+async def _update_inventory_enhanced(
+    sku, color, size, qty, operation, customer="", location="", is_bpo=False,
+    *, manufacturer="", description="", country_of_origin="", fabric_content="",
+):
+    """Add/allocate/deallocate/deduct stock. The inventory key is now
+    (sku, color, size, location, fabric_content, country_of_origin) so two
+    batches of the same SKU at the same shelf with different fabric content
+    or country of origin stay as separate rows instead of being silently
+    merged. For non-add operations we fall back to the legacy 4-field key
+    to keep picking/move flows working when callers don't supply meta."""
+    full_key = {
+        "sku": sku, "color": color or "", "size": size or "",
+        "location": location or "",
+        "fabric_content": fabric_content or "",
+        "country_of_origin": country_of_origin or "",
+    }
+    inv = await db.wms_inventory.find_one(full_key)
+    # Excel-imported inventory may have sku='None' with real value in 'style'
     if not inv and sku:
-        style_key = {"style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"}, "color": color or "", "size": size or "", "location": location or ""}
+        style_key = {
+            "style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"},
+            **{k: v for k, v in full_key.items() if k != "sku"},
+        }
         inv = await db.wms_inventory.find_one(style_key)
+    # Loose fallback: if caller didn't pass meta, match by the legacy 4-field
+    # key so picks/moves that don't know fabric/COO still find existing rows.
+    if not inv and (not fabric_content and not country_of_origin):
+        loose_key = {"sku": sku, "color": color or "", "size": size or "", "location": location or ""}
+        inv = await db.wms_inventory.find_one(loose_key)
+        if not inv and sku:
+            inv = await db.wms_inventory.find_one({
+                "style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"},
+                **{k: v for k, v in loose_key.items() if k != "sku"},
+            })
     if not inv and operation == "add":
         await db.wms_inventory.insert_one({
             "sku": sku, "style": sku, "color": color or "", "size": size or "",
             "inventory_id": gen_id("inv"), "customer": customer,
+            "manufacturer": manufacturer or "",
+            "description": description or "",
+            "country_of_origin": country_of_origin or "",
+            "fabric_content": fabric_content or "",
             "location": location, "is_bpo": is_bpo,
             "units_on_hand": qty, "units_allocated": 0, "total_boxes": 1,
             "updated_at": now_iso()
@@ -969,7 +1022,24 @@ async def _update_inventory_enhanced(sku, color, size, qty, operation, customer=
     elif inv:
         doc_key = {"_id": inv["_id"]}
         if operation == "add":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "is_bpo": is_bpo}})
+            # Backfill empty metadata fields on existing rows so re-receiving
+            # the same SKU into the same location heals legacy gaps.
+            backfill = {}
+            for field, value in (
+                ("manufacturer", manufacturer),
+                ("description", description),
+                ("country_of_origin", country_of_origin),
+                ("fabric_content", fabric_content),
+            ):
+                if value and not (inv.get(field) or "").strip():
+                    backfill[field] = value
+            await db.wms_inventory.update_one(
+                doc_key,
+                {
+                    "$inc": {"units_on_hand": qty, "total_boxes": 1},
+                    "$set": {"updated_at": now_iso(), "is_bpo": is_bpo, **backfill},
+                },
+            )
         elif operation == "allocate":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"units_allocated": qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deallocate":
@@ -3170,8 +3240,13 @@ async def add_inventory_manual(request: Request):
     size = s("size")
     now = now_iso()
 
+    # Wider key so two batches of the same SKU with different fabric/COO
+    # stay as separate inventory rows (mirrors the import + receiving keys).
+    fabric_key = s("fabric_content")
+    coo_key = s("country_of_origin")
     existing = await db.wms_inventory.find_one({
         "style": style, "color": color, "size": size, "location": location,
+        "fabric_content": fabric_key, "country_of_origin": coo_key,
     })
 
     if existing:
@@ -3223,7 +3298,11 @@ async def add_inventory_manual(request: Request):
             "location": location,
             "state": "putaway",
             "customer": s("customer"),
-            "coo": s("country_of_origin"),
+            "coo": coo_key,
+            "country_of_origin": coo_key,
+            "fabric_content": fabric_key,
+            "description": s("description"),
+            "manufacturer": s("manufacturer"),
             "created_at": now,
         } for i in range(total_boxes)]
         await db.wms_boxes.insert_many(box_docs)
@@ -3310,11 +3389,14 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
         total_units = int(float(get(row, 'TotalUnits', 0) or 0))
         description = get(row, 'Description', '').strip().upper()
         coo = get(row, 'CountryofOrigin', '').strip().upper()
+        fabric = get(row, 'FabricContent', '').strip().upper()
 
         if inv_loc:
             locations_set.add(inv_loc)
 
-        key = (style, color, size, inv_loc)
+        # Include fabric + COO in the key so distinct batches at the same shelf
+        # stay separate (matches _update_inventory_enhanced behavior).
+        key = (style, color, size, inv_loc, fabric, coo)
         if key not in inventory_by_key:
             inventory_id = f"inv_{uuid.uuid4().hex[:12]}"
             inventory_by_key[key] = {
@@ -3364,7 +3446,11 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
                     "location": inv_loc,
                     "state": "putaway",
                     "customer": get(row, 'CustomerID', '').strip().upper(),
+                    "manufacturer": get(row, 'Manufacturer', '').strip().upper(),
+                    "description": description,
                     "coo": coo,
+                    "country_of_origin": coo,
+                    "fabric_content": fabric,
                     "created_at": now
                 })
 
