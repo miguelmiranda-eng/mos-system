@@ -54,7 +54,7 @@ const SECTIONS_DEFS = [
     items: [
       { name: 'Opciones y Estados', path: '/catalog-center', desc: 'Administra clientes, brandings y estados.', icon: 'Tags' },
       { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para producción.', icon: 'UserSquare' },
-      { name: 'Prosper Pipeline', path: '/ceo-dashboard', desc: 'Seguimiento de órdenes y facturación.', icon: 'TrendingUp', roles: ['admin'] },
+      { name: 'Mos-atlas', path: '/ceo-dashboard', desc: 'Seguimiento de órdenes y facturación.', icon: 'TrendingUp', roles: ['admin'] },
     ]
   }
 ];
