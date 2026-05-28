@@ -59,7 +59,15 @@ export default function WMS() {
   // so the content area doesn't look frozen until the new module's first paint.
   const [moduleSwitching, setModuleSwitching] = useState(false);
   const isFirstModuleRender = useRef(true);
-  const httpBusy = useHttpBusy();
+  const httpBusyRaw = useHttpBusy();
+  // Debounce: only show the global progress bar after sustained busy >400ms.
+  // Short requests (badge refreshes, fast polls) shouldn't make it blink.
+  const [httpBusy, setHttpBusy] = useState(false);
+  useEffect(() => {
+    if (!httpBusyRaw) { setHttpBusy(false); return; }
+    const id = setTimeout(() => setHttpBusy(true), 400);
+    return () => clearTimeout(id);
+  }, [httpBusyRaw]);
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });

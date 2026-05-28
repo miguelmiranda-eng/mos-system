@@ -95,14 +95,21 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(logLoadError('data')); }, []);
 
-  // Build the query params common to every chunk
+  // Debounced search value so we don't trigger a fetch on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // Build the query params common to every chunk (uses the debounced search).
   const buildBaseParams = useCallback(() => {
     const params = new URLSearchParams({ paginated: 'true', limit: String(PAGE_SIZE) });
-    if (search) params.set('style', search);
+    if (debouncedSearch) params.set('style', debouncedSearch);
     if (customerFilter) params.set('customer', customerFilter);
     if (categoryFilter) params.set('category', categoryFilter);
     return params;
-  }, [search, customerFilter, categoryFilter]);
+  }, [debouncedSearch, customerFilter, categoryFilter]);
 
   // Cancellation token: increments whenever filters change so old chunks bail
   const loadGenRef = useRef(0);
@@ -151,7 +158,23 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(logLoadError('data'));
   }, [buildBaseParams, customerFilter]);
 
-  useEffect(() => { load(); loadFilters(); }, [load, loadFilters]);
+  // Filters (dropdown sources) load once on mount; the inventory itself only
+  // loads on-demand when the user actually types a search or applies a filter.
+  // Auto-loading 19k+ rows just for opening the screen was killing the app.
+  useEffect(() => { loadFilters(); }, [loadFilters]);
+
+  useEffect(() => {
+    const hasQuery = (debouncedSearch || '').trim() || customerFilter || categoryFilter;
+    if (!hasQuery) {
+      // Nothing to look up — cancel any in-flight chunks and clear the table.
+      loadGenRef.current += 1;
+      setInventory([]);
+      setTotalRows(0);
+      setLoadingMore(false);
+      return;
+    }
+    load();
+  }, [load, debouncedSearch, customerFilter, categoryFilter]);
 
   const exportExcel = () => window.open(`${API}/export/inventory`, '_blank');
 
@@ -264,7 +287,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           : `Inventario creado (${data.added_units} pzs)`;
         toast.success(msg);
         setShowAddManual(false);
-        load(); loadFilters();
+        // Show what we just added by setting the search to the style — the
+        // debounced effect will fetch only matching rows (cheap), instead of
+        // pulling all 19k rows back into memory.
+        setSearch(style);
+        loadFilters();
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || 'Error al guardar');
@@ -512,13 +539,27 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
               )}
             </tbody>
           </table>
-          {inventory.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
-              <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_inv')}</p>
-              <p className="text-xs mt-1">{t('wms_import_hint')}</p>
-            </div>
-          )}
+          {inventory.length === 0 && !loadingMore && (() => {
+            const hasQuery = (debouncedSearch || '').trim() || customerFilter || categoryFilter;
+            if (!hasQuery) {
+              return (
+                <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+                  <Search className="w-16 h-16 mb-4 stroke-[1px] opacity-40" />
+                  <p className="font-bold uppercase tracking-widest text-sm">Busca un producto para empezar</p>
+                  <p className="text-xs mt-2 opacity-60 max-w-md text-center">
+                    Para no cargar miles de registros de un golpe, escribe un Style/SKU arriba o aplica un filtro de Cliente/Categoría.
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
+                <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
+                <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_inv')}</p>
+                <p className="text-xs mt-1">{t('wms_import_hint')}</p>
+              </div>
+            );
+          })()}
         </div>
       </div>
       <div className="flex items-center justify-end gap-3 mt-2">
