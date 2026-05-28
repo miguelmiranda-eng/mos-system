@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft } from "lucide-react";
+import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 
@@ -22,6 +22,23 @@ export const LocationsModule = () => {
   const ZONES_PER_PAGE = 8;
   const [visibleZones, setVisibleZones] = useState(ZONES_PER_PAGE);
   useEffect(() => { setVisibleZones(ZONES_PER_PAGE); }, [search, activeTab]);
+
+  // Click-to-inspect: shows every SKU + box info inside the selected location.
+  const [detailLoc, setDetailLoc] = useState(null);
+  const [detailItems, setDetailItems] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const openDetail = useCallback(async (loc) => {
+    setDetailLoc(loc);
+    setDetailItems([]);
+    setDetailLoading(true);
+    try {
+      const data = await fetcher(`/inventory?location=${encodeURIComponent(loc.name)}&limit=500`);
+      setDetailItems(Array.isArray(data) ? data : (data.items || []));
+    } catch (err) {
+      logLoadError('location detail')(err);
+      toast.error('No se pudo cargar el detalle de la ubicación');
+    } finally { setDetailLoading(false); }
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -301,7 +318,8 @@ export const LocationsModule = () => {
                   return (
                     <div
                       key={l.location_id}
-                      className={`grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 items-center border-b border-border/10 hover:bg-secondary/30 transition-colors border-l-2 ${isEmpty ? 'border-l-transparent opacity-60' : (activeTab === 'system' ? 'border-l-indigo-500/40' : 'border-l-primary/40')}`}
+                      onClick={() => !isEmpty && openDetail(l)}
+                      className={`grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 items-center border-b border-border/10 hover:bg-secondary/30 transition-colors border-l-2 ${isEmpty ? 'border-l-transparent opacity-60' : `cursor-pointer ${activeTab === 'system' ? 'border-l-indigo-500/40' : 'border-l-primary/40'}`}`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${isEmpty ? 'text-muted-foreground/40' : 'text-primary'}`} />
@@ -331,7 +349,7 @@ export const LocationsModule = () => {
                           </>
                         )}
                       </div>
-                      <div className="flex items-center justify-end gap-0.5">
+                      <div className="flex items-center justify-end gap-0.5" onClick={e => e.stopPropagation()}>
                         <button
                           onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
                           className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-all"
@@ -486,6 +504,144 @@ export const LocationsModule = () => {
                 className="flex-1 py-4 bg-secondary text-foreground rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-secondary/80 transition-all"
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Location detail modal — opens when user clicks a non-empty row. */}
+      {detailLoc && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setDetailLoc(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-card border border-emerald-500/40 rounded-3xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                  <MapPin className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-mono font-black text-xl tracking-tighter">{detailLoc.name}</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold uppercase tracking-widest">
+                    Zona {detailLoc.zone || 'SIN ZONA'}
+                    {detailLoc.inventory_summary && (
+                      <> · {detailLoc.inventory_summary.skus_count || 0} SKUs · {(detailLoc.inventory_summary.total_units || 0).toLocaleString()} pzs</>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDetailLoc(null)}
+                className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5">
+              {detailLoading ? (
+                <div className="flex flex-col items-center justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-3">Cargando contenido…</span>
+                </div>
+              ) : detailItems.length === 0 ? (
+                <div className="text-center py-16 text-xs font-bold uppercase tracking-widest text-muted-foreground/40 italic">
+                  Sin contenido en esta ubicación
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {detailItems.map((it, i) => (
+                    <div
+                      key={it.inventory_id || `${it.sku}-${it.color}-${it.size}-${i}`}
+                      className="border border-border/40 rounded-2xl bg-secondary/20 overflow-hidden"
+                    >
+                      {/* Header: customer + style/sku */}
+                      <div className="px-4 py-3 bg-secondary/40 border-b border-border/20 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Cliente</div>
+                          <div className="font-mono font-black text-sm truncate" title={it.customer}>{it.customer || '—'}</div>
+                        </div>
+                        <div className="min-w-0 text-right">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">SKU</div>
+                          <div className="font-mono font-black text-sm text-primary truncate" title={`${it.style}-${it.color}-${it.size}`}>
+                            {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Body: details grid */}
+                      <div className="grid grid-cols-2 gap-px bg-border/20 text-[11px]">
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Package className="w-2.5 h-2.5" /> Fabricante</div>
+                          <div className="font-mono font-bold truncate">{it.manufacturer || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Hash className="w-2.5 h-2.5" /> Estilo</div>
+                          <div className="font-mono font-bold truncate">{it.style || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Tag className="w-2.5 h-2.5" /> Color</div>
+                          <div className="font-mono font-bold truncate">{it.color || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Talla</div>
+                          <div className="font-mono font-bold truncate">{it.size || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2 col-span-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><FileText className="w-2.5 h-2.5" /> Descripción</div>
+                          <div className="font-mono font-bold truncate" title={it.description}>{it.description || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Globe className="w-2.5 h-2.5" /> País de origen</div>
+                          <div className="font-mono font-bold truncate">{it.country_of_origin || '—'}</div>
+                        </div>
+                        <div className="bg-card/60 px-4 py-2">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> Contenido tela</div>
+                          <div className="font-mono font-bold truncate" title={it.fabric_content}>{it.fabric_content || '—'}</div>
+                        </div>
+                        {(it.po || it.bpo) && (
+                          <div className="bg-card/60 px-4 py-2 col-span-2">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><User className="w-2.5 h-2.5" /> PO / BPO</div>
+                            <div className="font-mono font-bold truncate">{[it.po, it.bpo].filter(Boolean).join(' · ') || '—'}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Footer: stock summary */}
+                      <div className="px-4 py-3 grid grid-cols-3 gap-3 bg-secondary/40 border-t border-border/20 text-center">
+                        <div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center justify-center gap-1"><Box className="w-2.5 h-2.5" /> Cajas</div>
+                          <div className="font-mono font-black text-base tabular-nums">{(it.total_boxes || 0).toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">On hand</div>
+                          <div className="font-mono font-black text-base text-emerald-500 tabular-nums">{(it.on_hand ?? it.units_on_hand ?? 0).toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Disponible</div>
+                          <div className="font-mono font-black text-base text-blue-400 tabular-nums">{(it.available ?? ((it.on_hand ?? it.units_on_hand ?? 0) - (it.allocated ?? it.units_allocated ?? 0))).toLocaleString()}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 p-5 border-t border-border/20">
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
+                {detailItems.length} línea{detailItems.length === 1 ? '' : 's'} en esta ubicación
+              </span>
+              <button
+                onClick={() => setDetailLoc(null)}
+                className="px-5 py-2 bg-secondary/60 hover:bg-secondary text-foreground rounded-xl text-xs font-bold uppercase tracking-widest transition-all"
+              >
+                Cerrar
               </button>
             </div>
           </div>
