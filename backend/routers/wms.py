@@ -149,6 +149,125 @@ async def delete_catalog_option(catalog_id: str, request: Request):
     return {"message": "Opción eliminada"}
 
 
+# Map catalog type → (collection, field) it sources/normalizes.
+_CATALOG_FIELD_MAP = {
+    "countries":    ("country_of_origin", ["wms_inventory", "wms_receiving"]),
+    "descriptions": ("description",       ["wms_inventory", "wms_receiving"]),
+    "fabrics":      ("fabric_content",    ["wms_inventory", "wms_receiving"]),
+}
+
+
+@router.get("/catalogs/{ctype}/sources")
+async def list_catalog_sources(ctype: str, request: Request, limit: int = 500):
+    """List the distinct values currently present in inventory/receiving for
+    the given catalog type, with usage counts. Powers the "Fuentes desde
+    inventario" panel in WMS Configuration so admins can see + clean typos."""
+    await require_auth(request)
+    if ctype not in _CATALOG_FIELD_MAP:
+        raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
+    field, collections = _CATALOG_FIELD_MAP[ctype]
+
+    # Aggregate counts across all source collections (inventory + receiving).
+    counts: dict[str, int] = {}
+    for coll_name in collections:
+        coll = getattr(db, coll_name)
+        cursor = coll.aggregate([
+            {"$match": {field: {"$ne": None, "$nin": ["", "."]}}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+        ])
+        async for doc in cursor:
+            v = (doc.get("_id") or "").strip()
+            if not v:
+                continue
+            counts[v] = counts.get(v, 0) + int(doc.get("count", 0))
+
+    # Mark which ones are already in the curated catalog so the UI can show a badge.
+    curated_docs = await db.wms_catalog_options.find(
+        {"type": ctype}, {"_id": 0, "value": 1}
+    ).to_list(2000)
+    curated_set = {(c.get("value") or "").strip().upper() for c in curated_docs}
+
+    items = [
+        {
+            "value": v,
+            "count": c,
+            "in_catalog": v.strip().upper() in curated_set,
+        }
+        for v, c in counts.items()
+    ]
+    items.sort(key=lambda x: (-x["count"], x["value"].lower()))
+    return {
+        "type": ctype,
+        "field": field,
+        "total_distinct": len(items),
+        "items": items[: max(1, min(limit, 5000))],
+    }
+
+
+@router.post("/catalogs/{ctype}/rename")
+async def rename_catalog_value(ctype: str, request: Request):
+    """Bulk-rename a value across all source collections for a catalog type.
+    Example: rename {old: 'BANGLANDESH', new: 'BANGLADESH'} sweeps every
+    inventory + receiving row with the typo and fixes it in place."""
+    user = await require_auth(request)
+    if ctype not in _CATALOG_FIELD_MAP:
+        raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
+    body = await request.json()
+    old = (body.get("old") or "").strip()
+    new = (body.get("new") or "").strip()
+    if not old or not new:
+        raise HTTPException(400, "old y new son requeridos")
+    if old == new:
+        raise HTTPException(400, "old y new no pueden ser iguales")
+    field, collections = _CATALOG_FIELD_MAP[ctype]
+    new_upper = new.upper()
+
+    total_matched = 0
+    total_modified = 0
+    for coll_name in collections:
+        coll = getattr(db, coll_name)
+        res = await coll.update_many(
+            {field: old},
+            {"$set": {field: new_upper}},
+        )
+        total_matched += res.matched_count
+        total_modified += res.modified_count
+
+    await log_movement(user, "catalog_rename", {
+        "type": ctype, "field": field, "old": old, "new": new_upper,
+        "modified": total_modified,
+    })
+    return {
+        "type": ctype, "old": old, "new": new_upper,
+        "matched": total_matched, "modified": total_modified,
+    }
+
+
+@router.delete("/catalogs/{ctype}/sources")
+async def delete_catalog_value(ctype: str, request: Request):
+    """Bulk-clear a value (set to empty) across source collections.
+    Useful for purging junk like a stray '%' string."""
+    user = await require_auth(request)
+    if ctype not in _CATALOG_FIELD_MAP:
+        raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
+    body = await request.json()
+    value = (body.get("value") or "").strip()
+    if not value:
+        raise HTTPException(400, "value es requerido")
+    field, collections = _CATALOG_FIELD_MAP[ctype]
+
+    total_modified = 0
+    for coll_name in collections:
+        coll = getattr(db, coll_name)
+        res = await coll.update_many({field: value}, {"$set": {field: ""}})
+        total_modified += res.modified_count
+
+    await log_movement(user, "catalog_value_clear", {
+        "type": ctype, "field": field, "value": value, "modified": total_modified,
+    })
+    return {"value": value, "modified": total_modified}
+
+
 # ==================== LOCATIONS ====================
 
 @router.post("/locations")
@@ -957,17 +1076,26 @@ async def inventory_filters_v2(request: Request):
     categories = await db.wms_inventory.distinct("category")
     manufacturers = await db.wms_inventory.distinct("manufacturer")
     styles = await db.wms_inventory.distinct("style")
-    countries = await db.wms_inventory.distinct("country_of_origin")
-    # Drop fabric-content strings that leaked into country_of_origin via bad
-    # Excel imports (e.g. "52% COTTON 48% POLYESTER"). Anything with "%" is
-    # definitely not a country.
-    clean_countries = [c for c in countries if c and "%" not in c]
+
+    # If the admin curated a country catalog, use that as the authoritative
+    # list. Otherwise fall back to inventory distinct, filtering out leaked
+    # fabric-content rows (anything with "%").
+    curated_countries = await db.wms_catalog_options.find(
+        {"type": "countries"}, {"_id": 0, "value": 1}
+    ).to_list(2000)
+    curated_country_vals = [c["value"] for c in curated_countries if c.get("value")]
+    if curated_country_vals:
+        country_list = curated_country_vals
+    else:
+        raw_countries = await db.wms_inventory.distinct("country_of_origin")
+        country_list = [c for c in raw_countries if c and "%" not in c]
+
     return {
         "customers": sorted([c for c in customers if c]),
         "categories": sorted([c for c in categories if c]),
         "manufacturers": sorted([m for m in manufacturers if m]),
         "styles": sorted([s for s in styles if s]),
-        "countries": sorted(clean_countries),
+        "countries": sorted(country_list),
     }
 
 _STYLE_INFO_CACHE = {}  # {style_upper: (timestamp, payload)}
@@ -1589,21 +1717,27 @@ async def get_inventory_field_options(request: Request):
                 base_list.append(x)
         return base_list
 
-    descs_list = [d["val"] for d in descs]
-    countries_list = [c["val"] for c in countries]
+    # If the admin curated a catalog for a given type, that becomes the SOLE
+    # source of truth — the inventory distinct (which is full of typos like
+    # REPIBLICA / BANGLANDESH / RAPUBLICA DOMINICANA) is ignored. When the
+    # catalog is empty we fall back to inventory distinct so existing installs
+    # don't suddenly show empty dropdowns.
+    def authoritative_or_merge(inv_list, curated):
+        curated_clean = [c for c in curated if (c or "").strip()]
+        return curated_clean if curated_clean else merge_unique(inv_list, curated_clean)
 
-    merge_unique(descs_list, catalog_by_type["descriptions"])
-    merge_unique(countries_list, catalog_by_type["countries"])
-    merge_unique(all_fabrics, catalog_by_type["fabrics"])
+    descs_list = authoritative_or_merge([d["val"] for d in descs], catalog_by_type["descriptions"])
+    countries_list = authoritative_or_merge([c["val"] for c in countries], catalog_by_type["countries"])
+    fabrics_list = authoritative_or_merge(all_fabrics, catalog_by_type["fabrics"])
 
-    all_fabrics.sort()
+    fabrics_list.sort()
     descs_list.sort(key=lambda x: x.lower())
     countries_list.sort(key=lambda x: x.lower())
 
     return {
         "descriptions": descs_list,
         "countries": countries_list,
-        "fabrics": all_fabrics
+        "fabrics": fabrics_list,
     }
 
 @router.get("/pick-tickets")
