@@ -958,12 +958,16 @@ async def inventory_filters_v2(request: Request):
     manufacturers = await db.wms_inventory.distinct("manufacturer")
     styles = await db.wms_inventory.distinct("style")
     countries = await db.wms_inventory.distinct("country_of_origin")
+    # Drop fabric-content strings that leaked into country_of_origin via bad
+    # Excel imports (e.g. "52% COTTON 48% POLYESTER"). Anything with "%" is
+    # definitely not a country.
+    clean_countries = [c for c in countries if c and "%" not in c]
     return {
         "customers": sorted([c for c in customers if c]),
         "categories": sorted([c for c in categories if c]),
         "manufacturers": sorted([m for m in manufacturers if m]),
         "styles": sorted([s for s in styles if s]),
-        "countries": sorted([c for c in countries if c]),
+        "countries": sorted(clean_countries),
     }
 
 _STYLE_INFO_CACHE = {}  # {style_upper: (timestamp, payload)}
@@ -1515,8 +1519,14 @@ async def get_inventory_field_options(request: Request):
         {"$group": {"_id": {"$toLower": "$description"}, "val": {"$first": "$description"}}},
         {"$sort": {"_id": 1}}
     ]
+    # Some imported Excel rows shifted columns and dumped fabric-content strings
+    # ("52% COTTON 48% POLYESTER", "100% COTTON", etc.) into country_of_origin.
+    # Filter those out so the Receiving "País de origen" dropdown stays clean.
     country_pipeline = [
-        {"$match": {"country_of_origin": {"$ne": None, "$nin": ["", "."]}}},
+        {"$match": {
+            "country_of_origin": {"$ne": None, "$nin": ["", "."]},
+            "$expr": {"$eq": [{"$indexOfCP": ["$country_of_origin", "%"]}, -1]},
+        }},
         {"$group": {"_id": {"$toLower": "$country_of_origin"}, "val": {"$first": "$country_of_origin"}}},
         {"$sort": {"_id": 1}}
     ]
