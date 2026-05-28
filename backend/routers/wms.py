@@ -957,12 +957,75 @@ async def inventory_filters_v2(request: Request):
     categories = await db.wms_inventory.distinct("category")
     manufacturers = await db.wms_inventory.distinct("manufacturer")
     styles = await db.wms_inventory.distinct("style")
+    countries = await db.wms_inventory.distinct("country_of_origin")
     return {
         "customers": sorted([c for c in customers if c]),
         "categories": sorted([c for c in categories if c]),
         "manufacturers": sorted([m for m in manufacturers if m]),
-        "styles": sorted([s for s in styles if s])
+        "styles": sorted([s for s in styles if s]),
+        "countries": sorted([c for c in countries if c]),
     }
+
+_STYLE_INFO_CACHE = {}  # {style_upper: (timestamp, payload)}
+_STYLE_INFO_TTL = 60.0
+
+
+@router.get("/inventory/style-info")
+async def inventory_style_info(request: Request, style: str = ""):
+    """Cascade data for the manual-entry modal: given a style, returns the
+    distinct colors and sizes already in inventory, plus the "template" fields
+    (customer, description, country_of_origin, category) taken from an existing
+    row. One aggregation round-trip + 60s in-process cache so repeated clicks
+    on the same style are instant.
+    """
+    await require_auth(request)
+    if not style:
+        raise HTTPException(400, "Style requerido")
+
+    import time
+    key = style.strip().upper()
+    cached = _STYLE_INFO_CACHE.get(key)
+    if cached and (time.monotonic() - cached[0]) < _STYLE_INFO_TTL:
+        return cached[1]
+
+    # Exact match on the upper-cased value: import_inventory stores everything
+    # already upper-cased, so equality is fine and lets the index kick in.
+    match = {"$or": [{"style": key}, {"sku": key}]}
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": None,
+            "colors": {"$addToSet": "$color"},
+            "sizes": {"$addToSet": "$size"},
+            "template": {"$first": "$$ROOT"},
+        }},
+    ]
+    docs = await db.wms_inventory.aggregate(pipeline).to_list(1)
+    if not docs:
+        raise HTTPException(404, f"No existe inventario para style '{style}'")
+
+    agg = docs[0]
+    colors = sorted(c for c in agg.get("colors", []) if c)
+    SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', '6X']
+    raw_sizes = {s for s in agg.get("sizes", []) if s}
+    ordered = [s for s in SIZE_ORDER if s in raw_sizes]
+    sizes = ordered + sorted(raw_sizes - set(ordered))
+    template = agg.get("template") or {}
+    payload = {
+        "style": template.get("style") or template.get("sku") or key,
+        "colors": colors,
+        "sizes": sizes,
+        "customer": template.get("customer", ""),
+        "description": template.get("description", ""),
+        "country_of_origin": template.get("country_of_origin", ""),
+        "category": template.get("category", ""),
+        "manufacturer": template.get("manufacturer", ""),
+        "size_header": template.get("size_header", ""),
+        "fabric_content": template.get("fabric_content", ""),
+    }
+    _STYLE_INFO_CACHE[key] = (time.monotonic(), payload)
+    return payload
+
 
 @router.get("/inventory/locations-lookup")
 async def locations_lookup(request: Request, style: str = "", color: str = ""):
@@ -2917,6 +2980,141 @@ async def prioritize_ticket(ticket_id: str, request: Request):
     
     await log_movement(user, "ticket_prioritized", {"ticket_id": ticket_id})
     return {"status": "success", "message": "Ticket escalado a HOT"}
+
+# ==================== MANUAL INVENTORY ENTRY ====================
+
+@router.post("/inventory")
+async def add_inventory_manual(request: Request):
+    """Add a single inventory line manually. Accumulates with any existing row
+    matching (style, color, size, location); creates a new row otherwise.
+    Auto-creates the location if missing and generates LPN boxes for any new
+    cases added by this call. Mirrors POST /import/inventory semantics for one
+    line so the data shape stays consistent.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+
+    def s(field, default=""):
+        v = body.get(field, default)
+        return str(v).strip().upper() if isinstance(default, str) else v
+
+    style = s("style") or s("sku")
+    if not style:
+        raise HTTPException(400, "Style/SKU es requerido")
+
+    location = s("location")
+    if not location:
+        raise HTTPException(400, "Ubicación es requerida")
+
+    try:
+        total_boxes = int(float(body.get("total_boxes", 0) or 0))
+        total_units = int(float(body.get("total_units", 0) or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Cantidades inválidas")
+
+    if total_units <= 0:
+        raise HTTPException(400, "Total de unidades debe ser mayor a 0")
+    if total_boxes < 0:
+        raise HTTPException(400, "Total de cajas no puede ser negativo")
+
+    color = s("color")
+    size = s("size")
+    now = now_iso()
+
+    existing = await db.wms_inventory.find_one({
+        "style": style, "color": color, "size": size, "location": location,
+    })
+
+    if existing:
+        inventory_id = existing["inventory_id"]
+        await db.wms_inventory.update_one(
+            {"inventory_id": inventory_id},
+            {"$inc": {"total_boxes": total_boxes, "units_on_hand": total_units},
+             "$set": {"updated_at": now}},
+        )
+        mode = "accumulated"
+    else:
+        inventory_id = f"inv_{uuid.uuid4().hex[:12]}"
+        await db.wms_inventory.insert_one({
+            "inventory_id": inventory_id,
+            "customer": s("customer"),
+            "style": style,
+            "sku": style,
+            "color": color,
+            "size": size,
+            "size_header": s("size_header"),
+            "manufacturer": s("manufacturer"),
+            "description": s("description"),
+            "category": s("category"),
+            "country_of_origin": s("country_of_origin"),
+            "fabric_content": s("fabric_content"),
+            "import_number": body.get("import_number", ""),
+            "po": body.get("po", ""),
+            "bpo": body.get("bpo", ""),
+            "location": location,
+            "total_boxes": total_boxes,
+            "units_on_hand": total_units,
+            "units_allocated": 0,
+            "updated_at": now,
+        })
+        mode = "created"
+
+    # Generate LPN boxes for the units we just added (matches import logic).
+    if total_boxes > 0:
+        units_per_box = total_units // total_boxes
+        remainder = total_units % total_boxes
+        box_docs = [{
+            "box_id": f"LPN_{uuid.uuid4().hex[:8].upper()}",
+            "inventory_id": inventory_id,
+            "sku": style,
+            "color": color,
+            "size": size,
+            "units": units_per_box + (1 if i < remainder else 0),
+            "qty": units_per_box + (1 if i < remainder else 0),
+            "location": location,
+            "state": "putaway",
+            "customer": s("customer"),
+            "coo": s("country_of_origin"),
+            "created_at": now,
+        } for i in range(total_boxes)]
+        await db.wms_boxes.insert_many(box_docs)
+
+    # Auto-create location if missing (case-insensitive check).
+    loc_existing = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}
+    )
+    location_created = False
+    if not loc_existing:
+        zone = location.split("-")[0] if "-" in location else "DEFAULT"
+        await db.wms_locations.insert_one({
+            "location_id": f"loc_{uuid.uuid4().hex[:12]}",
+            "name": location,
+            "zone": zone,
+            "type": "rack",
+            "active": True,
+            "created_at": now,
+        })
+        location_created = True
+
+    await log_movement(user, "manual_inventory_add", {
+        "inventory_id": inventory_id,
+        "mode": mode,
+        "style": style,
+        "color": color,
+        "size": size,
+        "location": location,
+        "added_boxes": total_boxes,
+        "added_units": total_units,
+    })
+
+    return {
+        "inventory_id": inventory_id,
+        "mode": mode,
+        "location_created": location_created,
+        "added_boxes": total_boxes,
+        "added_units": total_units,
+    }
+
 
 # ==================== IMPORT INVENTORY ====================
 
