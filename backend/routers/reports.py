@@ -11,93 +11,169 @@ from reportlab.lib.units import inch
 
 router = APIRouter(prefix="/api/reports")
 
+def _humanize(action) -> str:
+    """Safely turn a snake_case action into 'Title Case' even if it's None/empty."""
+    return (action or "").replace("_", " ").title() or "Event"
+
+
 @router.get("/order-history/{order_id}")
 async def get_order_history_consolidated(order_id: str, request: Request):
-    """Consolidate all history records for a specific order."""
+    """Consolidate all history records for a specific order.
+
+    Resilient to orders that have null/missing fields (e.g. order_number
+    not yet assigned). Always returns the `creator` derived either from
+    the order doc itself or from the create_order activity log, so the
+    frontend can show who created the order.
+    """
     await require_auth(request)
-    
-    # 1. Get Order Info
+
+    # 1. Get Order Info ────────────────────────────────────────────────────
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
         # Try search by order_number
         order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
-    
+
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    
+
     oid = order.get("order_id")
     onum = order.get("order_number")
-    
+
+    # Build the $or filter for activity logs, excluding any None criteria.
+    # MongoDB treats `{field: None}` as "field missing OR null" so passing
+    # None here would match ALL logs without that field — a critical bug
+    # that returned ~1000 unrelated activities and caused timeouts.
+    activity_or_clauses = []
+    if oid:
+        activity_or_clauses.append({"details.order_id": oid})
+        activity_or_clauses.append({"details.order": oid})
+    if onum:
+        activity_or_clauses.append({"details.order_number": onum})
+        activity_or_clauses.append({"details.order": onum})
+
     events = []
-    
-    # 2. Activity Logs
-    activity_query = {
-        "$or": [
-            {"details.order_id": oid},
-            {"details.order_number": onum},
-            {"details.order": oid},
-            {"details.order": onum}
-        ]
-    }
-    activities = await db.activity_logs.find(activity_query, {"_id": 0}).to_list(1000)
+
+    # 2. Activity Logs ─────────────────────────────────────────────────────
+    activities = []
+    if activity_or_clauses:
+        try:
+            activities = await db.activity_logs.find(
+                {"$or": activity_or_clauses}, {"_id": 0}
+            ).to_list(1000)
+        except Exception as e:
+            logger.error(f"[order-history] activity_logs query failed for {oid}: {e}")
+
     for a in activities:
         events.append({
             "timestamp": a.get("timestamp"),
             "type": "activity",
             "action": a.get("action"),
             "user": a.get("user_name") or a.get("user_email") or "System",
-            "description": a.get("action").replace("_", " ").title(),
-            "details": a.get("details", {})
+            "description": _humanize(a.get("action")),
+            "details": a.get("details", {}) or {},
         })
-        
-    # 3. Production Logs
-    production = await db.production_logs.find({"order_id": oid}, {"_id": 0}).to_list(1000)
+
+    # 3. Production Logs ───────────────────────────────────────────────────
+    try:
+        production = await db.production_logs.find({"order_id": oid}, {"_id": 0}).to_list(1000)
+    except Exception as e:
+        logger.error(f"[order-history] production_logs query failed for {oid}: {e}")
+        production = []
     for p in production:
+        qty = p.get("quantity_produced") or 0
+        machine = p.get("machine") or "—"
         events.append({
             "timestamp": p.get("created_at"),
             "type": "production",
             "action": "register_production",
             "user": p.get("operator") or p.get("user_name") or "System",
-            "description": f"Producción registrada: {p.get('quantity_produced')} pcs en {p.get('machine')}",
-            "details": p
+            "description": f"Producción registrada: {qty} pcs en {machine}",
+            "details": p,
         })
-        
-    # 4. WMS Movements
-    wms_query = {
-        "$or": [
-            {"details.order_id": oid},
-            {"details.order_number": onum}
-        ]
-    }
-    movements = await db.wms_movements.find(wms_query, {"_id": 0}).to_list(1000)
+
+    # 4. WMS Movements ─────────────────────────────────────────────────────
+    wms_or_clauses = []
+    if oid:
+        wms_or_clauses.append({"details.order_id": oid})
+    if onum:
+        wms_or_clauses.append({"details.order_number": onum})
+
+    movements = []
+    if wms_or_clauses:
+        try:
+            movements = await db.wms_movements.find(
+                {"$or": wms_or_clauses}, {"_id": 0}
+            ).to_list(1000)
+        except Exception as e:
+            logger.error(f"[order-history] wms_movements query failed for {oid}: {e}")
+
     for m in movements:
         events.append({
             "timestamp": m.get("created_at"),
             "type": "wms",
             "action": m.get("type"),
             "user": m.get("user_name") or "System",
-            "description": f"WMS: {m.get('type').replace('_', ' ').title()}",
-            "details": m.get("details", {})
+            "description": f"WMS: {_humanize(m.get('type'))}",
+            "details": m.get("details", {}) or {},
         })
-        
-    # 5. Comments
-    comments = await db.comments.find({"order_id": oid}, {"_id": 0}).to_list(1000)
+
+    # 5. Comments ──────────────────────────────────────────────────────────
+    try:
+        comments = await db.comments.find({"order_id": oid}, {"_id": 0}).to_list(1000)
+    except Exception as e:
+        logger.error(f"[order-history] comments query failed for {oid}: {e}")
+        comments = []
     for c in comments:
         events.append({
             "timestamp": c.get("created_at"),
             "type": "comment",
             "action": "add_comment",
-            "user": c.get("user_name"),
+            "user": c.get("user_name") or "Sistema",
             "description": "Comentario añadido",
-            "details": {"content": c.get("content")}
+            "details": {"content": c.get("content") or ""},
         })
-        
-    # Sort events by timestamp descending
-    events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    
+
+    # 6. Synthesize a "Order created" event from the create_order activity
+    #    (or fall back to the order doc's created_at) so the timeline ALWAYS
+    #    shows who created the order, even when nothing else has happened yet.
+    create_log = next(
+        (a for a in activities if (a.get("action") == "create_order")),
+        None,
+    )
+    creator_name = None
+    creator_email = None
+    created_at = order.get("created_at")
+    if create_log:
+        creator_name = create_log.get("user_name")
+        creator_email = create_log.get("user_email")
+        created_at = create_log.get("timestamp") or created_at
+    if not creator_name:
+        # Fall back to fields the order doc itself might carry.
+        creator_name = order.get("created_by_name") or order.get("created_by") or "Sistema"
+
+    # If no activity log exists with the create event, inject a synthetic one
+    # so the UI shows it. Otherwise the existing activity event already covers it.
+    if not create_log and created_at:
+        events.append({
+            "timestamp": created_at,
+            "type": "activity",
+            "action": "create_order",
+            "user": creator_name,
+            "description": "Order created",
+            "details": {"synthetic": True},
+        })
+
+    # 7. Sort events by timestamp descending; None timestamps go last.
+    events.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+
     return {
         "order": order,
-        "history": events
+        "creator": {
+            "name": creator_name,
+            "email": creator_email,
+            "created_at": created_at,
+        },
+        "history": events,
     }
 
 @router.post("/order-history/{order_id}/pdf")

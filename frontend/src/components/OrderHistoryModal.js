@@ -11,8 +11,10 @@ import { toast } from 'sonner';
 const OrderHistoryModal = ({ order, isOpen, onClose }) => {
   const { t } = useLang();
   const [history, setHistory] = useState([]);
+  const [creator, setCreator] = useState(null); // { name, email, created_at }
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (isOpen && order) {
@@ -22,16 +24,28 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
 
   const fetchHistory = async () => {
     setLoading(true);
+    setLoadError(null);
+    setHistory([]);
+    setCreator(null);
     try {
       const res = await fetch(`${API}/reports/order-history/${order.order_id}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setHistory(data.history);
+        setHistory(data.history || []);
+        setCreator(data.creator || null);
       } else {
-        toast.error('Error al cargar historial');
+        let detail = `HTTP ${res.status}`;
+        try {
+          const err = await res.json();
+          detail = err.detail || detail;
+        } catch (_) { /* response wasn't JSON */ }
+        setLoadError(detail);
+        toast.error(`Error al cargar historial: ${detail}`);
       }
     } catch (err) {
-      toast.error('Error de conexión');
+      const msg = err?.message || 'Error de conexión';
+      setLoadError(msg);
+      toast.error(`Error de conexión: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -133,7 +147,7 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
           {/* Executive Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: 'Estado Actual', value: order.board, icon: FileText, color: 'text-indigo-400' },
+              { label: 'Estado Actual', value: order.board || 'N/A', icon: FileText, color: 'text-indigo-400' },
               { label: 'Producción', value: order.production_status || 'N/A', icon: Factory, color: 'text-emerald-400' },
               { label: 'Cantidad', value: order.quantity || 0, icon: Package, color: 'text-blue-400' },
               { label: 'Fecha Entrega', value: order.due_date || 'N/A', icon: Calendar, color: 'text-amber-400' },
@@ -147,6 +161,30 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
             ))}
           </div>
 
+          {/* Creator strip — always visible, even when there is no history */}
+          {creator && (creator.name || creator.created_at) && (
+            <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-primary/15 border border-primary/30 rounded-xl flex items-center justify-center">
+                  <User className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">Creada por</div>
+                  <div className="text-base font-black text-foreground">{creator.name || 'Desconocido'}</div>
+                  {creator.email && (
+                    <div className="text-[11px] text-muted-foreground font-mono">{creator.email}</div>
+                  )}
+                </div>
+              </div>
+              {creator.created_at && (
+                <div className="text-right">
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">Fecha de creación</div>
+                  <div className="text-sm font-bold text-foreground">{formatTimestamp(creator.created_at)}</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Timeline Section */}
           <div className="space-y-6 relative">
             <h3 className="text-xs font-black uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
@@ -157,6 +195,17 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
               <div className="flex flex-col items-center justify-center py-20 gap-4">
                 <Loader2 className="w-10 h-10 animate-spin text-primary" />
                 <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">Compilando historial completo...</p>
+              </div>
+            ) : loadError ? (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-6 text-center space-y-3">
+                <p className="text-sm font-black uppercase tracking-widest text-red-400">No se pudo cargar el historial</p>
+                <p className="text-xs font-mono text-red-300/80 break-all">{loadError}</p>
+                <button
+                  onClick={fetchHistory}
+                  className="mt-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-300 transition-all"
+                >
+                  Reintentar
+                </button>
               </div>
             ) : history.length > 0 ? (
               <div className="relative pl-4 ml-2 border-l-2 border-border/50 space-y-8">
@@ -205,9 +254,14 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-20 opacity-30">
-                <FileText className="w-12 h-12 mx-auto mb-2" />
-                <p className="text-sm font-bold uppercase tracking-widest">Sin registros históricos detectados</p>
+              <div className="text-center py-20 space-y-3">
+                <FileText className="w-12 h-12 mx-auto opacity-30" />
+                <p className="text-sm font-bold uppercase tracking-widest opacity-50">Sin actividad posterior a la creación</p>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                  {creator?.name
+                    ? `${creator.name} creó esta orden y nadie ha hecho cambios todavía.`
+                    : 'No se ha registrado ningún cambio sobre esta orden.'}
+                </p>
               </div>
             )}
           </div>
