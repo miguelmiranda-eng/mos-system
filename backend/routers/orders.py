@@ -429,11 +429,19 @@ async def bulk_move_orders(request: Request):
     body = await request.json()
     order_ids = body.get("order_ids", [])
     target_board = body.get("board")
+    # Optional sub-state inside a machine board. Accepted values:
+    #   "active"  → running on the machine right now
+    #   "queued"  → waiting in line for that machine ("A Cola")
+    # For non-machine boards this is forced to None so the field doesn't
+    # linger when an order leaves the machine workflow.
+    queue_status = body.get("queue_status")
     if not order_ids or not target_board:
         raise HTTPException(status_code=400, detail="order_ids and board required")
     boards = await get_dynamic_boards()
     if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail="Invalid board")
+    if queue_status not in (None, "active", "queued"):
+        raise HTTPException(status_code=400, detail="queue_status must be 'active' or 'queued'")
     original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1, "order_number": 1, "locked_by_qc": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
 
@@ -448,8 +456,21 @@ async def bulk_move_orders(request: Request):
         if qc_board:
             raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
 
-    result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
-    await log_activity(user, "bulk_move_orders", {"order_count": len(order_ids), "target_board": target_board}, previous_data={"order_ids": order_ids, "original_boards": original_boards})
+    is_machine_board = target_board.startswith("MAQUINA")
+    update_fields = {
+        "board": target_board,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        # On machine boards default to "active" unless the caller explicitly
+        # asked for "queued"; on any other board the concept doesn't apply.
+        "queue_status": (queue_status or "active") if is_machine_board else None,
+    }
+    result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": update_fields})
+    await log_activity(
+        user,
+        "bulk_move_orders",
+        {"order_count": len(order_ids), "target_board": target_board, "queue_status": update_fields["queue_status"]},
+        previous_data={"order_ids": order_ids, "original_boards": original_boards},
+    )
     
     executed_automations = []
     updated_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0}).to_list(len(order_ids))

@@ -258,7 +258,7 @@ const Dashboard = () => {
 
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
 
-  const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete) => {
+  const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete, queueStatus = null) => {
     const qcBoardOrders = orders.filter(o => orderIds.includes(o.order_id) && o.board === 'CONTROL DE CALIDAD');
     const isQcAdmin = ['supersu', 'inspector_qc', 'qc'].includes(user?.role);
 
@@ -277,7 +277,7 @@ const Dashboard = () => {
       const ok = window.confirm(`⚠️ SUPERVISOR QC: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
       if (!ok) return;
     }
-    await handleBulkMove(orderIds, targetBoard);
+    await handleBulkMove(orderIds, targetBoard, queueStatus);
     if (onComplete) onComplete();
   };
 
@@ -1089,6 +1089,66 @@ const Dashboard = () => {
       );
     }
 
+    // ── Machine boards: split rows into ACTIVA / EN COLA sub-sections ──
+    // queue_status defaults to "active" for orders that don't carry the
+    // field yet (legacy data + freshly-moved orders before the schema
+    // change). This keeps the existing UX intact and only buckets out the
+    // orders explicitly placed in queue.
+    if (currentBoard && currentBoard.startsWith('MAQUINA') && !groupByDate) {
+      const activeOrders = visibleOrders.filter(o => (o.queue_status || 'active') === 'active');
+      const queuedOrders = visibleOrders.filter(o => o.queue_status === 'queued');
+      const renderSection = (key, label, list, icon, tone) => {
+        if (list.length === 0) return null;
+        const isCollapsed = !!collapsedGroups[key];
+        const totalQty = list.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
+        return (
+          <React.Fragment key={key}>
+            <div
+              style={{ gridColumn: '1 / -1' }}
+              className={`py-0 px-0 border-b ${tone.bar}`}
+              data-testid={`queue-group-${key}`}
+            >
+              <button
+                onClick={() => setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))}
+                className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${tone.text}`}
+              >
+                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
+                <span className="text-base">{icon}</span>
+                <span>{label}</span>
+                <span className="font-normal text-xs text-muted-foreground ml-1">({list.length})</span>
+                <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${tone.badge}`}>
+                  {totalQty.toLocaleString()} pcs
+                </span>
+              </button>
+            </div>
+            {!isCollapsed && list.map(renderOrderRow)}
+          </React.Fragment>
+        );
+      };
+      return (
+        <>
+          {renderSection(
+            '__machine_active',
+            'Activa',
+            activeOrders,
+            '▶',
+            isDark
+              ? { bar: 'bg-emerald-500/10 border-emerald-500/30', text: 'text-emerald-300 hover:bg-emerald-500/20', badge: 'bg-emerald-500/20 text-emerald-300' }
+              : { bar: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700 hover:bg-emerald-100', badge: 'bg-emerald-100 text-emerald-700' }
+          )}
+          {renderSection(
+            '__machine_queued',
+            'En Cola',
+            queuedOrders,
+            '⏸',
+            isDark
+              ? { bar: 'bg-amber-500/10 border-amber-500/30', text: 'text-amber-300 hover:bg-amber-500/20', badge: 'bg-amber-500/20 text-amber-300' }
+              : { bar: 'bg-amber-50 border-amber-200', text: 'text-amber-700 hover:bg-amber-100', badge: 'bg-amber-100 text-amber-700' }
+          )}
+        </>
+      );
+    }
+
     if (!groupByDate) return visibleOrders.map(renderOrderRow);
     const groups = {};
     const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
@@ -1607,9 +1667,25 @@ const Dashboard = () => {
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl">
                         {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
-                          <DropdownMenuItem key={board} onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]))} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
-                            {board}
-                          </DropdownMenuItem>
+                          <DropdownMenuSub key={board}>
+                            <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight">
+                              <span>{board}</span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
+                              <DropdownMenuItem
+                                onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'active')}
+                                className="font-bold py-3 px-5 text-sm tracking-tight text-emerald-600 dark:text-emerald-400"
+                              >
+                                ▶ Activa
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'queued')}
+                                className="font-bold py-3 px-5 text-sm tracking-tight text-amber-600 dark:text-amber-400"
+                              >
+                                ⏸ A Cola
+                              </DropdownMenuItem>
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
                         ))}
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>

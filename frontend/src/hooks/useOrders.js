@@ -436,7 +436,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     }
   };
 
-  const handleBulkMove = async (orderIds, targetBoard) => {
+  const handleBulkMove = async (orderIds, targetBoard, queueStatus = null) => {
     if (!orderIds || orderIds.length === 0) return;
 
     // Optimistic update: remove moved orders from current view
@@ -451,11 +451,18 @@ export const useOrders = (currentBoard, boardFilters) => {
     delete lastFetchedTime[targetBoard + JSON.stringify(boardFilters[targetBoard] || {})];
 
     try {
+      const payload = { order_ids: orderIds, board: targetBoard };
+      // Only send queue_status when explicitly requested ("active" | "queued").
+      // The backend defaults non-machine boards to null and machine boards
+      // without a value to "active".
+      if (queueStatus === 'active' || queueStatus === 'queued') {
+        payload.queue_status = queueStatus;
+      }
       const res = await fetch(`${API}/orders/bulk-move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ order_ids: orderIds, board: targetBoard })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
