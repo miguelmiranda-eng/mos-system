@@ -1644,6 +1644,34 @@ const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Quick queue toggles — only on machine boards. One click moves the
+                  selected orders to "Activa" or "A Cola" on the SAME machine without
+                  touching the multi-level Move-to menu. */}
+              {currentBoard && currentBoard.startsWith('MAQUINA') && (
+                <div className="flex items-center gap-1.5 border-r border-border pr-2 md:pr-3">
+                  <button
+                    onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'active')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30"
+                    title="Mover a Activa en esta máquina"
+                    data-testid="quick-to-active"
+                  >
+                    <span className="text-sm leading-none">▶</span>
+                    <span className="hidden sm:inline">A Activa</span>
+                    <span className="sm:hidden">Activa</span>
+                  </button>
+                  <button
+                    onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'queued')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30"
+                    title="Mover a En Cola en esta máquina"
+                    data-testid="quick-to-queued"
+                  >
+                    <span className="text-sm leading-none">⏸</span>
+                    <span className="hidden sm:inline">A Cola</span>
+                    <span className="sm:hidden">Cola</span>
+                  </button>
+                </div>
+              )}
+
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase font-bold opacity-50 hidden sm:inline">{t('move_to')}:</span>
                 <DropdownMenu>
@@ -1666,10 +1694,13 @@ const Dashboard = () => {
                         </div>
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="z-[301] min-w-[200px] shadow-2xl">
-                        {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
+                        {/* Show every machine — including the current one — so users can
+                            flip queue_status (Activa ↔ A Cola) without having to leave the
+                            board and come back. */}
+                        {allBoardsIncludingHidden.filter(b => b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
                           <DropdownMenuSub key={board}>
-                            <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight">
-                              <span>{board}</span>
+                            <DropdownMenuSubTrigger className={`flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight ${board === currentBoard ? 'text-primary' : ''}`}>
+                              <span>{board}{board === currentBoard ? ' (actual)' : ''}</span>
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
                               <DropdownMenuItem
