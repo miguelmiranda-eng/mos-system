@@ -256,9 +256,22 @@ const Dashboard = () => {
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
 
+  // Day-of-week scheduling: applies to machine boards + this fixed list.
+  // Order matters for display (Mon..Sun).
+  const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  // JS Date.getDay() maps 0=Sunday..6=Saturday; keep that order so
+  // WEEKDAY_KEYS[new Date().getDay()] resolves to today's key directly.
+  const WEEKDAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const DAY_LABEL_ES = { monday: 'Lunes', tuesday: 'Martes', wednesday: 'Miércoles', thursday: 'Jueves', friday: 'Viernes', saturday: 'Sábado', sunday: 'Domingo' };
+  const DAY_LABEL_EN = { monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday' };
+  const DAY_SHORT = { monday: 'Lun', tuesday: 'Mar', wednesday: 'Mié', thursday: 'Jue', friday: 'Vie', saturday: 'Sáb', sunday: 'Dom' };
+  const DAY_SUPPORTED_NON_MACHINE = new Set(['READY TO SCHEDULED', 'BLANKS', 'SCREENS', 'NECK']);
+  const isDaySupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || DAY_SUPPORTED_NON_MACHINE.has(b));
+  const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
+
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
 
-  const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete, queueStatus = null) => {
+  const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete, queueStatus = null, scheduledDay = undefined) => {
     const qcBoardOrders = orders.filter(o => orderIds.includes(o.order_id) && o.board === 'CONTROL DE CALIDAD');
     const isQcAdmin = ['supersu', 'inspector_qc', 'qc'].includes(user?.role);
 
@@ -277,7 +290,7 @@ const Dashboard = () => {
       const ok = window.confirm(`⚠️ SUPERVISOR QC: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
       if (!ok) return;
     }
-    await handleBulkMove(orderIds, targetBoard, queueStatus);
+    await handleBulkMove(orderIds, targetBoard, queueStatus, scheduledDay);
     if (onComplete) onComplete();
   };
 
@@ -1089,63 +1102,130 @@ const Dashboard = () => {
       );
     }
 
-    // ── Machine boards: split rows into ACTIVA / EN COLA sub-sections ──
-    // queue_status defaults to "active" for orders that don't carry the
-    // field yet (legacy data + freshly-moved orders before the schema
-    // change). This keeps the existing UX intact and only buckets out the
-    // orders explicitly placed in queue.
-    if (currentBoard && currentBoard.startsWith('MAQUINA') && !groupByDate) {
-      const activeOrders = visibleOrders.filter(o => (o.queue_status || 'active') === 'active');
-      const queuedOrders = visibleOrders.filter(o => o.queue_status === 'queued');
-      const renderSection = (key, label, list, icon, tone) => {
-        if (list.length === 0) return null;
+    // ── Day-supported boards: group rows by day, with queue nesting on machines ──
+    // queue_status defaults to "active" for orders that don't carry the field
+    // yet (legacy + freshly-moved before the schema change). Same for
+    // scheduled_day: legacy orders show up under "Sin día".
+    if (isDaySupportedBoard(currentBoard) && !groupByDate) {
+      const isMachine = currentBoard.startsWith('MAQUINA');
+
+      // Render a generic collapsible section. Always rendered — even when
+      // empty — so the day tabs are visible at all times on day-supported
+      // boards, giving the user obvious drop targets. Empty groups still
+      // show their count (0) and a muted style.
+      const renderSection = (key, label, list, icon, tone, level = 0) => {
         const isCollapsed = !!collapsedGroups[key];
+        const isEmpty = list.length === 0;
         const totalQty = list.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
+        const pad = level === 0 ? 'px-4' : 'pl-10 pr-4';
         return (
           <React.Fragment key={key}>
             <div
               style={{ gridColumn: '1 / -1' }}
-              className={`py-0 px-0 border-b ${tone.bar}`}
-              data-testid={`queue-group-${key}`}
+              className={`py-0 px-0 border-b ${tone.bar} ${isEmpty ? 'opacity-60' : ''}`}
+              data-testid={`group-${key}`}
             >
               <button
                 onClick={() => setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))}
-                className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${tone.text}`}
+                disabled={isEmpty}
+                className={`w-full flex items-center gap-2 py-2 ${pad} text-left font-roboto font-bold ${level === 0 ? 'text-sm uppercase tracking-wide' : 'text-xs uppercase tracking-widest'} transition-colors ${tone.text} ${isEmpty ? 'cursor-default' : ''}`}
               >
-                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
-                <span className="text-base">{icon}</span>
+                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed || isEmpty ? '-rotate-90' : ''} ${isEmpty ? 'opacity-30' : ''}`} />
+                {icon && <span className="text-base">{icon}</span>}
                 <span>{label}</span>
-                <span className="font-normal text-xs text-muted-foreground ml-1">({list.length})</span>
-                <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${tone.badge}`}>
-                  {totalQty.toLocaleString()} pcs
-                </span>
+                <span className="font-normal text-[10px] text-muted-foreground ml-1">({list.length})</span>
+                {totalQty > 0 && (
+                  <span className={`font-mono text-[10px] ml-2 px-2 py-0.5 rounded ${tone.badge}`}>
+                    {totalQty.toLocaleString()} pcs
+                  </span>
+                )}
               </button>
             </div>
-            {!isCollapsed && list.map(renderOrderRow)}
+            {!isCollapsed && !isEmpty && list.map(renderOrderRow)}
           </React.Fragment>
         );
       };
-      return (
-        <>
-          {renderSection(
-            '__machine_active',
-            'Activa',
-            activeOrders,
-            '▶',
-            isDark
-              ? { bar: 'bg-emerald-500/10 border-emerald-500/30', text: 'text-emerald-300 hover:bg-emerald-500/20', badge: 'bg-emerald-500/20 text-emerald-300' }
-              : { bar: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700 hover:bg-emerald-100', badge: 'bg-emerald-100 text-emerald-700' }
-          )}
-          {renderSection(
-            '__machine_queued',
-            'En Cola',
-            queuedOrders,
-            '⏸',
-            isDark
-              ? { bar: 'bg-amber-500/10 border-amber-500/30', text: 'text-amber-300 hover:bg-amber-500/20', badge: 'bg-amber-500/20 text-amber-300' }
-              : { bar: 'bg-amber-50 border-amber-200', text: 'text-amber-700 hover:bg-amber-100', badge: 'bg-amber-100 text-amber-700' }
-          )}
-        </>
+
+      // Bucket orders by scheduled_day → returns ordered [{key, label, list}].
+      // ALL weekday buckets are returned (Mon..Sun) so the headers are
+      // permanently visible on the board even when a day has zero orders.
+      // "Sin día" was removed: every order on a day-supported board now
+      // carries a scheduled_day (migration + backend default-to-today).
+      const bucketByDay = (orders) => {
+        const buckets = {};
+        DAY_KEYS.forEach(d => { buckets[d] = []; });
+        const todayKey = WEEKDAY_KEYS[new Date().getDay()];
+        orders.forEach(o => {
+          const d = o.scheduled_day;
+          if (d && DAY_KEYS.includes(d)) buckets[d].push(o);
+          else buckets[todayKey].push(o); // Defensive: fall back to today
+        });
+        return DAY_KEYS.map(d => ({ key: d, label: dayLabel(d), list: buckets[d] }));
+      };
+
+      const dayTone = isDark
+        ? { bar: 'bg-sky-500/5 border-sky-500/20', text: 'text-sky-300 hover:bg-sky-500/10', badge: 'bg-sky-500/15 text-sky-300' }
+        : { bar: 'bg-sky-50/60 border-sky-200', text: 'text-sky-700 hover:bg-sky-100', badge: 'bg-sky-100 text-sky-700' };
+      const noDayTone = isDark
+        ? { bar: 'bg-muted/10 border-muted/30', text: 'text-muted-foreground hover:bg-muted/20', badge: 'bg-muted/30 text-muted-foreground' }
+        : { bar: 'bg-gray-50 border-gray-200', text: 'text-gray-600 hover:bg-gray-100', badge: 'bg-gray-100 text-gray-700' };
+
+      if (isMachine) {
+        // Outer: queue_status (Activa / En Cola). Inner: day-of-week.
+        const activeOrders = visibleOrders.filter(o => (o.queue_status || 'active') === 'active');
+        const queuedOrders = visibleOrders.filter(o => o.queue_status === 'queued');
+        const queueTones = {
+          active: isDark
+            ? { bar: 'bg-emerald-500/10 border-emerald-500/30', text: 'text-emerald-300 hover:bg-emerald-500/20', badge: 'bg-emerald-500/20 text-emerald-300' }
+            : { bar: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700 hover:bg-emerald-100', badge: 'bg-emerald-100 text-emerald-700' },
+          queued: isDark
+            ? { bar: 'bg-amber-500/10 border-amber-500/30', text: 'text-amber-300 hover:bg-amber-500/20', badge: 'bg-amber-500/20 text-amber-300' }
+            : { bar: 'bg-amber-50 border-amber-200', text: 'text-amber-700 hover:bg-amber-100', badge: 'bg-amber-100 text-amber-700' },
+        };
+        const renderQueueGroup = (queueKey, queueLabel, queueList, queueIcon, queueTone) => {
+          const queueGroupKey = `__machine_${queueKey}`;
+          const isQueueCollapsed = !!collapsedGroups[queueGroupKey];
+          const queueTotalQty = queueList.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+          const isQueueEmpty = queueList.length === 0;
+          return (
+            <React.Fragment key={queueGroupKey}>
+              <div
+                style={{ gridColumn: '1 / -1' }}
+                className={`py-0 px-0 border-b ${queueTone.bar} ${isQueueEmpty ? 'opacity-70' : ''}`}
+                data-testid={`queue-group-${queueKey}`}
+              >
+                <button
+                  onClick={() => setCollapsedGroups(prev => ({ ...prev, [queueGroupKey]: !prev[queueGroupKey] }))}
+                  className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${queueTone.text}`}
+                >
+                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isQueueCollapsed ? '-rotate-90' : ''}`} />
+                  <span className="text-base">{queueIcon}</span>
+                  <span>{queueLabel}</span>
+                  <span className="font-normal text-xs text-muted-foreground ml-1">({queueList.length})</span>
+                  {queueTotalQty > 0 && (
+                    <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${queueTone.badge}`}>
+                      {queueTotalQty.toLocaleString()} pcs
+                    </span>
+                  )}
+                </button>
+              </div>
+              {!isQueueCollapsed && bucketByDay(queueList).map(bucket =>
+                renderSection(`__${queueKey}_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 1)
+              )}
+            </React.Fragment>
+          );
+        };
+        return (
+          <>
+            {renderQueueGroup('active', 'Activa', activeOrders, '▶', queueTones.active)}
+            {renderQueueGroup('queued', 'En Cola', queuedOrders, '⏸', queueTones.queued)}
+          </>
+        );
+      }
+
+      // Non-machine day-supported boards: just bucket by day.
+      return bucketByDay(visibleOrders).map(bucket =>
+        renderSection(`__day_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 0)
       );
     }
 
@@ -1672,6 +1752,24 @@ const Dashboard = () => {
                 </div>
               )}
 
+              {/* Day-of-week chips — visible on every day-supported board (machines
+                  + R.T.S. / BLANKS / SCREENS / NECK). One click sets scheduled_day
+                  on the selected orders without touching their board or queue. */}
+              {isDaySupportedBoard(currentBoard) && (
+                <div className="flex items-center gap-1 border-r border-border pr-2 md:pr-3 flex-wrap" data-testid="day-chips">
+                  {DAY_KEYS.map(d => (
+                    <button
+                      key={d}
+                      onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), null, d)}
+                      className="px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all bg-sky-500/15 text-sky-600 dark:text-sky-400 hover:bg-sky-500/25 border border-sky-500/30"
+                      title={dayLabel(d)}
+                    >
+                      {DAY_SHORT[d]}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase font-bold opacity-50 hidden sm:inline">{t('move_to')}:</span>
                 <DropdownMenu>
@@ -1680,11 +1778,35 @@ const Dashboard = () => {
                     <ChevronDown className="w-4 h-4 md:w-5 md:h-5 opacity-70" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
-                    {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => (
-                      <DropdownMenuItem key={board} onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]))} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
-                        {board}
-                      </DropdownMenuItem>
-                    ))}
+                    {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => {
+                      // Day-supported non-machine boards expand into a sub-menu so the
+                      // user can pick the weekday at the same time as the move.
+                      if (DAY_SUPPORTED_NON_MACHINE.has(board)) {
+                        return (
+                          <DropdownMenuSub key={board}>
+                            <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight">
+                              <span>{board}</span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="z-[301] min-w-[180px] shadow-2xl">
+                              {DAY_KEYS.map(d => (
+                                <DropdownMenuItem
+                                  key={d}
+                                  onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), null, d)}
+                                  className="font-bold py-3 px-5 text-sm tracking-tight"
+                                >
+                                  {dayLabel(d)}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        );
+                      }
+                      return (
+                        <DropdownMenuItem key={board} onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]))} className="font-bold py-3.5 px-5 text-sm md:text-base tracking-tight">
+                          {board}
+                        </DropdownMenuItem>
+                      );
+                    })}
                     <DropdownMenuSeparator className="opacity-50" />
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold text-primary cursor-pointer text-sm md:text-base">

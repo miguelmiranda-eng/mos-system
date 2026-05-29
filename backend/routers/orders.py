@@ -423,6 +423,17 @@ async def permanent_delete_order(order_id: str, request: Request):
     await log_activity(user, "permanent_delete_order", {"order_id": order_id, "order_number": existing.get("order_number")})
     return {"message": "Order and linked invoice deleted permanently"}
 
+# Boards (besides MAQUINA*) that participate in the day-of-week scheduling.
+DAY_SUPPORTED_BOARDS = {"READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"}
+VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _today_weekday() -> str:
+    """Return today's weekday name in lowercase (server local time = UTC)."""
+    return WEEKDAY_NAMES[datetime.now(timezone.utc).weekday()]
+
+
 @router.post("/bulk-move")
 async def bulk_move_orders(request: Request):
     user = await require_auth(request)
@@ -432,16 +443,23 @@ async def bulk_move_orders(request: Request):
     # Optional sub-state inside a machine board. Accepted values:
     #   "active"  → running on the machine right now
     #   "queued"  → waiting in line for that machine ("A Cola")
-    # For non-machine boards this is forced to None so the field doesn't
-    # linger when an order leaves the machine workflow.
+    # For non-machine boards this is forced to None.
+    queue_status_provided = "queue_status" in body
     queue_status = body.get("queue_status")
+    # Optional day-of-week bucket. Accepted values: monday..sunday or None.
+    # Only meaningful on day-supported boards (machines + R.T.S./BLANKS/SCREENS/NECK).
+    scheduled_day_provided = "scheduled_day" in body
+    scheduled_day = body.get("scheduled_day")
+
     if not order_ids or not target_board:
         raise HTTPException(status_code=400, detail="order_ids and board required")
     boards = await get_dynamic_boards()
     if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail="Invalid board")
-    if queue_status not in (None, "active", "queued"):
-        raise HTTPException(status_code=400, detail="queue_status must be 'active' or 'queued'")
+    if queue_status_provided and queue_status not in (None, "active", "queued"):
+        raise HTTPException(status_code=400, detail="queue_status must be 'active', 'queued' or null")
+    if scheduled_day_provided and scheduled_day not in (None, *VALID_DAYS):
+        raise HTTPException(status_code=400, detail="scheduled_day must be a weekday name or null")
     original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1, "order_number": 1, "locked_by_qc": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
 
@@ -457,18 +475,88 @@ async def bulk_move_orders(request: Request):
             raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
 
     is_machine_board = target_board.startswith("MAQUINA")
-    update_fields = {
+    is_day_supported = is_machine_board or target_board in DAY_SUPPORTED_BOARDS
+
+    # Build the base $set payload. queue_status / scheduled_day get added based
+    # on whether the caller explicitly set them and whether the target board
+    # supports the field.
+    base_update = {
         "board": target_board,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        # On machine boards default to "active" unless the caller explicitly
-        # asked for "queued"; on any other board the concept doesn't apply.
-        "queue_status": (queue_status or "active") if is_machine_board else None,
     }
-    result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": update_fields})
+
+    # scheduled_day handling
+    if scheduled_day_provided:
+        base_update["scheduled_day"] = scheduled_day
+    elif not is_day_supported:
+        # Always clear on incompatible boards so the value doesn't linger.
+        base_update["scheduled_day"] = None
+    # else: target is day-supported and no explicit value.
+    # Default any order whose scheduled_day is currently null/missing to TODAY
+    # so the board never accumulates a "Sin día" pile. Orders that already
+    # have a day on a day-supported source board keep their day.
+    elif is_day_supported and any(
+        not o.get("scheduled_day") for o in original_orders
+    ):
+        today = _today_weekday()
+        orders_to_default = [
+            o["order_id"] for o in original_orders if not o.get("scheduled_day")
+        ]
+        await db.orders.update_many(
+            {"order_id": {"$in": orders_to_default}},
+            {"$set": {"scheduled_day": today}},
+        )
+
+    # queue_status handling — the special case is "no explicit value and target
+    # is a machine": orders coming from a non-machine board must default to
+    # "active" while orders already on a machine keep their current queue_status
+    # (so e.g. day-chips don't accidentally flip queued orders to active).
+    log_queue_status = queue_status if queue_status_provided else ("active" if is_machine_board else None)
+
+    if queue_status_provided:
+        base_update["queue_status"] = queue_status
+        result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": base_update})
+        modified_count = result.modified_count
+    elif not is_machine_board:
+        base_update["queue_status"] = None
+        result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": base_update})
+        modified_count = result.modified_count
+    else:
+        # Target is a machine board, queue_status implicit: split into two updates.
+        from_non_machine_ids = [
+            o["order_id"]
+            for o in original_orders
+            if not (o.get("board") or "").startswith("MAQUINA")
+        ]
+        preserve_ids = [oid for oid in order_ids if oid not in from_non_machine_ids]
+        modified_count = 0
+        if from_non_machine_ids:
+            r1 = await db.orders.update_many(
+                {"order_id": {"$in": from_non_machine_ids}},
+                {"$set": {**base_update, "queue_status": "active"}},
+            )
+            modified_count += r1.modified_count
+        if preserve_ids:
+            r2 = await db.orders.update_many(
+                {"order_id": {"$in": preserve_ids}},
+                {"$set": base_update},
+            )
+            modified_count += r2.modified_count
+
+    class _R:
+        pass
+    result = _R()
+    result.modified_count = modified_count
+
     await log_activity(
         user,
         "bulk_move_orders",
-        {"order_count": len(order_ids), "target_board": target_board, "queue_status": update_fields["queue_status"]},
+        {
+            "order_count": len(order_ids),
+            "target_board": target_board,
+            "queue_status": log_queue_status,
+            "scheduled_day": scheduled_day if scheduled_day_provided else None,
+        },
         previous_data={"order_ids": order_ids, "original_boards": original_boards},
     )
     

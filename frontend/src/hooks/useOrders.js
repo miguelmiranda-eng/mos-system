@@ -436,12 +436,17 @@ export const useOrders = (currentBoard, boardFilters) => {
     }
   };
 
-  const handleBulkMove = async (orderIds, targetBoard, queueStatus = null) => {
+  const handleBulkMove = async (orderIds, targetBoard, queueStatus = null, scheduledDay = undefined) => {
     if (!orderIds || orderIds.length === 0) return;
 
-    // Optimistic update: remove moved orders from current view
-    setOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
-    setUnfilteredOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
+    // Stay on the same board when only changing queue_status or scheduled_day:
+    // avoid the optimistic remove that would make rows disappear from the view.
+    const samePage = orders.length > 0 && orders[0]?.board === targetBoard;
+    if (!samePage) {
+      // Optimistic update: remove moved orders from current view
+      setOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
+      setUnfilteredOrders(prev => prev.filter(o => !orderIds.includes(o.order_id)));
+    }
 
     // Signal WebSocket handler that THIS client made the change → 50ms refresh instead of 1-4s jitter
     selfUpdateRef.current = true;
@@ -453,10 +458,15 @@ export const useOrders = (currentBoard, boardFilters) => {
     try {
       const payload = { order_ids: orderIds, board: targetBoard };
       // Only send queue_status when explicitly requested ("active" | "queued").
-      // The backend defaults non-machine boards to null and machine boards
-      // without a value to "active".
+      // The backend defaults non-machine boards to null and, for machines,
+      // preserves the existing value when this key is absent.
       if (queueStatus === 'active' || queueStatus === 'queued') {
         payload.queue_status = queueStatus;
+      }
+      // scheduled_day uses `undefined` to mean "don't change". `null` and the
+      // weekday names ("monday"..."sunday") are explicit values forwarded as-is.
+      if (scheduledDay !== undefined) {
+        payload.scheduled_day = scheduledDay;
       }
       const res = await fetch(`${API}/orders/bulk-move`, {
         method: 'POST',
