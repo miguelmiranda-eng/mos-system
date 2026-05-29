@@ -1382,10 +1382,12 @@ const Dashboard = () => {
 
           {/* Top-right action buttons */}
           <div className="flex items-center gap-2 self-center">
-            <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
-              <Plus className="w-3.5 h-3.5" />
-              Nueva Orden
-            </button>
+            {currentBoard === 'SCHEDULING' && (
+              <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
+                <Plus className="w-3.5 h-3.5" />
+                Nueva Orden
+              </button>
+            )}
             <div className="flex items-center rounded-lg overflow-hidden border border-emerald-600/40 shadow-sm shadow-emerald-600/10">
               <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} title="Producción" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all border-r border-emerald-500/40">
                 <Factory className="w-3.5 h-3.5" />
