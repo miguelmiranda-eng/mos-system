@@ -190,6 +190,79 @@ async def get_insights_analysis(request: Request):
              {"$group": {"_id": {"name": "$user_name", "email": "$user_email"}, "n": {"$sum": 1}}},
              {"$sort": {"n": -1}}, {"$limit": 10}]
         ).to_list(10)
+
+        # ── WMS-specific analytics ─────────────────────────────────────────
+        # WMS does NOT write to activity_logs — it has its own collections.
+        # We measure who uses WMS, which sub-modules, where (zones/customers).
+        wms_total_inventory = await db.wms_inventory.count_documents({})
+        wms_total_boxes = await db.wms_boxes.count_documents({})
+        wms_total_locations = await db.wms_locations.count_documents({"active": True})
+
+        # 1) wms_movements per user (overall WMS activity proxy)
+        wms_users = await db.wms_movements.aggregate(
+            [{"$group": {"_id": {"id": "$user_id", "name": "$user_name"}, "n": {"$sum": 1}}},
+             {"$sort": {"n": -1}}, {"$limit": 15}]
+        ).to_list(15)
+        # 2) wms_movements per type (which WMS feature is used)
+        wms_by_type = await db.wms_movements.aggregate(
+            [{"$group": {"_id": "$type", "n": {"$sum": 1}}},
+             {"$sort": {"n": -1}}]
+        ).to_list(30)
+
+        # 3) Pick tickets — picker workload
+        pick_total = await db.wms_pick_tickets.count_documents({})
+        pick_unassigned = await db.wms_pick_tickets.count_documents(
+            {"$or": [{"assigned_to_name": {"$in": [None, ""]}}, {"assigned_to_name": {"$exists": False}}]}
+        )
+        pick_by_status = await db.wms_pick_tickets.aggregate(
+            [{"$group": {"_id": "$status", "n": {"$sum": 1}}},
+             {"$sort": {"n": -1}}]
+        ).to_list(20)
+        pick_by_assignee = await db.wms_pick_tickets.aggregate(
+            [{"$match": {"assigned_to_name": {"$nin": [None, ""]}}},
+             {"$group": {"_id": "$assigned_to_name", "n": {"$sum": 1}, "qty": {"$sum": "$total_pick_qty"}}},
+             {"$sort": {"n": -1}}, {"$limit": 10}]
+        ).to_list(10)
+        pick_by_creator = await db.wms_pick_tickets.aggregate(
+            [{"$match": {"created_by_name": {"$nin": [None, ""]}}},
+             {"$group": {"_id": "$created_by_name", "n": {"$sum": 1}}},
+             {"$sort": {"n": -1}}, {"$limit": 10}]
+        ).to_list(10)
+
+        # 4) Receiving — who unloads merchandise
+        receiving_total = await db.wms_receiving.count_documents({})
+        receiving_by_user = await db.wms_receiving.aggregate(
+            [{"$match": {"received_by_name": {"$nin": [None, ""]}}},
+             {"$group": {"_id": "$received_by_name", "n": {"$sum": 1}, "units": {"$sum": "$total_units"}}},
+             {"$sort": {"n": -1}}, {"$limit": 10}]
+        ).to_list(10)
+
+        # 5) Cycle counts — inventory audits
+        cc_total = await db.wms_cycle_counts.count_documents({})
+        cc_by_user = await db.wms_cycle_counts.aggregate(
+            [{"$facet": {
+                "creators": [{"$match": {"created_by_name": {"$ne": None}}},
+                             {"$group": {"_id": "$created_by_name", "n": {"$sum": 1}}}],
+                "assignees": [{"$match": {"assigned_to_name": {"$ne": None}}},
+                              {"$group": {"_id": "$assigned_to_name", "n": {"$sum": 1}}}]
+            }}]
+        ).to_list(1)
+
+        # 6) WHERE WMS is happening — boxes per zone (top warehouse zones)
+        wms_boxes_by_zone = await db.wms_boxes.aggregate(
+            [{"$match": {"location": {"$nin": [None, ""]}}},
+             # zone is the prefix before "-" (e.g. RP10-A26 -> RP10)
+             {"$addFields": {"zone": {"$arrayElemAt": [{"$split": ["$location", "-"]}, 0]}}},
+             {"$group": {"_id": "$zone", "boxes": {"$sum": 1}, "units": {"$sum": "$units"}}},
+             {"$sort": {"boxes": -1}}, {"$limit": 15}]
+        ).to_list(15)
+
+        # 7) WHO's inventory — customers with most boxes in stock
+        wms_customers = await db.wms_boxes.aggregate(
+            [{"$match": {"customer": {"$nin": [None, ""]}}},
+             {"$group": {"_id": "$customer", "boxes": {"$sum": 1}, "units": {"$sum": "$units"}}},
+             {"$sort": {"units": -1}}, {"$limit": 10}]
+        ).to_list(10)
     except Exception as e:
         logger.error(f"[Insights] Mongo gather failed: {e}\n{traceback.format_exc()}")
         raise HTTPException(
@@ -278,6 +351,102 @@ async def get_insights_analysis(request: Request):
     lines.append("## 10. ORDER PIPELINE DISTRIBUTION (operational context)")
     for board, count in list(boards_summary.items())[:20]:
         lines.append(f"- {board}: {count} orders")
+    lines.append("")
+
+    # ── WMS DEDICATED SECTION ───────────────────────────────────────────────
+    lines.append("## 11. WMS — WAREHOUSE MANAGEMENT SYSTEM")
+    lines.append("WMS does NOT log into activity_logs — it has its own collections. "
+                 "These metrics show who actually uses WMS, in which sub-module, and where.")
+    lines.append("")
+    lines.append("### 11.1 WMS footprint (totals)")
+    lines.append(f"- Inventory records (SKUs): {wms_total_inventory}")
+    lines.append(f"- Active locations (warehouse slots): {wms_total_locations}")
+    lines.append(f"- Boxes/LPNs tracked: {wms_total_boxes}")
+    lines.append(f"- Pick tickets created: {pick_total}")
+    lines.append(f"- Receivings logged: {receiving_total}")
+    lines.append(f"- Cycle counts opened: {cc_total}")
+    lines.append("")
+
+    lines.append("### 11.2 WMS sub-module usage (movements by type)")
+    if wms_by_type:
+        for row in wms_by_type:
+            lines.append(f"- {row['_id'] or '(unknown type)'}: {row['n']}")
+    else:
+        lines.append("- (no movements tracked)")
+    lines.append("")
+
+    lines.append("### 11.3 Power users of WMS (overall movements)")
+    if wms_users:
+        for row in wms_users:
+            ident = row["_id"]
+            name = ident.get("name") or ident.get("id") or "(unknown)"
+            lines.append(f"- {name}: {row['n']} movements")
+    else:
+        lines.append("- (no users have triggered WMS movements)")
+    lines.append("")
+
+    lines.append("### 11.4 Pick tickets — by status")
+    for row in pick_by_status:
+        lines.append(f"- {row['_id'] or '(no status)'}: {row['n']} tickets")
+    lines.append("")
+
+    lines.append("### 11.5 Pick tickets — top assignees (the actual pickers)")
+    lines.append(f"- Unassigned pick tickets: {pick_unassigned} (work created but no picker designated)")
+    if pick_by_assignee:
+        for row in pick_by_assignee:
+            lines.append(f"- {row['_id']}: {row['n']} tickets, {row.get('qty', 0)} units to pick")
+    else:
+        lines.append("- (no pick tickets have been assigned to anyone)")
+    lines.append("")
+
+    lines.append("### 11.6 Pick tickets — top creators (who issues the work)")
+    if pick_by_creator:
+        for row in pick_by_creator:
+            lines.append(f"- {row['_id']}: {row['n']} tickets created")
+    else:
+        lines.append("- (no creators tracked)")
+    lines.append("")
+
+    lines.append("### 11.7 Receiving — top operators")
+    if receiving_by_user:
+        for row in receiving_by_user:
+            lines.append(f"- {row['_id']}: {row['n']} receipts, {row.get('units', 0)} units")
+    else:
+        lines.append("- (no receivings attributed to users)")
+    lines.append("")
+
+    lines.append("### 11.8 Cycle counts — by user role")
+    if cc_by_user:
+        creators = cc_by_user[0].get("creators", [])
+        assignees = cc_by_user[0].get("assignees", [])
+        lines.append("- Creators (who orders the count):")
+        if creators:
+            for c in creators:
+                lines.append(f"  - {c['_id']}: {c['n']} counts")
+        else:
+            lines.append("  - (none)")
+        lines.append("- Assignees (who runs the count on the floor):")
+        if assignees:
+            for a in assignees:
+                lines.append(f"  - {a['_id']}: {a['n']} counts")
+        else:
+            lines.append("  - (none)")
+    lines.append("")
+
+    lines.append("### 11.9 WHERE — top warehouse zones by box count")
+    if wms_boxes_by_zone:
+        for row in wms_boxes_by_zone:
+            lines.append(f"- Zone {row['_id']}: {row['boxes']} boxes, {row.get('units', 0)} units")
+    else:
+        lines.append("- (no boxes located)")
+    lines.append("")
+
+    lines.append("### 11.10 WMS customers by inventory volume")
+    if wms_customers:
+        for row in wms_customers:
+            lines.append(f"- {row['_id']}: {row.get('units', 0)} units across {row['boxes']} boxes")
+    else:
+        lines.append("- (no customer-tagged inventory)")
 
     data_snapshot = "\n".join(lines)
 
@@ -299,6 +468,18 @@ async def get_insights_analysis(request: Request):
         "## 🕐 Patrones de Uso Horario\n"
         "Interpreta las horas pico y valles. ¿La plataforma se usa solo en jornada o también fuera? "
         "¿Hay horas muertas que indiquen que algunos turnos no la usan?\n\n"
+        "## 📦 WMS — Adopción y Operación de Almacén\n"
+        "Sección OBLIGATORIA y EXCLUSIVA. Reporta:\n"
+        "- **Adopción general**: ¿Qué tan vivo está WMS? (totales de inventario, locations, boxes, tickets).\n"
+        "- **Sub-módulos usados vs. abandonados**: tabla Markdown con Sub-módulo · Volumen · Veredicto "
+        "(receiving, pick_ticket_created, putaway, cycle counts, etc.).\n"
+        "- **Power users de WMS**: nombra a los 3 top, indica si están en picking, receiving o cycle counts. "
+        "Detecta si una sola persona concentra demasiado trabajo (riesgo operativo).\n"
+        "- **Asignaciones vs. creación de pick tickets**: ¿Hay desbalance entre quién crea trabajo y quién lo ejecuta?\n"
+        "- **WHERE — zonas calientes del almacén**: lista las 3-5 zonas con más cajas y los clientes con mayor volumen. "
+        "Si una sola zona concentra >50% del inventario, marca como riesgo de saturación.\n"
+        "- **Riesgos detectados**: pick tickets pendientes acumulados, cycle counts sin asignar, "
+        "receivings sin usuario atribuido, locations activas sin uso, etc.\n\n"
         "## ⚠️ Señales de Usabilidad y Errores\n"
         "3–5 bullets concretos. Considera: undos (sugieren fricción/errores), deletes (riesgo de pérdida de datos), "
         "módulos sin tracción, acciones repetitivas (updates múltiples a la misma orden), "
