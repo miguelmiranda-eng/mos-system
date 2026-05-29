@@ -266,7 +266,11 @@ const Dashboard = () => {
   const DAY_LABEL_EN = { monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday' };
   const DAY_SHORT = { monday: 'Lun', tuesday: 'Mar', wednesday: 'Mié', thursday: 'Jue', friday: 'Vie', saturday: 'Sáb', sunday: 'Dom' };
   const DAY_SUPPORTED_NON_MACHINE = new Set(['READY TO SCHEDULED', 'BLANKS', 'SCREENS', 'NECK']);
+  // Queue support (Activa / En Cola) is broader than just machines now —
+  // BLANKS and NECK share the same workflow split.
+  const QUEUE_SUPPORTED_NON_MACHINE = new Set(['BLANKS', 'NECK']);
   const isDaySupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || DAY_SUPPORTED_NON_MACHINE.has(b));
+  const isQueueSupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || QUEUE_SUPPORTED_NON_MACHINE.has(b));
   const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
 
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
@@ -1102,12 +1106,12 @@ const Dashboard = () => {
       );
     }
 
-    // ── Day-supported boards: group rows by day, with queue nesting on machines ──
+    // ── Day-supported boards: group rows by day, with queue nesting on queue-supported boards ──
     // queue_status defaults to "active" for orders that don't carry the field
     // yet (legacy + freshly-moved before the schema change). Same for
-    // scheduled_day: legacy orders show up under "Sin día".
+    // scheduled_day: orders with no value defensively show up under today.
     if (isDaySupportedBoard(currentBoard) && !groupByDate) {
-      const isMachine = currentBoard.startsWith('MAQUINA');
+      const showQueueSplit = isQueueSupportedBoard(currentBoard);
 
       // Render a generic collapsible section. Always rendered — even when
       // empty — so the day tabs are visible at all times on day-supported
@@ -1170,7 +1174,7 @@ const Dashboard = () => {
         ? { bar: 'bg-muted/10 border-muted/30', text: 'text-muted-foreground hover:bg-muted/20', badge: 'bg-muted/30 text-muted-foreground' }
         : { bar: 'bg-gray-50 border-gray-200', text: 'text-gray-600 hover:bg-gray-100', badge: 'bg-gray-100 text-gray-700' };
 
-      if (isMachine) {
+      if (showQueueSplit) {
         // Outer: queue_status (Activa / En Cola). Inner: day-of-week.
         const activeOrders = visibleOrders.filter(o => (o.queue_status || 'active') === 'active');
         const queuedOrders = visibleOrders.filter(o => o.queue_status === 'queued');
@@ -1183,6 +1187,8 @@ const Dashboard = () => {
             : { bar: 'bg-amber-50 border-amber-200', text: 'text-amber-700 hover:bg-amber-100', badge: 'bg-amber-100 text-amber-700' },
         };
         const renderQueueGroup = (queueKey, queueLabel, queueList, queueIcon, queueTone) => {
+          // Keep the legacy "__machine_*" prefix so already-collapsed state
+          // by users on machines stays remembered. BLANKS / NECK share it.
           const queueGroupKey = `__machine_${queueKey}`;
           const isQueueCollapsed = !!collapsedGroups[queueGroupKey];
           const queueTotalQty = queueList.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
@@ -1209,9 +1215,13 @@ const Dashboard = () => {
                   )}
                 </button>
               </div>
-              {!isQueueCollapsed && bucketByDay(queueList).map(bucket =>
+              {/* "En Cola" is intentionally flat — the queue is a single
+                  waiting list, no need to split by day. "Activa" still gets
+                  the per-day breakdown so the floor can plan the week. */}
+              {!isQueueCollapsed && queueKey === 'active' && bucketByDay(queueList).map(bucket =>
                 renderSection(`__${queueKey}_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 1)
               )}
+              {!isQueueCollapsed && queueKey !== 'active' && queueList.map(renderOrderRow)}
             </React.Fragment>
           );
         };
@@ -1724,15 +1734,16 @@ const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-3">
-              {/* Quick queue toggles — only on machine boards. One click moves the
-                  selected orders to "Activa" or "A Cola" on the SAME machine without
-                  touching the multi-level Move-to menu. */}
-              {currentBoard && currentBoard.startsWith('MAQUINA') && (
+              {/* Quick queue toggles — on every queue-supported board (machines +
+                  BLANKS + NECK). One click moves the selected orders to "Activa" or
+                  "A Cola" on the SAME board without touching the multi-level
+                  Move-to menu. */}
+              {isQueueSupportedBoard(currentBoard) && (
                 <div className="flex items-center gap-1.5 border-r border-border pr-2 md:pr-3">
                   <button
                     onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'active')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30"
-                    title="Mover a Activa en esta máquina"
+                    title={`Mover a Activa en ${currentBoard}`}
                     data-testid="quick-to-active"
                   >
                     <span className="text-sm leading-none">▶</span>
@@ -1742,7 +1753,7 @@ const Dashboard = () => {
                   <button
                     onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'queued')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30"
-                    title="Mover a En Cola en esta máquina"
+                    title={`Mover a En Cola en ${currentBoard}`}
                     data-testid="quick-to-queued"
                   >
                     <span className="text-sm leading-none">⏸</span>
@@ -1779,8 +1790,45 @@ const Dashboard = () => {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
                     {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => {
-                      // Day-supported non-machine boards expand into a sub-menu so the
-                      // user can pick the weekday at the same time as the move.
+                      // Queue-supported non-machine boards (BLANKS, NECK) follow
+                      // the machine UX: pick Activa (then a day) or A Cola here.
+                      // A Cola is intentionally flat — no day breakdown there.
+                      if (QUEUE_SUPPORTED_NON_MACHINE.has(board)) {
+                        return (
+                          <DropdownMenuSub key={board}>
+                            <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight">
+                              <span>{board}</span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger className="flex items-center justify-between py-3 px-5 font-bold cursor-pointer text-sm tracking-tight text-emerald-600 dark:text-emerald-400">
+                                  <span>▶ Activa</span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="z-[303] min-w-[140px] shadow-2xl">
+                                  {DAY_KEYS.map(d => (
+                                    <DropdownMenuItem
+                                      key={d}
+                                      onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'active', d)}
+                                      className="font-bold py-2.5 px-4 text-sm tracking-tight"
+                                    >
+                                      {dayLabel(d)}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                              <DropdownMenuItem
+                                onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'queued')}
+                                className="font-bold py-3 px-5 text-sm tracking-tight text-amber-600 dark:text-amber-400"
+                              >
+                                ⏸ A Cola
+                              </DropdownMenuItem>
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        );
+                      }
+                      // Day-supported non-machine non-queue boards
+                      // (READY TO SCHEDULED, SCREENS) expand into a sub-menu so
+                      // the user can pick the weekday at the same time as the move.
                       if (DAY_SUPPORTED_NON_MACHINE.has(board)) {
                         return (
                           <DropdownMenuSub key={board}>
@@ -1825,12 +1873,23 @@ const Dashboard = () => {
                               <span>{board}{board === currentBoard ? ' (actual)' : ''}</span>
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
-                              <DropdownMenuItem
-                                onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'active')}
-                                className="font-bold py-3 px-5 text-sm tracking-tight text-emerald-600 dark:text-emerald-400"
-                              >
-                                ▶ Activa
-                              </DropdownMenuItem>
+                              {/* Activa expands into a weekday picker — same as BLANKS/NECK. */}
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger className="flex items-center justify-between py-3 px-5 font-bold cursor-pointer text-sm tracking-tight text-emerald-600 dark:text-emerald-400">
+                                  <span>▶ Activa</span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="z-[303] min-w-[140px] shadow-2xl">
+                                  {DAY_KEYS.map(d => (
+                                    <DropdownMenuItem
+                                      key={d}
+                                      onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'active', d)}
+                                      className="font-bold py-2.5 px-4 text-sm tracking-tight"
+                                    >
+                                      {dayLabel(d)}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
                               <DropdownMenuItem
                                 onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'queued')}
                                 className="font-bold py-3 px-5 text-sm tracking-tight text-amber-600 dark:text-amber-400"

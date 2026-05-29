@@ -425,8 +425,18 @@ async def permanent_delete_order(order_id: str, request: Request):
 
 # Boards (besides MAQUINA*) that participate in the day-of-week scheduling.
 DAY_SUPPORTED_BOARDS = {"READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"}
+# Boards (besides MAQUINA*) that carry an Active / Queued sub-state.
+# Machines were the first, but BLANKS and NECK ship + queue work that mirrors
+# the machine workflow closely enough that the same Activa / En Cola split is
+# useful there too.
+QUEUE_SUPPORTED_BOARDS = {"BLANKS", "NECK"}
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _is_queue_supported(board: str) -> bool:
+    """A board carries queue_status if it's a machine or in the fixed list."""
+    return bool(board) and (board.startswith("MAQUINA") or board in QUEUE_SUPPORTED_BOARDS)
 
 
 def _today_weekday() -> str:
@@ -475,6 +485,7 @@ async def bulk_move_orders(request: Request):
             raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
 
     is_machine_board = target_board.startswith("MAQUINA")
+    is_queue_supported = _is_queue_supported(target_board)
     is_day_supported = is_machine_board or target_board in DAY_SUPPORTED_BOARDS
 
     # Build the base $set payload. queue_status / scheduled_day get added based
@@ -508,31 +519,34 @@ async def bulk_move_orders(request: Request):
         )
 
     # queue_status handling — the special case is "no explicit value and target
-    # is a machine": orders coming from a non-machine board must default to
-    # "active" while orders already on a machine keep their current queue_status
-    # (so e.g. day-chips don't accidentally flip queued orders to active).
-    log_queue_status = queue_status if queue_status_provided else ("active" if is_machine_board else None)
+    # supports queue": orders coming from a board that does NOT support queue
+    # must default to "active" while orders coming from another queue-supported
+    # board keep their current queue_status (so e.g. day-chips don't
+    # accidentally flip queued orders to active).
+    log_queue_status = queue_status if queue_status_provided else ("active" if is_queue_supported else None)
 
     if queue_status_provided:
         base_update["queue_status"] = queue_status
         result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": base_update})
         modified_count = result.modified_count
-    elif not is_machine_board:
+    elif not is_queue_supported:
         base_update["queue_status"] = None
         result = await db.orders.update_many({"order_id": {"$in": order_ids}}, {"$set": base_update})
         modified_count = result.modified_count
     else:
-        # Target is a machine board, queue_status implicit: split into two updates.
-        from_non_machine_ids = [
+        # Target is queue-supported (machine/BLANKS/NECK), queue_status implicit:
+        # split into two updates so previously-queued orders preserve their
+        # state and newcomers get a sane default.
+        from_non_queue_ids = [
             o["order_id"]
             for o in original_orders
-            if not (o.get("board") or "").startswith("MAQUINA")
+            if not _is_queue_supported(o.get("board") or "")
         ]
-        preserve_ids = [oid for oid in order_ids if oid not in from_non_machine_ids]
+        preserve_ids = [oid for oid in order_ids if oid not in from_non_queue_ids]
         modified_count = 0
-        if from_non_machine_ids:
+        if from_non_queue_ids:
             r1 = await db.orders.update_many(
-                {"order_id": {"$in": from_non_machine_ids}},
+                {"order_id": {"$in": from_non_queue_ids}},
                 {"$set": {**base_update, "queue_status": "active"}},
             )
             modified_count += r1.modified_count
