@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import { 
-  Sparkles, Loader2, ArrowLeft, Key, Lock, Settings, Activity, ShieldCheck, 
-  Lightbulb, TrendingUp, AlertTriangle
+import {
+  Sparkles, Loader2, ArrowLeft, Key, Lock, Settings, Activity, ShieldCheck,
+  Lightbulb, TrendingUp, AlertTriangle, Languages
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
@@ -20,6 +20,7 @@ const InsightsDashboard = ({ isAdmin }) => {
   
   const [apiKey, setApiKey] = useState("");
   const [showConfig, setShowConfig] = useState(false);
+  const [lang, setLang] = useState("es"); // "es" | "en" — language of the AI report
 
   useEffect(() => {
     checkConfig();
@@ -69,11 +70,11 @@ const InsightsDashboard = ({ isAdmin }) => {
     }
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (targetLang = lang) => {
     setAnalyzing(true);
     setInsights("");
     try {
-      const res = await fetch(`${API}/insights/analyze`, {
+      const res = await fetch(`${API}/insights/analyze?lang=${encodeURIComponent(targetLang)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include'
@@ -81,16 +82,23 @@ const InsightsDashboard = ({ isAdmin }) => {
       if (res.ok) {
         const data = await res.json();
         setInsights(data.insights);
-        toast.success("Análisis completado");
+        setLang(targetLang);
+        toast.success(targetLang === 'en' ? "Analysis complete" : "Análisis completado");
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Error durante el análisis');
+        toast.error(err.detail || (targetLang === 'en' ? 'Error during analysis' : 'Error durante el análisis'));
       }
     } catch (err) {
-      toast.error('Error de comunicación con el servidor');
+      toast.error(targetLang === 'en' ? 'Could not reach server' : 'Error de comunicación con el servidor');
     } finally {
       setAnalyzing(false);
     }
+  };
+
+  // Re-run analysis in the other language (used as the Translate button)
+  const toggleLanguage = () => {
+    const nextLang = lang === "es" ? "en" : "es";
+    runAnalysis(nextLang);
   };
 
   // Removed formatInsights function since we now use ReactMarkdown
@@ -185,21 +193,37 @@ const InsightsDashboard = ({ isAdmin }) => {
                        <Sparkles className="w-8 h-8 text-primary absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
                      </div>
                      <div className="text-center space-y-2">
-                       <h3 className="text-lg font-black uppercase text-foreground tracking-widest">Analizando Base de Datos</h3>
-                       <p className="text-xs text-muted-foreground uppercase font-bold tracking-[0.3em] animate-pulse">Procesando cuellos de botella y métricas...</p>
+                       <h3 className="text-lg font-black uppercase text-foreground tracking-widest">
+                         {lang === 'en' ? 'Analyzing Database' : 'Analizando Base de Datos'}
+                       </h3>
+                       <p className="text-xs text-muted-foreground uppercase font-bold tracking-[0.3em] animate-pulse">
+                         {lang === 'en' ? 'Processing bottlenecks and metrics...' : 'Procesando cuellos de botella y métricas...'}
+                       </p>
                      </div>
                    </div>
                 )}
 
                 {insights && !analyzing && (
                   <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="flex items-center justify-between border-b border-border/50 pb-4 mb-6">
+                    <div className="flex items-center justify-between border-b border-border/50 pb-4 mb-6 flex-wrap gap-3">
                       <h2 className="text-xl font-black uppercase tracking-widest text-foreground flex items-center gap-3">
-                        <LineChart className="w-6 h-6 text-primary" /> Resultados del Análisis
+                        <LineChart className="w-6 h-6 text-primary" />
+                        {lang === 'en' ? 'Analysis Results' : 'Resultados del Análisis'}
                       </h2>
-                      <button onClick={runAnalysis} className="px-4 py-2 bg-secondary/50 hover:bg-secondary rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground transition-all flex items-center gap-2">
-                        <RefreshCw className="w-3 h-3" /> Actualizar
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={toggleLanguage}
+                          title={lang === 'es' ? 'Translate report to English' : 'Traducir reporte al español'}
+                          className="px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary transition-all flex items-center gap-2"
+                        >
+                          <Languages className="w-3 h-3" />
+                          {lang === 'es' ? 'Translate to EN' : 'Traducir a ES'}
+                        </button>
+                        <button onClick={() => runAnalysis(lang)} className="px-4 py-2 bg-secondary/50 hover:bg-secondary rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground transition-all flex items-center gap-2">
+                          <RefreshCw className="w-3 h-3" />
+                          {lang === 'en' ? 'Refresh' : 'Actualizar'}
+                        </button>
+                      </div>
                     </div>
                     
                     <div className="prose dark:prose-invert prose-primary prose-headings:font-black prose-headings:tracking-widest prose-h2:text-primary prose-h2:border-b prose-h2:border-primary/20 prose-h2:pb-2 prose-h2:mt-8 prose-p:leading-relaxed prose-li:marker:text-primary prose-strong:text-primary/90 prose-code:text-primary prose-code:bg-primary/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none max-w-none text-[15px] text-foreground/80 font-medium tracking-wide">

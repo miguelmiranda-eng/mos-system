@@ -61,11 +61,20 @@ async def update_insights_config(body: ConfigUpdate, request: Request):
         raise HTTPException(status_code=500, detail=f"Error al encriptar la clave: {str(e)}")
 
 @router.post("/analyze")
-async def get_insights_analysis(request: Request):
-    """Gather app data and query Gemini for insights."""
+async def get_insights_analysis(request: Request, lang: str = "es"):
+    """Gather app data and query Gemini for insights.
+
+    Query params:
+        lang: "es" (default) or "en" — language of the generated report.
+    """
     import traceback
 
     await require_admin(request)
+
+    # Normalize language; only Spanish and English are supported.
+    lang = (lang or "es").lower()
+    if lang not in ("es", "en"):
+        lang = "es"
 
     # ── Step 1: Check config exists ─────────────────────────────────────────
     config = await db.insights_config.find_one({"config_id": "main"}, {"_id": 0})
@@ -450,7 +459,7 @@ async def get_insights_analysis(request: Request):
 
     data_snapshot = "\n".join(lines)
 
-    system_prompt = (
+    system_prompt_es = (
         "You are a Senior Product Analyst and Usability Consultant for MOS-SYSTEM, a manufacturing operations platform. "
         "Your job is to analyze a snapshot of REAL user activity and tell the CEO which modules and actions are actually used, "
         "by whom, and where the usability or adoption problems are. "
@@ -489,6 +498,48 @@ async def get_insights_analysis(request: Request):
         "Reglas: usa **negritas** para números exactos y nombres de personas/módulos. Frases cortas. Nada de saludos. "
         "Si los datos están vacíos en alguna sección, dilo explícitamente — no inventes."
     )
+
+    system_prompt_en = (
+        "You are a Senior Product Analyst and Usability Consultant for MOS-SYSTEM, a manufacturing operations platform. "
+        "Your job is to analyze a snapshot of REAL user activity and tell the CEO which modules and actions are actually used, "
+        "by whom, and where the usability or adoption problems are. "
+        "STRICTLY respond in English using clean Markdown. Use the following exact structure:\n\n"
+        "## 📊 Executive Summary\n"
+        "2–3 sentences. Overall platform usage state (volume, adoption, health).\n\n"
+        "## 🧩 Module Usage\n"
+        "Markdown table with columns: Module · Actions (30d) · Verdict. "
+        "Identify the most-used modules, the underutilized ones, and the ones that look abandoned.\n\n"
+        "## 🔥 Most Frequent Actions\n"
+        "Bullets with the action and a short comment on what it reveals (e.g. excessive uploads may signal process problems).\n\n"
+        "## 👤 Power Users and Underutilized Users\n"
+        "List the **3–5 power users** (most active, with the widest variety of actions) and the **idle users** who have not logged in for 30 days. "
+        "For each, add one sentence of interpretation (e.g. \"risk of losing a license\", \"operational bottleneck if they leave\").\n\n"
+        "## 🕐 Hourly Usage Patterns\n"
+        "Interpret peak and quiet hours. Is the platform used only during work hours or also off-hours? "
+        "Are there dead hours that indicate certain shifts are not using it?\n\n"
+        "## 📦 WMS — Warehouse Adoption and Operation\n"
+        "MANDATORY and EXCLUSIVE section. Report:\n"
+        "- **General adoption**: How alive is WMS? (totals for inventory, locations, boxes, tickets).\n"
+        "- **Used vs. abandoned sub-modules**: Markdown table with Sub-module · Volume · Verdict "
+        "(receiving, pick_ticket_created, putaway, cycle counts, etc.).\n"
+        "- **WMS power users**: name the top 3, note whether they are in picking, receiving or cycle counts. "
+        "Flag concentration risk if one person owns too much work.\n"
+        "- **Assignments vs. creation of pick tickets**: Is there an imbalance between who creates work and who executes it?\n"
+        "- **WHERE — hot warehouse zones**: list the 3-5 zones with the most boxes and the customers with the largest volume. "
+        "If one zone holds >50% of inventory, flag saturation risk.\n"
+        "- **Detected risks**: backlogged pending pick tickets, unassigned cycle counts, "
+        "receivings without an attributed user, active but unused locations, etc.\n\n"
+        "## ⚠️ Usability and Error Signals\n"
+        "3–5 concrete bullets. Consider: undos (suggest friction/errors), deletes (data-loss risk), "
+        "modules without traction, repetitive actions (multiple updates to the same order), "
+        "roles that are not using what they should.\n\n"
+        "## 💡 Recommended Actions\n"
+        "3–4 steps actionable RIGHT NOW. Be specific (which module to train on, which user to contact, which feature to deprecate, which process to review).\n\n"
+        "Rules: use **bold** for exact numbers and people/module names. Short sentences. No greetings. "
+        "If any section has empty data, say so explicitly — do not invent."
+    )
+
+    system_prompt = system_prompt_en if lang == "en" else system_prompt_es
 
     # ── Step 5: Call Gemini ─────────────────────────────────────────────────
     try:
