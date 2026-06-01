@@ -289,6 +289,14 @@ class ProductionLogCreate(BaseModel):
     stop_cause: Optional[str] = ""
     supervisor: Optional[str] = ""
 
+class NeckLogCreate(BaseModel):
+    # Captura Neck — mismo patrón que ProductionLogCreate pero solo cantidad +
+    # operador + turno. Estación fija "CORTE NECK" (hardcoded en el handler).
+    order_id: str
+    quantity_neck_cut: int
+    operator: Optional[str] = ""
+    shift: Optional[str] = ""
+
 class ArtLogCreate(BaseModel):
     order_id: str
     order_number: str

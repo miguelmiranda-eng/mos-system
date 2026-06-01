@@ -35,6 +35,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   }, []);
   const [options, setOptions] = useState({});
   const [productionSummary, setProductionSummary] = useState({});
+  const [neckSummary, setNeckSummary] = useState({});
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [automationRunning, setAutomationRunning] = useState(false);
@@ -155,6 +156,10 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   const fetchProductionSummary = useCallback(async () => {
     try { const res = await apiFetch(`${API}/production-summary`); if (res.ok) setProductionSummary(await res.json()); } catch { /* silent */ }
+  }, []);
+
+  const fetchNeckSummary = useCallback(async () => {
+    try { const res = await apiFetch(`${API}/neck-summary`); if (res.ok) setNeckSummary(await res.json()); } catch { /* silent */ }
   }, []);
 
   const fetchNotifications = useCallback(async () => {
@@ -281,13 +286,14 @@ export const useOrders = (currentBoard, boardFilters) => {
     }
   }, [currentBoard, applyFilters, unfilteredOrders]); // Removed boardFilters to prevent loop
 
-  useEffect(() => { 
-    fetchOptions(); 
+  useEffect(() => {
+    fetchOptions();
     fetchAllOrders();
     fetchProductionSummary();
+    fetchNeckSummary();
     fetchBoards();
     fetchGroups();
-  }, [fetchOptions, fetchAllOrders, fetchProductionSummary, fetchBoards, fetchGroups]);
+  }, [fetchOptions, fetchAllOrders, fetchProductionSummary, fetchNeckSummary, fetchBoards, fetchGroups]);
 
   useEffect(() => { 
     fetchNotifications();
@@ -300,11 +306,13 @@ export const useOrders = (currentBoard, boardFilters) => {
   const reconnectTimer = useRef(null);
   const fetchOrdersRef = useRef(fetchOrders);
   const fetchProdRef = useRef(fetchProductionSummary);
+  const fetchNeckRef = useRef(fetchNeckSummary);
   const fetchNotifsRef = useRef(fetchNotifications);
   const selfUpdateRef = useRef(false);
 
   useEffect(() => { fetchOrdersRef.current = fetchOrders; }, [fetchOrders]);
   useEffect(() => { fetchProdRef.current = fetchProductionSummary; }, [fetchProductionSummary]);
+  useEffect(() => { fetchNeckRef.current = fetchNeckSummary; }, [fetchNeckSummary]);
   useEffect(() => { fetchNotifsRef.current = fetchNotifications; }, [fetchNotifications]);
 
   const sessionExpiredRef = useRef(false);
@@ -319,7 +327,7 @@ export const useOrders = (currentBoard, boardFilters) => {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'order_change' || msg.type === 'production_update') {
+          if (msg.type === 'order_change' || msg.type === 'production_update' || msg.type === 'neck_update') {
             // Debounce server fetches to prevent flooding during bursts of updates
             if (updateDebounceTimer.current) clearTimeout(updateDebounceTimer.current);
             // Add a random Jitter between 1000ms and 4000ms to prevent Thundering Herds
@@ -331,6 +339,7 @@ export const useOrders = (currentBoard, boardFilters) => {
             }
             updateDebounceTimer.current = setTimeout(() => {
               fetchProdRef.current();
+              if (msg.type === 'neck_update') fetchNeckRef.current?.();
               if (msg.type === 'order_change') {
                 fetchOrdersRef.current(true, true); // Silent but forced refresh
                 if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
@@ -583,9 +592,9 @@ export const useOrders = (currentBoard, boardFilters) => {
 
   return {
     orders, setOrders, allOrders, unfilteredOrders, loading, operationLoading, setOperationLoading: safeSetOperationLoading,
-    options, productionSummary, notifications, unreadCount, markNotificationsRead,
+    options, productionSummary, neckSummary, notifications, unreadCount, markNotificationsRead,
     automationRunning, automationMessage, columns, columnWidths, setColumnWidths,
-    fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary,
+    fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary, fetchNeckSummary,
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
     handleAddColumn, handleDeleteColumn, saveCustomColumns, saveColumnsConfig, removedDefaults,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,

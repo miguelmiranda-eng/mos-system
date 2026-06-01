@@ -7,7 +7,7 @@ import {
   Search, Plus, LogOut, X, RefreshCw, Trash2, ListFilter,
   Download, Sun, Moon, Settings, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
-  Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft,
+  Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
   ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
@@ -47,6 +47,7 @@ import AnalyticsView from "./AnalyticsView";
 import CalendarView from "./CalendarView";
 import BlanksTrackingView from "./BlanksTrackingView";
 import ProductionModal from "./ProductionModal";
+import NeckCaptureModal from "./NeckCaptureModal";
 import GanttView from "./GanttView";
 import CapacityPlanModal from "./CapacityPlanModal";
 import ProductionScreen from "./ProductionScreen";
@@ -135,6 +136,7 @@ const Dashboard = () => {
   const [blanksOrders, setBlanksOrders] = useState([]);
   const [readyOrders, setReadyOrders] = useState([]);
   const [showProduction, setShowProduction] = useState(false);
+  const [showNeckCapture, setShowNeckCapture] = useState(false);
   const [showGantt, setShowGantt] = useState(false);
   const [showCapacityPlan, setShowCapacityPlan] = useState(false);
   const [showProductionScreen, setShowProductionScreen] = useState(false);
@@ -228,9 +230,9 @@ const Dashboard = () => {
   // Core data hook
   const {
     orders, setOrders, allOrders, unfilteredOrders, loading, operationLoading, setOperationLoading,
-    options, productionSummary, notifications, unreadCount, markNotificationsRead, markNotificationRead,
+    options, productionSummary, neckSummary, notifications, unreadCount, markNotificationsRead, markNotificationRead,
     automationRunning, automationMessage, columns, columnWidths, setColumnWidths,
-    fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary,
+    fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary, fetchNeckSummary,
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
     handleAddColumn, handleDeleteColumn, saveCustomColumns,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
@@ -691,6 +693,17 @@ const Dashboard = () => {
           row[col.label] = o[col.key] || '';
         });
         row[t('board')] = o.board;
+
+        // Avance / Restante — mismas cifras que la columna "RESTANTE" del board.
+        // productionSummary va por order_number; quantity es lo planeado.
+        const prodData = productionSummary?.[o.order_number] || { total_produced: 0 };
+        const total = Number(o.quantity) || 0;
+        const produced = Number(prodData.total_produced) || 0;
+        const remaining = Math.max(0, total - produced);
+        const progressPct = total > 0 ? Math.min(100, Math.round((produced / total) * 100)) : 0;
+        row['Producido'] = produced;
+        row[t('restante')] = remaining;
+        row['Avance %'] = progressPct;
         return row;
       });
 
@@ -1013,9 +1026,25 @@ const Dashboard = () => {
             );
           })()}
         </div>
+
+        {/* Avance Neck — solo porcentaje (compacto) */}
+        <div className={`py-4 px-3 border-b border-border/5 flex flex-col items-center justify-center ${rowBgClass}`} style={{ minWidth: 110 }} data-testid={`row-restante-neck-${order.order_id}`}>
+          {(() => {
+            const neckData = neckSummary?.[order.order_number] || { total_neck_cut: 0 };
+            const total = order.quantity || 0;
+            const neckCut = neckData.total_neck_cut || 0;
+            const neckPct = total > 0 ? Math.min(100, Math.round((neckCut / total) * 100)) : 0;
+            const color = neckPct >= 100 ? 'text-green-500' : neckPct >= 50 ? 'text-amber-500' : 'text-pink-500';
+            return (
+              <span className={`text-sm font-black font-mono ${color}`} title={`Neck: ${neckCut} / ${total} pz`}>
+                {neckPct}%
+              </span>
+            );
+          })()}
+        </div>
       </React.Fragment>
     );
-  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove, productionSummary]);
+  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove, productionSummary, neckSummary]);
 
 
   const renderMobileOrderCard = (order) => {
@@ -1538,20 +1567,54 @@ const Dashboard = () => {
                 Nueva Orden
               </button>
             )}
-            <div className="flex items-center rounded-lg overflow-hidden border border-emerald-600/40 shadow-sm shadow-emerald-600/10">
-              <button onClick={() => { setShowProduction(true); fetchAllOrders(); }} title="Producción" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all border-r border-emerald-500/40">
-                <Factory className="w-3.5 h-3.5" />
-                Production
-              </button>
-              <button onClick={() => setShowProductionScreen(true)} title="Pantalla de Producción (TV)" className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-[0.15em] hover:bg-emerald-500 transition-all">
-                <Monitor className="w-3.5 h-3.5" />
-                TV
-              </button>
-            </div>
-            <button onClick={() => setShowCapacityPlan(true)} title="Planificación" className="flex items-center gap-2 px-4 py-1.5 bg-card border border-border text-foreground hover:bg-muted hover:text-royal rounded-lg font-bold text-[10px] uppercase tracking-widest shadow-sm hover:shadow-md transition-all whitespace-nowrap">
-              <TrendingUp className="w-3.5 h-3.5" />
-              PLAN
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  title="Captura"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-sm shadow-emerald-600/10 hover:bg-emerald-500 transition-all whitespace-nowrap"
+                  data-testid="captura-trigger"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  Captura
+                  <ChevronDown className="w-3 h-3 opacity-80" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                <DropdownMenuItem
+                  onClick={() => { setShowProduction(true); fetchAllOrders(); }}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="captura-prd"
+                >
+                  <Factory className="w-3.5 h-3.5 mr-2 text-emerald-500" />
+                  Captura PRD
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => { setShowNeckCapture(true); fetchAllOrders(); }}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="captura-neck"
+                >
+                  <Scissors className="w-3.5 h-3.5 mr-2 text-pink-500" />
+                  Captura Neck
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setShowProductionScreen(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-tv"
+                >
+                  <Monitor className="w-3.5 h-3.5 mr-2 text-emerald-500" />
+                  TV
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setShowCapacityPlan(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-plan"
+                >
+                  <TrendingUp className="w-3.5 h-3.5 mr-2 text-royal" />
+                  Plan
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
@@ -1957,7 +2020,7 @@ const Dashboard = () => {
               <>
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
-                  gridTemplateColumns: `48px 48px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr)`,
+                  gridTemplateColumns: `48px 48px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
                   minWidth: '100%',
                   width: 'max-content'
                 }}>
@@ -2219,6 +2282,7 @@ const Dashboard = () => {
                     );
                   })}
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
                 </div>
                 {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
@@ -2234,6 +2298,7 @@ const Dashboard = () => {
       <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} />
       <AnalyticsView isOpen={showAnalytics} onClose={() => setShowAnalytics(false)} allOrders={allOrders} options={options} />
       <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
+      <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
       <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
@@ -2422,6 +2487,7 @@ const Dashboard = () => {
       </Dialog>
       {/* System Guide Modal — triggered by secret code 201492 */}
       <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
+      <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
       <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}

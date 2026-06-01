@@ -1,6 +1,6 @@
 """Production logs, gantt data, capacity plan, email routes."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY
+from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, NeckLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY
 from ws_manager import ws_manager
 from datetime import datetime, timezone, timedelta
 import zoneinfo
@@ -200,6 +200,50 @@ async def get_production_summary(request: Request, date_from: str = None, date_t
         set_cache(cache_key, summary)
     return summary
 
+# Shared filter helper for the LIST endpoints below — keeps the two listings
+# (production / neck) DRY.
+def _build_log_query(date_from: str, date_to: str, operator: str, shift: str,
+                      machine: str, order_number: str) -> dict:
+    query = {}
+    if date_from or date_to:
+        tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
+        dt_query = {}
+        if date_from:
+            dt = datetime.strptime(date_from, "%Y-%m-%d")
+            dt_query["$gte"] = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz).astimezone(timezone.utc).isoformat()
+        if date_to:
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            dt_query["$lte"] = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz).astimezone(timezone.utc).isoformat()
+        query["created_at"] = dt_query
+    if operator:
+        query["operator"] = {"$regex": operator, "$options": "i"}
+    if shift:
+        query["shift"] = shift
+    if machine:
+        query["machine"] = machine
+    if order_number:
+        query["order_number"] = {"$regex": order_number, "$options": "i"}
+    return query
+
+
+@router.get("/production-logs")
+async def list_production_logs(
+    request: Request,
+    date_from: str = None, date_to: str = None,
+    operator: str = "", shift: str = "", machine: str = "", order_number: str = "",
+    skip: int = 0, limit: int = 200,
+):
+    """Cross-order list of production logs with filters + pagination. Used by
+    the Registros center (sidebar) to surface every capture."""
+    await require_auth(request)
+    query = _build_log_query(date_from, date_to, operator, shift, machine, order_number)
+    skip = max(0, skip)
+    limit = max(1, min(limit, 1000))
+    total = await db.production_logs.count_documents(query)
+    logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"total": total, "skip": skip, "limit": limit, "logs": logs}
+
+
 @router.delete("/production-logs/{log_id}")
 async def delete_production_log(log_id: str, request: Request):
     user = await require_admin(request)
@@ -209,6 +253,136 @@ async def delete_production_log(log_id: str, request: Request):
     await db.production_logs.delete_one({"log_id": log_id})
     await log_activity(user, "delete_production_log", {"log_id": log_id, "order_id": existing.get("order_id"), "quantity_produced": existing.get("quantity_produced")})
     return {"message": "Production log deleted"}
+
+# ==================== NECK CAPTURE ====================
+# Separate collection (neck_logs) so neck cuts never bleed into production
+# analytics, gantt, capacity-plan or reports. Same shape as production-logs
+# minus machine/setup/design_type/stop_cause/supervisor — the user wanted a
+# minimal form (cantidad + operador + turno) with a fixed "CORTE NECK" station.
+
+NECK_STATION = "CORTE NECK"
+
+
+@router.post("/neck-logs")
+async def create_neck_log(log: NeckLogCreate, request: Request):
+    user = await require_auth(request)
+    order = await db.orders.find_one({"order_id": log.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    log_doc = {
+        "log_id": f"nlog_{uuid.uuid4().hex[:12]}",
+        "order_id": log.order_id,
+        "order_number": order.get("order_number", ""),
+        "quantity_neck_cut": log.quantity_neck_cut,
+        "station": NECK_STATION,
+        "operator": log.operator or user.get("name", ""),
+        "shift": log.shift or "",
+        "client": order.get("client", ""),
+        "user_id": user.get("user_id"),
+        "user_name": user.get("name"),
+        "user_email": user.get("email"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.neck_logs.insert_one(log_doc)
+
+    try:
+        await log_activity(user, "register_neck_cut", {
+            "order_id": log.order_id,
+            "order_number": order.get("order_number"),
+            "quantity_neck_cut": log.quantity_neck_cut,
+        })
+    except Exception as e:
+        logger.error(f"Error logging neck activity: {e}")
+
+    await ws_manager.broadcast("neck_update", {"order_id": log.order_id})
+    invalidate_cache("neck_")
+    return {k: v for k, v in log_doc.items() if k != "_id"}
+
+
+@router.get("/neck-logs/{order_id}")
+async def get_neck_logs(order_id: str, request: Request):
+    await require_auth(request)
+    logs = await db.neck_logs.find({"order_id": order_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total_neck_cut = sum(entry.get("quantity_neck_cut", 0) for entry in logs)
+    return {"logs": logs, "total_neck_cut": total_neck_cut}
+
+
+@router.get("/neck-summary")
+async def get_neck_summary(request: Request, date_from: str = None, date_to: str = None):
+    api_key = request.query_params.get("api_key")
+    if api_key != MASTER_API_KEY:
+        await require_auth(request)
+    cache_key = "neck_summary"
+    cached = get_cached(cache_key)
+    if cached and not date_from and not date_to:
+        return cached
+
+    query = {}
+    if date_from or date_to:
+        tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
+        dt_query = {}
+        if date_from:
+            dt = datetime.strptime(date_from, "%Y-%m-%d")
+            local_start = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz)
+            dt_query["$gte"] = local_start.astimezone(timezone.utc).isoformat()
+        if date_to:
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            local_end = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz)
+            dt_query["$lte"] = local_end.astimezone(timezone.utc).isoformat()
+        query["created_at"] = dt_query
+
+    pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": "$order_number",
+            "total_neck_cut": {"$sum": "$quantity_neck_cut"},
+            "log_count": {"$sum": 1},
+            "last_date": {"$max": "$created_at"},
+        }},
+    ]
+    results = await db.neck_logs.aggregate(pipeline).to_list(10000)
+    summary = {r["_id"]: {
+        "total_neck_cut": r["total_neck_cut"],
+        "log_count": r["log_count"],
+        "last_date": r["last_date"],
+    } for r in results if r["_id"]}
+
+    if not date_from and not date_to:
+        set_cache(cache_key, summary)
+    return summary
+
+
+@router.get("/neck-logs")
+async def list_neck_logs(
+    request: Request,
+    date_from: str = None, date_to: str = None,
+    operator: str = "", shift: str = "", order_number: str = "",
+    skip: int = 0, limit: int = 200,
+):
+    """Cross-order list of neck logs with filters + pagination."""
+    await require_auth(request)
+    query = _build_log_query(date_from, date_to, operator, shift, machine="", order_number=order_number)
+    skip = max(0, skip)
+    limit = max(1, min(limit, 1000))
+    total = await db.neck_logs.count_documents(query)
+    logs = await db.neck_logs.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"total": total, "skip": skip, "limit": limit, "logs": logs}
+
+
+@router.delete("/neck-logs/{log_id}")
+async def delete_neck_log(log_id: str, request: Request):
+    user = await require_admin(request)
+    existing = await db.neck_logs.find_one({"log_id": log_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Neck log not found")
+    await db.neck_logs.delete_one({"log_id": log_id})
+    await log_activity(user, "delete_neck_log", {
+        "log_id": log_id,
+        "order_id": existing.get("order_id"),
+        "quantity_neck_cut": existing.get("quantity_neck_cut"),
+    })
+    invalidate_cache("neck_")
+    return {"message": "Neck log deleted"}
 
 # ==================== GANTT & CAPACITY PLAN ====================
 

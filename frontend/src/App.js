@@ -653,6 +653,7 @@ import OperatorView from "./components/OperatorView";
 import HomeDashboard from "./components/HomeDashboard";
 import AutomationCenter from "./components/AutomationCenter";
 import ActivityLogCenter from "./components/ActivityLogCenter";
+import LogsCenter from "./components/LogsCenter";
 import UserManagementCenter from "./components/UserManagementCenter";
 import CatalogCenter from "./components/CatalogCenter";
 import OperatorsCenter from "./components/OperatorsCenter";
@@ -760,6 +761,11 @@ function AppRouter() {
       <Route path="/dashboard" element={
         <ProtectedRoute>
           <Dashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/registros" element={
+        <ProtectedRoute>
+          <LogsCenter />
         </ProtectedRoute>
       } />
       <Route path="/ceo-dashboard" element={

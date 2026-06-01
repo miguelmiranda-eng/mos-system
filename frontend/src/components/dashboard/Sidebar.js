@@ -22,7 +22,8 @@ import {
   Receipt,
   Globe,
   Folder,
-  Wrench
+  Wrench,
+  ClipboardList,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -252,10 +253,6 @@ const Sidebar = ({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
-                    <button onClick={() => { navigate('/agenda'); if (isMobile) onClose(); }} className={navItem(false)} title="Smart Agenda">
-                      <CalendarDays size={15} className={iconCls(false)} />
-                      <span>Smart Agenda</span>
-                    </button>
                     <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title="Control de Calidad">
                       <ShieldCheck size={15} className={iconCls(false)} />
                       <span>Control de Calidad</span>
@@ -276,9 +273,9 @@ const Sidebar = ({
                       <Box size={15} className={iconCls(false)} />
                       <span>Packing List</span>
                     </button>
-                    <button onClick={() => { onShowAnalytics(); if (isMobile) onClose(); }} className={navItem(showAnalytics)} title="Análisis">
-                      <BarChart3 size={15} className={iconCls(showAnalytics)} />
-                      <span>Análisis</span>
+                    <button onClick={() => { navigate('/registros'); if (isMobile) onClose(); }} className={navItem(false)} title="Registros (Producción / Neck)">
+                      <ClipboardList size={15} className={iconCls(false)} />
+                      <span>Registros</span>
                     </button>
                     <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(showTrash)} title="Papelera">
                       <div className="relative flex-shrink-0">
