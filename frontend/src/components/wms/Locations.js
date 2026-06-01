@@ -613,20 +613,32 @@ export const LocationsModule = () => {
                             <ArrowRightLeft className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button
-                          onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
-                          className="p-1.5 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded-md transition-all"
-                          title="Editar ubicación"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(l.location_id, l.name)}
-                          className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
-                          title="Eliminar ubicación"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {l.name !== 'UBICACION TEMPORAL' && (
+                          <>
+                            <button
+                              onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
+                              className="p-1.5 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded-md transition-all"
+                              title="Editar ubicación"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(l.location_id, l.name)}
+                              className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
+                              title="Eliminar ubicación"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                        {l.name === 'UBICACION TEMPORAL' && (
+                          <span
+                            className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded"
+                            title="Ubicación del sistema (módulo En Tránsito) — no editable ni eliminable"
+                          >
+                            sistema
+                          </span>
+                        )}
                       </div>
                     </div>
                   );

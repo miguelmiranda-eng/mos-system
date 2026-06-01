@@ -771,12 +771,51 @@ async def boxes_relocate(request: Request):
 
 
 @router.delete("/locations/{location_id}")
-async def delete_location(location_id: str, request: Request):
-    user = await require_auth(request)
+async def delete_location(location_id: str, request: Request, force: bool = False):
+    """Delete a location. Two guards:
+      1. System-protected slots (the canonical UBICACION TEMPORAL) can never
+         be deleted — they're hard-wired to other modules (En Tránsito flow,
+         Receiving "Recibir a Temporal" button) so removing them silently
+         breaks those features.
+      2. Regular slots are blocked when the bin still has boxes or inventory
+         rows pointing to it — otherwise the operator orphans stock that
+         can't be surfaced anywhere in the UI. Pass `?force=true` to
+         override this second guard (advanced; doesn't bypass #1)."""
+    await require_auth(request)
+    loc = await db.wms_locations.find_one({"location_id": location_id})
+    if not loc:
+        raise HTTPException(404, "Ubicacion no encontrada")
+    name = loc.get("name") or ""
+
+    # Guard 1 — system-protected locations are off-limits, even with force.
+    if name == TRANSIT_LOCATION_NAME:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"'{name}' es una ubicación del sistema (módulo En Tránsito) "
+                "y no se puede eliminar."
+            ),
+        )
+
+    # Guard 2 — stock-bearing bins are blocked unless ?force=true is passed.
+    if not force:
+        n_boxes = await db.wms_boxes.count_documents({"location": name})
+        n_inv = await db.wms_inventory.count_documents({
+            "location": name, "units_on_hand": {"$gt": 0},
+        })
+        if n_boxes or n_inv:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{name}' tiene contenido: {n_boxes} cajas / {n_inv} líneas con stock. "
+                    "Vácila primero (Mover) o pasa ?force=true para forzar."
+                ),
+            )
+
     result = await db.wms_locations.delete_one({"location_id": location_id})
     if result.deleted_count == 0:
         raise HTTPException(404, "Ubicacion no encontrada")
-    return {"message": "Ubicacion eliminada"}
+    return {"message": f"Ubicacion '{name}' eliminada"}
 
 @router.put("/locations/{location_id}")
 async def update_location(location_id: str, request: Request):
@@ -784,13 +823,25 @@ async def update_location(location_id: str, request: Request):
     body = await request.json()
     new_name = body.get("name", "").strip().upper()
     new_zone = body.get("zone", "").strip().upper()
-    
+
     existing_loc = await db.wms_locations.find_one({"location_id": location_id})
     if not existing_loc:
         raise HTTPException(404, "Ubicación no encontrada")
-        
+
     old_name = existing_loc.get("name")
-    
+
+    # System-protected: the canonical transit slot cannot be renamed because
+    # the En Tránsito module + Receiving "Recibir a Temporal" button look it
+    # up by the exact string TRANSIT_LOCATION_NAME.
+    if old_name == TRANSIT_LOCATION_NAME and new_name and new_name != old_name:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"'{old_name}' es una ubicación del sistema (módulo En Tránsito) "
+                "y no se puede renombrar."
+            ),
+        )
+
     update_doc = {}
     if new_name:
         if new_name != old_name:
