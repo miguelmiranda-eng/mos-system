@@ -65,6 +65,7 @@ class MovementType:
     BULK_RELOCATION = "bulk_relocation"
     ASN_IMPORTED = "asn_imported"
     ASN_RECEIPT = "asn_receipt"
+    TRANSIT_RELOCATION = "transit_relocation"  # boxes moved out of UBICACION TEMPORAL
 
 
 class AsnStatus:

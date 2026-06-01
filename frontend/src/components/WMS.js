@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors,
+  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -27,6 +27,7 @@ import { MovementsModule } from "./wms/Movements";
 import { CycleCountModule } from "./wms/CycleCount";
 import { DirectedWorkModule } from "./wms/DirectedWork";
 import { AsnModule } from "./wms/Asn";
+import { TransitModule } from "./wms/Transit";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -37,6 +38,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'directed':     return <DirectedWorkModule />;
     case 'dashboard':    return <InventoryDashboard customer={ctx.associatedCustomer} apiBase={API} />;
     case 'receiving':    return <ReceivingModule />;
+    case 'transit':      return <TransitModule />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule />;
@@ -99,6 +101,7 @@ export default function WMS() {
     { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
+    { id: 'transit', label: 'En Tránsito', icon: Clock, color: 'text-amber-400', desc: 'Cajas recibidas sin ubicación física asignada' },
     { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
     { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
     { id: 'locations', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400', desc: 'Mapa lógico y gestión de ubicaciones' },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
@@ -27,19 +27,32 @@ export const LocationsModule = () => {
   const [detailLoc, setDetailLoc] = useState(null);
   const [detailItems, setDetailItems] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
-  const openDetail = useCallback(async (loc) => {
-    setDetailLoc(loc);
-    setDetailItems([]);
-    setDetailLoading(true);
-    try {
-      const data = await fetcher(`/inventory?location=${encodeURIComponent(loc.name)}&limit=500`);
-      setDetailItems(Array.isArray(data) ? data : (data.items || []));
-    } catch (err) {
-      logLoadError('location detail')(err);
-      toast.error('No se pudo cargar el detalle de la ubicación');
-    } finally { setDetailLoading(false); }
-  }, []);
+  // Per-item LPN expansion inside the detail modal. Keys are inventory_id;
+  // values are { loading: bool, boxes: [] }. Lazy-fetched on toggle.
+  const [boxesByInv, setBoxesByInv] = useState({});
 
+  // Inline per-LPN relocate inside the detail modal. While a box is being
+  // relocated we replace its row with a small destination input + confirm.
+  const [relocatingBoxId, setRelocatingBoxId] = useState(null);
+  const [relocateDst, setRelocateDst] = useState('');
+  const [relocateSaving, setRelocateSaving] = useState(false);
+  // Active locations cached for the relocate typeahead (lazy-loaded when the
+  // modal opens — `summary=false` skips the expensive inventory aggregation).
+  const [activeLocations, setActiveLocations] = useState([]);
+  const [activeLocLoaded, setActiveLocLoaded] = useState(false);
+  const [showLocDrop, setShowLocDrop] = useState(false);
+
+  // LPN finder — direct lookup by box_id from the top of the module. Resolves
+  // to the box's current location, opens its detail modal, auto-expands the
+  // inventory item that owns the box and highlights the row.
+  const [lpnSearch, setLpnSearch] = useState('');
+  const [lpnSearching, setLpnSearching] = useState(false);
+  const [foundBox, setFoundBox] = useState(null); // full box doc from the lookup
+  const [highlightBoxId, setHighlightBoxId] = useState(null);
+
+  // Top-level list loader — declared up here because confirmRelocate (below)
+  // references it in a useCallback dep array and `const` has TDZ semantics:
+  // accessing it before initialization throws at first render.
   const load = useCallback(() => {
     setLoading(true);
     fetcher('/locations')
@@ -47,7 +60,219 @@ export const LocationsModule = () => {
       .finally(() => setLoading(false));
   }, []);
 
+  const openDetail = useCallback(async (loc) => {
+    setDetailLoc(loc);
+    setDetailItems([]);
+    setBoxesByInv({});
+    setRelocatingBoxId(null);
+    setRelocateDst('');
+    setDetailLoading(true);
+    // Kick off the active-locations fetch in parallel — needed by the
+    // relocate typeahead. Won't block the detail load.
+    if (!activeLocLoaded) {
+      fetcher('/locations?summary=false&limit=5000')
+        .then(rows => {
+          const filtered = (Array.isArray(rows) ? rows : []).filter(l => l.active !== false);
+          setActiveLocations(filtered);
+          setActiveLocLoaded(true);
+        })
+        .catch(logLoadError('active locations for relocate'));
+    }
+    try {
+      // Fetch inventory rows AND every box in this location in parallel so the
+      // LPNs are immediately visible — no extra clicks required to see "which
+      // boxes are these". For locations with hundreds of boxes the response
+      // is still cheap (single mongo find).
+      const [invData, boxData] = await Promise.all([
+        fetcher(`/inventory?location=${encodeURIComponent(loc.name)}&limit=500`),
+        fetcher(`/boxes?location=${encodeURIComponent(loc.name)}`).catch(err => {
+          logLoadError('location boxes preload')(err);
+          return [];
+        }),
+      ]);
+      const items = Array.isArray(invData) ? invData : (invData.items || []);
+      setDetailItems(items);
+
+      // Bucket boxes by composite SKU key (sku + color + size). Many receiving
+      // flows write boxes without an inventory_id link, so we can't rely on
+      // that field alone — the SKU triple is the only thing that's reliably
+      // populated on both sides.
+      const skuKey = (o) => `${(o.sku || o.style || '').toUpperCase()}|${(o.color || '').toUpperCase()}|${(o.size || '').toUpperCase()}`;
+      const grouped = {};
+      (Array.isArray(boxData) ? boxData : []).forEach(b => {
+        const key = skuKey(b);
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(b);
+      });
+      // Seed boxesByInv keyed by each inventory item's inventory_id so the
+      // existing per-card drawer renderer keeps working unchanged.
+      const seeded = {};
+      items.forEach(it => {
+        if (!it.inventory_id) return;
+        const matching = grouped[skuKey(it)];
+        if (matching && matching.length) {
+          seeded[it.inventory_id] = { loading: false, boxes: matching };
+        }
+      });
+      setBoxesByInv(seeded);
+    } catch (err) {
+      logLoadError('location detail')(err);
+      toast.error('No se pudo cargar el detalle de la ubicación');
+    } finally { setDetailLoading(false); }
+  }, [activeLocLoaded]);
+
+  const findBox = useCallback(async () => {
+    const lpn = (lpnSearch || '').trim().toUpperCase();
+    if (!lpn) { toast.error('Escribe un LPN para buscar'); return; }
+    setLpnSearching(true);
+    setFoundBox(null);
+    setHighlightBoxId(null);
+    try {
+      // Direct lookup. The backend already 404s if the box doesn't exist.
+      const res = await fetch(`${API}/boxes/${encodeURIComponent(lpn)}`, { credentials: 'include' });
+      if (res.status === 404) { toast.error(`Caja '${lpn}' no encontrada`); return; }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || `Error ${res.status}`);
+        return;
+      }
+      const box = await res.json();
+      if (!box || !box.box_id) { toast.error(`Caja '${lpn}' no encontrada`); return; }
+
+      const boxLoc = (box.location || '').toUpperCase();
+      if (!boxLoc) {
+        toast.error(`La caja ${box.box_id} no tiene ubicación asignada`);
+        return;
+      }
+      // Find the location object in our local list so openDetail can render
+      // the header + load its items. If absent (e.g. paginated out), build a
+      // stub — openDetail only reads loc.name.
+      const loc = locations.find(l => (l.name || '').toUpperCase() === boxLoc) || { name: box.location };
+      setFoundBox(box);
+      setHighlightBoxId(box.box_id);
+      await openDetail(loc);
+      toast.success(`Caja ${box.box_id} en ${box.location}`);
+    } catch (err) {
+      logLoadError('lookup box')(err);
+      toast.error('Error al buscar la caja');
+    } finally { setLpnSearching(false); }
+  }, [lpnSearch, locations, openDetail]);
+
+  const startRelocate = useCallback((boxId) => {
+    setRelocatingBoxId(boxId);
+    setRelocateDst('');
+    setShowLocDrop(false);
+  }, []);
+
+  const cancelRelocate = useCallback(() => {
+    setRelocatingBoxId(null);
+    setRelocateDst('');
+    setShowLocDrop(false);
+  }, []);
+
+  const confirmRelocate = useCallback(async (box, inventoryId) => {
+    const dst = (relocateDst || '').trim().toUpperCase();
+    if (!dst) { toast.error('Escribe la ubicación destino'); return; }
+    if (!detailLoc) return;
+    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
+    const exists = activeLocations.some(l => (l.name || '').toUpperCase() === dst);
+    if (!exists) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    setRelocateSaving(true);
+    try {
+      const res = await poster('/boxes/relocate', { box_ids: [box.box_id], to: dst });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(data.message || 'Caja movida');
+        // Drop the moved LPN from the open drawer so the UI matches reality.
+        setBoxesByInv(prev => {
+          const node = prev[inventoryId];
+          if (!node) return prev;
+          return {
+            ...prev,
+            [inventoryId]: {
+              ...node,
+              boxes: node.boxes.filter(b => b.box_id !== box.box_id),
+            },
+          };
+        });
+        setRelocatingBoxId(null);
+        setRelocateDst('');
+        // Refresh the location list in the background so totals update.
+        load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al mover la caja');
+      }
+    } catch (err) {
+      logLoadError('relocate box')(err);
+      toast.error('Error de conexión');
+    } finally { setRelocateSaving(false); }
+  }, [relocateDst, detailLoc, activeLocations, load]);
+
+  const toggleBoxes = useCallback(async (it) => {
+    const id = it.inventory_id;
+    if (!id) {
+      toast.error('Este renglón no tiene inventory_id — no se pueden listar cajas');
+      return;
+    }
+    const existing = boxesByInv[id];
+    if (existing) {
+      // Toggle: if already shown, hide.
+      setBoxesByInv(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    setBoxesByInv(prev => ({ ...prev, [id]: { loading: true, boxes: [] } }));
+    try {
+      // Two-step lookup so we work for boxes that DO have inventory_id linked
+      // (e.g. restored from snapshot) AND for boxes that don't (Receiving flow):
+      // 1. Try the explicit inventory_id link first — fast and exact.
+      // 2. If empty, fall back to filtering by location + SKU triple, which is
+      //    what every box reliably carries.
+      let data = await fetcher(`/boxes?inventory_id=${encodeURIComponent(id)}`);
+      if (!Array.isArray(data) || data.length === 0) {
+        const loc = detailLoc?.name || it.inv_location || it.location || '';
+        const params = new URLSearchParams({ location: loc });
+        if (it.sku || it.style) params.set('sku', it.sku || it.style);
+        if (it.color) params.set('color', it.color);
+        if (it.size) params.set('size', it.size);
+        data = await fetcher(`/boxes?${params.toString()}`);
+      }
+      setBoxesByInv(prev => ({ ...prev, [id]: { loading: false, boxes: Array.isArray(data) ? data : [] } }));
+    } catch (err) {
+      logLoadError('boxes by inventory')(err);
+      toast.error('Error al cargar las cajas');
+      setBoxesByInv(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }, [boxesByInv, detailLoc]);
+
   useEffect(() => { load(); }, [load]);
+
+  // After a LPN lookup, once the location's detail items have loaded, expand
+  // the boxes drawer of the item that owns the found box. Ref-guarded so we
+  // never trigger the expand twice for the same lookup.
+  const expandedForBoxRef = useRef(null);
+  useEffect(() => {
+    if (!foundBox || !detailLoc || detailItems.length === 0) return;
+    if (expandedForBoxRef.current === foundBox.box_id) return;
+    const target = detailItems.find(it => it.inventory_id === foundBox.inventory_id);
+    if (!target) {
+      // Inventory record might not be loaded (different aggregation key); just
+      // clear the guard so a subsequent lookup can try again.
+      return;
+    }
+    if (!boxesByInv[target.inventory_id]) {
+      expandedForBoxRef.current = foundBox.box_id;
+      toggleBoxes(target);
+    }
+  }, [foundBox, detailLoc, detailItems, boxesByInv, toggleBoxes]);
 
   const handleCreateLoc = async () => {
     const name = newLoc.name.trim().toUpperCase();
@@ -245,6 +470,28 @@ export const LocationsModule = () => {
           </div>
         </div>
       )}
+
+      {/* LPN finder — quick lookup that jumps directly to the box's location */}
+      <div className="relative group">
+        <Box className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-amber-500 group-focus-within:text-amber-400 transition-colors" />
+        <input
+          placeholder="Buscar por número de caja (LPN)…"
+          value={lpnSearch}
+          onChange={e => setLpnSearch(e.target.value.toUpperCase())}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); findBox(); } }}
+          disabled={lpnSearching}
+          className="w-full pl-12 pr-32 py-3 bg-amber-500/5 border border-amber-500/20 rounded-2xl text-sm font-mono font-bold uppercase focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500/40 transition-all"
+          data-testid="lpn-search"
+        />
+        <button
+          onClick={findBox}
+          disabled={lpnSearching || !lpnSearch.trim()}
+          className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-30 flex items-center gap-1.5"
+        >
+          {lpnSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+          Buscar
+        </button>
+      </div>
 
       <div className="relative group">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -614,10 +861,16 @@ export const LocationsModule = () => {
 
                       {/* Footer: stock summary */}
                       <div className="px-4 py-3 grid grid-cols-3 gap-3 bg-secondary/40 border-t border-border/20 text-center">
-                        <div>
+                        <button
+                          type="button"
+                          onClick={() => toggleBoxes(it)}
+                          disabled={!it.inventory_id || (it.total_boxes || 0) === 0}
+                          className={`rounded-lg transition-all ${it.inventory_id && (it.total_boxes || 0) > 0 ? 'cursor-pointer hover:bg-primary/10' : 'cursor-default opacity-80'}`}
+                          title={it.inventory_id && (it.total_boxes || 0) > 0 ? 'Ver LPNs en esta ubicación' : ''}
+                        >
                           <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center justify-center gap-1"><Box className="w-2.5 h-2.5" /> Cajas</div>
-                          <div className="font-mono font-black text-base tabular-nums">{(it.total_boxes || 0).toLocaleString()}</div>
-                        </div>
+                          <div className={`font-mono font-black text-base tabular-nums ${boxesByInv[it.inventory_id] ? 'text-primary' : ''}`}>{(it.total_boxes || 0).toLocaleString()}</div>
+                        </button>
                         <div>
                           <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">On hand</div>
                           <div className="font-mono font-black text-base text-emerald-500 tabular-nums">{(it.on_hand ?? it.units_on_hand ?? 0).toLocaleString()}</div>
@@ -627,6 +880,126 @@ export const LocationsModule = () => {
                           <div className="font-mono font-black text-base text-blue-400 tabular-nums">{(it.available ?? ((it.on_hand ?? it.units_on_hand ?? 0) - (it.allocated ?? it.units_allocated ?? 0))).toLocaleString()}</div>
                         </div>
                       </div>
+
+                      {/* Boxes (LPN) drawer — appears only when the user clicks the Cajas tile */}
+                      {boxesByInv[it.inventory_id] && (
+                        <div className="border-t border-border/20 bg-card/40 p-3 max-h-60 overflow-y-auto custom-scrollbar">
+                          {boxesByInv[it.inventory_id].loading ? (
+                            <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span className="text-[10px] font-bold uppercase tracking-widest">Cargando LPNs…</span>
+                            </div>
+                          ) : boxesByInv[it.inventory_id].boxes.length === 0 ? (
+                            <div className="text-center text-[10px] text-muted-foreground font-bold uppercase py-3">Sin LPNs registrados</div>
+                          ) : (
+                            <table className="w-full text-[11px]">
+                              <thead>
+                                <tr className="border-b border-border/20">
+                                  <th className="text-left py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">LPN</th>
+                                  <th className="text-right py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Unidades</th>
+                                  <th className="text-left py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Estado</th>
+                                  <th className="text-right py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Acción</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {boxesByInv[it.inventory_id].boxes.map((b, bi) => {
+                                  const isRelocating = relocatingBoxId === b.box_id;
+                                  if (isRelocating) {
+                                    const q = (relocateDst || '').trim().toUpperCase();
+                                    const matches = (q
+                                      ? activeLocations.filter(l => (l.name || '').toUpperCase().includes(q))
+                                      : activeLocations
+                                    ).slice(0, 30);
+                                    return (
+                                      <tr key={b.box_id || bi} className="bg-amber-500/10 border-b border-amber-500/20">
+                                        <td colSpan={4} className="py-2 px-2">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-mono font-black text-amber-500 text-[11px] whitespace-nowrap">
+                                              {b.box_id} →
+                                            </span>
+                                            <div className="relative flex-1 min-w-[160px]">
+                                              <input
+                                                autoFocus
+                                                type="text"
+                                                value={relocateDst}
+                                                onChange={e => { setRelocateDst(e.target.value.toUpperCase()); setShowLocDrop(true); }}
+                                                onFocus={() => setShowLocDrop(true)}
+                                                onBlur={() => setTimeout(() => setShowLocDrop(false), 150)}
+                                                onKeyDown={e => {
+                                                  if (e.key === 'Enter') { e.preventDefault(); confirmRelocate(b, it.inventory_id); }
+                                                  if (e.key === 'Escape') { e.preventDefault(); cancelRelocate(); }
+                                                }}
+                                                placeholder="Ubicación destino"
+                                                className="w-full px-2 py-1 bg-background border border-amber-500/40 rounded text-[11px] font-mono uppercase focus:outline-none focus:border-amber-500"
+                                              />
+                                              {showLocDrop && matches.length > 0 && (
+                                                <div className="absolute z-40 mt-0.5 w-full max-h-48 overflow-y-auto bg-popover border border-border rounded-lg shadow-xl">
+                                                  {matches.map(l => (
+                                                    <button
+                                                      key={l.location_id || l.name}
+                                                      type="button"
+                                                      onMouseDown={(e) => {
+                                                        e.preventDefault();
+                                                        setRelocateDst(l.name);
+                                                        setShowLocDrop(false);
+                                                      }}
+                                                      className="w-full text-left px-2 py-1 text-[11px] font-mono hover:bg-secondary flex items-center justify-between"
+                                                    >
+                                                      <span className="font-bold">{l.name}</span>
+                                                      {l.zone && <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => confirmRelocate(b, it.inventory_id)}
+                                              disabled={relocateSaving || !relocateDst.trim()}
+                                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded text-[10px] font-black uppercase tracking-widest disabled:opacity-50 flex items-center gap-1"
+                                            >
+                                              {relocateSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'OK'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={cancelRelocate}
+                                              disabled={relocateSaving}
+                                              className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+                                  const isHighlighted = highlightBoxId && b.box_id === highlightBoxId;
+                                  return (
+                                    <tr key={b.box_id || bi} className={`border-b border-border/5 group/lpn transition-colors ${isHighlighted ? 'bg-amber-400/30 ring-2 ring-amber-500/40' : 'hover:bg-primary/5'}`}>
+                                      <td className="py-1 px-2 font-mono font-bold text-primary">
+                                        {isHighlighted && <Box className="w-3 h-3 text-amber-500 inline mr-1" />}
+                                        {b.box_id || '—'}
+                                      </td>
+                                      <td className="py-1 px-2 text-right font-mono font-black text-emerald-500">{(b.units || b.qty || 0).toLocaleString()}</td>
+                                      <td className="py-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">{b.state || b.status || '—'}</td>
+                                      <td className="py-1 px-2 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => startRelocate(b.box_id)}
+                                          className="opacity-0 group-hover/lpn:opacity-100 transition-opacity inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded border border-amber-500/30"
+                                          title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
+                                        >
+                                          <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

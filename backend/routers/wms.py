@@ -27,6 +27,33 @@ def now_iso():
 def gen_id(prefix="wms"):
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
+
+# Canonical name for the warehouse-wide holding location where boxes wait when
+# they are received without a final destination. Lives next to the regular
+# locations in wms_locations so the rest of the system (Locations module,
+# move-location, aggregations) treats it like any other slot.
+TRANSIT_LOCATION_NAME = "UBICACION TEMPORAL"
+
+
+async def _ensure_transit_location():
+    """Idempotently insert the transit location if it isn't already in
+    wms_locations. Safe to call on every request that may need to write
+    there — it's a single find+(optional)insert."""
+    existing = await db.wms_locations.find_one({"name": TRANSIT_LOCATION_NAME})
+    if existing:
+        return existing
+    doc = {
+        "location_id": gen_id("loc"),
+        "name": TRANSIT_LOCATION_NAME,
+        "zone": "TRANSIT",
+        "type": "transit",
+        "active": True,
+        "is_custom": True,
+        "created_at": now_iso(),
+    }
+    await db.wms_locations.insert_one(doc)
+    return doc
+
 async def log_movement(user, movement_type, details):
     await db.wms_movements.insert_one({
         "movement_id": gen_id("mov"),
@@ -429,6 +456,320 @@ async def move_location_bulk(request: Request):
     }
 
 
+@router.get("/transit/info")
+async def transit_info(request: Request):
+    """Tell the frontend the canonical transit location name and ensure it
+    exists. Used by the Transit module and the Receiving "Recibir a Temporal"
+    flow to know where to drop boxes without hard-coding the name."""
+    await require_auth(request)
+    loc = await _ensure_transit_location()
+    n_boxes = await db.wms_boxes.count_documents({"location": TRANSIT_LOCATION_NAME})
+    return {
+        "name": TRANSIT_LOCATION_NAME,
+        "location_id": loc.get("location_id"),
+        "boxes_in_transit": n_boxes,
+    }
+
+
+@router.get("/transit/boxes")
+async def transit_boxes(request: Request, customer: str = "", style: str = "",
+                        search: str = "", limit: int = 1000):
+    """List every box currently sitting in UBICACION TEMPORAL. Optional
+    text filters help triage when there are hundreds of pending boxes."""
+    await require_auth(request)
+    await _ensure_transit_location()
+    query = {"location": TRANSIT_LOCATION_NAME}
+    if customer:
+        query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
+    if style:
+        query["style"] = {"$regex": re.escape(style), "$options": "i"}
+    if search:
+        # Free-text search across the most useful fields.
+        rx = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [
+            {"box_id": rx}, {"sku": rx}, {"style": rx}, {"color": rx},
+            {"description": rx}, {"customer": rx}, {"manufacturer": rx},
+        ]
+    boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", 1).to_list(limit)
+    return {
+        "transit_location": TRANSIT_LOCATION_NAME,
+        "count": len(boxes),
+        "boxes": boxes,
+    }
+
+
+@router.post("/transit/relocate")
+async def transit_relocate(request: Request):
+    """Move specific boxes out of UBICACION TEMPORAL into a real warehouse slot.
+
+    Body: { box_ids: [str, ...], to: str }
+    - box_ids must currently live at the transit location (silently skipped
+      otherwise so concurrent moves don't error out).
+    - `to` must be an existing wms_location.
+    - Updates each box's location, decrements/clears the transit inventory
+      row(s) and increments (or creates) the destination inventory row(s).
+    - Logs a single transit_relocation movement with a summary.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    box_ids = body.get("box_ids") or []
+    dst = (body.get("to") or "").strip().upper()
+    if not box_ids:
+        raise HTTPException(400, "box_ids es obligatorio")
+    if not dst:
+        raise HTTPException(400, "to es obligatorio")
+    if dst == TRANSIT_LOCATION_NAME:
+        raise HTTPException(400, "El destino no puede ser la propia ubicación temporal")
+
+    dst_loc = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}}
+    )
+    if not dst_loc:
+        raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
+    dst_name = dst_loc.get("name", dst)
+
+    # Pull the boxes that ACTUALLY are in transit right now.
+    boxes = await db.wms_boxes.find(
+        {"box_id": {"$in": box_ids}, "location": TRANSIT_LOCATION_NAME},
+        {"_id": 0},
+    ).to_list(len(box_ids))
+    if not boxes:
+        return {
+            "message": "Ninguna de las cajas indicadas está en ubicación temporal.",
+            "moved": 0, "units_moved": 0, "to": dst_name,
+        }
+
+    # 1. Move the boxes in one shot.
+    moved_ids = [b["box_id"] for b in boxes]
+    await db.wms_boxes.update_many(
+        {"box_id": {"$in": moved_ids}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located"}},
+    )
+
+    # 2. Aggregate units per (sku, color, size) so we can re-balance inventory.
+    from collections import defaultdict
+    bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
+    for b in boxes:
+        key = (b.get("sku") or b.get("style") or "", b.get("color", ""), b.get("size", ""))
+        bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
+        bucket[key]["boxes"] += 1
+        if bucket[key]["sample"] is None:
+            bucket[key]["sample"] = b
+
+    units_moved = 0
+    skus_moved = 0
+    for (sku, color, size), agg in bucket.items():
+        units = agg["units"]
+        boxes_cnt = agg["boxes"]
+        sample = agg["sample"] or {}
+        units_moved += units
+        skus_moved += 1
+
+        # Decrement the transit inventory row (or delete it if it would go to 0).
+        src_inv = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": TRANSIT_LOCATION_NAME,
+        })
+        if src_inv:
+            new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
+            new_total_boxes = max(0, int(src_inv.get("total_boxes", 0)) - boxes_cnt)
+            if new_on_hand == 0 and new_total_boxes == 0:
+                await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+            else:
+                await db.wms_inventory.update_one(
+                    {"_id": src_inv["_id"]},
+                    {"$set": {
+                        "units_on_hand": new_on_hand,
+                        "total_boxes": new_total_boxes,
+                        "updated_at": now_iso(),
+                    }},
+                )
+
+        # Increment (or create) the destination inventory row.
+        dst_inv = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": dst_name,
+        })
+        if dst_inv:
+            await db.wms_inventory.update_one(
+                {"_id": dst_inv["_id"]},
+                {"$inc": {"units_on_hand": units, "total_boxes": boxes_cnt},
+                 "$set": {"updated_at": now_iso()}},
+            )
+        else:
+            await db.wms_inventory.insert_one({
+                "inventory_id": gen_id("inv"),
+                "sku": sku,
+                "style": sample.get("style") or sku,
+                "color": color,
+                "size": size,
+                "customer": sample.get("customer", ""),
+                "manufacturer": sample.get("manufacturer", ""),
+                "description": sample.get("description", ""),
+                "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
+                "fabric_content": sample.get("fabric_content", ""),
+                "location": dst_name,
+                "total_boxes": boxes_cnt,
+                "units_on_hand": units,
+                "units_allocated": 0,
+                "updated_at": now_iso(),
+            })
+
+    await log_movement(user, MovementType.TRANSIT_RELOCATION, {
+        "to": dst_name,
+        "boxes_moved": len(moved_ids),
+        "skus_moved": skus_moved,
+        "units_moved": units_moved,
+        "box_ids": moved_ids[:50],  # cap log payload
+    })
+    await notify_badge_change("all")
+
+    return {
+        "message": f"Movidas {len(moved_ids)} cajas ({units_moved} unidades, {skus_moved} SKUs) a {dst_name}",
+        "moved": len(moved_ids),
+        "units_moved": units_moved,
+        "skus_moved": skus_moved,
+        "to": dst_name,
+    }
+
+
+@router.post("/boxes/relocate")
+async def boxes_relocate(request: Request):
+    """Generic per-box relocation. Unlike /transit/relocate, doesn't restrict
+    the source location — works from any source to any destination. Used by
+    the Locations detail modal to let an admin pick individual LPNs out of a
+    bin and ship them elsewhere.
+
+    Body: { box_ids: [str, ...], to: str }
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    box_ids = body.get("box_ids") or []
+    dst = (body.get("to") or "").strip().upper()
+    if not box_ids:
+        raise HTTPException(400, "box_ids es obligatorio")
+    if not dst:
+        raise HTTPException(400, "to es obligatorio")
+
+    dst_loc = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}}
+    )
+    if not dst_loc:
+        raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
+    dst_name = dst_loc.get("name", dst)
+
+    # Load the boxes; silently skip those already at the destination so
+    # accidental double-clicks don't error out.
+    boxes_raw = await db.wms_boxes.find(
+        {"box_id": {"$in": box_ids}}, {"_id": 0},
+    ).to_list(len(box_ids))
+    boxes = [b for b in boxes_raw if (b.get("location") or "").upper() != dst_name.upper()]
+    if not boxes:
+        return {
+            "message": "Las cajas seleccionadas ya están en la ubicación destino.",
+            "moved": 0, "units_moved": 0, "skus_moved": 0, "to": dst_name,
+        }
+
+    # 1. Bulk update box locations.
+    moved_ids = [b["box_id"] for b in boxes]
+    await db.wms_boxes.update_many(
+        {"box_id": {"$in": moved_ids}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located"}},
+    )
+
+    # 2. Rebalance inventory: bucket by (source_location, sku, color, size) so
+    #    moves spanning multiple source bins still decrement the right rows.
+    from collections import defaultdict
+    bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
+    for b in boxes:
+        src = (b.get("location") or "")
+        key = (src, b.get("sku") or b.get("style") or "", b.get("color", ""), b.get("size", ""))
+        bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
+        bucket[key]["boxes"] += 1
+        if bucket[key]["sample"] is None:
+            bucket[key]["sample"] = b
+
+    units_moved = 0
+    skus_moved = 0
+    sources_touched = set()
+    for (src, sku, color, size), agg in bucket.items():
+        units = agg["units"]
+        boxes_cnt = agg["boxes"]
+        sample = agg["sample"] or {}
+        units_moved += units
+        skus_moved += 1
+        if src:
+            sources_touched.add(src)
+
+        # Decrement the source inventory row (delete if it would hit 0/0).
+        if src:
+            src_inv = await db.wms_inventory.find_one({
+                "sku": sku, "color": color, "size": size, "location": src,
+            })
+            if src_inv:
+                new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
+                new_total_boxes = max(0, int(src_inv.get("total_boxes", 0)) - boxes_cnt)
+                if new_on_hand == 0 and new_total_boxes == 0:
+                    await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+                else:
+                    await db.wms_inventory.update_one(
+                        {"_id": src_inv["_id"]},
+                        {"$set": {
+                            "units_on_hand": new_on_hand,
+                            "total_boxes": new_total_boxes,
+                            "updated_at": now_iso(),
+                        }},
+                    )
+
+        # Increment (or create) the destination inventory row.
+        dst_inv = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": dst_name,
+        })
+        if dst_inv:
+            await db.wms_inventory.update_one(
+                {"_id": dst_inv["_id"]},
+                {"$inc": {"units_on_hand": units, "total_boxes": boxes_cnt},
+                 "$set": {"updated_at": now_iso()}},
+            )
+        else:
+            await db.wms_inventory.insert_one({
+                "inventory_id": gen_id("inv"),
+                "sku": sku,
+                "style": sample.get("style") or sku,
+                "color": color,
+                "size": size,
+                "customer": sample.get("customer", ""),
+                "manufacturer": sample.get("manufacturer", ""),
+                "description": sample.get("description", ""),
+                "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
+                "fabric_content": sample.get("fabric_content", ""),
+                "location": dst_name,
+                "total_boxes": boxes_cnt,
+                "units_on_hand": units,
+                "units_allocated": 0,
+                "updated_at": now_iso(),
+            })
+
+    # Use the transit movement type when source was the transit location, so the
+    # Movements module surfaces it under the same bucket as /transit/relocate.
+    move_type = MovementType.TRANSIT_RELOCATION if sources_touched == {TRANSIT_LOCATION_NAME} else MovementType.BULK_RELOCATION
+    await log_movement(user, move_type, {
+        "to": dst_name,
+        "sources": sorted(sources_touched),
+        "boxes_moved": len(moved_ids),
+        "skus_moved": skus_moved,
+        "units_moved": units_moved,
+        "box_ids": moved_ids[:50],  # cap log payload
+    })
+    await notify_badge_change("all")
+
+    return {
+        "message": f"Movidas {len(moved_ids)} cajas ({units_moved} unidades) a {dst_name}",
+        "moved": len(moved_ids),
+        "units_moved": units_moved,
+        "skus_moved": skus_moved,
+        "to": dst_name,
+    }
+
+
 @router.delete("/locations/{location_id}")
 async def delete_location(location_id: str, request: Request):
     user = await require_auth(request)
@@ -691,24 +1032,49 @@ async def create_receiving(request: Request):
     
     # Update inventory — pass through the receiving metadata so the inventory
     # row mirrors what the operator captured (Cliente, Manufacturer, COO, etc.).
+    # We collect the inventory_id returned by each call so we can link the
+    # freshly-created box docs to their inventory row in a single bulk update
+    # below. Keyed by item_size so multi-size receiving stays per-line.
     meta = {
         "manufacturer": manufacturer,
         "description": description,
         "country_of_origin": country_of_origin,
         "fabric_content": fabric_content,
     }
+    inv_id_by_size: dict[str, str] = {}
     if items:
         for item in items:
-            await _update_inventory_enhanced(
-                style, color, item.get("size"),
+            item_size = item.get("size") or ""
+            inv_id = await _update_inventory_enhanced(
+                style, color, item_size,
                 int(item.get("boxes", 1)) * int(item.get("units_per_box", 1)),
                 "add", customer, inv_location, is_bpo, **meta,
             )
+            if inv_id:
+                inv_id_by_size[item_size] = inv_id
     else:
-        await _update_inventory_enhanced(
+        inv_id = await _update_inventory_enhanced(
             style, color, size, total_units, "add",
             customer, inv_location, is_bpo, **meta,
         )
+        if inv_id:
+            inv_id_by_size[size or ""] = inv_id
+
+    # Link every box we just inserted to the inventory row it physically
+    # represents. Without this link the Locations modal can't match LPNs back
+    # to inventory items and the "Cajas" drawer renders empty.
+    if inv_id_by_size and box_docs:
+        from collections import defaultdict
+        by_inv: dict[str, list[str]] = defaultdict(list)
+        for b in box_docs:
+            target_inv = inv_id_by_size.get(b.get("size") or "")
+            if target_inv:
+                by_inv[target_inv].append(b["box_id"])
+        for target_inv, box_ids in by_inv.items():
+            await db.wms_boxes.update_many(
+                {"box_id": {"$in": box_ids}},
+                {"$set": {"inventory_id": target_inv}},
+            )
 
     # Ensure location exists
     inv_location_upper = inv_location.upper()
@@ -853,7 +1219,11 @@ async def delete_receiving(receiving_id: str, request: Request):
 @router.get("/stocktakes")
 @router.get("/boxes")
 async def list_boxes(request: Request, sku: str = "", color: str = "", size: str = "",
-                     location: str = "", status: str = "", state: str = "", po: str = ""):
+                     location: str = "", status: str = "", state: str = "", po: str = "",
+                     inventory_id: str = ""):
+    """List boxes. Add `inventory_id=...` to fetch every LPN belonging to a
+    single SKU+location inventory row — used by the Inventory and Locations
+    UIs to expand a 'Cajas' cell into the actual LPN list."""
     await require_auth(request)
     query = {}
     if sku: query["sku"] = {"$regex": sku, "$options": "i"}
@@ -867,7 +1237,8 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
             query["status"] = status
     if state: query["state"] = state
     if po: query["po"] = {"$regex": po, "$options": "i"}
-    boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    if inventory_id: query["inventory_id"] = inventory_id
+    boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return boxes
 
 @router.get("/stocktakes/{box_id}")
@@ -1008,9 +1379,10 @@ async def _update_inventory_enhanced(
                 **{k: v for k, v in loose_key.items() if k != "sku"},
             })
     if not inv and operation == "add":
+        new_inv_id = gen_id("inv")
         await db.wms_inventory.insert_one({
             "sku": sku, "style": sku, "color": color or "", "size": size or "",
-            "inventory_id": gen_id("inv"), "customer": customer,
+            "inventory_id": new_inv_id, "customer": customer,
             "manufacturer": manufacturer or "",
             "description": description or "",
             "country_of_origin": country_of_origin or "",
@@ -1019,6 +1391,7 @@ async def _update_inventory_enhanced(
             "units_on_hand": qty, "units_allocated": 0, "total_boxes": 1,
             "updated_at": now_iso()
         })
+        return new_inv_id
     elif inv:
         doc_key = {"_id": inv["_id"]}
         if operation == "add":
@@ -1069,6 +1442,11 @@ async def _update_inventory_enhanced(
                 {"$inc": {"units_on_hand": qty, "units_allocated": qty}, "$set": {"updated_at": now_iso(), "customer": customer, "style": inv.get("style", sku)}},
                 upsert=True
             )
+        # Surface the inventory_id so callers (e.g. receiving) can link the
+        # boxes they just created to the inventory row that holds them.
+        return inv.get("inventory_id")
+    return None
+
 
 async def _update_inventory(sku, color, size, qty, operation="add", location=""):
     # Standard fallback for old calls
@@ -1110,6 +1488,7 @@ async def get_inventory(
         {"$limit": limit},
         {"$project": {
             "_id": 0,
+            "inventory_id": 1,  # needed so the Locations modal can link items to their LPNs
             "sku": 1,
             "style": 1,
             "color": 1,

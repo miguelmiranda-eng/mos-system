@@ -293,7 +293,14 @@ export const ReceivingModule = () => {
 
   const totalUnits = parseInt(form.pieces) || parseInt(form.units) || 0;
 
-  const handleSubmit = async () => {
+  // Canonical transit location name. Mirrors backend TRANSIT_LOCATION_NAME.
+  const TRANSIT_LOCATION = "UBICACION TEMPORAL";
+
+  // `toTransit=true` ignores whatever inv_location the user typed and forces
+  // the box into the global holding location. Used by the "Recibir a Temporal"
+  // button so the operator doesn't have to remember to clear the field.
+  const handleSubmit = async (opts = {}) => {
+    const toTransit = !!opts.toTransit;
     if (!form.style) { toast.error(t('wms_style_req')); return; }
     // Required fields enforced only on CREATE; editing legacy records is allowed
     if (!editingId) {
@@ -341,11 +348,14 @@ export const ReceivingModule = () => {
           pieces: totalPieces,
           items: items.length > 0 ? items : undefined,
           asn_line_no: selectedAsnLine,  // optional — when set, backend decrements that exact line
+          // "Recibir a Temporal" wins over whatever was typed in inv_location.
+          ...(toTransit ? { inv_location: TRANSIT_LOCATION } : {}),
         };
         const res = await poster('/receiving', payload);
         if (res.ok) {
           const data = await res.json();
-          toast.success(`${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`);
+          const baseMsg = `${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`;
+          toast.success(toTransit ? `${baseMsg} → ${TRANSIT_LOCATION}` : baseMsg);
           // Surface ASN reconciliation warnings (warning-permissive: never blocks).
           const warns = data.asn_warnings || [];
           if (warns.length > 0) {
@@ -743,10 +753,22 @@ export const ReceivingModule = () => {
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
           </div>
-          <div className="flex gap-2">
-            <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
+          <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={() => handleSubmit()} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : t('wms_receive_btn')}
             </button>
+            {!editingId && (
+              <button
+                onClick={() => handleSubmit({ toTransit: true })}
+                disabled={loading}
+                className="px-4 py-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 rounded text-sm flex items-center gap-1.5 disabled:opacity-50"
+                data-testid="rcv-submit-transit"
+                title="Recibir esta caja sin asignar ubicación física — irá a UBICACION TEMPORAL hasta que la ubiques manualmente."
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-base leading-none">⏸</span>}
+                Recibir a Temporal
+              </button>
+            )}
             <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>
         </div>

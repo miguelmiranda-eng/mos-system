@@ -69,6 +69,13 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [historyFor, setHistoryFor] = useState(null); // { style, color, size }
   const [historyData, setHistoryData] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // "Cajas" cell expansion: click on the count opens a modal listing the LPNs
+  // for that inventory row. Lazy-loaded — we only hit /wms/boxes?inventory_id=…
+  // when the user actually wants to look.
+  const [boxesFor, setBoxesFor] = useState(null); // { inventory_id, label, location }
+  const [boxesList, setBoxesList] = useState([]);
+  const [boxesLoading, setBoxesLoading] = useState(false);
   // Manual inventory entry modal — cascading dropdowns only (no free text).
   const [showAddManual, setShowAddManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
@@ -321,6 +328,26 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     }
   };
 
+  const openBoxes = async (inv) => {
+    if (!inv.inventory_id) {
+      toast.error('Esta fila no tiene inventory_id — no se pueden listar cajas');
+      return;
+    }
+    const label = [inv.style || inv.sku, inv.color, inv.size].filter(Boolean).join(' · ');
+    setBoxesFor({ inventory_id: inv.inventory_id, label, location: inv.inv_location || inv.location || '' });
+    setBoxesList([]);
+    setBoxesLoading(true);
+    try {
+      const data = await fetcher(`/boxes?inventory_id=${encodeURIComponent(inv.inventory_id)}`);
+      setBoxesList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      logLoadError('boxes by inventory')(err);
+      toast.error('Error al cargar las cajas');
+    } finally {
+      setBoxesLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -492,7 +519,19 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                           {inv.inv_location || '-'}
                         </td>
                         <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
-                        <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
+                        <td className="p-4 text-right font-mono font-bold">
+                          {inv.total_boxes > 0 && inv.inventory_id ? (
+                            <button
+                              onClick={() => openBoxes(inv)}
+                              className="px-2 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary border border-primary/20 transition-all font-mono font-bold cursor-pointer"
+                              title="Ver LPNs (cajas) de esta línea"
+                            >
+                              {inv.total_boxes.toLocaleString()}
+                            </button>
+                          ) : (
+                            (inv.total_boxes || 0).toLocaleString()
+                          )}
+                        </td>
                         <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
@@ -576,6 +615,72 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
         </div>
       </div>
+
+      {/* Boxes (LPN) modal — opened from the "Cajas" cell in the inventory table */}
+      {boxesFor && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <Package className="w-5 h-5 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-widest text-muted-foreground">Cajas / LPNs</div>
+                  <div className="font-bold text-foreground truncate">{boxesFor.label}</div>
+                  {boxesFor.location && (
+                    <div className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 mt-0.5">
+                      <MapPin className="w-3 h-3" /> {boxesFor.location}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => setBoxesFor(null)} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
+                <X className="w-5 h-5 text-muted-foreground" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-5">
+              {boxesLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <p className="text-xs uppercase tracking-widest font-bold text-muted-foreground">Cargando cajas…</p>
+                </div>
+              ) : boxesList.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Package className="w-12 h-12 mx-auto opacity-30 mb-2" />
+                  <p className="text-sm font-bold uppercase tracking-widest">Sin cajas registradas</p>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">
+                    {boxesList.length} {boxesList.length === 1 ? 'caja' : 'cajas'} · {boxesList.reduce((s, b) => s + (Number(b.units) || 0), 0).toLocaleString()} unidades
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead className="bg-secondary/40 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">LPN</th>
+                        <th className="p-2 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
+                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
+                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {boxesList.map((b, i) => (
+                        <tr key={b.box_id || i} className="border-b border-border/10 hover:bg-primary/5">
+                          <td className="p-2 font-mono text-[11px] font-bold text-primary">{b.box_id || '—'}</td>
+                          <td className="p-2 text-right font-mono font-black text-emerald-400">{(b.units || b.qty || 0).toLocaleString()}</td>
+                          <td className="p-2 font-mono text-[11px] text-emerald-400">{b.location || '—'}</td>
+                          <td className="p-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{b.state || b.status || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* History Modal */}
       {historyFor && (
