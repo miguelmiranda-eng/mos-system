@@ -4,6 +4,12 @@ import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLef
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 
+// System-protected slots managed by Putaway 2.0 — mirrors backend
+// SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
+const SYSTEM_TRANSIT_NAMES = new Set([
+  'UBICACION TEMPORAL', 'CARRO 1', 'CARRO 2', 'CARRO 3', 'CARRO 4', 'CARRO 5',
+]);
+
 export const LocationsModule = () => {
   const { t } = useLang();
   const [locations, setLocations] = useState([]);
@@ -613,7 +619,7 @@ export const LocationsModule = () => {
                             <ArrowRightLeft className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {l.name !== 'UBICACION TEMPORAL' && (
+                        {!SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
                           <>
                             <button
                               onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
@@ -631,10 +637,10 @@ export const LocationsModule = () => {
                             </button>
                           </>
                         )}
-                        {l.name === 'UBICACION TEMPORAL' && (
+                        {SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
                           <span
                             className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded"
-                            title="Ubicación del sistema (módulo En Tránsito) — no editable ni eliminable"
+                            title="Ubicación del sistema (módulo Putaway 2.0) — no editable ni eliminable"
                           >
                             sistema
                           </span>

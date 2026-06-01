@@ -34,25 +34,42 @@ def gen_id(prefix="wms"):
 # move-location, aggregations) treats it like any other slot.
 TRANSIT_LOCATION_NAME = "UBICACION TEMPORAL"
 
+# Five physical carts the Receiving operator can choose between when parking
+# boxes before putaway. Each cart is a regular wms_location with type="transit"
+# so the rest of the system (inventory, movements) treats them like any slot.
+TRANSIT_CART_NAMES = ["CARRO 1", "CARRO 2", "CARRO 3", "CARRO 4", "CARRO 5"]
+
+# Every location managed by the Putaway 2.0 module. Legacy UBICACION TEMPORAL
+# is kept so boxes received before the carts existed still surface.
+SYSTEM_TRANSIT_LOCATIONS = [TRANSIT_LOCATION_NAME] + TRANSIT_CART_NAMES
+
 
 async def _ensure_transit_location():
-    """Idempotently insert the transit location if it isn't already in
-    wms_locations. Safe to call on every request that may need to write
-    there — it's a single find+(optional)insert."""
-    existing = await db.wms_locations.find_one({"name": TRANSIT_LOCATION_NAME})
-    if existing:
-        return existing
-    doc = {
-        "location_id": gen_id("loc"),
-        "name": TRANSIT_LOCATION_NAME,
-        "zone": "TRANSIT",
-        "type": "transit",
-        "active": True,
-        "is_custom": True,
-        "created_at": now_iso(),
-    }
-    await db.wms_locations.insert_one(doc)
-    return doc
+    """Idempotently insert UBICACION TEMPORAL + the 5 carts if they aren't in
+    wms_locations yet. Safe to call on every request that may need to write
+    there — bulk find + (optional) inserts."""
+    existing = await db.wms_locations.find({
+        "name": {"$in": SYSTEM_TRANSIT_LOCATIONS}
+    }, {"_id": 0}).to_list(None)
+    by_name = {l["name"]: l for l in existing}
+    to_insert = []
+    for name in SYSTEM_TRANSIT_LOCATIONS:
+        if name in by_name:
+            continue
+        doc = {
+            "location_id": gen_id("loc"),
+            "name": name,
+            "zone": "TRANSIT",
+            "type": "transit",
+            "active": True,
+            "is_custom": True,
+            "created_at": now_iso(),
+        }
+        to_insert.append(doc)
+        by_name[name] = doc
+    if to_insert:
+        await db.wms_locations.insert_many(to_insert)
+    return by_name[TRANSIT_LOCATION_NAME]
 
 async def log_movement(user, movement_type, details):
     await db.wms_movements.insert_one({
@@ -458,27 +475,53 @@ async def move_location_bulk(request: Request):
 
 @router.get("/transit/info")
 async def transit_info(request: Request):
-    """Tell the frontend the canonical transit location name and ensure it
-    exists. Used by the Transit module and the Receiving "Recibir a Temporal"
-    flow to know where to drop boxes without hard-coding the name."""
+    """Tell the frontend the canonical transit location, the 5 cart names and
+    how many boxes each one currently holds. Receiving uses this to populate
+    its 'Recibir a Carro' dropdown; the Putaway 2.0 module uses it for tabs."""
     await require_auth(request)
     loc = await _ensure_transit_location()
-    n_boxes = await db.wms_boxes.count_documents({"location": TRANSIT_LOCATION_NAME})
+
+    # Per-location count in a single aggregation.
+    pipeline = [
+        {"$match": {"location": {"$in": SYSTEM_TRANSIT_LOCATIONS}}},
+        {"$group": {"_id": "$location", "n": {"$sum": 1}}},
+    ]
+    counts = {row["_id"]: row["n"] async for row in db.wms_boxes.aggregate(pipeline)}
+
+    carts = []
+    for name in TRANSIT_CART_NAMES:
+        cart_loc = await db.wms_locations.find_one({"name": name}, {"_id": 0})
+        carts.append({
+            "name": name,
+            "location_id": cart_loc.get("location_id") if cart_loc else None,
+            "boxes": counts.get(name, 0),
+        })
+
     return {
         "name": TRANSIT_LOCATION_NAME,
         "location_id": loc.get("location_id"),
-        "boxes_in_transit": n_boxes,
+        "boxes_in_transit": sum(counts.values()),
+        "legacy_boxes": counts.get(TRANSIT_LOCATION_NAME, 0),
+        "carts": carts,
     }
 
 
 @router.get("/transit/boxes")
 async def transit_boxes(request: Request, customer: str = "", style: str = "",
-                        search: str = "", limit: int = 1000):
-    """List every box currently sitting in UBICACION TEMPORAL. Optional
+                        search: str = "", cart: str = "", limit: int = 1000):
+    """List every box currently sitting in a transit slot (the 5 carts +
+    legacy UBICACION TEMPORAL). Optional `cart` narrows to a single slot;
     text filters help triage when there are hundreds of pending boxes."""
     await require_auth(request)
     await _ensure_transit_location()
-    query = {"location": TRANSIT_LOCATION_NAME}
+
+    if cart:
+        cart_norm = cart.strip().upper()
+        if cart_norm not in SYSTEM_TRANSIT_LOCATIONS:
+            raise HTTPException(400, f"'{cart}' no es una ubicación de tránsito válida")
+        query = {"location": cart_norm}
+    else:
+        query = {"location": {"$in": SYSTEM_TRANSIT_LOCATIONS}}
     if customer:
         query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
     if style:
@@ -493,6 +536,8 @@ async def transit_boxes(request: Request, customer: str = "", style: str = "",
     boxes = await db.wms_boxes.find(query, {"_id": 0}).sort("created_at", 1).to_list(limit)
     return {
         "transit_location": TRANSIT_LOCATION_NAME,
+        "transit_locations": SYSTEM_TRANSIT_LOCATIONS,
+        "carts": TRANSIT_CART_NAMES,
         "count": len(boxes),
         "boxes": boxes,
     }
@@ -518,8 +563,8 @@ async def transit_relocate(request: Request):
         raise HTTPException(400, "box_ids es obligatorio")
     if not dst:
         raise HTTPException(400, "to es obligatorio")
-    if dst == TRANSIT_LOCATION_NAME:
-        raise HTTPException(400, "El destino no puede ser la propia ubicación temporal")
+    if dst in SYSTEM_TRANSIT_LOCATIONS:
+        raise HTTPException(400, "El destino no puede ser una ubicación de tránsito (carro / temporal)")
 
     dst_loc = await db.wms_locations.find_one(
         {"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}}
@@ -528,14 +573,15 @@ async def transit_relocate(request: Request):
         raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
     dst_name = dst_loc.get("name", dst)
 
-    # Pull the boxes that ACTUALLY are in transit right now.
+    # Pull the boxes that ACTUALLY are in any transit slot right now (5 carts
+    # + legacy UBICACION TEMPORAL).
     boxes = await db.wms_boxes.find(
-        {"box_id": {"$in": box_ids}, "location": TRANSIT_LOCATION_NAME},
+        {"box_id": {"$in": box_ids}, "location": {"$in": SYSTEM_TRANSIT_LOCATIONS}},
         {"_id": 0},
     ).to_list(len(box_ids))
     if not boxes:
         return {
-            "message": "Ninguna de las cajas indicadas está en ubicación temporal.",
+            "message": "Ninguna de las cajas indicadas está en una ubicación de tránsito.",
             "moved": 0, "units_moved": 0, "to": dst_name,
         }
 
@@ -546,11 +592,17 @@ async def transit_relocate(request: Request):
         {"$set": {"location": dst_name, "state": "located", "status": "located"}},
     )
 
-    # 2. Aggregate units per (sku, color, size) so we can re-balance inventory.
+    # 2. Aggregate units per (source_location, sku, color, size) — each box's
+    # source location matters because inventory rows are keyed per-location.
     from collections import defaultdict
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
     for b in boxes:
-        key = (b.get("sku") or b.get("style") or "", b.get("color", ""), b.get("size", ""))
+        key = (
+            b.get("location") or TRANSIT_LOCATION_NAME,
+            b.get("sku") or b.get("style") or "",
+            b.get("color", ""),
+            b.get("size", ""),
+        )
         bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
         bucket[key]["boxes"] += 1
         if bucket[key]["sample"] is None:
@@ -558,16 +610,18 @@ async def transit_relocate(request: Request):
 
     units_moved = 0
     skus_moved = 0
-    for (sku, color, size), agg in bucket.items():
+    sources_set = set()
+    for (src_location, sku, color, size), agg in bucket.items():
         units = agg["units"]
         boxes_cnt = agg["boxes"]
         sample = agg["sample"] or {}
         units_moved += units
         skus_moved += 1
+        sources_set.add(src_location)
 
-        # Decrement the transit inventory row (or delete it if it would go to 0).
+        # Decrement the source inventory row (or delete it if it would go to 0).
         src_inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": TRANSIT_LOCATION_NAME,
+            "sku": sku, "color": color, "size": size, "location": src_location,
         })
         if src_inv:
             new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
@@ -615,6 +669,7 @@ async def transit_relocate(request: Request):
 
     await log_movement(user, MovementType.TRANSIT_RELOCATION, {
         "to": dst_name,
+        "from_sources": sorted(sources_set),
         "boxes_moved": len(moved_ids),
         "skus_moved": skus_moved,
         "units_moved": units_moved,
@@ -748,9 +803,14 @@ async def boxes_relocate(request: Request):
                 "updated_at": now_iso(),
             })
 
-    # Use the transit movement type when source was the transit location, so the
-    # Movements module surfaces it under the same bucket as /transit/relocate.
-    move_type = MovementType.TRANSIT_RELOCATION if sources_touched == {TRANSIT_LOCATION_NAME} else MovementType.BULK_RELOCATION
+    # Use the transit movement type when EVERY source was a transit slot
+    # (cart or legacy UBICACION TEMPORAL), so the Movements module surfaces it
+    # under the same bucket as /transit/relocate.
+    move_type = (
+        MovementType.TRANSIT_RELOCATION
+        if sources_touched and sources_touched.issubset(set(SYSTEM_TRANSIT_LOCATIONS))
+        else MovementType.BULK_RELOCATION
+    )
     await log_movement(user, move_type, {
         "to": dst_name,
         "sources": sorted(sources_touched),
@@ -788,11 +848,11 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
     name = loc.get("name") or ""
 
     # Guard 1 — system-protected locations are off-limits, even with force.
-    if name == TRANSIT_LOCATION_NAME:
+    if name in SYSTEM_TRANSIT_LOCATIONS:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"'{name}' es una ubicación del sistema (módulo En Tránsito) "
+                f"'{name}' es una ubicación del sistema (módulo Putaway 2.0) "
                 "y no se puede eliminar."
             ),
         )
@@ -830,14 +890,14 @@ async def update_location(location_id: str, request: Request):
 
     old_name = existing_loc.get("name")
 
-    # System-protected: the canonical transit slot cannot be renamed because
-    # the En Tránsito module + Receiving "Recibir a Temporal" button look it
-    # up by the exact string TRANSIT_LOCATION_NAME.
-    if old_name == TRANSIT_LOCATION_NAME and new_name and new_name != old_name:
+    # System-protected: the canonical transit slot and the 5 carts cannot be
+    # renamed because the Putaway 2.0 module + Receiving "Recibir a Carro"
+    # button look them up by exact string match.
+    if old_name in SYSTEM_TRANSIT_LOCATIONS and new_name and new_name != old_name:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"'{old_name}' es una ubicación del sistema (módulo En Tránsito) "
+                f"'{old_name}' es una ubicación del sistema (módulo Putaway 2.0) "
                 "y no se puede renombrar."
             ),
         )

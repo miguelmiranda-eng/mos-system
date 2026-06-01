@@ -1,17 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
-  Loader2, Package, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft,
+  Loader2, Package, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck,
 } from "lucide-react";
 import { fetcher, poster, logLoadError } from "./lib";
 
+const TRANSIT_LEGACY = "UBICACION TEMPORAL";
+
 /**
- * Transit module — manages the boxes parked at "UBICACION TEMPORAL".
+ * Putaway 2.0 — manages the boxes parked at the 5 transit carts + the legacy
+ * UBICACION TEMPORAL.
  *
- * Receiving operators may receive a box without a final destination (button
- * "Recibir a Temporal" in the Receiving form). Those boxes land here.
- *
+ * Receiving operators land boxes here via the "Recibir a Carro" dropdown.
  * From this screen, an admin / warehouse lead can:
+ *   - Filter by cart (tab).
  *   - Filter / search the pending pile.
  *   - Select boxes (one or many).
  *   - Type the target location (typeahead against active locations).
@@ -19,10 +21,15 @@ import { fetcher, poster, logLoadError } from "./lib";
  */
 export const TransitModule = () => {
   const [boxes, setBoxes] = useState([]);
-  const [transitName, setTransitName] = useState("UBICACION TEMPORAL");
+  const [transitName, setTransitName] = useState(TRANSIT_LEGACY);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
+  // Cart tab — "" = all carts + legacy. Otherwise the exact cart name.
+  const [activeCart, setActiveCart] = useState("");
+  // [{name, location_id, boxes}] — loaded from /transit/info, used for tab counts.
+  const [cartInfo, setCartInfo] = useState([]);
+  const [legacyCount, setLegacyCount] = useState(0);
   // Selection state — keyed by box_id so it survives reorder/refresh.
   const [selected, setSelected] = useState(() => new Set());
   // Move-to flow
@@ -32,37 +39,55 @@ export const TransitModule = () => {
   const [showLocDrop, setShowLocDrop] = useState(false);
   const destRef = useRef(null);
 
+  const loadInfo = useCallback(() => {
+    fetcher("/transit/info")
+      .then(data => {
+        setCartInfo(Array.isArray(data?.carts) ? data.carts : []);
+        setLegacyCount(Number(data?.legacy_boxes) || 0);
+        if (data?.name) setTransitName(data.name);
+      })
+      .catch(logLoadError("transit info"));
+  }, []);
+
+  useEffect(() => { loadInfo(); }, [loadInfo]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (customerFilter.trim()) params.set("customer", customerFilter.trim());
       if (search.trim()) params.set("search", search.trim());
+      if (activeCart) params.set("cart", activeCart);
       const data = await fetcher(`/transit/boxes?${params.toString()}`);
       setTransitName(data.transit_location || transitName);
       setBoxes(Array.isArray(data.boxes) ? data.boxes : []);
     } catch (err) {
       logLoadError("transit boxes")(err);
-      toast.error("No se pudieron cargar las cajas en tránsito");
+      toast.error("No se pudieron cargar las cajas de Putaway 2.0");
     } finally { setLoading(false); }
-  }, [customerFilter, search, transitName]);
+  }, [customerFilter, search, activeCart, transitName]);
 
   useEffect(() => { load(); }, [load]);
 
   // Active locations for the typeahead — `summary=false` skips the expensive
-  // inventory aggregation so the dropdown is snappy.
+  // inventory aggregation so the dropdown is snappy. We exclude every system
+  // transit slot (the 5 carts + legacy temporal) because you can't relocate
+  // FROM a cart TO another cart.
   useEffect(() => {
     let cancelled = false;
+    const excluded = new Set(
+      [TRANSIT_LEGACY, ...(cartInfo.map(c => c.name) || [])].map(n => (n || "").toUpperCase())
+    );
     fetcher("/locations?summary=false&limit=5000")
       .then(rows => {
         if (cancelled) return;
         const filtered = (Array.isArray(rows) ? rows : [])
-          .filter(l => l.active !== false && (l.name || "").toUpperCase() !== transitName);
+          .filter(l => l.active !== false && !excluded.has((l.name || "").toUpperCase()));
         setLocOptions(filtered);
       })
       .catch(logLoadError("locations for transit destination"));
     return () => { cancelled = true; };
-  }, [transitName]);
+  }, [cartInfo]);
 
   // Close destination dropdown on outside click.
   useEffect(() => {
@@ -115,6 +140,7 @@ export const TransitModule = () => {
         setSelected(new Set());
         setDestination("");
         load();
+        loadInfo();
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || "Error al reubicar");
@@ -134,18 +160,65 @@ export const TransitModule = () => {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
-            <span className="text-amber-500 text-base leading-none">⏸</span>
+            <Truck className="w-5 h-5 text-amber-500" />
           </div>
           <div>
-            <h2 className="font-black uppercase tracking-widest text-foreground">En Tránsito</h2>
+            <h2 className="font-black uppercase tracking-widest text-foreground">Putaway 2.0</h2>
             <p className="text-[11px] text-muted-foreground">
-              Cajas en <span className="font-mono font-bold text-amber-500">{transitName}</span> — pendientes de asignar ubicación física
+              Carros de tránsito — selecciona un carro para asignar ubicación física a sus cajas
             </p>
           </div>
         </div>
         <div className="text-[11px] font-mono font-bold text-muted-foreground">
           {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
         </div>
+      </div>
+
+      {/* Cart tabs */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setActiveCart("")}
+          className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+            activeCart === ""
+              ? "bg-amber-500 text-white border-amber-500"
+              : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+          }`}
+        >
+          Todos
+          <span className="text-[10px] opacity-80 font-mono">
+            {(cartInfo.reduce((s, c) => s + (c.boxes || 0), 0) + legacyCount).toLocaleString()}
+          </span>
+        </button>
+        {cartInfo.map(c => (
+          <button
+            key={c.name}
+            onClick={() => setActiveCart(c.name)}
+            className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+              activeCart === c.name
+                ? "bg-amber-500 text-white border-amber-500"
+                : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+            }`}
+            data-testid={`putaway2-tab-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
+          >
+            <Truck className="w-3.5 h-3.5" />
+            {c.name}
+            <span className="text-[10px] opacity-80 font-mono">{(c.boxes || 0).toLocaleString()}</span>
+          </button>
+        ))}
+        {legacyCount > 0 && (
+          <button
+            onClick={() => setActiveCart(TRANSIT_LEGACY)}
+            className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+              activeCart === TRANSIT_LEGACY
+                ? "bg-amber-500 text-white border-amber-500"
+                : "bg-card/40 text-muted-foreground border-amber-500/30 hover:border-amber-500/60 hover:text-foreground"
+            }`}
+            title="Cajas recibidas antes de los carros — siguen aquí hasta que las reubiques."
+          >
+            ⏸ Temporal (legacy)
+            <span className="text-[10px] opacity-80 font-mono">{legacyCount.toLocaleString()}</span>
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -235,6 +308,9 @@ export const TransitModule = () => {
                   </button>
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">LPN</th>
+                {!activeCart && (
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Carro</th>
+                )}
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estilo / SKU</th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
@@ -245,17 +321,19 @@ export const TransitModule = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={activeCart ? 7 : 8} className="py-16 text-center text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                   </td>
                 </tr>
               ) : boxes.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-20 text-center">
-                    <Package className="w-12 h-12 mx-auto opacity-20 mb-2 text-amber-500" />
-                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Sin cajas en tránsito</p>
+                  <td colSpan={activeCart ? 7 : 8} className="py-20 text-center">
+                    <Truck className="w-12 h-12 mx-auto opacity-20 mb-2 text-amber-500" />
+                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                      {activeCart ? `${activeCart} vacío` : "Sin cajas en Putaway 2.0"}
+                    </p>
                     <p className="text-xs text-muted-foreground/70 mt-2 max-w-md mx-auto">
-                      Cuando recibas mercancía con el botón "Recibir a Temporal" en Receiving, las cajas aparecerán aquí esperando una ubicación física.
+                      Cuando recibas mercancía con el botón "Recibir a Carro" en Receiving, las cajas aparecerán aquí esperando una ubicación física.
                     </p>
                   </td>
                 </tr>
@@ -272,6 +350,14 @@ export const TransitModule = () => {
                         {isSel ? <CheckSquare className="w-4 h-4 text-amber-500" /> : <Square className="w-4 h-4 text-muted-foreground" />}
                       </td>
                       <td className="p-3 font-mono font-bold text-primary text-[11px]">{b.box_id}</td>
+                      {!activeCart && (
+                        <td className="p-3">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 border border-amber-500/30 font-mono">
+                            {b.location === TRANSIT_LEGACY ? "⏸" : <Truck className="w-3 h-3" />}
+                            {b.location || '—'}
+                          </span>
+                        </td>
+                      )}
                       <td className="p-3 text-[11px] font-bold truncate max-w-[160px]" title={b.customer}>{b.customer || '—'}</td>
                       <td className="p-3 font-mono text-[11px] font-bold">
                         <div className="text-primary">{b.style || '—'}</div>

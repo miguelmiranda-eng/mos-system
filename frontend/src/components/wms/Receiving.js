@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
@@ -150,6 +150,11 @@ export const ReceivingModule = () => {
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
+  // Putaway 2.0: 5 carts + legacy transit slot. Loaded from /transit/info so
+  // the names stay in sync with the backend.
+  const [transitCarts, setTransitCarts] = useState([]);
+  const [showCartMenu, setShowCartMenu] = useState(false);
+  const cartMenuRef = useRef(null);
 
   // The full ASN doc currently selected in the form (null if the typed value
   // doesn't match any known open ASN — we only show the line picker when we
@@ -252,7 +257,20 @@ export const ReceivingModule = () => {
     fetcher('/asn').then(data => {
       setOpenAsns((data || []).filter(a => a.status !== AsnStatus.RECEIVED));
     }).catch(logLoadError('ASNs'));
+    fetcher('/transit/info').then(data => {
+      setTransitCarts(Array.isArray(data?.carts) ? data.carts : []);
+    }).catch(logLoadError('transit info'));
   }, []);
+
+  // Close the "Recibir a Carro" dropdown on outside click.
+  useEffect(() => {
+    if (!showCartMenu) return;
+    const onDoc = (e) => {
+      if (!cartMenuRef.current?.contains(e.target)) setShowCartMenu(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [showCartMenu]);
 
   const loadOptions = useCallback(async (customer, manufacturer, style) => {
     const params = new URLSearchParams();
@@ -296,11 +314,11 @@ export const ReceivingModule = () => {
   // Canonical transit location name. Mirrors backend TRANSIT_LOCATION_NAME.
   const TRANSIT_LOCATION = "UBICACION TEMPORAL";
 
-  // `toTransit=true` ignores whatever inv_location the user typed and forces
-  // the box into the global holding location. Used by the "Recibir a Temporal"
-  // button so the operator doesn't have to remember to clear the field.
+  // `toLocation` (when set) overrides whatever inv_location the user typed and
+  // forces the box into a specific Putaway 2.0 slot — one of the 5 carts, or
+  // the legacy UBICACION TEMPORAL. Used by the "Recibir a Carro" dropdown.
   const handleSubmit = async (opts = {}) => {
-    const toTransit = !!opts.toTransit;
+    const toLocation = opts.toLocation || (opts.toTransit ? TRANSIT_LOCATION : null);
     if (!form.style) { toast.error(t('wms_style_req')); return; }
     // Required fields enforced only on CREATE; editing legacy records is allowed
     if (!editingId) {
@@ -348,14 +366,14 @@ export const ReceivingModule = () => {
           pieces: totalPieces,
           items: items.length > 0 ? items : undefined,
           asn_line_no: selectedAsnLine,  // optional — when set, backend decrements that exact line
-          // "Recibir a Temporal" wins over whatever was typed in inv_location.
-          ...(toTransit ? { inv_location: TRANSIT_LOCATION } : {}),
+          // "Recibir a Carro" wins over whatever was typed in inv_location.
+          ...(toLocation ? { inv_location: toLocation } : {}),
         };
         const res = await poster('/receiving', payload);
         if (res.ok) {
           const data = await res.json();
           const baseMsg = `${t('wms_rcv_created')}: ${data.total_units || totalUnits} ${t('wms_units')}`;
-          toast.success(toTransit ? `${baseMsg} → ${TRANSIT_LOCATION}` : baseMsg);
+          toast.success(toLocation ? `${baseMsg} → ${toLocation}` : baseMsg);
           // Surface ASN reconciliation warnings (warning-permissive: never blocks).
           const warns = data.asn_warnings || [];
           if (warns.length > 0) {
@@ -758,16 +776,52 @@ export const ReceivingModule = () => {
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : t('wms_receive_btn')}
             </button>
             {!editingId && (
-              <button
-                onClick={() => handleSubmit({ toTransit: true })}
-                disabled={loading}
-                className="px-4 py-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 rounded text-sm flex items-center gap-1.5 disabled:opacity-50"
-                data-testid="rcv-submit-transit"
-                title="Recibir esta caja sin asignar ubicación física — irá a UBICACION TEMPORAL hasta que la ubiques manualmente."
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-base leading-none">⏸</span>}
-                Recibir a Temporal
-              </button>
+              <div className="relative" ref={cartMenuRef}>
+                <button
+                  onClick={() => setShowCartMenu(s => !s)}
+                  disabled={loading}
+                  className="px-4 py-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 rounded text-sm flex items-center gap-1.5 disabled:opacity-50"
+                  data-testid="rcv-submit-cart"
+                  title="Recibir esta caja a un carro de Putaway 2.0 — quedará en el carro hasta que la ubiques manualmente."
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
+                  Recibir a Carro
+                  <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+                </button>
+                {showCartMenu && (
+                  <div className="absolute z-30 right-0 mt-1 w-56 bg-popover border border-amber-500/30 rounded-lg shadow-2xl overflow-hidden">
+                    {(transitCarts.length > 0 ? transitCarts : [
+                      { name: 'CARRO 1', boxes: 0 }, { name: 'CARRO 2', boxes: 0 },
+                      { name: 'CARRO 3', boxes: 0 }, { name: 'CARRO 4', boxes: 0 },
+                      { name: 'CARRO 5', boxes: 0 },
+                    ]).map(c => (
+                      <button
+                        key={c.name}
+                        onClick={() => { setShowCartMenu(false); handleSubmit({ toLocation: c.name }); }}
+                        disabled={loading}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-amber-500/15 flex items-center justify-between gap-2 disabled:opacity-50"
+                        data-testid={`rcv-submit-cart-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
+                      >
+                        <span className="flex items-center gap-2 font-mono font-bold text-amber-500">
+                          <Truck className="w-3.5 h-3.5" /> {c.name}
+                        </span>
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                          {c.boxes || 0} cajas
+                        </span>
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => { setShowCartMenu(false); handleSubmit({ toLocation: TRANSIT_LOCATION }); }}
+                      disabled={loading}
+                      className="w-full text-left px-3 py-2 text-xs border-t border-border/40 hover:bg-secondary/60 text-muted-foreground disabled:opacity-50"
+                      title="Ubicación temporal legacy — solo si ninguno de los carros aplica."
+                      data-testid="rcv-submit-temporal"
+                    >
+                      ⏸ Ubicación Temporal (legacy)
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
           </div>

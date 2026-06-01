@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock,
+  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -101,8 +101,10 @@ export default function WMS() {
     { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
-    { id: 'transit', label: 'En Tránsito', icon: Clock, color: 'text-amber-400', desc: 'Cajas recibidas sin ubicación física asignada' },
-    { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
+    { id: 'transit', label: 'Putaway 2.0', icon: Truck, color: 'text-amber-400', desc: 'Carros de tránsito — cajas pendientes de ubicación física' },
+    // STANDBY — Putaway 1.0 oculto del sidebar. Reemplazado por Putaway 2.0 (id: 'transit').
+    // El import + el case 'putaway' del switch se quedan vivos por si hay que reactivarlo.
+    // { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
     { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
     { id: 'locations', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400', desc: 'Mapa lógico y gestión de ubicaciones' },
     { id: 'picking', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400', desc: t('wms_mod_picking_desc') },
