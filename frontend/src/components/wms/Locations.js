@@ -18,7 +18,7 @@ export const LocationsModule = () => {
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [search, setSearch] = useState('');
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
-  const [activeTab, setActiveTab] = useState('custom'); // 'custom' or 'system'
+  const [activeTab, setActiveTab] = useState('custom'); // 'custom' | 'system' | 'narro'
   // Bulk-move state: { from: locObj, to: '' } when modal is open
   const [moveBulk, setMoveBulk] = useState(null);
   const [movingBulk, setMovingBulk] = useState(false);
@@ -76,7 +76,7 @@ export const LocationsModule = () => {
     // Kick off the active-locations fetch in parallel — needed by the
     // relocate typeahead. Won't block the detail load.
     if (!activeLocLoaded) {
-      fetcher('/locations?summary=false&limit=5000')
+      fetcher('/locations?summary=false&limit=20000')
         .then(rows => {
           const filtered = (Array.isArray(rows) ? rows : []).filter(l => l.active !== false);
           setActiveLocations(filtered);
@@ -390,7 +390,13 @@ export const LocationsModule = () => {
     const matchesSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
                          (l.zone || '').toLowerCase().includes(search.toLowerCase()) ||
                          summary.items.some(item => item.style.toLowerCase().includes(search.toLowerCase()));
-    const matchesTab = activeTab === 'custom' ? l.is_custom === true : l.is_custom !== true;
+    // NARRO bucket is mutually exclusive: rows with tab="narro" never appear
+    // in custom/system. Everything else falls back to the is_custom split.
+    const isNarro = l.tab === 'narro';
+    let matchesTab;
+    if (activeTab === 'narro')      matchesTab = isNarro;
+    else if (activeTab === 'custom') matchesTab = !isNarro && l.is_custom === true;
+    else                             matchesTab = !isNarro && l.is_custom !== true;
     return matchesSearch && matchesTab;
   });
 
@@ -426,14 +432,21 @@ export const LocationsModule = () => {
           className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'custom' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
         >
           Mis Locaciones
-          <span className="ml-2 px-1.5 py-0.5 bg-black/10 rounded-md text-[9px]">{locations.filter(l => l.is_custom).length}</span>
+          <span className="ml-2 px-1.5 py-0.5 bg-black/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && l.is_custom).length}</span>
         </button>
         <button
           onClick={() => setActiveTab('system')}
           className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'system' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
         >
           Sistema / Inventario
-          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => !l.is_custom).length}</span>
+          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && !l.is_custom).length}</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('narro')}
+          className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'narro' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
+        >
+          NARRO
+          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab === 'narro').length}</span>
         </button>
       </div>
 

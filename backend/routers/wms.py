@@ -339,15 +339,17 @@ async def create_location(request: Request):
     return loc
 
 @router.get("/locations")
-async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 5000):
+async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 20000):
     """List locations. Query params:
       - summary=false → skip the expensive inventory aggregation (use for dropdowns)
-      - skip / limit  → paginate. Hard-capped at 5000 to prevent runaway responses.
+      - skip / limit  → paginate. Hard-capped at 20000 to prevent runaway
+        responses while still fitting the full catalog (NARRO rack adds 6,688
+        rows on top of the existing ~3k system slots).
     """
     await require_auth(request)
 
     skip = max(0, skip)
-    limit = max(1, min(limit, 5000))
+    limit = max(1, min(limit, 20000))
 
     locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
 
