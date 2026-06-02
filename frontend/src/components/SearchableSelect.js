@@ -3,7 +3,7 @@ import { ChevronDown, X, Plus, Search } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
 import * as Popover from "@radix-ui/react-popover";
 
-export default function SearchableSelect({ options = [], value, onChange, placeholder, allowCreate = true, testId = "" }) {
+export default function SearchableSelect({ options = [], value, onChange, placeholder, allowCreate = true, testId = "", disabled = false }) {
   const { t } = useLang();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -28,11 +28,12 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={disabled ? false : open} onOpenChange={(v) => !disabled && setOpen(v)}>
       <Popover.Trigger asChild>
-        <button 
+        <button
           type="button"
-          className="w-full flex items-center justify-between px-3 py-2 bg-secondary/50 border border-border rounded-lg text-sm text-foreground text-left hover:border-primary/50 transition-all outline-none focus:ring-2 focus:ring-primary/20"
+          disabled={disabled}
+          className={`w-full flex items-center justify-between px-3 py-2 bg-secondary/50 border border-border rounded-lg text-sm text-foreground text-left outline-none focus:ring-2 focus:ring-primary/20 transition-all ${disabled ? 'opacity-60 cursor-not-allowed' : 'hover:border-primary/50'}`}
           data-testid={testId}
         >
           <span className={value ? "text-foreground truncate font-medium" : "text-muted-foreground truncate"}>

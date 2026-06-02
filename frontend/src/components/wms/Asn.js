@@ -1,21 +1,31 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { FileDown, Loader2, X, Package, Search, AlertTriangle, Trash2 } from "lucide-react";
+import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2 } from "lucide-react";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, deleter, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STATUS_STYLES = {
-  [AsnStatus.PENDING]:  { label: "PENDIENTE",       cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
-  [AsnStatus.PARTIAL]:  { label: "PARCIAL",         cls: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
-  [AsnStatus.RECEIVED]: { label: "COMPLETO",        cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
+  [AsnStatus.PENDING]:  { label: "PENDIENTE",  cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",         tabCls: "bg-blue-500 text-white",    dot: "bg-blue-400" },
+  [AsnStatus.PARTIAL]:  { label: "EN PROCESO", cls: "bg-amber-500/10 text-amber-400 border-amber-500/20",      tabCls: "bg-amber-500 text-white",   dot: "bg-amber-400" },
+  [AsnStatus.RECEIVED]: { label: "COMPLETADO", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", tabCls: "bg-emerald-500 text-white", dot: "bg-emerald-400" },
 };
+
+const TABS = [
+  { id: 'all',                 label: 'Todos' },
+  { id: AsnStatus.PENDING,     label: 'Pendiente' },
+  { id: AsnStatus.PARTIAL,     label: 'En Proceso' },
+  { id: AsnStatus.RECEIVED,    label: 'Completado' },
+];
 
 export const AsnModule = () => {
   const { t } = useLang();
   const [asns, setAsns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeTab, setActiveTab] = useState('all'); // 'all' | pending | partial | received
 
   // Two-step upload state
   const [pendingFile, setPendingFile] = useState(null);
@@ -132,6 +142,68 @@ export const AsnModule = () => {
     }
   };
 
+  // Export the currently visible list (respects active tab + search) into a
+  // 2-sheet xlsx: "ASNs" (one row per ASN, summary) + "Líneas" (one row per
+  // packing-list item, with progress per line). Detail items are fetched on
+  // demand since the /asn list endpoint already includes them.
+  const handleExport = async () => {
+    if (filteredAsns.length === 0) {
+      toast.error("No hay ASNs para exportar");
+      return;
+    }
+    try {
+      const labelOf = (st) => STATUS_STYLES[st]?.label || (st || "").toUpperCase();
+      const asnRows = filteredAsns.map(a => {
+        const items = a.items || [];
+        const exp = items.reduce((s, i) => s + (Number(i.qty_expected) || 0), 0);
+        const rcv = items.reduce((s, i) => s + (Number(i.qty_received) || 0), 0);
+        const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
+        return {
+          ASN: a.asn_id || "",
+          Vendor: a.vendor || "",
+          PO: a.po_number || "",
+          Estado: labelOf(a.status),
+          'Líneas': items.length,
+          Esperado: exp,
+          Recibido: rcv,
+          'Avance %': pct,
+          Registrado: a.created_at ? new Date(a.created_at).toLocaleString() : "",
+          'Hoja origen': a.source_sheet || "",
+        };
+      });
+      const itemRows = filteredAsns.flatMap(a => (a.items || []).map(it => {
+        const exp = Number(it.qty_expected) || 0;
+        const rcv = Number(it.qty_received) || 0;
+        const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
+        return {
+          ASN: a.asn_id || "",
+          Vendor: a.vendor || "",
+          PO: a.po_number || "",
+          Línea: it.line_no || "",
+          'Part Number': it.part_number || "",
+          'Descripción': it.description || "",
+          'País': it.country || "",
+          Marca: it.brand || "",
+          Esperado: exp,
+          Recibido: rcv,
+          'Avance %': pct,
+        };
+      }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(asnRows), 'ASNs');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), 'Líneas');
+      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const tag = activeTab === 'all' ? 'todos' : labelOf(activeTab).toLowerCase().replace(/\s+/g, '-');
+      saveAs(blob, `asn_${tag}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success(`${asnRows.length} ASN(s) · ${itemRows.length} líneas exportadas`);
+    } catch (err) {
+      console.error("[ASN export] error", err);
+      toast.error("Error al exportar");
+    }
+  };
+
   const openDetail = async (asnId) => {
     setDetailFor(asnId);
     setDetailLoading(true);
@@ -146,13 +218,25 @@ export const AsnModule = () => {
     } finally { setDetailLoading(false); }
   };
 
-  const filteredAsns = asns.filter(a => {
+  const searched = asns.filter(a => {
     if (!query) return true;
     const q = query.toLowerCase();
     return (a.asn_id || "").toLowerCase().includes(q)
         || (a.po_number || "").toLowerCase().includes(q)
         || (a.vendor || "").toLowerCase().includes(q);
   });
+
+  // Counts per tab respect the search box but ignore the active tab itself.
+  const tabCounts = {
+    all: searched.length,
+    [AsnStatus.PENDING]:  searched.filter(a => a.status === AsnStatus.PENDING).length,
+    [AsnStatus.PARTIAL]:  searched.filter(a => a.status === AsnStatus.PARTIAL).length,
+    [AsnStatus.RECEIVED]: searched.filter(a => a.status === AsnStatus.RECEIVED).length,
+  };
+
+  const filteredAsns = activeTab === 'all'
+    ? searched
+    : searched.filter(a => a.status === activeTab);
 
   return (
     <div className="space-y-6">
@@ -171,6 +255,16 @@ export const AsnModule = () => {
               className="pl-9 pr-3 py-2 bg-background border border-border rounded-xl text-sm text-foreground w-64 focus:outline-none focus:border-primary"
             />
           </div>
+          <button
+            onClick={handleExport}
+            disabled={filteredAsns.length === 0}
+            className="flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
+            title="Exportar la lista actual (respeta tab + buscador)"
+            data-testid="asn-export"
+          >
+            <FileUp className="w-4 h-4" />
+            Exportar
+          </button>
           <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={handleFilePick} />
           <label htmlFor="asn-import" className={`flex items-center gap-2 px-6 py-3 bg-indigo-500 text-white rounded-2xl cursor-pointer text-xs font-black uppercase tracking-widest hover:scale-105 transition-all shadow-lg ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
@@ -179,68 +273,114 @@ export const AsnModule = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredAsns.map(a => {
-          const totalExp = (a.items || []).reduce((s, i) => s + (i.qty_expected || 0), 0);
-          const totalRcv = (a.items || []).reduce((s, i) => s + (i.qty_received || 0), 0);
-          const pct = totalExp > 0 ? Math.min(100, Math.round((totalRcv / totalExp) * 100)) : 0;
-          const sd = STATUS_STYLES[a.status] || STATUS_STYLES[AsnStatus.PENDING];
+      {/* Status tabs */}
+      <div className="flex flex-wrap gap-2 p-1 bg-secondary/20 rounded-2xl w-fit border border-border/40">
+        {TABS.map(tab => {
+          const isActive = activeTab === tab.id;
+          const sd = STATUS_STYLES[tab.id];
+          const count = tabCounts[tab.id] ?? 0;
+          const baseCls = isActive
+            ? (sd?.tabCls || 'bg-primary text-primary-foreground')
+            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40';
           return (
-            <div
-              key={a.asn_id}
-              onClick={() => openDetail(a.asn_id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') openDetail(a.asn_id); }}
-              className="group relative text-left p-5 bg-card/40 border border-border/40 rounded-[2rem] hover:bg-card hover:border-primary/30 transition-all shadow-sm cursor-pointer"
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${baseCls} ${isActive ? 'shadow-lg' : ''}`}
+              data-testid={`asn-tab-${tab.id}`}
             >
-              <button
-                onClick={(e) => { e.stopPropagation(); handleDelete(a.asn_id); }}
-                className="absolute top-3 right-3 p-2 rounded-xl text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
-                title="Eliminar ASN"
-                data-testid={`asn-delete-${a.asn_id}`}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <div className="flex justify-between items-start mb-4 pr-8">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-black uppercase text-primary tracking-widest">ASN {a.asn_id}</div>
-                  <div className="text-lg font-black uppercase tracking-tight leading-tight truncate">{a.vendor || '—'}</div>
-                  {a.po_number && <div className="text-[10px] font-mono text-muted-foreground mt-1">PO {a.po_number}</div>}
-                </div>
-                <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${sd.cls}`}>
-                  {sd.label}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground border-b border-border/10 pb-2">
-                  <span>Líneas</span>
-                  <span className="text-foreground">{a.items?.length || 0}</span>
-                </div>
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground">
-                  <span>Recibido</span>
-                  <span className="text-foreground tabular-nums">{totalRcv.toLocaleString()} / {totalExp.toLocaleString()}</span>
-                </div>
-                <div className="h-1.5 bg-secondary/40 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
-                </div>
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground">
-                  <span>Registrado</span>
-                  <span className="text-foreground">{a.created_at ? new Date(a.created_at).toLocaleDateString() : '—'}</span>
-                </div>
-              </div>
-            </div>
+              {sd && <span className={`w-1.5 h-1.5 rounded-full ${sd.dot}`} />}
+              {tab.label}
+              <span className={`text-[10px] tabular-nums ${isActive ? 'opacity-90' : 'opacity-60'}`}>{count}</span>
+            </button>
           );
         })}
       </div>
-      {filteredAsns.length === 0 && (
-        <div className="py-20 text-center bg-secondary/10 rounded-[3rem] border-2 border-dashed border-border/20">
-          <FileDown className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-          <p className="text-sm font-black text-muted-foreground uppercase tracking-widest">
-            {asns.length === 0 ? 'No hay ASNs registrados' : 'Sin coincidencias'}
-          </p>
+
+      {/* List view */}
+      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/40 border-b border-border/30">
+              <tr>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">ASN</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Vendor</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">PO</th>
+                <th className="p-3 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Líneas</th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido / Esperado</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-40">Avance</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Registrado</th>
+                <th className="p-3 w-10"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/10">
+              {filteredAsns.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-20 text-center">
+                    <FileDown className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                    <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">
+                      {asns.length === 0 ? 'No hay ASNs registrados' : 'Sin coincidencias en esta pestaña'}
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                filteredAsns.map(a => {
+                  const totalExp = (a.items || []).reduce((s, i) => s + (i.qty_expected || 0), 0);
+                  const totalRcv = (a.items || []).reduce((s, i) => s + (i.qty_received || 0), 0);
+                  const pct = totalExp > 0 ? Math.min(100, Math.round((totalRcv / totalExp) * 100)) : 0;
+                  const sd = STATUS_STYLES[a.status] || STATUS_STYLES[AsnStatus.PENDING];
+                  return (
+                    <tr
+                      key={a.asn_id}
+                      onClick={() => openDetail(a.asn_id)}
+                      className="hover:bg-primary/5 cursor-pointer transition-colors"
+                      data-testid={`asn-row-${a.asn_id}`}
+                    >
+                      <td className="p-3 font-mono font-black text-primary text-[12px]">{a.asn_id}</td>
+                      <td className="p-3 text-[12px] font-bold truncate max-w-[220px]" title={a.vendor}>{a.vendor || '—'}</td>
+                      <td className="p-3 text-[11px] font-mono text-muted-foreground">{a.po_number || '—'}</td>
+                      <td className="p-3 text-center">
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${sd.cls}`}>
+                          {sd.label}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right tabular-nums font-mono font-bold text-[11px]">{a.items?.length || 0}</td>
+                      <td className="p-3 text-right tabular-nums font-mono font-bold text-[11px]">
+                        <span className={pct >= 100 ? 'text-emerald-400' : totalRcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}>
+                          {totalRcv.toLocaleString()}
+                        </span>
+                        <span className="text-muted-foreground"> / {totalExp.toLocaleString()}</span>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-secondary/40 rounded-full overflow-hidden min-w-[60px]">
+                            <div className={`h-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="text-[10px] font-mono font-black tabular-nums w-9 text-right">{pct}%</span>
+                        </div>
+                      </td>
+                      <td className="p-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">
+                        {a.created_at ? new Date(a.created_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="p-3">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(a.asn_id); }}
+                          className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all"
+                          title="Eliminar ASN"
+                          data-testid={`asn-delete-${a.asn_id}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
 
       {/* Sheet picker dialog (Phase 1 → Phase 2) */}
       {sheetChoices && (
@@ -361,6 +501,91 @@ export const AsnModule = () => {
                 </div>
               ) : detailData ? (
                 <div className="p-5 space-y-6">
+                  {/* Trazabilidad: summary cards + recepciones agregadas */}
+                  {detailData.summary && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Unidades recibidas</div>
+                        <div className="text-2xl font-black tabular-nums text-emerald-400">{(detailData.summary.total_units || 0).toLocaleString()}</div>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cajas (LPNs)</div>
+                        <div className="text-2xl font-black tabular-nums text-blue-400">{(detailData.summary.total_boxes || 0).toLocaleString()}</div>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Recepciones</div>
+                        <div className="text-2xl font-black tabular-nums text-purple-400">{detailData.summary.total_receivings || 0}</div>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Ubicaciones</div>
+                        <div className="text-2xl font-black tabular-nums text-amber-400">{(detailData.summary.distinct_locations || []).length}</div>
+                      </div>
+                      {detailData.summary.first_received_at && (
+                        <div className="md:col-span-2 p-3 rounded-xl bg-secondary/30 border border-border/30">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-0.5">Periodo de recepción</div>
+                          <div className="text-[11px] font-mono">
+                            {new Date(detailData.summary.first_received_at).toLocaleString()}
+                            {' → '}
+                            {new Date(detailData.summary.last_received_at).toLocaleString()}
+                          </div>
+                        </div>
+                      )}
+                      {(detailData.summary.receivers || []).length > 0 && (
+                        <div className="md:col-span-2 p-3 rounded-xl bg-secondary/30 border border-border/30">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-0.5">Receptores</div>
+                          <div className="text-[11px] font-bold flex flex-wrap gap-1.5">
+                            {(detailData.summary.receivers || []).map(r => (
+                              <span key={r} className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[10px] uppercase tracking-wider">
+                                {r}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Eventos de recepción (1 row por receiving_id) */}
+                  {detailData.receivings && detailData.receivings.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">
+                        Eventos de recepción ({detailData.receivings.length})
+                      </h4>
+                      <div className="border border-border/30 rounded-2xl overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-secondary/40">
+                            <tr>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Receiving ID</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style / SKU</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Lote</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
+                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
+                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido por</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/10">
+                            {detailData.receivings.map(r => (
+                              <tr key={r.receiving_id} className="hover:bg-secondary/30">
+                                <td className="p-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
+                                <td className="p-3 text-[11px] font-mono font-bold text-primary">{r.receiving_id}</td>
+                                <td className="p-3 text-[11px] font-mono">{r.style || r.sku || '—'}</td>
+                                <td className="p-3 text-[11px]">{r.color || '—'} · {r.size || '—'}</td>
+                                <td className="p-3 text-[11px] font-mono text-muted-foreground">{r.lot_number || '—'}</td>
+                                <td className="p-3 text-[11px] font-mono text-emerald-400">{r.inv_location || '—'}</td>
+                                <td className="p-3 text-right text-[11px] tabular-nums font-bold">{(r.boxes || []).length}</td>
+                                <td className="p-3 text-right text-[11px] tabular-nums font-bold text-emerald-400">{(r.total_units || 0).toLocaleString()}</td>
+                                <td className="p-3 text-[11px] text-muted-foreground">{r.received_by_name || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Expected vs received table */}
                   <div>
                     <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">Líneas del packing list</h4>

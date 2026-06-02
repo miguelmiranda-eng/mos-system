@@ -1069,6 +1069,7 @@ async def create_receiving(request: Request):
                     "description": description,
                     "lot_number": lot_number,
                     "asn_reference": body.get("asn_reference", "").strip(),
+                    "upc": str(body.get("upc", "")).strip().upper(),
                     "created_at": now_iso(),
                 })
     else:
@@ -1136,6 +1137,9 @@ async def create_receiving(request: Request):
         "country_of_origin": country_of_origin, "fabric_content": fabric_content,
         "inv_location": inv_location, "lot_number": lot_number, "sku": sku,
         "total_units": total_units, "is_bpo": is_bpo,
+        # Traceability — linked back to the ASN + UPC the operator captured.
+        "asn_reference": body.get("asn_reference", "").strip(),
+        "upc": str(body.get("upc", "")).strip().upper(),
         "received_by": user.get("user_id"), "received_by_name": user.get("name", ""),
         "created_at": now_iso(),
         "boxes": [{"box_id": b["box_id"], "units": b["units"]} for b in box_docs]
@@ -1570,6 +1574,7 @@ async def get_inventory(
     request: Request,
     sku: str = "", color: str = "", size: str = "", location: str = "",
     customer: str = "", category: str = "", style: str = "",
+    description: str = "", country_of_origin: str = "", fabric_content: str = "",
     paginated: bool = False, skip: int = 0, limit: int = 5000,
 ):
     """List inventory rows.
@@ -1589,6 +1594,9 @@ async def get_inventory(
     elif category:
         query["category"] = {"$regex": category, "$options": "i"}
     if location: query["location"] = {"$regex": location, "$options": "i"}
+    if description: query["description"] = {"$regex": description, "$options": "i"}
+    if country_of_origin: query["country_of_origin"] = {"$regex": country_of_origin, "$options": "i"}
+    if fabric_content: query["fabric_content"] = {"$regex": fabric_content, "$options": "i"}
 
     skip = max(0, skip)
     limit = max(1, min(limit, 5000))
@@ -1657,12 +1665,16 @@ async def inventory_filters_v2(request: Request):
         raw_countries = await db.wms_inventory.distinct("country_of_origin")
         country_list = [c for c in raw_countries if c and "%" not in c]
 
+    raw_fabrics = await db.wms_inventory.distinct("fabric_content")
+    fabrics = sorted([f for f in raw_fabrics if f and isinstance(f, str)])
+
     return {
         "customers": sorted([c for c in customers if c]),
         "categories": sorted([c for c in categories if c]),
         "manufacturers": sorted([m for m in manufacturers if m]),
         "styles": sorted([s for s in styles if s]),
         "countries": sorted(country_list),
+        "fabrics": fabrics,
     }
 
 _STYLE_INFO_CACHE = {}  # {style_upper: (timestamp, payload)}
@@ -3425,15 +3437,48 @@ async def list_asn(request: Request):
 
 @router.get("/asn/{asn_id}")
 async def get_asn_detail(asn_id: str, request: Request):
-    """Return ASN doc + all boxes received against it (newest first)."""
+    """Return ASN doc + every receiving event + every box tied to this ASN.
+
+    Trazabilidad: el frontend muestra un summary, una lista de recepciones
+    (con quién, cuándo, lote, ubicación) y la tabla detallada de cajas.
+    """
     await require_auth(request)
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")
+
     boxes = await db.wms_boxes.find(
         {"asn_reference": asn_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(5000)
-    return {"asn": asn, "boxes": boxes}
+
+    receivings = await db.wms_receiving.find(
+        {"asn_reference": asn_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(2000)
+
+    # Aggregated summary across boxes (since boxes are the granular unit and
+    # cover historical records that pre-date the receiving.asn_reference field).
+    total_units = sum(int(b.get("units") or b.get("qty") or 0) for b in boxes)
+    total_boxes = len(boxes)
+    receivers = sorted({(r.get("received_by_name") or "").strip() for r in receivings if r.get("received_by_name")})
+    distinct_styles = sorted({(b.get("style") or "").strip() for b in boxes if b.get("style")})
+    distinct_locations = sorted({(b.get("location") or "").strip() for b in boxes if b.get("location")})
+    dates = [r.get("created_at") for r in receivings if r.get("created_at")] + \
+            [b.get("created_at") for b in boxes if b.get("created_at")]
+    first_at = min(dates) if dates else None
+    last_at = max(dates) if dates else None
+
+    summary = {
+        "total_units": total_units,
+        "total_boxes": total_boxes,
+        "total_receivings": len(receivings),
+        "receivers": receivers,
+        "distinct_styles": distinct_styles,
+        "distinct_locations": distinct_locations,
+        "first_received_at": first_at,
+        "last_received_at": last_at,
+    }
+
+    return {"asn": asn, "boxes": boxes, "receivings": receivings, "summary": summary}
 
 @router.delete("/asn/{asn_id}")
 async def delete_asn(asn_id: str, request: Request):
@@ -4310,3 +4355,133 @@ async def complete_task(task_id: str, request: Request):
     await log_movement(user, "task_completed", {"task_id": task_id, "type": task["task_type"]})
     await notify_badge_change("all")
     return {"message": "Task successfully executed"}
+
+
+# ==================== UPC PRODUCT CATALOG ====================
+# Single source of truth for what a UPC means. Receiving (and the inline
+# Crear ASN modal later) look up by UPC to autofill style/color/size/etc
+# so the same product never lands twice with conflicting descriptions.
+#
+# Collection: wms_upc_catalog. Unique key: upc (normalized to digits-only
+# uppercase). Other fields are the canonical product metadata.
+
+
+def _norm_upc(raw) -> str:
+    """Strip whitespace and uppercase. Don't restrict to digits because some
+    customers use alphanumeric internal codes — but trim aggressively so a
+    typo'd trailing space doesn't bypass uniqueness."""
+    return str(raw or "").strip().upper()
+
+
+@router.get("/upc/{upc}")
+async def get_upc(upc: str, request: Request):
+    """Lookup a UPC. Returns 404 if not in the catalog so the frontend can
+    show the 'Crear UPC' button."""
+    await require_auth(request)
+    code = _norm_upc(upc)
+    if not code:
+        raise HTTPException(400, "upc requerido")
+    doc = await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, f"UPC {code} no encontrado")
+    return doc
+
+
+@router.get("/upc")
+async def list_upc(request: Request, search: str = "", customer: str = "",
+                    style: str = "", limit: int = 200):
+    """List the catalog with optional filters. Used by the typeahead in the
+    Receiving form so the operator can pick a UPC without typing it whole."""
+    await require_auth(request)
+    query = {}
+    if customer:
+        query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
+    if style:
+        query["style"] = {"$regex": re.escape(style), "$options": "i"}
+    if search:
+        rx = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [
+            {"upc": rx}, {"style": rx}, {"description": rx},
+            {"color": rx}, {"customer": rx}, {"brand": rx},
+        ]
+    limit = max(1, min(limit, 1000))
+    docs = await db.wms_upc_catalog.find(query, {"_id": 0}).sort("upc", 1).to_list(limit)
+    return docs
+
+
+@router.post("/upc")
+async def create_upc(request: Request):
+    """Create a UPC catalog entry. Idempotent: returns the existing doc if the
+    UPC is already registered (so a race between two operators capturing the
+    same UPC doesn't error out — the second one just gets the existing one)."""
+    user = await require_auth(request)
+    body = await request.json()
+    code = _norm_upc(body.get("upc"))
+    if not code:
+        raise HTTPException(400, "upc es obligatorio")
+
+    existing = await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
+    if existing:
+        return existing  # idempotent return
+
+    doc = {
+        "upc": code,
+        "customer": str(body.get("customer", "")).strip().upper(),
+        "manufacturer": str(body.get("manufacturer", "")).strip().upper(),
+        "style": str(body.get("style", "")).strip().upper(),
+        "color": str(body.get("color", "")).strip().upper(),
+        "size": str(body.get("size", "")).strip().upper(),
+        "description": str(body.get("description", "")).strip(),
+        "country_of_origin": str(body.get("country_of_origin", "")).strip().upper(),
+        "fabric_content": str(body.get("fabric_content", "")).strip(),
+        "brand": str(body.get("brand", "")).strip().upper(),
+        "sku": str(body.get("sku", "")).strip().upper(),
+        "created_at": now_iso(),
+        "created_by": user.get("user_id"),
+        "created_by_name": user.get("name", ""),
+    }
+    if not doc["style"]:
+        raise HTTPException(400, "style es obligatorio para crear un UPC")
+    await db.wms_upc_catalog.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.put("/upc/{upc}")
+async def update_upc(upc: str, request: Request):
+    """Admin-only edit. Useful when a description or country was captured
+    wrong on first sight and needs correction (propagation to past receipts
+    is NOT automatic — only future ones inherit the new value)."""
+    user = await require_admin(request)
+    code = _norm_upc(upc)
+    body = await request.json()
+    existing = await db.wms_upc_catalog.find_one({"upc": code})
+    if not existing:
+        raise HTTPException(404, f"UPC {code} no encontrado")
+    allowed = ["customer", "manufacturer", "style", "color", "size", "description",
+               "country_of_origin", "fabric_content", "brand", "sku"]
+    update = {}
+    for k in allowed:
+        if k in body:
+            update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
+                          else str(body[k]).strip())
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    update["updated_by"] = user.get("user_id")
+    await db.wms_upc_catalog.update_one({"upc": code}, {"$set": update})
+    return await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
+
+
+@router.delete("/upc/{upc}")
+async def delete_upc(upc: str, request: Request):
+    """Admin-only delete. Existing receiving records keep their data — they
+    don't reference the catalog by FK, they just inherited values at capture
+    time."""
+    user = await require_admin(request)
+    code = _norm_upc(upc)
+    res = await db.wms_upc_catalog.delete_one({"upc": code})
+    if res.deleted_count == 0:
+        raise HTTPException(404, f"UPC {code} no encontrado")
+    await log_movement(user, "upc_deleted", {"upc": code})
+    return {"message": f"UPC {code} eliminado"}

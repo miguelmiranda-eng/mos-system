@@ -1,12 +1,84 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, ListFilter } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
 const EMPTY = [];
+
+/**
+ * Header con filtro tipo Dashboard: el label + un icono ListFilter que abre un
+ * Popover con buscador + lista clickeable de valores distintos. Single-select.
+ * El icono se ilumina cuando el filtro tiene valor.
+ */
+const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, placeholder, mono, options }) {
+  const active = !!(value || '').trim();
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const list = Array.isArray(options) ? options : [];
+    const q = (query || '').trim().toUpperCase();
+    if (!q) return list.slice(0, 200);
+    return list.filter(o => String(o).toUpperCase().includes(q)).slice(0, 200);
+  }, [options, query]);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span>{label}</span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={`p-0.5 rounded transition-colors flex-shrink-0 ${active ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}
+            title={`Filtrar por ${label}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <ListFilter className="w-3.5 h-3.5" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-64 p-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+            {active && (
+              <button onClick={() => { onChange(''); setQuery(''); }} className="text-[10px] font-bold text-destructive hover:underline uppercase">
+                Limpiar
+              </button>
+            )}
+          </div>
+          <input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={placeholder}
+            className={`w-full h-8 px-2 bg-secondary/50 border border-border rounded text-xs ${mono ? 'font-mono' : ''} focus:ring-1 focus:ring-primary outline-none mb-1.5`}
+          />
+          <div className="max-h-56 overflow-y-auto custom-scrollbar -mx-0.5">
+            {filtered.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground italic px-2 py-3 text-center">Sin coincidencias</p>
+            ) : (
+              filtered.map(opt => {
+                const isSel = String(opt).toUpperCase() === String(value || '').toUpperCase();
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => onChange(opt)}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${mono ? 'font-mono' : ''} ${isSel ? 'bg-primary/15 text-primary font-bold' : 'hover:bg-secondary/60 text-foreground'}`}
+                    title={opt}
+                  >
+                    <span className="truncate block">{opt}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+});
 
 /**
  * Tiny typeahead select: input + filtered dropdown limited to top 50 matches.
@@ -59,10 +131,21 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const { t } = useLang();
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
-  const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [] });
+  const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [], fabrics: [] });
   const [search, setSearch] = useState('');
   const [customerFilter, setCustomerFilter] = useState(initialCustomer);
   const [categoryFilter, setCategoryFilter] = useState('');
+  // Per-column filters mostrados como popover (ícono ListFilter) en el header.
+  // Solo 3 columnas: Customer, País de origen, Fabric %. Debounce antes de fetch.
+  const [colFilters, setColFilters] = useState({
+    customer: '', country_of_origin: '', fabric_content: '',
+  });
+  const [debouncedColFilters, setDebouncedColFilters] = useState(colFilters);
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedColFilters(colFilters), 300);
+    return () => clearTimeout(id);
+  }, [colFilters]);
+  const updateColFilter = (key, value) => setColFilters(p => ({ ...p, [key]: value }));
   const [importing, setImporting] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [groupByCustomer, setGroupByCustomer] = useState(false);
@@ -115,8 +198,13 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     if (debouncedSearch) params.set('style', debouncedSearch);
     if (customerFilter) params.set('customer', customerFilter);
     if (categoryFilter) params.set('category', categoryFilter);
+    // Per-column filters — el backend soporta cada uno como regex case-insensitive
+    Object.entries(debouncedColFilters).forEach(([k, v]) => {
+      const val = (v || '').trim();
+      if (val) params.set(k, val);
+    });
     return params;
-  }, [debouncedSearch, customerFilter, categoryFilter]);
+  }, [debouncedSearch, customerFilter, categoryFilter, debouncedColFilters]);
 
   // Cancellation token: increments whenever filters change so old chunks bail
   const loadGenRef = useRef(0);
@@ -159,20 +247,35 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     };
 
     fetchChunk(0);
+  }, [buildBaseParams]);
 
+  // Summary cards (TOTAL SKUS / ON HAND / ALLOCATED / AVAILABLE / UBICACIONES)
+  // load on mount + when customer filter changes — independent del grid, así
+  // los headlines del módulo no se ven en cero al abrir.
+  const loadSummary = useCallback(() => {
     const summaryParams = new URLSearchParams();
     if (customerFilter) summaryParams.set('customer', customerFilter);
-    fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(logLoadError('data'));
-  }, [buildBaseParams, customerFilter]);
+    fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(logLoadError('summary'));
+  }, [customerFilter]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
 
   // Filters (dropdown sources) load once on mount; the inventory itself only
   // loads on-demand when the user actually types a search or applies a filter.
   // Auto-loading 19k+ rows just for opening the screen was killing the app.
   useEffect(() => { loadFilters(); }, [loadFilters]);
 
+  // True when ANY filter — el search global, customer/category, o cualquier
+  // col-filter — tiene contenido. Solo entonces disparamos el load del grid
+  // (para no traer 21k filas al abrir).
+  const hasAnyFilter = (
+    (debouncedSearch || '').trim() ||
+    customerFilter ||
+    categoryFilter ||
+    Object.values(debouncedColFilters).some(v => (v || '').trim())
+  );
+
   useEffect(() => {
-    const hasQuery = (debouncedSearch || '').trim() || customerFilter || categoryFilter;
-    if (!hasQuery) {
+    if (!hasAnyFilter) {
       // Nothing to look up — cancel any in-flight chunks and clear the table.
       loadGenRef.current += 1;
       setInventory([]);
@@ -181,7 +284,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       return;
     }
     load();
-  }, [load, debouncedSearch, customerFilter, categoryFilter]);
+  }, [load, hasAnyFilter]);
 
   const exportExcel = () => window.open(`${API}/export/inventory`, '_blank');
 
@@ -462,7 +565,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             </select>
           </div>
           <div className="flex items-end">
-            <button onClick={() => { setCustomerFilter(''); setCategoryFilter(''); setSearch(''); }} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded">{t('wms_clear_filters')}</button>
+            <button onClick={() => { setCustomerFilter(''); setCategoryFilter(''); setSearch(''); setColFilters({ customer: '', country_of_origin: '', fabric_content: '' }); }} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded">{t('wms_clear_filters')}</button>
           </div>
         </div>
       )}
@@ -471,17 +574,24 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           <table className="w-full text-sm">
             <thead className="bg-secondary/80 backdrop-blur-md sticky top-0 z-10 border-b border-border/40">
               <tr>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('customer')}</th>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_style_sku')}</th>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_col_sz')}</th>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('description')}</th>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
-                <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('country_of_origin')}</th>
-                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
-                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
-                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
-                <th className="p-4 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_available')}</th>
-                <th className="p-4 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Historial</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={filters.customers} />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_style_sku')}</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_col_sz')}</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('description')}</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={filters.countries} />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder="ej. 100% cotton" options={filters.fabrics} />
+                </th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
+                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_available')}</th>
+                <th className="p-3 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Historial</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/10">
@@ -496,7 +606,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 ).map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-secondary/30">
-                      <td colSpan="11" className="p-3">
+                      <td colSpan="12" className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
                           <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
@@ -519,6 +629,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                           {inv.inv_location || '-'}
                         </td>
                         <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
+                        <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
                         <td className="p-4 text-right font-mono font-bold">
                           {inv.total_boxes > 0 && inv.inventory_id ? (
                             <button
@@ -562,6 +673,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                       {inv.inv_location || '-'}
                     </td>
                     <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
+                    <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
                     <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
@@ -579,8 +691,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             </tbody>
           </table>
           {inventory.length === 0 && !loadingMore && (() => {
-            const hasQuery = (debouncedSearch || '').trim() || customerFilter || categoryFilter;
-            if (!hasQuery) {
+            if (!hasAnyFilter) {
               return (
                 <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                   <Search className="w-16 h-16 mb-4 stroke-[1px] opacity-40" />

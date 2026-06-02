@@ -150,6 +150,26 @@ export const ReceivingModule = () => {
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
+  // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
+  // when set, the product fields (style/color/size/desc/country/fabric/brand)
+  // become read-only because the catalog is the source of truth.
+  const [upc, setUpc] = useState('');
+  const [upcDoc, setUpcDoc] = useState(null);
+  const [upcLooking, setUpcLooking] = useState(false);
+  const [createUpcOpen, setCreateUpcOpen] = useState(false);
+  const [creatingUpc, setCreatingUpc] = useState(false);
+  const [upcDraft, setUpcDraft] = useState({
+    upc: '', customer: '', manufacturer: '', style: '', color: '', size: '',
+    description: '', country_of_origin: '', fabric_content: '', brand: '',
+  });
+  // Inline ASN creation — used when the operator wants to receive material
+  // for an ASN that wasn't pre-imported via Excel.
+  const [createAsnOpen, setCreateAsnOpen] = useState(false);
+  const [creatingAsn, setCreatingAsn] = useState(false);
+  const [asnDraft, setAsnDraft] = useState({
+    asn_id: '', vendor: '', po_number: '',
+    items: [{ part_number: '', description: '', qty_expected: '', country: '', brand: '' }],
+  });
   // Putaway 2.0: 5 carts + legacy transit slot. Loaded from /transit/info so
   // the names stay in sync with the backend.
   const [transitCarts, setTransitCarts] = useState([]);
@@ -314,6 +334,176 @@ export const ReceivingModule = () => {
   // Canonical transit location name. Mirrors backend TRANSIT_LOCATION_NAME.
   const TRANSIT_LOCATION = "UBICACION TEMPORAL";
 
+  // Debounced UPC lookup. When the operator finishes typing (300ms idle), we
+  // hit /upc/{code} — on hit, autofill every product field and lock them so
+  // two operators capturing the same UPC can't write conflicting metadata.
+  // On miss (404), clear upcDoc so the "+ Crear UPC" button surfaces.
+  useEffect(() => {
+    const code = upc.trim().toUpperCase();
+    if (!code) { setUpcDoc(null); return; }
+    setUpcLooking(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/upc/${encodeURIComponent(code)}`, { credentials: 'include' });
+        if (res.ok) {
+          const doc = await res.json();
+          setUpcDoc(doc);
+          // Autofill — preserve numeric/operational fields the operator types.
+          setForm(p => ({
+            ...p,
+            customer: doc.customer || p.customer,
+            manufacturer: doc.manufacturer || p.manufacturer,
+            style: doc.style || p.style,
+            color: doc.color || p.color,
+            size: doc.size || p.size,
+            description: doc.description || p.description,
+            country_of_origin: doc.country_of_origin || p.country_of_origin,
+            fabric_content: doc.fabric_content || p.fabric_content,
+            sku: doc.sku || p.sku,
+          }));
+        } else if (res.status === 404) {
+          setUpcDoc(null);
+        }
+      } catch { /* silent */ }
+      finally { setUpcLooking(false); }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [upc]);
+
+  // Open the "Crear UPC" mini-modal. Prefills with whatever the operator has
+  // already captured in the receiving form so they don't retype it.
+  const openCreateUpc = () => {
+    setUpcDraft({
+      upc: upc.trim().toUpperCase(),
+      customer: form.customer || '',
+      manufacturer: form.manufacturer || '',
+      style: form.style || '',
+      color: form.color || '',
+      size: form.size || '',
+      description: form.description || '',
+      country_of_origin: form.country_of_origin || '',
+      fabric_content: form.fabric_content || '',
+      brand: '',
+    });
+    setCreateUpcOpen(true);
+  };
+
+  const handleCreateUpc = async () => {
+    const code = upcDraft.upc.trim().toUpperCase();
+    if (!code) { toast.error('Captura el UPC'); return; }
+    if (!upcDraft.style?.trim()) { toast.error('Style es obligatorio'); return; }
+    setCreatingUpc(true);
+    try {
+      const res = await poster('/upc', { ...upcDraft, upc: code });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo crear el UPC');
+        return;
+      }
+      const doc = await res.json();
+      toast.success(`UPC ${doc.upc} guardado en catálogo`);
+      setUpcDoc(doc);
+      setUpc(doc.upc);
+      // Aplicar valores del catálogo al form para reflejar el lock visual.
+      setForm(p => ({
+        ...p,
+        customer: doc.customer || p.customer,
+        manufacturer: doc.manufacturer || p.manufacturer,
+        style: doc.style || p.style,
+        color: doc.color || p.color,
+        size: doc.size || p.size,
+        description: doc.description || p.description,
+        country_of_origin: doc.country_of_origin || p.country_of_origin,
+        fabric_content: doc.fabric_content || p.fabric_content,
+      }));
+      setCreateUpcOpen(false);
+    } catch {
+      toast.error('Error de conexión');
+    } finally { setCreatingUpc(false); }
+  };
+
+  // Open the inline ASN creator. Prefills asn_id with whatever the operator
+  // already typed in the ASN field so they don't have to retype it. Vendor
+  // falls back to the customer they picked.
+  const openCreateAsn = () => {
+    setAsnDraft({
+      asn_id: form.asn_reference?.trim() || '',
+      vendor: form.customer || '',
+      po_number: '',
+      items: [{
+        part_number: form.style || '',
+        description: form.description || '',
+        qty_expected: form.pieces || form.units || '',
+        country: form.country_of_origin || '',
+        brand: form.manufacturer || '',
+      }],
+    });
+    setCreateAsnOpen(true);
+  };
+
+  const updateAsnDraftItem = (idx, field, value) => {
+    setAsnDraft(p => {
+      const items = p.items.slice();
+      items[idx] = { ...items[idx], [field]: value };
+      return { ...p, items };
+    });
+  };
+
+  const addAsnDraftItem = () => {
+    setAsnDraft(p => ({
+      ...p,
+      items: [...p.items, { part_number: '', description: '', qty_expected: '', country: '', brand: '' }],
+    }));
+  };
+
+  const removeAsnDraftItem = (idx) => {
+    setAsnDraft(p => ({
+      ...p,
+      items: p.items.length > 1 ? p.items.filter((_, i) => i !== idx) : p.items,
+    }));
+  };
+
+  const handleCreateAsn = async () => {
+    const asnId = asnDraft.asn_id.trim();
+    if (!asnId) { toast.error('Captura el número de ASN'); return; }
+    const cleanItems = asnDraft.items
+      .map(it => ({
+        part_number: (it.part_number || '').trim().toUpperCase(),
+        description: (it.description || '').trim(),
+        qty_expected: parseInt(it.qty_expected) || 0,
+        country: (it.country || '').trim().toUpperCase(),
+        brand: (it.brand || '').trim().toUpperCase(),
+      }))
+      .filter(it => it.part_number && it.qty_expected > 0);
+    if (cleanItems.length === 0) {
+      toast.error('Captura al menos una línea con Part Number y Cantidad esperada');
+      return;
+    }
+    setCreatingAsn(true);
+    try {
+      const res = await poster('/asn', {
+        asn_id: asnId,
+        vendor: asnDraft.vendor.trim().toUpperCase(),
+        po_number: asnDraft.po_number.trim(),
+        items: cleanItems,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo crear el ASN');
+        return;
+      }
+      const newAsn = await res.json();
+      toast.success(`ASN ${newAsn.asn_id} creado · ${cleanItems.length} línea(s)`);
+      // Refresh openAsns + auto-seleccionar el nuevo.
+      const all = await fetcher('/asn');
+      setOpenAsns((all || []).filter(a => a.status !== AsnStatus.RECEIVED));
+      setForm(p => ({ ...p, asn_reference: newAsn.asn_id }));
+      setCreateAsnOpen(false);
+    } catch (err) {
+      toast.error('Error de conexión');
+    } finally { setCreatingAsn(false); }
+  };
+
   // `toLocation` (when set) overrides whatever inv_location the user typed and
   // forces the box into a specific Putaway 2.0 slot — one of the 5 carts, or
   // the legacy UBICACION TEMPORAL. Used by the "Recibir a Carro" dropdown.
@@ -322,8 +512,26 @@ export const ReceivingModule = () => {
     if (!form.style) { toast.error(t('wms_style_req')); return; }
     // Required fields enforced only on CREATE; editing legacy records is allowed
     if (!editingId) {
+      // UPC obligatorio: el catálogo es la fuente de verdad del producto.
+      if (!upc.trim()) {
+        toast.error('UPC obligatorio — escanea o teclea el UPC del producto');
+        return;
+      }
+      if (!upcDoc) {
+        toast.error(`UPC ${upc.trim().toUpperCase()} no está en el catálogo. Créalo con "+ Crear UPC".`);
+        return;
+      }
       if (!form.country_of_origin?.trim()) { toast.error('País de origen es obligatorio'); return; }
       if (!form.fabric_content?.trim()) { toast.error('Contenido / Fabric es obligatorio'); return; }
+      // ASN obligatorio: no se puede recibir material sin un ASN cargado.
+      if (!form.asn_reference?.trim()) {
+        toast.error('ASN obligatorio — captura el número de packing list o créalo primero');
+        return;
+      }
+      if (!selectedAsnDoc) {
+        toast.error(`ASN ${form.asn_reference} no existe. Créalo con el botón "+ Crear ASN".`);
+        return;
+      }
     }
     setLoading(true);
     try {
@@ -366,6 +574,7 @@ export const ReceivingModule = () => {
           pieces: totalPieces,
           items: items.length > 0 ? items : undefined,
           asn_line_no: selectedAsnLine,  // optional — when set, backend decrements that exact line
+          upc: upcDoc?.upc || '',  // catalog reference — empty only on legacy edits
           // "Recibir a Carro" wins over whatever was typed in inv_location.
           ...(toLocation ? { inv_location: toLocation } : {}),
         };
@@ -391,6 +600,7 @@ export const ReceivingModule = () => {
           setShowForm(false);
           setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
           setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
+          setUpc(''); setUpcDoc(null);
           fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
           load();
         } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
@@ -527,7 +737,7 @@ export const ReceivingModule = () => {
           {t('wms_recent_entries')}: {records.length}
         </div>
         <button
-          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setShowForm(!showForm); }}
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setUpc(''); setUpcDoc(null); setShowForm(!showForm); }}
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
           data-testid="new-receiving-btn"
         >
@@ -536,14 +746,86 @@ export const ReceivingModule = () => {
       </div>
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="receiving-form">
+          {/* UPC — captura primero. Master del catálogo de producto */}
+          {!editingId && (
+            <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
+              <label className="text-xs uppercase tracking-wider font-bold block mb-1 flex items-center gap-2">
+                <span className="text-indigo-400">UPC</span>
+                <span className="text-red-400">*</span>
+                {upcDoc && (
+                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <CheckCircle2 className="w-2.5 h-2.5" /> en catálogo
+                  </span>
+                )}
+                {upc.trim() && !upcDoc && !upcLooking && (
+                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                    sin catálogo
+                  </span>
+                )}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  value={upc}
+                  onChange={e => setUpc(e.target.value)}
+                  placeholder="Escanea o teclea el UPC"
+                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono font-bold ${
+                    upcDoc ? 'border-emerald-500/40' : upc.trim() ? 'border-amber-500/40' : 'border-border'
+                  }`}
+                  data-testid="rcv-upc"
+                  autoFocus
+                />
+                {upcLooking && (
+                  <span className="flex items-center px-3 text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  </span>
+                )}
+                {upc.trim() && !upcDoc && !upcLooking && (
+                  <button
+                    type="button"
+                    onClick={openCreateUpc}
+                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-black uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-all"
+                    title={`Crear UPC ${upc.trim().toUpperCase()} en el catálogo`}
+                    data-testid="rcv-upc-create"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Crear UPC
+                  </button>
+                )}
+                {upcDoc && (
+                  <button
+                    type="button"
+                    onClick={() => { setUpc(''); setUpcDoc(null); }}
+                    className="px-3 py-2 bg-secondary hover:bg-secondary/70 text-foreground rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
+                    title="Limpiar UPC y desbloquear campos"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {upcDoc && (
+                <p className="text-[10px] text-emerald-500 mt-1.5 font-mono">
+                  {upcDoc.style} · {upcDoc.color} · {upcDoc.size} — {upcDoc.description?.slice(0, 60) || '—'}
+                </p>
+              )}
+              {upc.trim() && !upcDoc && !upcLooking && (
+                <p className="text-[10px] text-amber-500 mt-1.5">
+                  UPC <span className="font-mono font-bold">{upc.trim().toUpperCase()}</span> no está en el catálogo. Créalo antes de recibir.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('customer')}</label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('customer')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('manufacturer')}</label>
-              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('manufacturer')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
@@ -552,16 +834,22 @@ export const ReceivingModule = () => {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('style')}</label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId} />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('style')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('color')}</label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId} />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('color')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('size')}</label>
-              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId}>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('size')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc}>
                 <option value="">{t('select_placeholder')}</option>
                 {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -569,23 +857,25 @@ export const ReceivingModule = () => {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('description')}</label>
-              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                {t('description')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              </label>
+              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>}
+                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
+                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} disabled={!!upcDoc} />
               </div>
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>}
+                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} />
+                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc} />
               </div>
             </div>
           </div>
@@ -674,16 +964,37 @@ export const ReceivingModule = () => {
               <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">ASN (Packing List)</label>
-              <input
-                list="rcv-asn-list"
-                placeholder="N° de ASN (opcional)"
-                value={form.asn_reference}
-                onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
-                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono"
-                data-testid="rcv-asn"
-                disabled={!!editingId}
-              />
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                ASN (Packing List) <span className="text-red-400">*</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  list="rcv-asn-list"
+                  placeholder="N° de ASN (obligatorio)"
+                  value={form.asn_reference}
+                  onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
+                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm text-foreground font-mono ${form.asn_reference && !selectedAsnDoc && !editingId ? 'border-red-500/60' : selectedAsnDoc ? 'border-emerald-500/40' : 'border-border'}`}
+                  data-testid="rcv-asn"
+                  disabled={!!editingId}
+                />
+                {!editingId && form.asn_reference && !selectedAsnDoc && (
+                  <button
+                    type="button"
+                    onClick={openCreateAsn}
+                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-black uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-all"
+                    title={`Crear ASN ${form.asn_reference} si aún no existe`}
+                    data-testid="rcv-asn-create"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Crear ASN
+                  </button>
+                )}
+              </div>
+              {!editingId && form.asn_reference && !selectedAsnDoc && (
+                <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+                  El ASN <span className="font-mono font-bold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
+                </p>
+              )}
               <datalist id="rcv-asn-list">
                 {openAsns.map(a => (
                   <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
@@ -916,6 +1227,281 @@ export const ReceivingModule = () => {
           </div>
         )}
       </div>
+
+      {/* Create UPC inline modal */}
+      {createUpcOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Crear UPC en catálogo</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold">
+                    Este producto se guardará como master — futuros recibos del mismo UPC heredarán estos datos.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCreateUpcOpen(false)}
+                disabled={creatingUpc}
+                className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                  UPC <span className="text-red-400">*</span>
+                </label>
+                <input
+                  value={upcDraft.upc}
+                  onChange={e => setUpcDraft(p => ({ ...p, upc: e.target.value.trim().toUpperCase() }))}
+                  placeholder="Código del UPC"
+                  className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold"
+                  data-testid="upc-draft-code"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
+                  <input value={upcDraft.customer} onChange={e => setUpcDraft(p => ({ ...p, customer: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
+                  <input value={upcDraft.manufacturer} onChange={e => setUpcDraft(p => ({ ...p, manufacturer: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Marca</label>
+                  <input value={upcDraft.brand} onChange={e => setUpcDraft(p => ({ ...p, brand: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                    Style <span className="text-red-400">*</span>
+                  </label>
+                  <input value={upcDraft.style} onChange={e => setUpcDraft(p => ({ ...p, style: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold" data-testid="upc-draft-style" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
+                  <input value={upcDraft.color} onChange={e => setUpcDraft(p => ({ ...p, color: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
+                  <select value={upcDraft.size} onChange={e => setUpcDraft(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono">
+                    <option value="">{t('select_placeholder')}</option>
+                    {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                <input value={upcDraft.description} onChange={e => setUpcDraft(p => ({ ...p, description: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                  <input value={upcDraft.country_of_origin} onChange={e => setUpcDraft(p => ({ ...p, country_of_origin: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
+                  <input value={upcDraft.fabric_content} onChange={e => setUpcDraft(p => ({ ...p, fabric_content: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-5 border-t border-border/20">
+              <button
+                onClick={handleCreateUpc}
+                disabled={creatingUpc || !upcDraft.upc.trim() || !upcDraft.style.trim()}
+                className="flex-1 px-4 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                data-testid="upc-draft-submit"
+              >
+                {creatingUpc ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Guardar UPC
+              </button>
+              <button
+                onClick={() => setCreateUpcOpen(false)}
+                disabled={creatingUpc}
+                className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create ASN inline modal */}
+      {createAsnOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Crear ASN manualmente</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold">
+                    Captura mínima del packing list — luego puedes recibir contra este ASN.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCreateAsnOpen(false)}
+                disabled={creatingAsn}
+                className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-4">
+              {/* Header fields */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                    N° ASN <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    value={asnDraft.asn_id}
+                    onChange={e => setAsnDraft(p => ({ ...p, asn_id: e.target.value.trim() }))}
+                    placeholder="Ej. 12345"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold"
+                    data-testid="asn-draft-id"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Vendor</label>
+                  <input
+                    value={asnDraft.vendor}
+                    onChange={e => setAsnDraft(p => ({ ...p, vendor: e.target.value }))}
+                    placeholder="Proveedor"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">PO</label>
+                  <input
+                    value={asnDraft.po_number}
+                    onChange={e => setAsnDraft(p => ({ ...p, po_number: e.target.value }))}
+                    placeholder="Purchase Order"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Items */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                    Líneas del packing list ({asnDraft.items.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addAsnDraftItem}
+                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-indigo-400 hover:text-indigo-300"
+                  >
+                    <Plus className="w-3 h-3" /> Agregar línea
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {asnDraft.items.map((it, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 p-3 bg-secondary/20 border border-border/20 rounded-xl">
+                      <div className="col-span-3">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Part #*</label>
+                        <input
+                          value={it.part_number}
+                          onChange={e => updateAsnDraftItem(idx, 'part_number', e.target.value)}
+                          placeholder="Style"
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs font-mono font-bold"
+                          data-testid={`asn-draft-pn-${idx}`}
+                        />
+                      </div>
+                      <div className="col-span-4">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                        <input
+                          value={it.description}
+                          onChange={e => updateAsnDraftItem(idx, 'description', e.target.value)}
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Cant.*</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={it.qty_expected}
+                          onChange={e => updateAsnDraftItem(idx, 'qty_expected', e.target.value)}
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs font-mono text-right"
+                          data-testid={`asn-draft-qty-${idx}`}
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">País</label>
+                        <input
+                          value={it.country}
+                          onChange={e => updateAsnDraftItem(idx, 'country', e.target.value.toUpperCase())}
+                          maxLength={3}
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs font-mono"
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Marca</label>
+                        <input
+                          value={it.brand}
+                          onChange={e => updateAsnDraftItem(idx, 'brand', e.target.value)}
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs"
+                        />
+                      </div>
+                      <div className="col-span-1 flex items-end justify-end">
+                        <button
+                          type="button"
+                          onClick={() => removeAsnDraftItem(idx)}
+                          disabled={asnDraft.items.length <= 1}
+                          className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                          title="Quitar línea"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-5 border-t border-border/20">
+              <button
+                onClick={handleCreateAsn}
+                disabled={creatingAsn || !asnDraft.asn_id.trim()}
+                className="flex-1 px-4 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                data-testid="asn-draft-submit"
+              >
+                {creatingAsn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Crear ASN
+              </button>
+              <button
+                onClick={() => setCreateAsnOpen(false)}
+                disabled={creatingAsn}
+                className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
