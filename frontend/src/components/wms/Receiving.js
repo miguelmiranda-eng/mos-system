@@ -842,15 +842,15 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('customer')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('customer')} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc} />
+              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('manufacturer')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('manufacturer')} {!!upcDoc?.manufacturer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc} />
+              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc?.manufacturer} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
@@ -860,21 +860,21 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('style')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('style')} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc} />
+              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('color')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('color')} {!!upcDoc?.color && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc} />
+              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('size')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('size')} {!!upcDoc?.size && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc}>
+              <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc?.size}>
                 <option value="">{t('select_placeholder')}</option>
                 {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -883,24 +883,24 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('description')} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('description')} {!!upcDoc?.description && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc} />
+              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc?.description} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.country_of_origin && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} disabled={!!upcDoc} />
+                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} disabled={!!upcDoc?.country_of_origin} />
               </div>
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>} {upcDoc && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.fabric_content && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc} />
+                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc?.fabric_content} />
               </div>
             </div>
           </div>
