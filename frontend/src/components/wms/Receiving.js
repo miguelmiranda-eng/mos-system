@@ -338,6 +338,8 @@ export const ReceivingModule = () => {
   // hit /upc/{code} — on hit, autofill every product field and lock them so
   // two operators capturing the same UPC can't write conflicting metadata.
   // On miss (404), clear upcDoc so the "+ Crear UPC" button surfaces.
+  // On 401/403 we toast a clear error so the user doesn't think the UPC is
+  // missing when really their session expired.
   useEffect(() => {
     const code = upc.trim().toUpperCase();
     if (!code) { setUpcDoc(null); return; }
@@ -345,6 +347,11 @@ export const ReceivingModule = () => {
     const handle = setTimeout(async () => {
       try {
         const res = await fetch(`${API}/upc/${encodeURIComponent(code)}`, { credentials: 'include' });
+        if (res.status === 401 || res.status === 403) {
+          toast.error('Sesión expirada. Cierra sesión y vuelve a entrar.');
+          setUpcDoc(null);
+          return;
+        }
         if (res.ok) {
           const doc = await res.json();
           setUpcDoc(doc);
