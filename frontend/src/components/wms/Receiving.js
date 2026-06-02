@@ -338,41 +338,59 @@ export const ReceivingModule = () => {
   // hit /upc/{code} — on hit, autofill every product field and lock them so
   // two operators capturing the same UPC can't write conflicting metadata.
   // On miss (404), clear upcDoc so the "+ Crear UPC" button surfaces.
-  // On 401/403 we toast a clear error so the user doesn't think the UPC is
-  // missing when really their session expired.
+  // Any other non-2xx (401/403/5xx) surfaces a toast + console.log so we don't
+  // silently fall back to "sin catálogo" when the real cause is auth or net.
   useEffect(() => {
     const code = upc.trim().toUpperCase();
     if (!code) { setUpcDoc(null); return; }
     setUpcLooking(true);
     const handle = setTimeout(async () => {
+      const url = `${API}/upc/${encodeURIComponent(code)}`;
+      console.log('[UPC lookup] →', url);
       try {
-        const res = await fetch(`${API}/upc/${encodeURIComponent(code)}`, { credentials: 'include' });
+        const res = await fetch(url, { credentials: 'include' });
+        console.log('[UPC lookup] ←', res.status, res.url);
         if (res.status === 401 || res.status === 403) {
           toast.error('Sesión expirada. Cierra sesión y vuelve a entrar.');
           setUpcDoc(null);
           return;
         }
-        if (res.ok) {
-          const doc = await res.json();
-          setUpcDoc(doc);
-          // Autofill — preserve numeric/operational fields the operator types.
-          setForm(p => ({
-            ...p,
-            customer: doc.customer || p.customer,
-            manufacturer: doc.manufacturer || p.manufacturer,
-            style: doc.style || p.style,
-            color: doc.color || p.color,
-            size: doc.size || p.size,
-            description: doc.description || p.description,
-            country_of_origin: doc.country_of_origin || p.country_of_origin,
-            fabric_content: doc.fabric_content || p.fabric_content,
-            sku: doc.sku || p.sku,
-          }));
-        } else if (res.status === 404) {
+        if (res.status === 404) {
           setUpcDoc(null);
+          return;
         }
-      } catch { /* silent */ }
-      finally { setUpcLooking(false); }
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('[UPC lookup] error body:', txt);
+          toast.error(`UPC lookup error ${res.status} — ver consola`);
+          setUpcDoc(null);
+          return;
+        }
+        const doc = await res.json();
+        console.log('[UPC lookup] doc:', doc);
+        if (!doc || !doc.upc) {
+          toast.error('UPC respuesta vacía — ver consola');
+          setUpcDoc(null);
+          return;
+        }
+        setUpcDoc(doc);
+        // Autofill — preserve numeric/operational fields the operator types.
+        setForm(p => ({
+          ...p,
+          customer: doc.customer || p.customer,
+          manufacturer: doc.manufacturer || p.manufacturer,
+          style: doc.style || p.style,
+          color: doc.color || p.color,
+          size: doc.size || p.size,
+          description: doc.description || p.description,
+          country_of_origin: doc.country_of_origin || p.country_of_origin,
+          fabric_content: doc.fabric_content || p.fabric_content,
+          sku: doc.sku || p.sku,
+        }));
+      } catch (err) {
+        console.error('[UPC lookup] exception:', err);
+        toast.error(`UPC lookup falló: ${err?.message || err}`);
+      } finally { setUpcLooking(false); }
     }, 300);
     return () => clearTimeout(handle);
   }, [upc]);
