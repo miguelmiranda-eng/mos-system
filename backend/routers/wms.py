@@ -1374,6 +1374,95 @@ async def get_box(box_id: str, request: Request):
         raise HTTPException(404, "Caja no encontrada")
     return box
 
+
+# Fields the operator can edit after a box is received. Excludes box_id /
+# location / created_at / receiving_id / asn_reference / upc — those tie the
+# box to its origin and to physical putaway, so the relocate endpoints own
+# those mutations.
+_BOX_EDITABLE_FIELDS = {
+    "customer", "manufacturer", "description",
+    "country_of_origin", "fabric_content", "lot_number",
+    "units",  # qty mirror is kept in sync below
+}
+
+
+@router.put("/boxes/{box_id}")
+async def update_box(box_id: str, request: Request):
+    """Edit a received box. If `units` changes, the inventory row for the
+    box's location is rebalanced by the delta so the on-hand stays accurate.
+    Other field edits propagate to the box doc only — they don't affect
+    inventory aggregations because those bucket on (sku, color, size,
+    location), not on description/country/fabric/lot."""
+    user = await require_auth(request)
+    body = await request.json()
+
+    box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    if not box:
+        raise HTTPException(404, f"Caja {box_id} no encontrada")
+
+    update_doc = {}
+    for k, v in body.items():
+        if k not in _BOX_EDITABLE_FIELDS:
+            continue
+        if k == "units":
+            try:
+                update_doc["units"] = int(v)
+                update_doc["qty"] = int(v)  # qty mirrors units in the schema
+            except (TypeError, ValueError):
+                raise HTTPException(400, "units debe ser un entero")
+        else:
+            update_doc[k] = (str(v).strip() if v is not None else "")
+
+    if not update_doc:
+        raise HTTPException(400, "Nada por actualizar")
+
+    update_doc["updated_at"] = now_iso()
+    update_doc["updated_by"] = user.get("user_id")
+
+    # 1. Inventory rebalance if units changed.
+    old_units = int(box.get("units") or box.get("qty") or 0)
+    new_units = update_doc.get("units", old_units)
+    delta = new_units - old_units
+    if delta != 0:
+        sku = box.get("sku") or box.get("style") or ""
+        color = box.get("color", "")
+        size = box.get("size", "")
+        location = box.get("location", "")
+        inv = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": location,
+        })
+        if inv:
+            new_on_hand = max(0, int(inv.get("units_on_hand", 0)) + delta)
+            await db.wms_inventory.update_one(
+                {"_id": inv["_id"]},
+                {"$set": {"units_on_hand": new_on_hand, "updated_at": now_iso()}},
+            )
+            # If the inventory row is empty AND has no other boxes pointing
+            # at it, delete it so it doesn't ghost the Inventory listing.
+            if new_on_hand == 0:
+                still = await db.wms_boxes.count_documents({
+                    "sku": sku, "color": color, "size": size, "location": location,
+                    "box_id": {"$ne": box_id}, "units": {"$gt": 0},
+                })
+                if not still:
+                    await db.wms_inventory.delete_one({"_id": inv["_id"]})
+
+    # 2. Patch the box.
+    await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update_doc})
+
+    # 3. Audit trail.
+    await log_movement(user, "box_edited", {
+        "box_id": box_id,
+        "changes": {k: v for k, v in update_doc.items() if k not in ("updated_at", "updated_by")},
+        "old_units": old_units,
+        "new_units": new_units,
+        "delta_units": delta,
+    })
+    await notify_badge_change("all")
+
+    updated = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    return updated
+
 # ==================== PUTAWAY ====================
 
 async def _move_box_inventory(box, old_loc, new_loc):

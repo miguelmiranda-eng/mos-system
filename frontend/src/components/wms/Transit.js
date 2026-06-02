@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
-  Loader2, Package, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck,
+  Loader2, Package, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
 } from "lucide-react";
-import { fetcher, poster, logLoadError } from "./lib";
+import { fetcher, poster, putter, logLoadError } from "./lib";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -38,6 +38,10 @@ export const TransitModule = () => {
   const [locOptions, setLocOptions] = useState([]); // [{name, zone}]
   const [showLocDrop, setShowLocDrop] = useState(false);
   const destRef = useRef(null);
+  // Edit-box modal state.
+  const [editBox, setEditBox] = useState(null); // box doc being edited, or null
+  const [editDraft, setEditDraft] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
 
   const loadInfo = useCallback(() => {
     fetcher("/transit/info")
@@ -123,6 +127,53 @@ export const TransitModule = () => {
   const totalSelectedUnits = useMemo(() => {
     return boxes.reduce((s, b) => selected.has(b.box_id) ? s + (Number(b.units) || Number(b.qty) || 0) : s, 0);
   }, [boxes, selected]);
+
+  const openEdit = (box) => {
+    setEditBox(box);
+    setEditDraft({
+      customer: box.customer || '',
+      manufacturer: box.manufacturer || '',
+      description: box.description || '',
+      country_of_origin: box.country_of_origin || '',
+      fabric_content: box.fabric_content || '',
+      lot_number: box.lot_number || '',
+      units: String(box.units ?? box.qty ?? 0),
+    });
+  };
+  const closeEdit = () => { setEditBox(null); setEditDraft({}); };
+  const setDraft = (k, v) => setEditDraft(p => ({ ...p, [k]: v }));
+
+  const handleSaveEdit = async () => {
+    if (!editBox) return;
+    const units = parseInt(editDraft.units);
+    if (Number.isNaN(units) || units < 0) {
+      toast.error('Unidades debe ser un entero >= 0');
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const res = await putter(`/boxes/${encodeURIComponent(editBox.box_id)}`, {
+        customer: editDraft.customer,
+        manufacturer: editDraft.manufacturer,
+        description: editDraft.description,
+        country_of_origin: editDraft.country_of_origin,
+        fabric_content: editDraft.fabric_content,
+        lot_number: editDraft.lot_number,
+        units,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo guardar');
+        return;
+      }
+      toast.success(`Caja ${editBox.box_id} actualizada`);
+      closeEdit();
+      load();
+      loadInfo();
+    } catch {
+      toast.error('Error de conexión');
+    } finally { setEditSaving(false); }
+  };
 
   const handleRelocate = async () => {
     const dst = (destination || "").trim().toUpperCase();
@@ -316,18 +367,19 @@ export const TransitModule = () => {
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
                 <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibida</th>
+                <th className="p-3 w-10"></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={activeCart ? 7 : 8} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={activeCart ? 8 : 9} className="py-16 text-center text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                   </td>
                 </tr>
               ) : boxes.length === 0 ? (
                 <tr>
-                  <td colSpan={activeCart ? 7 : 8} className="py-20 text-center">
+                  <td colSpan={activeCart ? 8 : 9} className="py-20 text-center">
                     <Truck className="w-12 h-12 mx-auto opacity-20 mb-2 text-amber-500" />
                     <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
                       {activeCart ? `${activeCart} vacío` : "Sin cajas en Putaway 2.0"}
@@ -370,6 +422,16 @@ export const TransitModule = () => {
                       </td>
                       <td className="p-3 text-right font-mono font-black text-emerald-500">{(b.units || b.qty || 0).toLocaleString()}</td>
                       <td className="p-3 font-mono text-[10px] text-muted-foreground">{(b.created_at || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td className="p-3" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => openEdit(b)}
+                          className="p-1.5 rounded text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 transition-all"
+                          title="Editar caja"
+                          data-testid={`transit-edit-${b.box_id}`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
@@ -378,6 +440,106 @@ export const TransitModule = () => {
           </table>
         </div>
       </div>
+
+      {/* Edit-box modal */}
+      {editBox && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center">
+                  <Edit3 className="w-5 h-5 text-amber-500" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Editar caja</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold font-mono truncate">
+                    {editBox.box_id} · {editBox.style} · {editBox.color} / {editBox.size}
+                  </p>
+                </div>
+              </div>
+              <button onClick={closeEdit} disabled={editSaving} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
+              <p className="text-[10px] text-muted-foreground italic">
+                Los campos <span className="font-mono font-bold">style / sku / color / size / ubicación</span> no se editan aquí: usa el botón "Mover" para relocate, o elimina y vuelve a recibir si cambia el producto.
+              </p>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
+                  <input value={editDraft.customer} onChange={e => setDraft('customer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
+                  <input value={editDraft.manufacturer} onChange={e => setDraft('manufacturer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Lote</label>
+                  <input value={editDraft.lot_number} onChange={e => setDraft('lot_number', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                <input value={editDraft.description} onChange={e => setDraft('description', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                  <input value={editDraft.country_of_origin} onChange={e => setDraft('country_of_origin', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
+                  <input value={editDraft.fabric_content} onChange={e => setDraft('fabric_content', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-amber-500 block mb-1">
+                    Unidades <span title="Si cambias las unidades, el inventario se rebalancea automáticamente.">⚠</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editDraft.units}
+                    onChange={e => setDraft('units', e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-amber-500/40 rounded text-sm font-mono font-black text-right"
+                  />
+                  <p className="text-[9px] text-muted-foreground mt-1">
+                    Actual: {editBox.units ?? editBox.qty ?? 0}
+                    {Number(editDraft.units) !== (editBox.units ?? editBox.qty ?? 0) && (
+                      <span className="text-amber-500 font-bold ml-1">
+                        → {editDraft.units} ({Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0) >= 0 ? '+' : ''}{Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0)})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-5 border-t border-border/20">
+              <button
+                onClick={handleSaveEdit}
+                disabled={editSaving}
+                className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                data-testid="transit-edit-save"
+              >
+                {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Guardar
+              </button>
+              <button
+                onClick={closeEdit}
+                disabled={editSaving}
+                className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
