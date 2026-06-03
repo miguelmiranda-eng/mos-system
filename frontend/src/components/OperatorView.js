@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../App";
 import { Toaster, toast } from "sonner";
+import MachineOperatorView from "./MachineOperatorView";
 import {
   ClipboardCheck, MapPin, CheckCircle, Package, Loader2, LogOut,
   ChevronDown, ChevronUp, Save, Check, AlertTriangle, Bell
@@ -279,7 +280,10 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
   );
 };
 
-export default function OperatorView() {
+// PickerView holds the original WMS picking interface — kept as-is. The
+// component is renamed only at the export level so hooks aren't called after
+// a conditional return (React rules-of-hooks).
+function PickerView() {
   const { user, logout } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [selectedTicket, setSelectedTicket] = useState(null);
@@ -465,4 +469,14 @@ export default function OperatorView() {
       </div>
     </div>
   );
+}
+
+
+// Route entry — picks the right view based on the user role. role==='operator'
+// gets the machine-board capture screen; everything else (default: picker)
+// gets the existing WMS picking interface above.
+export default function OperatorView() {
+  const { user } = useAuth();
+  if (user?.role === 'operator') return <MachineOperatorView />;
+  return <PickerView />;
 }

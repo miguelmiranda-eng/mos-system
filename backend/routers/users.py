@@ -88,17 +88,24 @@ async def update_user_role(user_id: str, request: Request):
     body = await request.json()
     new_role = body.get("role", "general")
     associated_customer = body.get("associated_customer", "")
+    # Machine operators get their default board assigned by admin. The
+    # MachineOperatorView reads user.assigned_board on login and locks the
+    # selector to it. When the role moves away from "operator" we leave the
+    # field on the doc — idle metadata, no harm.
+    assigned_board = body.get("assigned_board")
     update_data = {"role": new_role}
     if associated_customer is not None:
         update_data["associated_customer"] = associated_customer
-        
+    if assigned_board is not None:
+        update_data["assigned_board"] = (assigned_board or "").strip().upper()
+
     result = await db.users.update_one(
-        {"$or": [{"user_id": user_id}, {"email": user_id}]}, 
+        {"$or": [{"user_id": user_id}, {"email": user_id}]},
         {"$set": update_data}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role, "associated_customer": associated_customer})
+    await log_activity(user, "update_user_role", {"email": user_id, "new_role": new_role, "associated_customer": associated_customer, "assigned_board": assigned_board})
     return {"message": f"Rol de {user_id} actualizado a {new_role}"}
 
 @router.delete("/users/{user_id}")

@@ -16,6 +16,13 @@ const PERM_OPTIONS = [
   { value: 'none', label: 'Sin acceso', icon: Ban, color: 'text-red-400' },
 ];
 
+// Boards an operator can be permanently assigned to. Matches the dropdown in
+// MachineOperatorView so the two stay in sync.
+const OPERATOR_BOARDS = [
+  ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`),
+  'NECK', 'BLANKS', 'SCREENS',
+];
+
 const UserManagementCenter = () => {
   const navigate = useNavigate();
   const { t } = useLang();
@@ -188,17 +195,38 @@ const UserManagementCenter = () => {
     } catch { toast.error(t('invite_err')); } finally { setInviting(false); }
   };
 
+  // Persist a board assignment for an operator user. Used by the inline
+  // dropdown next to the role select. We re-send role so the PUT shape
+  // stays the same.
+  const handleAssignedBoardChange = async (userId, currentRole, newBoard) => {
+    try {
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: currentRole, assigned_board: newBoard }),
+      });
+      if (res.ok) {
+        toast.success(`Operador asignado a ${newBoard}`);
+        setTimeout(fetchUsers, 300);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo asignar el tablero');
+      }
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
+
   const handleRoleChange = async (userId, newRole, customer = '') => {
     if (!window.confirm(`¿Cambiar el rol a ${newRole}?`)) {
         fetchUsers();
         return;
     }
-    
+
     setLoading(true);
     try {
-      const res = await fetch(`${API}/users/${userId}/role`, { 
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', 
-        body: JSON.stringify({ role: newRole, associated_customer: customer || undefined }) 
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: newRole, associated_customer: customer || undefined })
       });
       if (res.ok) { 
         toast.success('Rol actualizado con éxito'); 
@@ -500,6 +528,30 @@ const UserManagementCenter = () => {
                     ) : (
                       <span className="w-32 h-9 flex items-center px-3 bg-secondary/30 border border-border rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                         {u.role}
+                      </span>
+                    )}
+
+                    {/* Assigned board — only shows for operator users. Admin
+                        picks one of the machine boards; the operator's view
+                        locks to it on next login. */}
+                    {u.role === 'operator' && isSupersu && (
+                      <Select
+                        value={u.assigned_board || ''}
+                        onValueChange={(v) => handleAssignedBoardChange(u.user_id, u.role, v)}
+                      >
+                        <SelectTrigger className="w-32 h-9 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500 hover:bg-emerald-500/15">
+                          <SelectValue placeholder="Sin asignar" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover border-border z-[300] max-h-64">
+                          {OPERATOR_BOARDS.map(b => (
+                            <SelectItem key={b} value={b}>{b}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {u.role === 'operator' && !isSupersu && u.assigned_board && (
+                      <span className="h-9 flex items-center px-3 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500">
+                        {u.assigned_board}
                       </span>
                     )}
 
