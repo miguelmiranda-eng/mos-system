@@ -14,27 +14,35 @@ const API = `${BACKEND}/api`;
 const WS_URL = `${BACKEND}`.replace(/^http/, "ws") + "/api/ws";
 const STORAGE_BOARD = "operator_board";
 
-const BOARDS = [
+const FALLBACK_BOARDS = [
   ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`),
   "NECK", "BLANKS", "SCREENS",
 ];
-const MACHINE_BOARDS = new Set(BOARDS);
+
+// Boards operators must not see. Exact matches for the known names plus
+// substring patterns for boards whose exact name varies (respaldo monday,
+// cancelled/cancelado, inventario, papelera).
+const HIDDEN_EXACT = new Set(["MASTER", "EJEMPLOS", "COMPLETOS", "EDI", "FINAL BILL"]);
+const HIDDEN_PATTERNS = ["RESPALDO", "CANCEL", "INVENTARIO", "PAPELERA"];
+const isHiddenBoard = (name) => {
+  const n = String(name || "").trim().toUpperCase();
+  return HIDDEN_EXACT.has(n) || HIDDEN_PATTERNS.some(p => n.includes(p));
+};
+const visibleBoards = (list) => (list || []).filter(b => !isHiddenBoard(b));
 
 const fetcher = (path) =>
   fetch(`${API}${path}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
 
 export default function MachineOperatorView() {
   const { user, logout } = useAuth();
-  // Admins can hard-assign an operator to a board via UserManagementCenter.
-  // If assigned_board is set on the user, that's the DEFAULT board on login
-  // and the manual selector is locked. The operator can still navigate to a
-  // different machine board via the search bar (search needs to actually go
-  // to the matching order's board); a "volver" button surfaces while they're
-  // off-board.
-  const assignedBoard = (user?.assigned_board || "").trim().toUpperCase();
-  const isLocked = !!assignedBoard && MACHINE_BOARDS.has(assignedBoard);
-  const [board, setBoard] = useState(() => (isLocked ? assignedBoard : (localStorage.getItem(STORAGE_BOARD) || "MAQUINA1")));
-  const offAssignedBoard = isLocked && board !== assignedBoard;
+  // Operators see every board in the system and can freely switch between them.
+  // The full list comes from /config/boards (same source as the Dashboard);
+  // FALLBACK_BOARDS keeps the selector populated if that fetch fails.
+  const [boards, setBoards] = useState(() => visibleBoards(FALLBACK_BOARDS));
+  const [board, setBoard] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_BOARD);
+    return saved && !isHiddenBoard(saved) ? saved : "MAQUINA1";
+  });
   const [orders, setOrders] = useState([]);
   const [allOrdersForCapture, setAllOrdersForCapture] = useState([]);
   const [options, setOptions] = useState({});
@@ -68,6 +76,9 @@ export default function MachineOperatorView() {
   // wants this to render colored chips correctly).
   useEffect(() => {
     fetcher("/config/options").then(setOptions).catch(() => {});
+    fetcher("/config/boards")
+      .then(d => { if (Array.isArray(d?.boards) && d.boards.length) setBoards(visibleBoards(d.boards)); })
+      .catch(() => {});
   }, []);
 
   // Production + neck summaries refresh every 60s, not per-event like the
@@ -134,29 +145,22 @@ export default function MachineOperatorView() {
       const res = await fetch(`${API}/orders?search=${encodeURIComponent(q)}`, { credentials: "include" });
       if (!res.ok) { toast.error("Error al buscar"); return; }
       const all = await res.json();
-      const filtered = (Array.isArray(all) ? all : []).filter(o => o.board !== "PAPELERA DE RECICLAJE");
+      const filtered = (Array.isArray(all) ? all : []).filter(o => !isHiddenBoard(o.board));
       if (filtered.length === 0) {
         toast.error("Sin coincidencias globales");
         return;
       }
-      // Prefer a result on a machine board so the operator stays inside their
-      // scope. If nothing matches a machine board, surface ONLY a toast with
-      // where the order lives — don't switch boards.
-      const onMachine = filtered.find(o => MACHINE_BOARDS.has(o.board));
-      if (!onMachine) {
-        const found = filtered[0];
-        toast.info(`Orden ${found.order_number} está en ${found.board} (no es tablero de máquina)`, { duration: 6000 });
-        return;
+      // Operators can navigate to any board now — jump to the first result's
+      // board so they see the match in context.
+      const found = filtered[0];
+      if (found.board !== board) {
+        setBoard(found.board);
       }
-      if (onMachine.board !== board) {
-        setBoard(onMachine.board);
-      }
-      const machineMatches = filtered.filter(o => MACHINE_BOARDS.has(o.board));
-      if (machineMatches.length === 1) {
-        const exact = String(onMachine.order_number || "").trim().toLowerCase() === q.toLowerCase();
-        toast.success(exact ? `Orden ${onMachine.order_number} → ${onMachine.board}` : `Encontrada en orden ${onMachine.order_number} (${onMachine.board})`);
+      if (filtered.length === 1) {
+        const exact = String(found.order_number || "").trim().toLowerCase() === q.toLowerCase();
+        toast.success(exact ? `Orden ${found.order_number} → ${found.board}` : `Encontrada en orden ${found.order_number} (${found.board})`);
       } else {
-        toast.info(`${machineMatches.length} coincidencias en máquina · mostrando ${onMachine.board}`);
+        toast.info(`${filtered.length} coincidencias · mostrando ${found.board}`);
       }
     } catch {
       toast.error("Error de conexión");
@@ -233,37 +237,14 @@ export default function MachineOperatorView() {
           </div>
 
           <div className="flex items-center gap-2 ml-auto flex-wrap">
-            {isLocked ? (
-              offAssignedBoard ? (
-                <button
-                  onClick={() => setBoard(assignedBoard)}
-                  className="h-10 px-4 bg-amber-500/15 border border-amber-500/40 rounded-lg text-sm font-mono font-black uppercase tracking-widest text-amber-500 flex items-center gap-2 hover:bg-amber-500/25 transition-all"
-                  title={`Estás viendo ${board}. Click para volver a tu tablero asignado (${assignedBoard}).`}
-                >
-                  <span className="text-[9px] opacity-70">VIENDO</span>
-                  {board}
-                  <span className="opacity-60">·</span>
-                  <span className="text-[10px] font-bold normal-case tracking-wider">← volver a {assignedBoard}</span>
-                </button>
-              ) : (
-                <div
-                  className="h-10 px-4 bg-emerald-500/15 border border-emerald-500/40 rounded-lg text-sm font-mono font-black uppercase tracking-widest text-emerald-500 flex items-center gap-2"
-                  title="Tablero asignado por el administrador"
-                >
-                  <span className="text-[9px] opacity-70">ASIGNADO</span>
-                  {board}
-                </div>
-              )
-            ) : (
-              <select
-                value={board}
-                onChange={(e) => setBoard(e.target.value)}
-                className="h-10 px-3 bg-secondary/60 border border-border rounded-lg text-sm font-mono font-black uppercase tracking-widest focus:outline-none focus:border-primary"
-                data-testid="operator-board-select"
-              >
-                {BOARDS.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            )}
+            <select
+              value={board}
+              onChange={(e) => setBoard(e.target.value)}
+              className="h-10 px-3 bg-secondary/60 border border-border rounded-lg text-sm font-mono font-black uppercase tracking-widest focus:outline-none focus:border-primary"
+              data-testid="operator-board-select"
+            >
+              {(boards.includes(board) ? boards : [board, ...boards]).map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
 
             <div className="relative w-72">
               {searching ? (
