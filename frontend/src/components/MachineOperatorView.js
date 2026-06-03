@@ -163,6 +163,40 @@ export default function MachineOperatorView() {
     } finally { setSearching(false); }
   }, [search, board]);
 
+  // Operator-scoped cell update. Only production_status is wired through —
+  // every other column stays read-only on this view. Optimistic update of
+  // local state + PUT to /orders/{id}. Respects the QC lock that the
+  // Dashboard's handler also honors.
+  const handleCellUpdate = useCallback(async (orderId, field, value) => {
+    if (field !== "production_status") return;
+    const target = orders.find(o => o.order_id === orderId);
+    if (target?.locked_by_qc) {
+      toast.error("Orden bloqueada por QC — pide a un supervisor que la libere.");
+      return;
+    }
+    // Optimistic local update so the badge changes color immediately.
+    setOrders(prev => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o));
+    try {
+      const res = await fetch(`${API}/orders/${orderId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ [field]: value }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se pudo actualizar el estatus");
+        // Revert on failure.
+        setRefreshTick(t => t + 1);
+        return;
+      }
+      toast.success(`Producción actualizada: ${value}`);
+    } catch {
+      toast.error("Error de conexión");
+      setRefreshTick(t => t + 1);
+    }
+  }, [orders]);
+
   const openCapture = async () => {
     // First click hits /orders?limit=5000 to feed the production modal's
     // autocomplete. Subsequent clicks return instantly. The spinner only
@@ -371,21 +405,24 @@ export default function MachineOperatorView() {
                       )}
                     </div>
                   </div>
-                  {visibleColumns.filter(c => c.key !== "order_number").map(col => (
-                    <div key={col.key} className="py-3 px-3 border-b border-border/10 flex items-center" style={{ width: col.width, minWidth: col.width }}>
-                      <EditableCell
-                        orderId={order.order_id}
-                        field={col.key}
-                        value={order[col.key]}
-                        type={col.type}
-                        options={col.optionKey ? options[col.optionKey] : []}
-                        onUpdate={() => {}}
-                        readOnly={true}
-                        allOrders={orders}
-                        columns={visibleColumns}
-                      />
-                    </div>
-                  ))}
+                  {visibleColumns.filter(c => c.key !== "order_number").map(col => {
+                    const editable = col.key === "production_status";
+                    return (
+                      <div key={col.key} className={`py-3 px-3 border-b border-border/10 flex items-center ${editable ? "bg-primary/[0.03]" : ""}`} style={{ width: col.width, minWidth: col.width }}>
+                        <EditableCell
+                          orderId={order.order_id}
+                          field={col.key}
+                          value={order[col.key]}
+                          type={col.type}
+                          options={col.optionKey ? options[col.optionKey] : []}
+                          onUpdate={editable ? handleCellUpdate : () => {}}
+                          readOnly={!editable}
+                          allOrders={orders}
+                          columns={visibleColumns}
+                        />
+                      </div>
+                    );
+                  })}
                   {/* Restante */}
                   <div className="py-3 px-3 border-b border-border/10 flex flex-col justify-center gap-1" style={{ minWidth: 180 }}>
                     <div className="flex justify-between items-center text-[10px] font-mono font-black">
