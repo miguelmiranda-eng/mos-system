@@ -26,14 +26,15 @@ const fetcher = (path) =>
 export default function MachineOperatorView() {
   const { user, logout } = useAuth();
   // Admins can hard-assign an operator to a board via UserManagementCenter.
-  // If assigned_board is set on the user, the selector locks to it. Otherwise
-  // fall back to whatever the operator last picked (persisted in localStorage).
+  // If assigned_board is set on the user, that's the DEFAULT board on login
+  // and the manual selector is locked. The operator can still navigate to a
+  // different machine board via the search bar (search needs to actually go
+  // to the matching order's board); a "volver" button surfaces while they're
+  // off-board.
   const assignedBoard = (user?.assigned_board || "").trim().toUpperCase();
   const isLocked = !!assignedBoard && MACHINE_BOARDS.has(assignedBoard);
   const [board, setBoard] = useState(() => (isLocked ? assignedBoard : (localStorage.getItem(STORAGE_BOARD) || "MAQUINA1")));
-  // If the admin assigns or changes the board after the operator's session
-  // already started, snap to the new value on the next refetch of /auth/me.
-  useEffect(() => { if (isLocked && board !== assignedBoard) setBoard(assignedBoard); }, [isLocked, assignedBoard, board]);
+  const offAssignedBoard = isLocked && board !== assignedBoard;
   const [orders, setOrders] = useState([]);
   const [allOrdersForCapture, setAllOrdersForCapture] = useState([]);
   const [options, setOptions] = useState({});
@@ -199,13 +200,26 @@ export default function MachineOperatorView() {
 
           <div className="flex items-center gap-2 ml-auto flex-wrap">
             {isLocked ? (
-              <div
-                className="h-10 px-4 bg-emerald-500/15 border border-emerald-500/40 rounded-lg text-sm font-mono font-black uppercase tracking-widest text-emerald-500 flex items-center gap-2"
-                title="Tablero asignado por el administrador"
-              >
-                <span className="text-[9px] opacity-70">ASIGNADO</span>
-                {board}
-              </div>
+              offAssignedBoard ? (
+                <button
+                  onClick={() => setBoard(assignedBoard)}
+                  className="h-10 px-4 bg-amber-500/15 border border-amber-500/40 rounded-lg text-sm font-mono font-black uppercase tracking-widest text-amber-500 flex items-center gap-2 hover:bg-amber-500/25 transition-all"
+                  title={`Estás viendo ${board}. Click para volver a tu tablero asignado (${assignedBoard}).`}
+                >
+                  <span className="text-[9px] opacity-70">VIENDO</span>
+                  {board}
+                  <span className="opacity-60">·</span>
+                  <span className="text-[10px] font-bold normal-case tracking-wider">← volver a {assignedBoard}</span>
+                </button>
+              ) : (
+                <div
+                  className="h-10 px-4 bg-emerald-500/15 border border-emerald-500/40 rounded-lg text-sm font-mono font-black uppercase tracking-widest text-emerald-500 flex items-center gap-2"
+                  title="Tablero asignado por el administrador"
+                >
+                  <span className="text-[9px] opacity-70">ASIGNADO</span>
+                  {board}
+                </div>
+              )
             ) : (
               <select
                 value={board}
