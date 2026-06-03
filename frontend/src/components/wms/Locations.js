@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useTransition } from "react";
 import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
@@ -18,7 +18,45 @@ export const LocationsModule = () => {
   const [showNewLoc, setShowNewLoc] = useState(false);
   const [search, setSearch] = useState('');
   const [newLoc, setNewLoc] = useState({ name: '', zone: '', type: 'rack' });
-  const [activeTab, setActiveTab] = useState('custom'); // 'custom' | 'system' | 'narro'
+  const [activeTab, setActiveTab] = useState('custom'); // 'custom' | 'system' | 'narro' | 'pallet'
+  // useTransition (React 19) marks the tab change as non-urgent. The CURRENT
+  // view stays interactive while React renders the new tab in the background,
+  // and isPending stays true the whole time the heavy render is in flight —
+  // including for NARRO (6,688 docs) where the manual RAF approach hid the
+  // spinner because the work blocked the main thread before paint.
+  const [tabSwitching, startTabTransition] = useTransition();
+  // For heavy tabs (NARRO ≈ 6,688 docs, PALLET ≈ 836) we collapse all zones by
+  // default. Each zone header is light; the locations inside only mount when
+  // the user expands one. Without this, the initial render is JS-bound for
+  // several seconds and even the spinner can't paint.
+  const HEAVY_TABS = new Set(['narro', 'pallet', 'system']);
+  const [expandedZones, setExpandedZones] = useState(() => new Set());
+  const switchTab = (next) => {
+    if (next === activeTab) return;
+    // Reset expansion when we move to a heavy tab so nothing big mounts up
+    // front. Light tabs (custom, system without narro/pallet) auto-expand.
+    setExpandedZones(new Set());
+    startTabTransition(() => { setActiveTab(next); });
+  };
+  const toggleZone = (zone) => {
+    const wasOpen = expandedZones.has(zone);
+    setExpandedZones(prev => {
+      const next = new Set(prev);
+      if (next.has(zone)) next.delete(zone); else next.add(zone);
+      return next;
+    });
+    // When opening, snap the zone header to the top of the viewport so the
+    // freshly mounted content unfolds downward. Defer to next paint so the
+    // DOM has the new layout before scrollIntoView measures.
+    if (!wasOpen) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-zone-header="${zone}"]`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  };
+  // Light tabs render zone contents inline by default — same UX as before.
+  const isHeavyTab = HEAVY_TABS.has(activeTab);
   // Bulk-move state: { from: locObj, to: '' } when modal is open
   const [moveBulk, setMoveBulk] = useState(null);
   const [movingBulk, setMovingBulk] = useState(false);
@@ -401,13 +439,16 @@ export const LocationsModule = () => {
     const matchesSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
                          (l.zone || '').toLowerCase().includes(search.toLowerCase()) ||
                          summary.items.some(item => item.style.toLowerCase().includes(search.toLowerCase()));
-    // NARRO bucket is mutually exclusive: rows with tab="narro" never appear
-    // in custom/system. Everything else falls back to the is_custom split.
+    // NARRO and PALLET buckets are mutually exclusive: rows with those tabs
+    // never appear in custom/system. Everything else falls back to the
+    // is_custom split.
     const isNarro = l.tab === 'narro';
+    const isPallet = l.tab === 'pallet';
     let matchesTab;
-    if (activeTab === 'narro')      matchesTab = isNarro;
-    else if (activeTab === 'custom') matchesTab = !isNarro && l.is_custom === true;
-    else                             matchesTab = !isNarro && l.is_custom !== true;
+    if (activeTab === 'narro')       matchesTab = isNarro;
+    else if (activeTab === 'pallet') matchesTab = isPallet;
+    else if (activeTab === 'custom') matchesTab = !isNarro && !isPallet && l.is_custom === true;
+    else                             matchesTab = !isNarro && !isPallet && l.is_custom !== true;
     return matchesSearch && matchesTab;
   });
 
@@ -439,25 +480,32 @@ export const LocationsModule = () => {
       {/* Tabs de Separación */}
       <div className="flex gap-2 p-1 bg-secondary/20 rounded-2xl w-fit border border-border/40">
         <button
-          onClick={() => setActiveTab('custom')}
+          onClick={() => switchTab('custom')}
           className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'custom' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
         >
           Mis Locaciones
-          <span className="ml-2 px-1.5 py-0.5 bg-black/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && l.is_custom).length}</span>
+          <span className="ml-2 px-1.5 py-0.5 bg-black/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && l.is_custom).length}</span>
         </button>
         <button
-          onClick={() => setActiveTab('system')}
+          onClick={() => switchTab('system')}
           className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'system' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
         >
           Sistema / Inventario
-          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && !l.is_custom).length}</span>
+          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && !l.is_custom).length}</span>
         </button>
         <button
-          onClick={() => setActiveTab('narro')}
+          onClick={() => switchTab('narro')}
           className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'narro' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
         >
           NARRO
           <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab === 'narro').length}</span>
+        </button>
+        <button
+          onClick={() => switchTab('pallet')}
+          className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'pallet' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
+        >
+          Pallet
+          <span className="ml-2 px-1.5 py-0.5 bg-white/10 rounded-md text-[9px]">{locations.filter(l => l.tab === 'pallet').length}</span>
         </button>
       </div>
 
@@ -533,7 +581,19 @@ export const LocationsModule = () => {
         />
       </div>
 
-      <div className="space-y-10 pb-10">
+      <div className="relative space-y-10 pb-10">
+        {/* Spinner overlay during a tab switch — fades in/out via animate-in
+            so the heavy re-render of thousands of zone cards has visible
+            feedback. */}
+        {tabSwitching && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-sm rounded-3xl animate-in fade-in duration-150">
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cargando…</span>
+            </div>
+          </div>
+        )}
+        <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
         {(() => {
           const grouped = filtered.reduce((acc, l) => {
             const zone = l.zone || 'SIN ZONA';
@@ -543,10 +603,15 @@ export const LocationsModule = () => {
           }, {});
 
           const sortedZones = Object.keys(grouped).sort();
-          // When searching, the filter already narrows the set down, so render
-          // all matches. Otherwise paint progressively.
+          // Heavy tabs (NARRO / PALLET / Sistema): zones are collapsed by
+          // default so headers are cheap — render ALL of them up front. Light
+          // tabs (custom) paginate as before so we don't paint thousands of
+          // cards in one tick. Search bypasses pagination on either side
+          // because the result set is already narrowed.
           const isSearching = search.trim().length > 0;
-          const zonesToRender = isSearching ? sortedZones : sortedZones.slice(0, visibleZones);
+          const zonesToRender = (isHeavyTab || isSearching)
+            ? sortedZones
+            : sortedZones.slice(0, visibleZones);
           const hiddenZoneCount = sortedZones.length - zonesToRender.length;
 
           if (filtered.length === 0) return (
@@ -557,10 +622,19 @@ export const LocationsModule = () => {
           );
 
           return (<>
-          {zonesToRender.map(zone => (
+          {zonesToRender.map(zone => {
+            const isExpanded = !isHeavyTab || expandedZones.has(zone) || search.trim().length > 0;
+            return (
             <div key={zone} className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div
+                data-zone-header={zone}
+                className={`flex items-center gap-3 scroll-mt-4 ${isHeavyTab ? 'cursor-pointer hover:bg-secondary/20 rounded-xl px-2 py-1 -mx-2 transition-colors' : ''}`}
+                onClick={isHeavyTab ? () => toggleZone(zone) : undefined}
+              >
                 <div className="h-6 w-1 bg-primary rounded-full shadow-[0_0_10px_rgba(255,193,7,0.5)]" />
+                {isHeavyTab && (
+                  <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                )}
                 <h3 className="text-lg font-black uppercase tracking-tighter flex items-center gap-2">
                   {zone}
                   <span className="text-[10px] font-bold bg-secondary/50 px-2.5 py-1 rounded-full text-muted-foreground">
@@ -568,7 +642,8 @@ export const LocationsModule = () => {
                   </span>
                 </h3>
                 <button
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (window.confirm(`¿Imprimir todas las ${grouped[zone].length} ubicaciones de zona "${zone}"?`)) {
                       window.open(`${API}/locations/print?zone=${encodeURIComponent(zone)}`, '_blank');
                     }
@@ -581,7 +656,11 @@ export const LocationsModule = () => {
                 </button>
               </div>
 
-              <div className="rounded-2xl border border-border/30 overflow-hidden bg-card/20">
+              {isExpanded && (
+              <div
+                className="rounded-2xl border border-border/30 overflow-hidden bg-card/20 origin-top animate-in fade-in slide-in-from-top-2 duration-200"
+                style={{ overflowAnchor: 'none' }}
+              >
                 <div className="grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/50 bg-secondary/20 border-b border-border/30">
                   <span>Ubicación</span>
                   <span className="text-right">Inventario</span>
@@ -674,8 +753,10 @@ export const LocationsModule = () => {
                   );
                 })}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
           {hiddenZoneCount > 0 && (
             <div className="flex justify-center pt-2">
               <button
@@ -688,6 +769,7 @@ export const LocationsModule = () => {
           )}
           </>);
         })()}
+        </div>
       </div>
       {moveBulk && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-150">
