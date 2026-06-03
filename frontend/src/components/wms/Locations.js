@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash } from "lucide-react";
+import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 
@@ -36,6 +36,10 @@ export const LocationsModule = () => {
   // Per-item LPN expansion inside the detail modal. Keys are inventory_id;
   // values are { loading: bool, boxes: [] }. Lazy-fetched on toggle.
   const [boxesByInv, setBoxesByInv] = useState({});
+  // Which LPN drawers are currently expanded. We track this separately from
+  // boxesByInv so the box DATA can be preloaded silently (fast click response)
+  // without forcing every drawer open at once.
+  const [openDrawers, setOpenDrawers] = useState(() => new Set());
 
   // Inline per-LPN relocate inside the detail modal. While a box is being
   // relocated we replace its row with a small destination input + confirm.
@@ -70,6 +74,7 @@ export const LocationsModule = () => {
     setDetailLoc(loc);
     setDetailItems([]);
     setBoxesByInv({});
+    setOpenDrawers(new Set());
     setRelocatingBoxId(null);
     setRelocateDst('');
     setDetailLoading(true);
@@ -221,16 +226,22 @@ export const LocationsModule = () => {
       toast.error('Este renglón no tiene inventory_id — no se pueden listar cajas');
       return;
     }
-    const existing = boxesByInv[id];
-    if (existing) {
-      // Toggle: if already shown, hide.
-      setBoxesByInv(prev => {
-        const next = { ...prev };
-        delete next[id];
+    // If the drawer is already open, just close it (data stays cached).
+    if (openDrawers.has(id)) {
+      setOpenDrawers(prev => {
+        const next = new Set(prev);
+        next.delete(id);
         return next;
       });
       return;
     }
+    // Opening it. If the boxes were preloaded (the seeded path), just flip the
+    // open state — no fetch needed. Otherwise fetch on demand.
+    if (boxesByInv[id]) {
+      setOpenDrawers(prev => new Set(prev).add(id));
+      return;
+    }
+    setOpenDrawers(prev => new Set(prev).add(id));
     setBoxesByInv(prev => ({ ...prev, [id]: { loading: true, boxes: [] } }));
     try {
       // Two-step lookup so we work for boxes that DO have inventory_id linked
@@ -274,11 +285,11 @@ export const LocationsModule = () => {
       // clear the guard so a subsequent lookup can try again.
       return;
     }
-    if (!boxesByInv[target.inventory_id]) {
+    if (!openDrawers.has(target.inventory_id)) {
       expandedForBoxRef.current = foundBox.box_id;
       toggleBoxes(target);
     }
-  }, [foundBox, detailLoc, detailItems, boxesByInv, toggleBoxes]);
+  }, [foundBox, detailLoc, detailItems, openDrawers, toggleBoxes]);
 
   const handleCreateLoc = async () => {
     const name = newLoc.name.trim().toUpperCase();
@@ -832,104 +843,91 @@ export const LocationsModule = () => {
                   Sin contenido en esta ubicación
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {detailItems.map((it, i) => (
-                    <div
-                      key={it.inventory_id || `${it.sku}-${it.color}-${it.size}-${i}`}
-                      className="border border-border/40 rounded-2xl bg-secondary/20 overflow-hidden"
-                    >
-                      {/* Header: customer + style/sku */}
-                      <div className="px-4 py-3 bg-secondary/40 border-b border-border/20 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Cliente</div>
-                          <div className="font-mono font-black text-sm truncate" title={it.customer}>{it.customer || '—'}</div>
-                        </div>
-                        <div className="min-w-0 text-right">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">SKU</div>
-                          <div className="font-mono font-black text-sm text-primary truncate" title={`${it.style}-${it.color}-${it.size}`}>
-                            {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''}
-                          </div>
-                        </div>
-                      </div>
+                <div className="border border-border/30 rounded-2xl bg-card/30 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-secondary/40 sticky top-0">
+                        <tr>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground w-8"></th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Style / SKU</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Descripción</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">País</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Fabric</th>
+                          <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
+                          <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">On hand</th>
+                          <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Disponible</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailItems.map((it, i) => {
+                          const isOpen = openDrawers.has(it.inventory_id);
+                          const hasBoxes = isOpen; // legacy alias used below for hover/highlight
+                          const canExpand = !!it.inventory_id && (it.total_boxes || 0) > 0;
+                          const onHand = it.on_hand ?? it.units_on_hand ?? 0;
+                          const allocated = it.allocated ?? it.units_allocated ?? 0;
+                          const available = it.available ?? (onHand - allocated);
+                          return (
+                            <React.Fragment key={it.inventory_id || `${it.sku}-${it.color}-${it.size}-${i}`}>
+                              <tr
+                                onClick={() => canExpand && toggleBoxes(it)}
+                                className={`border-b border-border/10 transition-colors ${canExpand ? 'cursor-pointer hover:bg-primary/5' : ''} ${hasBoxes ? 'bg-primary/5' : ''}`}
+                              >
+                                <td className="p-2.5 text-center text-muted-foreground">
+                                  {canExpand && (
+                                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${hasBoxes ? 'rotate-90 text-primary' : ''}`} />
+                                  )}
+                                </td>
+                                <td className="p-2.5 text-[11px] font-bold truncate max-w-[140px]" title={it.customer}>{it.customer || '—'}</td>
+                                <td className="p-2.5 font-mono text-[11px] font-black text-primary truncate max-w-[200px]" title={`${it.style}-${it.color}-${it.size}`}>
+                                  {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''}
+                                </td>
+                                <td className="p-2.5 font-mono text-[11px]">
+                                  <span className="text-foreground">{it.color || '—'}</span>
+                                  <span className="mx-1 opacity-20">·</span>
+                                  <span className="text-primary font-bold">{it.size || '—'}</span>
+                                </td>
+                                <td className="p-2.5 text-[11px] text-muted-foreground truncate max-w-[200px]" title={it.description}>{it.description || '—'}</td>
+                                <td className="p-2.5 font-mono text-[10px] text-muted-foreground/80 truncate max-w-[110px]" title={it.country_of_origin}>{it.country_of_origin || '—'}</td>
+                                <td className="p-2.5 text-[10px] text-muted-foreground truncate max-w-[140px]" title={it.fabric_content}>{it.fabric_content || '—'}</td>
+                                <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums">
+                                  <span className={hasBoxes ? 'text-primary' : ''}>{(it.total_boxes || 0).toLocaleString()}</span>
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-emerald-500">{onHand.toLocaleString()}</td>
+                                <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-blue-400">{available.toLocaleString()}</td>
+                              </tr>
 
-                      {/* Body: details grid */}
-                      <div className="grid grid-cols-2 gap-px bg-border/20 text-[11px]">
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Package className="w-2.5 h-2.5" /> Fabricante</div>
-                          <div className="font-mono font-bold truncate">{it.manufacturer || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Hash className="w-2.5 h-2.5" /> Estilo</div>
-                          <div className="font-mono font-bold truncate">{it.style || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Tag className="w-2.5 h-2.5" /> Color</div>
-                          <div className="font-mono font-bold truncate">{it.color || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Talla</div>
-                          <div className="font-mono font-bold truncate">{it.size || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2 col-span-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><FileText className="w-2.5 h-2.5" /> Descripción</div>
-                          <div className="font-mono font-bold truncate" title={it.description}>{it.description || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Globe className="w-2.5 h-2.5" /> País de origen</div>
-                          <div className="font-mono font-bold truncate">{it.country_of_origin || '—'}</div>
-                        </div>
-                        <div className="bg-card/60 px-4 py-2">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> Contenido tela</div>
-                          <div className="font-mono font-bold truncate" title={it.fabric_content}>{it.fabric_content || '—'}</div>
-                        </div>
-                        {(it.po || it.bpo) && (
-                          <div className="bg-card/60 px-4 py-2 col-span-2">
-                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1"><User className="w-2.5 h-2.5" /> PO / BPO</div>
-                            <div className="font-mono font-bold truncate">{[it.po, it.bpo].filter(Boolean).join(' · ') || '—'}</div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Footer: stock summary */}
-                      <div className="px-4 py-3 grid grid-cols-3 gap-3 bg-secondary/40 border-t border-border/20 text-center">
-                        <button
-                          type="button"
-                          onClick={() => toggleBoxes(it)}
-                          disabled={!it.inventory_id || (it.total_boxes || 0) === 0}
-                          className={`rounded-lg transition-all ${it.inventory_id && (it.total_boxes || 0) > 0 ? 'cursor-pointer hover:bg-primary/10' : 'cursor-default opacity-80'}`}
-                          title={it.inventory_id && (it.total_boxes || 0) > 0 ? 'Ver LPNs en esta ubicación' : ''}
-                        >
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 flex items-center justify-center gap-1"><Box className="w-2.5 h-2.5" /> Cajas</div>
-                          <div className={`font-mono font-black text-base tabular-nums ${boxesByInv[it.inventory_id] ? 'text-primary' : ''}`}>{(it.total_boxes || 0).toLocaleString()}</div>
-                        </button>
-                        <div>
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">On hand</div>
-                          <div className="font-mono font-black text-base text-emerald-500 tabular-nums">{(it.on_hand ?? it.units_on_hand ?? 0).toLocaleString()}</div>
-                        </div>
-                        <div>
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">Disponible</div>
-                          <div className="font-mono font-black text-base text-blue-400 tabular-nums">{(it.available ?? ((it.on_hand ?? it.units_on_hand ?? 0) - (it.allocated ?? it.units_allocated ?? 0))).toLocaleString()}</div>
-                        </div>
-                      </div>
-
-                      {/* Boxes (LPN) drawer — appears only when the user clicks the Cajas tile */}
-                      {boxesByInv[it.inventory_id] && (
-                        <div className="border-t border-border/20 bg-card/40 p-3 max-h-60 overflow-y-auto custom-scrollbar">
+                              {/* LPN drawer expands below the row when clicked */}
+                              {hasBoxes && (
+                                <tr>
+                                  <td colSpan={10} className="p-0 border-b border-border/20">
+                                    <div className="bg-secondary/15 px-4 py-3">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <div className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
+                                          <Box className="w-3 h-3" />
+                                          LPNs · {(boxesByInv[it.inventory_id]?.boxes || []).length}
+                                        </div>
+                                        <span className="text-[10px] font-mono text-muted-foreground/60">
+                                          {it.style}{it.color ? ` · ${it.color}` : ''}{it.size ? ` · ${it.size}` : ''}
+                                        </span>
+                                      </div>
+                                      <div className="border border-border/30 rounded-xl bg-card/40 overflow-hidden">
                           {boxesByInv[it.inventory_id].loading ? (
                             <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
                               <Loader2 className="w-4 h-4 animate-spin" />
                               <span className="text-[10px] font-bold uppercase tracking-widest">Cargando LPNs…</span>
                             </div>
                           ) : boxesByInv[it.inventory_id].boxes.length === 0 ? (
-                            <div className="text-center text-[10px] text-muted-foreground font-bold uppercase py-3">Sin LPNs registrados</div>
+                            <div className="text-center text-[11px] text-muted-foreground font-bold uppercase tracking-widest py-6">Sin LPNs registrados</div>
                           ) : (
-                            <table className="w-full text-[11px]">
-                              <thead>
-                                <tr className="border-b border-border/20">
-                                  <th className="text-left py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">LPN</th>
-                                  <th className="text-right py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Unidades</th>
-                                  <th className="text-left py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Estado</th>
-                                  <th className="text-right py-1 px-2 text-[9px] font-black uppercase tracking-widest text-muted-foreground/70">Acción</th>
+                            <table className="w-full text-sm">
+                              <thead className="bg-secondary/40">
+                                <tr>
+                                  <th className="p-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">LPN</th>
+                                  <th className="p-2.5 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
+                                  <th className="p-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
+                                  <th className="p-2.5 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Acción</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -964,7 +962,7 @@ export const LocationsModule = () => {
                                                 className="w-full px-2 py-1 bg-background border border-amber-500/40 rounded text-[11px] font-mono uppercase focus:outline-none focus:border-amber-500"
                                               />
                                               {showLocDrop && matches.length > 0 && (
-                                                <div className="absolute z-40 mt-0.5 w-full max-h-48 overflow-y-auto bg-popover border border-border rounded-lg shadow-xl">
+                                                <div className="absolute z-[90] mt-1 w-full max-h-72 overflow-y-auto bg-popover border border-amber-500/40 rounded-lg shadow-2xl">
                                                   {matches.map(l => (
                                                     <button
                                                       key={l.location_id || l.name}
@@ -974,10 +972,10 @@ export const LocationsModule = () => {
                                                         setRelocateDst(l.name);
                                                         setShowLocDrop(false);
                                                       }}
-                                                      className="w-full text-left px-2 py-1 text-[11px] font-mono hover:bg-secondary flex items-center justify-between"
+                                                      className="w-full text-left px-3 py-1.5 text-[12px] font-mono hover:bg-amber-500/15 flex items-center justify-between border-b border-border/10 last:border-0"
                                                     >
                                                       <span className="font-bold">{l.name}</span>
-                                                      {l.zone && <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
+                                                      {l.zone && <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
                                                     </button>
                                                   ))}
                                                 </div>
@@ -1006,18 +1004,18 @@ export const LocationsModule = () => {
                                   }
                                   const isHighlighted = highlightBoxId && b.box_id === highlightBoxId;
                                   return (
-                                    <tr key={b.box_id || bi} className={`border-b border-border/5 group/lpn transition-colors ${isHighlighted ? 'bg-amber-400/30 ring-2 ring-amber-500/40' : 'hover:bg-primary/5'}`}>
-                                      <td className="py-1 px-2 font-mono font-bold text-primary">
+                                    <tr key={b.box_id || bi} className={`border-b border-border/10 group/lpn transition-colors ${isHighlighted ? 'bg-amber-400/30 ring-2 ring-amber-500/40' : 'hover:bg-primary/5'}`}>
+                                      <td className="p-2.5 font-mono font-black text-primary text-[11px]">
                                         {isHighlighted && <Box className="w-3 h-3 text-amber-500 inline mr-1" />}
                                         {b.box_id || '—'}
                                       </td>
-                                      <td className="py-1 px-2 text-right font-mono font-black text-emerald-500">{(b.units || b.qty || 0).toLocaleString()}</td>
-                                      <td className="py-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">{b.state || b.status || '—'}</td>
-                                      <td className="py-1 px-2 text-right">
+                                      <td className="p-2.5 text-right font-mono font-black text-emerald-500 text-[12px] tabular-nums">{(b.units || b.qty || 0).toLocaleString()}</td>
+                                      <td className="p-2.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{b.state || b.status || '—'}</td>
+                                      <td className="p-2.5 text-right">
                                         <button
                                           type="button"
                                           onClick={() => startRelocate(b.box_id)}
-                                          className="opacity-0 group-hover/lpn:opacity-100 transition-opacity inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded border border-amber-500/30"
+                                          className="opacity-0 group-hover/lpn:opacity-100 transition-opacity inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded-md border border-amber-500/30"
                                           title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
                                         >
                                           <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
@@ -1030,9 +1028,16 @@ export const LocationsModule = () => {
                             </table>
                           )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
