@@ -44,6 +44,7 @@ export default function MachineOperatorView() {
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [showProduction, setShowProduction] = useState(false);
+  const [capturaLoading, setCapturaLoading] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
   const wsRef = useRef(null);
   const summaryTimerRef = useRef(null);
@@ -162,8 +163,14 @@ export default function MachineOperatorView() {
   }, [search, board]);
 
   const openCapture = async () => {
-    await ensureAllOrders();
-    setShowProduction(true);
+    // First click hits /orders?limit=5000 to feed the production modal's
+    // autocomplete. Subsequent clicks return instantly. The spinner only
+    // really shows during that first fetch.
+    setCapturaLoading(true);
+    try {
+      await ensureAllOrders();
+      setShowProduction(true);
+    } finally { setCapturaLoading(false); }
   };
 
   // Use the project's default column config so the visual matches Dashboard.
@@ -228,11 +235,21 @@ export default function MachineOperatorView() {
 
             <button
               onClick={openCapture}
-              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-md transition-all"
+              disabled={capturaLoading}
+              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-md transition-all disabled:opacity-70 disabled:cursor-not-allowed"
               data-testid="operator-captura"
             >
-              <Factory className="w-4 h-4" />
-              Captura
+              {capturaLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Cargando…
+                </>
+              ) : (
+                <>
+                  <Factory className="w-4 h-4" />
+                  Captura
+                </>
+              )}
             </button>
 
             <button
