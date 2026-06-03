@@ -183,8 +183,30 @@ export const CycleCountModule = () => {
                     {grouped[loc].map(line => (
                       <div key={line.line_id} className={`flex items-center gap-3 px-3 py-2 ${line.counted && line.discrepancy !== 0 ? 'bg-red-500/5' : line.counted ? 'bg-green-500/5' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-mono font-bold">{line.style}</div>
-                          <div className="text-xs text-muted-foreground">{line.color} / {line.size}</div>
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="text-sm font-mono font-bold text-primary">{line.style}</span>
+                            {line.customer && (
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">
+                                {line.customer}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-mono text-muted-foreground">
+                            {line.color || '—'} / <span className="text-foreground font-bold">{line.size || '—'}</span>
+                          </div>
+                          {(line.description || line.fabric_content || line.country_of_origin) && (
+                            <div className="text-[10px] text-muted-foreground/80 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                              {line.description && (
+                                <span title={line.description}>{line.description}</span>
+                              )}
+                              {line.fabric_content && (
+                                <span className="text-emerald-500/80" title={line.fabric_content}>· {line.fabric_content}</span>
+                              )}
+                              {line.country_of_origin && (
+                                <span className="font-mono text-muted-foreground/70" title="País">· {line.country_of_origin}</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                         {isAdmin && (
                           <div className="text-center w-20">

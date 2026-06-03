@@ -4184,7 +4184,10 @@ async def create_cycle_count(request: Request):
     if not items:
         raise HTTPException(400, "No se encontraron items con los filtros proporcionados")
 
-    # Build count lines
+    # Build count lines. We snapshot the descriptive fields at creation time
+    # (description / customer / country / fabric / manufacturer) so the counter
+    # has full context on the item without an extra fetch. Old counts created
+    # before this change get enriched lazily on GET (see get_cycle_count below).
     count_lines = []
     for item in items:
         count_lines.append({
@@ -4195,6 +4198,11 @@ async def create_cycle_count(request: Request):
             "inv_location": item.get("location", ""),
             "sku": item.get("sku", ""),
             "system_qty": item.get("units_on_hand", 0),
+            "description": item.get("description", ""),
+            "customer": item.get("customer", ""),
+            "manufacturer": item.get("manufacturer", ""),
+            "country_of_origin": item.get("country_of_origin", ""),
+            "fabric_content": item.get("fabric_content", ""),
             "counted_qty": None,
             "discrepancy": None,
             "counted": False
@@ -4242,11 +4250,61 @@ async def list_cycle_counts(request: Request):
 
 @router.get("/cycle-counts/{count_id}")
 async def get_cycle_count(count_id: str, request: Request):
-    """Get a cycle count with all lines."""
+    """Get a cycle count with all lines. For counts created before we started
+    snapshotting description/customer/country/fabric/manufacturer onto each
+    line, enrich on the fly by joining against current wms_inventory so the
+    counter always sees the full context."""
     await require_auth(request)
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
+
+    lines = count.get("lines") or []
+    if lines:
+        missing_idx = [
+            i for i, l in enumerate(lines)
+            if not l.get("description") and not l.get("customer") and not l.get("fabric_content")
+        ]
+        if missing_idx:
+            # One inventory lookup per missing line, keyed on the (sku, location)
+            # pair that uniquely identifies each inventory row.
+            keys = []
+            for i in missing_idx:
+                line = lines[i]
+                keys.append({
+                    "sku": line.get("sku") or line.get("style") or "",
+                    "color": line.get("color") or "",
+                    "size": line.get("size") or "",
+                    "location": line.get("inv_location") or "",
+                })
+            # Build a single Mongo $or query for the join.
+            or_clauses = [{"sku": k["sku"], "color": k["color"], "size": k["size"], "location": k["location"]} for k in keys if k["sku"]]
+            inv_map = {}
+            if or_clauses:
+                async for inv in db.wms_inventory.find(
+                    {"$or": or_clauses},
+                    {"_id": 0, "sku": 1, "color": 1, "size": 1, "location": 1,
+                     "description": 1, "customer": 1, "manufacturer": 1,
+                     "country_of_origin": 1, "fabric_content": 1},
+                ):
+                    k = (inv.get("sku", ""), inv.get("color", ""), inv.get("size", ""), inv.get("location", ""))
+                    inv_map[k] = inv
+            for i in missing_idx:
+                line = lines[i]
+                k = (
+                    line.get("sku") or line.get("style") or "",
+                    line.get("color") or "",
+                    line.get("size") or "",
+                    line.get("inv_location") or "",
+                )
+                inv = inv_map.get(k)
+                if inv:
+                    line["description"] = line.get("description") or inv.get("description", "")
+                    line["customer"] = line.get("customer") or inv.get("customer", "")
+                    line["manufacturer"] = line.get("manufacturer") or inv.get("manufacturer", "")
+                    line["country_of_origin"] = line.get("country_of_origin") or inv.get("country_of_origin", "")
+                    line["fabric_content"] = line.get("fabric_content") or inv.get("fabric_content", "")
+            count["lines"] = lines
     return count
 
 @router.put("/cycle-counts/{count_id}/count")
