@@ -14,12 +14,12 @@ export const ColoredBadge = ({ value, isDark }) => {
   if (!value) return <span className="text-muted-foreground/40">—</span>;
 
   if (color) {
-    const bg = hexToRgba(color.bg, isDark ? 0.12 : 0.08);
-    const border = hexToRgba(color.bg, isDark ? 0.35 : 0.25);
+    const bg = hexToRgba(color.bg, isDark ? 0.22 : 0.18);
+    const border = hexToRgba(color.bg, isDark ? 0.55 : 0.45);
 
     return (
       <span
-        className="inline-flex items-center px-3 py-0.5 rounded-md text-[10px] font-black uppercase whitespace-nowrap tracking-wider border shadow-sm transition-all duration-300"
+        className="inline-flex items-center px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase whitespace-nowrap tracking-wider border shadow-sm transition-all duration-300"
         style={{
           backgroundColor: bg,
           borderColor: border,
@@ -33,7 +33,7 @@ export const ColoredBadge = ({ value, isDark }) => {
   }
 
   return (
-    <span className={`inline-flex items-center px-3 py-0.5 rounded-md text-[10px] font-black uppercase whitespace-nowrap border tracking-wider shadow-sm ${isDark ? 'bg-zinc-800/40 border-zinc-700/50 text-zinc-400' : 'bg-gray-100/60 border-gray-300/50 text-gray-500'}`}>
+    <span className={`inline-flex items-center px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase whitespace-nowrap border tracking-wider shadow-sm ${isDark ? 'bg-zinc-800/40 border-zinc-700/50 text-zinc-400' : 'bg-gray-100/60 border-gray-300/50 text-gray-500'}`}>
       {value}
     </span>
   );
