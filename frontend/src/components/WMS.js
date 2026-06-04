@@ -41,7 +41,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'transit':      return <TransitModule />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
-    case 'locations':    return <LocationsModule />;
+    case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
     case 'picking':      return <PickingModule />;
     case 'neck_cutting': return <NeckCuttingModule />;
     case 'finished':     return <FinishedGoodsModule />;
@@ -372,7 +372,7 @@ export default function WMS() {
             </div>
           ) : (
             <div key={activeModule} className="animate-in fade-in duration-200">
-              {renderActiveModule(activeModule, { associatedCustomer, setActiveModule })}
+              {renderActiveModule(activeModule, { associatedCustomer, setActiveModule, currentUser })}
             </div>
           )}
         </div>

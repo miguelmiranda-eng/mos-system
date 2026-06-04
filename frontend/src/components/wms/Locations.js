@@ -10,8 +10,9 @@ const SYSTEM_TRANSIT_NAMES = new Set([
   'UBICACION TEMPORAL', 'CARRO 1', 'CARRO 2', 'CARRO 3', 'CARRO 4', 'CARRO 5',
 ]);
 
-export const LocationsModule = () => {
+export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
+  const isSupersu = currentUser?.role === 'supersu';
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -306,7 +307,28 @@ export const LocationsModule = () => {
         return next;
       });
     }
-  }, [boxesByInv, detailLoc]);
+  }, [boxesByInv, detailLoc, openDrawers]);
+
+  // Super-user only. Deletes an LPN and refetches the location so the line
+  // counts / on-hand reflect the inventory rebalance the backend just did.
+  const deleteBox = useCallback(async (box) => {
+    const id = box?.box_id;
+    if (!id) return;
+    if (!window.confirm(`¿Borrar la caja ${id}? Descuenta sus unidades del inventario y no se puede deshacer.`)) return;
+    try {
+      const res = await fetch(`${API}/boxes/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo borrar la caja');
+        return;
+      }
+      toast.success(`Caja ${id} borrada`);
+      if (detailLoc) openDetail(detailLoc);
+    } catch (err) {
+      logLoadError('delete box')(err);
+      toast.error('Error de conexión');
+    }
+  }, [detailLoc, openDetail]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1094,14 +1116,26 @@ export const LocationsModule = () => {
                                       <td className="p-2.5 text-right font-mono font-black text-emerald-500 text-[12px] tabular-nums">{(b.units || b.qty || 0).toLocaleString()}</td>
                                       <td className="p-2.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{b.state || b.status || '—'}</td>
                                       <td className="p-2.5 text-right">
-                                        <button
-                                          type="button"
-                                          onClick={() => startRelocate(b.box_id)}
-                                          className="opacity-0 group-hover/lpn:opacity-100 transition-opacity inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded-md border border-amber-500/30"
-                                          title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
-                                        >
-                                          <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
-                                        </button>
+                                        <div className="inline-flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => startRelocate(b.box_id)}
+                                            className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded-md border border-amber-500/30"
+                                            title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
+                                          >
+                                            <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
+                                          </button>
+                                          {isSupersu && (
+                                            <button
+                                              type="button"
+                                              onClick={() => deleteBox(b)}
+                                              className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-destructive hover:bg-destructive/10 rounded-md border border-destructive/30"
+                                              title={`Borrar ${b.box_id || 'esta caja'} (solo Super Usuario)`}
+                                            >
+                                              <Trash2 className="w-2.5 h-2.5" /> Borrar
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                     </tr>
                                   );

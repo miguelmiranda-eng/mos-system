@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse
-from deps import db, get_current_user, require_auth, require_admin, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_supersu, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -1462,6 +1462,50 @@ async def update_box(box_id: str, request: Request):
 
     updated = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     return updated
+
+
+@router.delete("/boxes/{box_id}")
+async def delete_box(box_id: str, request: Request):
+    """Delete a box (LPN). Super-user only. Deducts the box's units from the
+    location's inventory row (mirrors the rebalance in update_box) and removes
+    the inventory row entirely if it empties out and no other box feeds it."""
+    user = await require_supersu(request)
+
+    box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    if not box:
+        raise HTTPException(404, f"Caja {box_id} no encontrada")
+
+    units = int(box.get("units") or box.get("qty") or 0)
+    sku = box.get("sku") or box.get("style") or ""
+    color = box.get("color", "")
+    size = box.get("size", "")
+    location = box.get("location", "")
+
+    if units > 0 and location:
+        inv = await db.wms_inventory.find_one({
+            "sku": sku, "color": color, "size": size, "location": location,
+        })
+        if inv:
+            new_on_hand = max(0, int(inv.get("units_on_hand", 0)) - units)
+            still = await db.wms_boxes.count_documents({
+                "sku": sku, "color": color, "size": size, "location": location,
+                "box_id": {"$ne": box_id}, "units": {"$gt": 0},
+            })
+            if new_on_hand == 0 and not still:
+                await db.wms_inventory.delete_one({"_id": inv["_id"]})
+            else:
+                await db.wms_inventory.update_one(
+                    {"_id": inv["_id"]},
+                    {"$set": {"units_on_hand": new_on_hand, "updated_at": now_iso()}},
+                )
+
+    await db.wms_boxes.delete_one({"box_id": box_id})
+    await log_movement(user, "box_deleted", {
+        "box_id": box_id, "sku": sku, "color": color, "size": size,
+        "location": location, "units": units,
+    })
+    await notify_badge_change("all")
+    return {"status": "deleted", "box_id": box_id}
 
 # ==================== PUTAWAY ====================
 
