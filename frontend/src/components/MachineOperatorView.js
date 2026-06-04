@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../App";
+import { useTheme } from "../contexts/ThemeContext";
 import { Toaster, toast } from "sonner";
 import {
   Factory, Search, LogOut, Loader2, Package, RefreshCw, MessageSquare,
@@ -35,6 +36,9 @@ const fetcher = (path) =>
 
 export default function MachineOperatorView() {
   const { user, logout } = useAuth();
+  const { setTheme } = useTheme();
+  // Operator profile always starts in light theme.
+  useEffect(() => { setTheme("light"); }, [setTheme]);
   // Operators see every board in the system and can freely switch between them.
   // The full list comes from /config/boards (same source as the Dashboard);
   // FALLBACK_BOARDS keeps the selector populated if that fetch fails.
