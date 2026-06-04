@@ -28,10 +28,16 @@ async def get_order_history_consolidated(order_id: str, request: Request):
     await require_auth(request)
 
     # 1. Get Order Info ────────────────────────────────────────────────────
-    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    # Forgiving lookup: by order_id, then order_number, tolerating a leading
+    # '#' the user may type and the '#'-prefixed form some docs store.
+    raw = (order_id or "").strip()
+    bare = raw.lstrip("#").strip()
+    order = await db.orders.find_one({"order_id": raw}, {"_id": 0})
     if not order:
-        # Try search by order_number
-        order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
+        for cand in [raw, bare, f"#{bare}"]:
+            order = await db.orders.find_one({"order_number": cand}, {"_id": 0})
+            if order:
+                break
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -63,7 +69,12 @@ async def get_order_history_consolidated(order_id: str, request: Request):
         except Exception as e:
             logger.error(f"[order-history] activity_logs query failed for {oid}: {e}")
 
+    # These actions are rendered from richer dedicated collections below, so
+    # skip them here to avoid showing each event twice in the timeline.
+    _RICHER_ELSEWHERE = {"add_comment", "register_production"}
     for a in activities:
+        if a.get("action") in _RICHER_ELSEWHERE:
+            continue
         events.append({
             "timestamp": a.get("timestamp"),
             "type": "activity",
@@ -71,6 +82,7 @@ async def get_order_history_consolidated(order_id: str, request: Request):
             "user": a.get("user_name") or a.get("user_email") or "System",
             "description": _humanize(a.get("action")),
             "details": a.get("details", {}) or {},
+            "previous_data": a.get("previous_data") or {},
         })
 
     # 3. Production Logs ───────────────────────────────────────────────────
@@ -131,6 +143,29 @@ async def get_order_history_consolidated(order_id: str, request: Request):
             "user": c.get("user_name") or "Sistema",
             "description": "Comentario añadido",
             "details": {"content": c.get("content") or ""},
+        })
+
+    # 5b. Neck cutting logs ──────────────────────────────────────────────────
+    neck_or = []
+    if oid:
+        neck_or.append({"order_id": oid})
+    if onum:
+        neck_or.append({"order_number": onum})
+    neck = []
+    if neck_or:
+        try:
+            neck = await db.neck_logs.find({"$or": neck_or}, {"_id": 0}).to_list(1000)
+        except Exception as e:
+            logger.error(f"[order-history] neck_logs query failed for {oid}: {e}")
+    for n in neck:
+        qty = n.get("qty_neck_cut") or 0
+        events.append({
+            "timestamp": n.get("created_at"),
+            "type": "neck",
+            "action": "neck_cut",
+            "user": n.get("operator") or n.get("user_name") or "Sistema",
+            "description": f"Corte de neck: {qty} pcs",
+            "details": n,
         })
 
     # 6. Synthesize a "Order created" event from the create_order activity

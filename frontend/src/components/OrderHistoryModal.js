@@ -4,35 +4,65 @@ import {
   ChevronDown, ChevronUp, Download, Loader2, Calendar, 
   User, ArrowRight, ClipboardList
 } from 'lucide-react';
-import { API } from '../lib/constants';
+import { API, DEFAULT_COLUMNS } from '../lib/constants';
 import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
 
-const OrderHistoryModal = ({ order, isOpen, onClose }) => {
+const FIELD_LABELS = Object.fromEntries((DEFAULT_COLUMNS || []).map(c => [c.key, c.label]));
+const labelFor = (k) => FIELD_LABELS[k] || String(k || '').replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase());
+const fmtVal = (v) => {
+  if (v === null || v === undefined || v === '') return '∅';
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  if (typeof v === 'object') return v.desc || v.url || JSON.stringify(v);
+  return String(v);
+};
+const ACTION_ES = {
+  create_order: 'Creó la orden',
+  update_order: 'Editó la orden',
+  move_order: 'Movió de tablero',
+  delete_order: 'Envió a la papelera',
+  bulk_move_orders: 'Movió órdenes en lote',
+  upload_attachment: 'Adjuntó un archivo',
+  add_comment: 'Comentó',
+  create_qc_record: 'Registró QC',
+  auto_create_qc: 'QC auto-generado',
+  automation_triggered: 'Automatización ejecutada',
+  register_production: 'Registró producción',
+  neck_cut: 'Corte de neck',
+};
+
+const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
   const { t } = useLang();
   const [history, setHistory] = useState([]);
   const [creator, setCreator] = useState(null); // { name, email, created_at }
+  const [orderDoc, setOrderDoc] = useState(null); // order returned by the endpoint
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
+  // Accept either an order object (Dashboard/WMS) or a raw order number/id
+  // typed in the Activity Log search.
+  const lookupId = order?.order_id || query;
+
   useEffect(() => {
-    if (isOpen && order) {
+    if (isOpen && lookupId) {
       fetchHistory();
     }
-  }, [isOpen, order]);
+  }, [isOpen, order, query]);
 
   const fetchHistory = async () => {
     setLoading(true);
     setLoadError(null);
     setHistory([]);
     setCreator(null);
+    setOrderDoc(null);
     try {
-      const res = await fetch(`${API}/reports/order-history/${order.order_id}`, { credentials: 'include' });
+      const res = await fetch(`${API}/reports/order-history/${encodeURIComponent(lookupId)}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setHistory(data.history || []);
         setCreator(data.creator || null);
+        setOrderDoc(data.order || null);
       } else {
         let detail = `HTTP ${res.status}`;
         try {
@@ -54,9 +84,9 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
   const handleDownloadPDF = async () => {
     setDownloading(true);
     try {
-      const res = await fetch(`${API}/reports/order-history/${order.order_id}/pdf`, { 
-        method: 'POST', 
-        credentials: 'include' 
+      const res = await fetch(`${API}/reports/order-history/${encodeURIComponent(lookupId)}/pdf`, {
+        method: 'POST',
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -76,6 +106,10 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
   };
 
   if (!isOpen) return null;
+
+  // Prefer the order doc the endpoint resolved (works when searching by
+  // number alone); fall back to the prop or an empty object.
+  const ord = orderDoc || order || {};
 
   const getEventIcon = (type) => {
     switch (type) {
@@ -118,7 +152,7 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
                 Reporte <span className="text-primary text-glow-primary">Extendido</span>
               </h2>
               <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">
-                PO: <span className="text-foreground">{order.order_number}</span> | {order.client}
+                PO: <span className="text-foreground">{ord.order_number || query || '—'}</span> | {ord.client || ''}
               </p>
             </div>
           </div>
@@ -147,10 +181,10 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
           {/* Executive Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: 'Estado Actual', value: order.board || 'N/A', icon: FileText, color: 'text-indigo-400' },
-              { label: 'Producción', value: order.production_status || 'N/A', icon: Factory, color: 'text-emerald-400' },
-              { label: 'Cantidad', value: order.quantity || 0, icon: Package, color: 'text-blue-400' },
-              { label: 'Fecha Entrega', value: order.due_date || 'N/A', icon: Calendar, color: 'text-amber-400' },
+              { label: 'Estado Actual', value: ord.board || 'N/A', icon: FileText, color: 'text-indigo-400' },
+              { label: 'Producción', value: ord.production_status || 'N/A', icon: Factory, color: 'text-emerald-400' },
+              { label: 'Cantidad', value: ord.quantity || 0, icon: Package, color: 'text-blue-400' },
+              { label: 'Fecha Entrega', value: ord.due_date || 'N/A', icon: Calendar, color: 'text-amber-400' },
             ].map((stat, i) => (
               <div key={i} className="bg-secondary/20 border border-border/30 rounded-2xl p-4 flex flex-col gap-1">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground">
@@ -231,7 +265,7 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
                       
                       <div className="text-sm font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-2">
                         {getEventIcon(event.type)}
-                        {event.description}
+                        {ACTION_ES[event.action] || event.description}
                       </div>
 
                       {/* Extra context specifically for comments or specific activities */}
@@ -242,10 +276,48 @@ const OrderHistoryModal = ({ order, isOpen, onClose }) => {
                                "{event.details.content}"
                              </p>
                            )}
-                           {event.type === 'activity' && event.action === 'update_order' && event.details.changed_fields && (
-                             <p className="text-[10px] text-muted-foreground font-medium">
-                               Campos modificados: <span className="text-foreground/70">{event.details.changed_fields.join(', ')}</span>
-                             </p>
+                           {event.type === 'activity' && event.action === 'update_order' && (() => {
+                             const ch = event.details?.changes && typeof event.details.changes === 'object' ? event.details.changes : null;
+                             const prev = event.previous_data?.fields || {};
+                             const fields = ch ? Object.keys(ch) : (event.details?.changed_fields || []);
+                             if (!fields.length) return null;
+                             return (
+                               <div className="space-y-1">
+                                 {fields.map(f => {
+                                   const c = ch?.[f];
+                                   return (
+                                     <div key={f} className="flex items-center gap-2 flex-wrap text-[11px]">
+                                       <span className="font-black uppercase tracking-wide text-muted-foreground/80 text-[9px]">{labelFor(f)}</span>
+                                       {c ? (
+                                         <span className="inline-flex items-center gap-1.5">
+                                           <span className="px-1.5 py-0.5 rounded bg-secondary/60 text-muted-foreground font-mono">{fmtVal(c.from)}</span>
+                                           <ArrowRight className="w-3 h-3 text-muted-foreground/50" />
+                                           <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary font-mono font-bold">{fmtVal(c.to)}</span>
+                                         </span>
+                                       ) : (
+                                         <span className="px-1.5 py-0.5 rounded bg-secondary/60 text-muted-foreground font-mono">antes: {fmtVal(prev[f])}</span>
+                                       )}
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                             );
+                           })()}
+                           {event.type === 'activity' && event.action === 'move_order' && (
+                             <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                               <span className="px-1.5 py-0.5 rounded bg-secondary/60 text-muted-foreground font-mono">{fmtVal(event.details?.from_board)}</span>
+                               <ArrowRight className="w-3 h-3 text-muted-foreground/50" />
+                               <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary font-mono font-bold">{fmtVal(event.details?.to_board)}</span>
+                             </div>
+                           )}
+                           {event.type === 'activity' && event.action === 'upload_attachment' && event.details?.filename && (
+                             <p className="text-[11px] text-muted-foreground font-mono">{event.details.filename}</p>
+                           )}
+                           {event.type === 'activity' && (event.action === 'create_qc_record' || event.action === 'auto_create_qc') && (
+                             <p className="text-[11px] text-muted-foreground">Resultado: <span className="text-foreground/80 font-bold">{event.details?.result || event.details?.reason || '—'}</span></p>
+                           )}
+                           {event.type === 'activity' && event.action === 'automation_triggered' && (
+                             <p className="text-[11px] text-muted-foreground">{event.details?.automation_name || event.details?.automation_id}</p>
                            )}
                         </div>
                       )}

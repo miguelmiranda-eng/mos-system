@@ -283,8 +283,11 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     changed_data = {k: v for k, v in update_data.items() if k != "updated_at"}
     prev_values = {k: existing.get(k) for k in changed_data}
+    # Record per-field from→to so the order history can show "X changed from A to B".
+    changes = {k: {"from": existing.get(k), "to": v} for k, v in changed_data.items()}
     await log_activity(user, "update_order", {
-        "order_id": order_id, "order_number": existing.get("order_number"), "changed_fields": list(changed_data.keys())
+        "order_id": order_id, "order_number": existing.get("order_number"),
+        "changed_fields": list(changed_data.keys()), "changes": changes,
     }, previous_data={"order_id": order_id, "fields": prev_values})
     # Auto-create QC record when production_status changes to "NECESITA QC"
     old_status = existing.get("production_status", "")
