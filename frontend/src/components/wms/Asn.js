@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2 } from "lucide-react";
+import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, deleter, logLoadError } from "./lib";
+import { API, fetcher, deleter, putter, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STATUS_STYLES = {
@@ -20,8 +20,9 @@ const TABS = [
   { id: AsnStatus.RECEIVED,    label: 'Completado' },
 ];
 
-export const AsnModule = () => {
+export const AsnModule = ({ currentUser }) => {
   const { t } = useLang();
+  const isSupersu = currentUser?.role === 'supersu';
   const [asns, setAsns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -36,6 +37,72 @@ export const AsnModule = () => {
   const [detailFor, setDetailFor] = useState(null);   // asn_id
   const [detailData, setDetailData] = useState(null); // {asn, boxes}
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Edit mode (super-user only)
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(null);   // { vendor, po_number, expected_date, items: [...] }
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const startEdit = () => {
+    const a = detailData?.asn;
+    if (!a) return;
+    setEditDraft({
+      vendor: a.vendor || '',
+      po_number: a.po_number || '',
+      expected_date: a.expected_date || '',
+      items: (a.items || []).map(it => ({
+        line_no: it.line_no,
+        part_number: it.part_number || '',
+        description: it.description || '',
+        country: it.country || '',
+        brand: it.brand || '',
+        qty_expected: it.qty_expected || 0,
+        qty_received: it.qty_received || 0,
+      })),
+    });
+    setEditing(true);
+  };
+  const cancelEdit = () => { setEditing(false); setEditDraft(null); };
+  const setItem = (i, field, value) =>
+    setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [field]: value } : it) }));
+  const addItem = () =>
+    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', qty_expected: 0, qty_received: 0 }] }));
+  const removeItem = (i) =>
+    setEditDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
+
+  const saveEdit = async () => {
+    if (!editDraft) return;
+    const items = editDraft.items
+      .filter(it => (it.part_number || '').trim())
+      .map(it => ({
+        line_no: it.line_no,
+        part_number: it.part_number,
+        description: it.description,
+        country: it.country,
+        brand: it.brand,
+        qty_expected: parseInt(it.qty_expected, 10) || 0,
+      }));
+    if (items.length === 0) { toast.error("El ASN debe tener al menos una línea con Part Number"); return; }
+    setSavingEdit(true);
+    try {
+      const res = await putter(`/asn/${encodeURIComponent(detailFor)}`, {
+        vendor: editDraft.vendor, po_number: editDraft.po_number, expected_date: editDraft.expected_date, items,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se pudo guardar el ASN");
+        return;
+      }
+      toast.success("ASN actualizado");
+      setEditing(false); setEditDraft(null);
+      const fresh = await fetcher(`/asn/${encodeURIComponent(detailFor)}`);
+      setDetailData(fresh);
+      loadAsns();
+    } catch (err) {
+      logLoadError('update ASN')(err);
+      toast.error("Error de conexión");
+    } finally { setSavingEdit(false); }
+  };
 
   const loadAsns = useCallback(async () => {
     try {
@@ -208,6 +275,7 @@ export const AsnModule = () => {
     setDetailFor(asnId);
     setDetailLoading(true);
     setDetailData(null);
+    setEditing(false); setEditDraft(null);
     try {
       const data = await fetcher(`/asn/${encodeURIComponent(asnId)}`);
       setDetailData(data);
@@ -480,15 +548,41 @@ export const AsnModule = () => {
                 </div>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                  onClick={() => handleDelete(detailFor, { closeDetail: true })}
-                  className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
-                  title="Eliminar ASN"
-                  data-testid="asn-detail-delete"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-                <button onClick={() => { setDetailFor(null); setDetailData(null); }} className="p-2 hover:bg-secondary rounded-lg transition-all">
+                {isSupersu && !editing && detailData && (
+                  <button
+                    onClick={startEdit}
+                    className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all"
+                    title="Editar ASN (Super Usuario)"
+                    data-testid="asn-detail-edit"
+                  >
+                    <Pencil className="w-5 h-5" />
+                  </button>
+                )}
+                {editing && (
+                  <>
+                    <button
+                      onClick={saveEdit}
+                      disabled={savingEdit}
+                      className="px-3 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Guardar
+                    </button>
+                    <button onClick={cancelEdit} className="px-3 py-2 text-muted-foreground hover:bg-secondary rounded-lg text-[11px] font-black uppercase tracking-widest">
+                      Cancelar
+                    </button>
+                  </>
+                )}
+                {!editing && (
+                  <button
+                    onClick={() => handleDelete(detailFor, { closeDetail: true })}
+                    className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                    title="Eliminar ASN"
+                    data-testid="asn-detail-delete"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
+                <button onClick={() => { setDetailFor(null); setDetailData(null); cancelEdit(); }} className="p-2 hover:bg-secondary rounded-lg transition-all">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -586,9 +680,37 @@ export const AsnModule = () => {
                     </div>
                   )}
 
+                  {/* Editable header fields (super-user edit mode) */}
+                  {editing && editDraft && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Proveedor</label>
+                        <input value={editDraft.vendor} onChange={e => setEditDraft(d => ({ ...d, vendor: e.target.value }))}
+                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">PO #</label>
+                        <input value={editDraft.po_number} onChange={e => setEditDraft(d => ({ ...d, po_number: e.target.value }))}
+                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Fecha esperada</label>
+                        <input value={editDraft.expected_date} onChange={e => setEditDraft(d => ({ ...d, expected_date: e.target.value }))}
+                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Expected vs received table */}
                   <div>
-                    <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">Líneas del packing list</h4>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground">Líneas del packing list</h4>
+                      {editing && (
+                        <button onClick={addItem} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary border border-primary/30 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary/20">
+                          <Plus className="w-3.5 h-3.5" /> Agregar línea
+                        </button>
+                      )}
+                    </div>
                     <div className="border border-border/30 rounded-2xl overflow-hidden">
                       <table className="w-full text-sm">
                         <thead className="bg-secondary/40">
@@ -600,36 +722,54 @@ export const AsnModule = () => {
                             <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Marca</th>
                             <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Esperado</th>
                             <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido</th>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-32">Progreso</th>
+                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-32">{editing ? '' : 'Progreso'}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border/10">
-                          {(detailData.asn?.items || []).map(it => {
-                            const exp = it.qty_expected || 0;
-                            const rcv = it.qty_received || 0;
-                            const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
-                            const done = rcv >= exp;
-                            return (
-                              <tr key={it.line_no} className="hover:bg-secondary/30">
-                                <td className="p-3 text-xs font-mono text-muted-foreground">{it.line_no}</td>
-                                <td className="p-3 text-xs font-mono font-black text-primary">{it.part_number}</td>
-                                <td className="p-3 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
-                                <td className="p-3 text-xs font-mono">{it.country || '—'}</td>
-                                <td className="p-3 text-xs">{it.brand || '—'}</td>
-                                <td className="p-3 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
-                                <td className={`p-3 text-xs text-right tabular-nums font-bold ${done ? 'text-emerald-400' : rcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
-                                <td className="p-3">
-                                  <div className="h-1.5 bg-secondary/40 rounded-full overflow-hidden">
-                                    <div className={`h-full ${done ? 'bg-emerald-500' : rcv > 0 ? 'bg-amber-500' : 'bg-blue-500/40'}`} style={{ width: `${pct}%` }} />
-                                  </div>
-                                  <div className="text-[10px] font-bold text-muted-foreground mt-0.5">{pct}%</div>
+                          {editing && editDraft ? (
+                            editDraft.items.map((it, i) => (
+                              <tr key={i} className="hover:bg-secondary/30">
+                                <td className="p-2 text-xs font-mono text-muted-foreground">{i + 1}</td>
+                                <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-secondary/60 border border-border rounded text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full h-8 px-2 bg-secondary/60 border border-border rounded text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-secondary/60 border border-border rounded text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-secondary/60 border border-border rounded text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input type="number" min="0" value={it.qty_expected} onChange={e => setItem(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-secondary/60 border border-border rounded text-xs text-right tabular-nums focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2 text-xs text-right tabular-nums text-muted-foreground">{(it.qty_received || 0).toLocaleString()}</td>
+                                <td className="p-2 text-center">
+                                  <button onClick={() => removeItem(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded" title="Quitar línea"><Trash2 className="w-3.5 h-3.5" /></button>
                                 </td>
                               </tr>
-                            );
-                          })}
+                            ))
+                          ) : (
+                            (detailData.asn?.items || []).map(it => {
+                              const exp = it.qty_expected || 0;
+                              const rcv = it.qty_received || 0;
+                              const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
+                              const done = rcv >= exp;
+                              return (
+                                <tr key={it.line_no} className="hover:bg-secondary/30">
+                                  <td className="p-3 text-xs font-mono text-muted-foreground">{it.line_no}</td>
+                                  <td className="p-3 text-xs font-mono font-black text-primary">{it.part_number}</td>
+                                  <td className="p-3 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
+                                  <td className="p-3 text-xs font-mono">{it.country || '—'}</td>
+                                  <td className="p-3 text-xs">{it.brand || '—'}</td>
+                                  <td className="p-3 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
+                                  <td className={`p-3 text-xs text-right tabular-nums font-bold ${done ? 'text-emerald-400' : rcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
+                                  <td className="p-3">
+                                    <div className="h-1.5 bg-secondary/40 rounded-full overflow-hidden">
+                                      <div className={`h-full ${done ? 'bg-emerald-500' : rcv > 0 ? 'bg-amber-500' : 'bg-blue-500/40'}`} style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <div className="text-[10px] font-bold text-muted-foreground mt-0.5">{pct}%</div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
+                    {editing && <p className="text-[10px] text-muted-foreground/60 mt-2 italic">La columna "Recibido" no se edita: refleja el material realmente recibido. El estatus se recalcula al guardar.</p>}
                   </div>
 
                   {/* Received boxes */}

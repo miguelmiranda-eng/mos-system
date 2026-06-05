@@ -3630,6 +3630,69 @@ async def delete_asn(asn_id: str, request: Request):
     })
     return {"status": "deleted", "asn_id": asn_id, "boxes_kept": boxes_count}
 
+@router.put("/asn/{asn_id}")
+async def update_asn(asn_id: str, request: Request):
+    """Edit an ASN's header and packing-list lines. Super-user only.
+    Received quantities are preserved (matched by line_no, then part_number),
+    and status is recomputed from expected vs received."""
+    user = await require_supersu(request)
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+    if not asn:
+        raise HTTPException(404, f"ASN {asn_id} no encontrado")
+    body = await request.json()
+
+    update = {}
+    for k in ("po_number", "vendor", "expected_date"):
+        if k in body:
+            v = str(body.get(k) or "").strip()
+            update[k] = v.upper() if k == "vendor" else v
+
+    if "items" in body:
+        incoming = body.get("items") or []
+        if not incoming:
+            raise HTTPException(400, "El ASN debe contener al menos un item")
+        prev = asn.get("items", [])
+        by_line = {it.get("line_no"): it for it in prev}
+        by_part = {}
+        for it in prev:
+            by_part.setdefault(str(it.get("part_number", "")).upper(), it)
+        normalized = []
+        for idx, it in enumerate(incoming, start=1):
+            part = str(it.get("part_number", it.get("sku", ""))).strip().upper()
+            # Preserve received qty: match by the original line_no, then part_number.
+            src = by_line.get(it.get("line_no")) or by_part.get(part) or {}
+            normalized.append({
+                "line_no": idx,
+                "part_number": part,
+                "description": str(it.get("description", "")).strip(),
+                "qty_expected": int(it.get("qty_expected", it.get("quantity", 0)) or 0),
+                "qty_received": int(src.get("qty_received", 0) or 0),
+                "country": str(it.get("country", "")).strip().upper(),
+                "brand": str(it.get("brand", "")).strip().upper(),
+            })
+        update["items"] = normalized
+
+        total_exp = sum(i["qty_expected"] for i in normalized)
+        total_rcv = sum(i["qty_received"] for i in normalized)
+        if total_rcv <= 0:
+            update["status"] = AsnStatus.PENDING
+        elif total_rcv >= total_exp and all(i["qty_received"] >= i["qty_expected"] for i in normalized):
+            update["status"] = AsnStatus.RECEIVED
+        else:
+            update["status"] = AsnStatus.PARTIAL
+
+    if not update:
+        raise HTTPException(400, "Nada por actualizar")
+
+    update["updated_at"] = now_iso()
+    update["updated_by"] = user.get("user_id")
+    await db.wms_asn.update_one({"asn_id": asn_id}, {"$set": update})
+    await log_movement(user, MovementType.ASN_IMPORTED, {
+        "asn_id": asn_id, "edited": True,
+        "fields": [k for k in update if k not in ("updated_at", "updated_by")],
+    })
+    return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+
 @router.post("/asn/import")
 async def import_asn(
     request: Request,

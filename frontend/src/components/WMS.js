@@ -47,7 +47,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'finished':     return <FinishedGoodsModule />;
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
-    case 'asn':          return <AsnModule />;
+    case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
     default:             return <ReceivingModule />;
   }
 };
