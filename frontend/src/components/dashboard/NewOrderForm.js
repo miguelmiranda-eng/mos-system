@@ -371,23 +371,23 @@ export const NewOrderForm = ({
 
       {/* Combined Scrollable Area */}
       <div className={`flex-1 overflow-y-auto p-0 custom-scrollbar ${isPreview ? 'bg-secondary/10' : 'bg-gradient-to-b from-transparent to-secondary/10'}`}>
-        <div className="px-6 py-8">
-          <div className="max-w-4xl mx-auto space-y-8">
+        <div className="px-6 py-5">
+          <div className="max-w-4xl mx-auto space-y-4">
           
           {/* Printavo Magic Import */}
-          <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform pointer-events-none">
-              <Zap className="w-16 h-16 text-primary" />
+          <div className="bg-primary/5 border border-primary/20 rounded-xl p-3.5 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform pointer-events-none">
+              <Zap className="w-10 h-10 text-primary" />
             </div>
-            
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary shadow-inner">
-                  <Zap className="w-5 h-5" />
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary shadow-inner shrink-0">
+                  <Zap className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Importación Externa</h3>
-                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60">Extrae datos desde Printavo (Enlace o PDF)</p>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">Importación Externa</h3>
+                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">Extrae datos desde Printavo (Enlace o PDF)</p>
                 </div>
               </div>
               <button 
@@ -400,7 +400,7 @@ export const NewOrderForm = ({
             </div>
 
             {showImportPanel && (
-              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="space-y-3 mt-3 animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -458,24 +458,24 @@ export const NewOrderForm = ({
           </div>
 
           {/* Pre-Order Linkage Section */}
-          <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-6 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
-              <Tag className="w-16 h-16 text-amber-500" />
+          <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-3.5 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-3 opacity-10 pointer-events-none">
+              <Tag className="w-10 h-10 text-amber-500" />
             </div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-600 shadow-inner">
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-600 shadow-inner shrink-0">
                 <Link2 className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-black uppercase tracking-widest text-amber-900">Vincular Pre-Orden</h3>
-                <p className="text-[10px] uppercase font-bold text-amber-700/60">Ingresa el Design # para jalar el arte</p>
+                <h3 className="text-xs font-black uppercase tracking-widest text-amber-900">Vincular Pre-Orden</h3>
+                <p className="text-[9px] uppercase font-bold text-amber-700/60">Ingresa el Design # para jalar el arte</p>
               </div>
             </div>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-600/50" />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={formData.design_number || formData["design_#"] || ''}
                   onChange={(e) => {
                     set('design_number', e.target.value.toUpperCase());
@@ -483,38 +483,38 @@ export const NewOrderForm = ({
                   }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleDesignCheck(); } }}
                   placeholder="Ej: DES-999"
-                  className="w-full bg-white border border-amber-200 rounded-xl pl-10 pr-4 py-3 text-lg font-black text-slate-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all outline-none uppercase"
+                  className="w-full bg-white border border-amber-200 rounded-lg pl-10 pr-4 py-2.5 text-sm font-black text-slate-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all outline-none uppercase"
                 />
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={handleDesignCheck}
                 disabled={checkingDesign || (!formData.design_number && !formData["design_#"])}
-                className="px-8 py-3 bg-amber-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                className="px-6 py-2.5 bg-amber-500 text-white rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
               >
                 {checkingDesign ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
               </button>
             </div>
             {linkedPreorderId && (
-              <div className="mt-3 flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+              <div className="mt-2.5 flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Vinculado a Pre-Orden Exitosamente
               </div>
             )}
           </div>
 
           {/* Twin (gemela) Linkage Section */}
-          <div className="bg-fuchsia-500/5 border border-fuchsia-500/20 rounded-2xl p-6 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
-              <Users className="w-16 h-16 text-fuchsia-500" />
+          <div className="bg-fuchsia-500/5 border border-fuchsia-500/20 rounded-xl p-3.5 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-3 opacity-10 pointer-events-none">
+              <Users className="w-10 h-10 text-fuchsia-500" />
             </div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-fuchsia-500/20 flex items-center justify-center text-fuchsia-500 shadow-inner">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-fuchsia-500/20 flex items-center justify-center text-fuchsia-500 shadow-inner shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Orden Gemela (Twin)</h3>
-                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60">Marca esta orden como gemela de otra existente</p>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">Orden Gemela (Twin)</h3>
+                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">Marca esta orden como gemela de otra existente</p>
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -534,7 +534,7 @@ export const NewOrderForm = ({
               </label>
             </div>
             {twinEnabled && (
-              <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="space-y-3 mt-3 animate-in fade-in slide-in-from-top-2 duration-200">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fuchsia-500/60" />
