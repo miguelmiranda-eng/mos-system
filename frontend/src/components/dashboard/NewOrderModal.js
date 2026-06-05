@@ -21,7 +21,11 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [formFieldKeys, setFormFieldKeys] = useState(HARDCODED_DEFAULTS);
 
-  const allColumns = [...DEFAULT_COLUMNS, ...columns.filter(c => c.custom)];
+  // The field universe is the GLOBAL column set (Columnas Globales): `columns`
+  // already excludes removed defaults and includes customs. Fall back to the
+  // built-in defaults only if it hasn't loaded yet.
+  const allColumns = columns.length ? columns : DEFAULT_COLUMNS;
+  const validKeys = new Set(allColumns.map(c => c.key));
 
   useEffect(() => {
     if (isOpen) {
@@ -132,7 +136,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         >
         <LoadingOverlay isLoading={loading} message={t('processing')} />
         <NewOrderForm
-          formFieldKeys={formFieldKeys}
+          formFieldKeys={formFieldKeys.filter(k => validKeys.has(k))}
           options={options}
           groupConfig={groupConfig}
           allColumns={allColumns}

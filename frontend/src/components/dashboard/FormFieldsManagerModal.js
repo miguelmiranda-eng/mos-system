@@ -22,8 +22,15 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
   const [options, setOptions] = useState({});
   const [groupConfig, setGroupConfig] = useState({});
   const [columns, setColumns] = useState(propsColumns);
+  const [removedDefaults, setRemovedDefaults] = useState([]);
 
-  const allColumns = [...DEFAULT_COLUMNS, ...columns.filter(c => c.custom)];
+  // Field universe = the GLOBAL column set defined in Columnas Globales:
+  // default columns minus the removed ones, plus custom columns.
+  const defaultKeys = new Set(DEFAULT_COLUMNS.map(c => c.key));
+  const allColumns = [
+    ...DEFAULT_COLUMNS.filter(c => !removedDefaults.includes(c.key)),
+    ...columns.filter(c => c.custom && !defaultKeys.has(c.key)),
+  ];
 
   // Drag state
   const dragIdx = useRef(null);
@@ -43,19 +50,26 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
     .then(([formData, optionsData, groupsData, colsData]) => {
       setOptions(optionsData);
       setGroupConfig(groupsData);
+      const removed = colsData.removed_default_columns || [];
+      setRemovedDefaults(removed);
       setColumns(colsData.custom_columns || []);
 
+      // Build the global column set (defaults minus removed + customs).
+      const dk = new Set(DEFAULT_COLUMNS.map(c => c.key));
+      const currentAllCols = [
+        ...DEFAULT_COLUMNS.filter(c => !removed.includes(c.key)),
+        ...(colsData.custom_columns || []).filter(c => c.custom && !dk.has(c.key)),
+      ];
+      const validKeys = new Set(currentAllCols.map(c => c.key));
+
       if (formData.fields?.length) {
-        const ordered = [...formData.fields];
-        // Ensure allColumns is defined correctly here using the newest colsData
-        const currentAllCols = [...DEFAULT_COLUMNS, ...(colsData.custom_columns || []).filter(c => c.custom)];
-        currentAllCols.forEach(c => {
-          if (!ordered.includes(c.key)) ordered.push(c.key);
-        });
+        // Keep only saved fields that still exist globally, then append any new
+        // global columns not yet in the saved order.
+        const ordered = formData.fields.filter(k => validKeys.has(k));
+        currentAllCols.forEach(c => { if (!ordered.includes(c.key)) ordered.push(c.key); });
         setSelectedFields(ordered);
         setHiddenFields(currentAllCols.filter(c => !formData.fields.includes(c.key)).map(c => c.key));
       } else {
-        const currentAllCols = [...DEFAULT_COLUMNS, ...(colsData.custom_columns || []).filter(c => c.custom)];
         setSelectedFields(currentAllCols.map(c => c.key));
         setHiddenFields(currentAllCols.filter(c => !HARDCODED_DEFAULTS.includes(c.key)).map(c => c.key));
       }
