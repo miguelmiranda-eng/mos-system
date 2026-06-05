@@ -5,7 +5,7 @@ import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
 import {
   Search, Plus, LogOut, X, RefreshCw, Trash2, ListFilter,
-  Download, Sun, Moon, Settings, GripVertical, PlusCircle,
+  Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
   ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu
@@ -112,11 +112,18 @@ const Dashboard = () => {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
 
-  // Column visibility & ordering
+  // Column visibility & ordering.
+  // - boardColumnOrders / globalHidden come from "Columnas Globales" (MASTER)
+  //   and govern the whole system: which columns exist, their order, and which
+  //   are hidden for everyone.
+  // - hiddenColumns is each USER's personal "what do I want to see" choice,
+  //   stored locally. It only narrows the view; it never edits the global config.
   const [hiddenColumns, setHiddenColumns] = useState({});
+  const [globalHidden, setGlobalHidden] = useState([]);
   const [boardColumnOrders, setBoardColumnOrders] = useState({});
-  const [showColumnManager, setShowColumnManager] = useState(false);
   const [draggedCol, setDraggedCol] = useState(null);
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const colPrefsKey = `mos_col_vis_${user?.user_id || user?.email || 'anon'}`;
 
   // Modal visibility
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -147,7 +154,6 @@ const Dashboard = () => {
   const [activeViewName, setActiveViewName] = useState(null);
   const activeViewIdRef = useRef(null);
   const viewApplyingRef = useRef(false);
-  const skipSaveRef = useRef(false); // Prevents saving layout immediately after loading it
   const [trashOrders, setTrashOrders] = useState([]);
   const [trashLoading, setTrashLoading] = useState(false);
   const [groupByDate, setGroupByDate] = useState(null);
@@ -234,7 +240,7 @@ const Dashboard = () => {
     automationRunning, automationMessage, columns, columnWidths, setColumnWidths,
     fetchOrders, fetchAllOrders, fetchOptions, fetchProductionSummary, fetchNeckSummary,
     handleCellUpdate, handleBulkMove, handleQuickUndo, handleGlobalSearch,
-    handleAddColumn, handleDeleteColumn, saveCustomColumns,
+    handleAddColumn, saveCustomColumns,
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
     groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
@@ -383,50 +389,40 @@ const Dashboard = () => {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [currentBoard, boardFilters, groupByDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load user's personal board layout (column_order + hidden_columns)
+  // Load the GLOBAL column layout (MASTER) defined in "Columnas Globales" and
+  // apply it to EVERY board — the CRM shows only the columns/order/visibility
+  // that Columnas Globales dictates, with no per-board divergence.
   const layoutLoaded = useRef({});
   useEffect(() => {
     if (layoutLoaded.current[currentBoard]) return;
     const loadLayout = async () => {
       try {
-        const res = await fetch(`${API}/config/board-layout/${currentBoard}`, { credentials: 'include' });
+        const res = await fetch(`${API}/config/board-layout/MASTER`, { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
-          if (data.board) {
-            if (data.column_order?.length) {
-              skipSaveRef.current = true;
-              setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: data.column_order }));
-            }
-            if (data.hidden_columns?.length) {
-              skipSaveRef.current = true;
-              setHiddenColumns(prev => ({ ...prev, [currentBoard]: data.hidden_columns }));
-            }
-            layoutLoaded.current[currentBoard] = true;
-          }
+          setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: data.column_order || [] }));
+          setGlobalHidden(data.hidden_columns || []);
+          layoutLoaded.current[currentBoard] = true;
         }
       } catch { /* silent */ }
     };
     loadLayout();
   }, [currentBoard]);
 
-  // Auto-save personal layout when user changes columns (debounced)
-  const layoutSaveRef = useRef(null);
-  const layoutInitRef = useRef(false);
+  // Personal column visibility: load this user's choice from localStorage and
+  // persist it there on change. Never touches the global layout.
+  const colPrefsLoaded = useRef(false);
   useEffect(() => {
-    if (!layoutLoaded.current[currentBoard] && !layoutInitRef.current) { layoutInitRef.current = true; return; }
-    if (skipSaveRef.current) {
-      skipSaveRef.current = false;
-      return;
-    }
-    if (layoutSaveRef.current) clearTimeout(layoutSaveRef.current);
-    layoutSaveRef.current = setTimeout(() => {
-      fetch(`${API}/config/board-layout/${currentBoard}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ column_order: boardColumnOrders[currentBoard] || [], hidden_columns: hiddenColumns[currentBoard] || [] })
-      }).catch(() => { });
-    }, 800);
-    return () => { if (layoutSaveRef.current) clearTimeout(layoutSaveRef.current); };
-  }, [boardColumnOrders, hiddenColumns, currentBoard]);
+    try {
+      const raw = localStorage.getItem(colPrefsKey);
+      setHiddenColumns(raw ? JSON.parse(raw) : {});
+    } catch { setHiddenColumns({}); }
+    colPrefsLoaded.current = true;
+  }, [colPrefsKey]);
+  useEffect(() => {
+    if (!colPrefsLoaded.current) return;
+    try { localStorage.setItem(colPrefsKey, JSON.stringify(hiddenColumns)); } catch { /* ignore */ }
+  }, [hiddenColumns, colPrefsKey]);
 
 
   useEffect(() => {
@@ -466,9 +462,10 @@ const Dashboard = () => {
     } catch { }
   }, [apiFetch, API]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Visible columns
+  // Visible columns = global config (existence + order + system-hidden from
+  // Columnas Globales) minus this user's personal hidden choice.
   const visibleColumns = (() => {
-    const hidden = hiddenColumns[currentBoard] || [];
+    const hidden = [...globalHidden, ...(hiddenColumns[currentBoard] || [])];
     const order = boardColumnOrders[currentBoard];
     let cols = columns.filter(c => !hidden.includes(c.key));
     if (order) { cols = order.map(key => cols.find(c => c.key === key)).filter(Boolean); const ordered = new Set(order); cols = [...cols, ...columns.filter(c => !ordered.has(c.key) && !hidden.includes(c.key))]; }
@@ -557,8 +554,8 @@ const Dashboard = () => {
   const pinnedViews = currentBoardViews.filter(v => v.pinned);
   const unpinnedViews = currentBoardViews.filter(v => !v.pinned);
 
-  // Column drag
-  const handleColumnDragStart = (colKey) => setDraggedCol(colKey);
+  // Column drag — reordering changes the GLOBAL order, so only admins can do it.
+  const handleColumnDragStart = (colKey) => { if (isAdmin) setDraggedCol(colKey); };
   const handleColumnDragOver = (e, targetKey) => {
     e.preventDefault();
     if (!draggedCol || draggedCol === targetKey) return;
@@ -571,28 +568,21 @@ const Dashboard = () => {
     const newOrder = [...currentOrder]; newOrder.splice(dragIdx, 1); newOrder.splice(targetIdx, 0, draggedCol);
     setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: newOrder }));
   };
-  const handleColumnDragEnd = () => setDraggedCol(null);
+  const handleColumnDragEnd = () => {
+    setDraggedCol(null);
+    if (isAdmin) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
+  };
 
-  const handleToggleColumnVisibility = async (colKey) => {
-    // Prevent hiding essential columns (Order Number and Style)
+  // Personal visibility toggle — narrows this user's own view only (localStorage).
+  const handleTogglePersonalColumn = (colKey) => {
     if (['order_number', 'style'].includes(colKey)) {
-      toast.error("Esta columna es obligatoria para la navegación.");
+      toast.error('Esta columna es obligatoria para la navegación.');
       return;
     }
     setHiddenColumns(prev => {
-      const current = prev[currentBoard] || [];
-      const next = current.includes(colKey) ? current.filter(x => x !== colKey) : [...current, colKey];
-      const newHidden = { ...prev, [currentBoard]: next };
-
-      // Auto-save layout
-      fetch(`${API}/config/board-layout/${currentBoard}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ hidden_columns: next, column_order: boardColumnOrders[currentBoard] || [] })
-      }).catch(err => console.error('Error saving layout:', err));
-
-      return newHidden;
+      const cur = prev[currentBoard] || [];
+      const next = cur.includes(colKey) ? cur.filter(k => k !== colKey) : [...cur, colKey];
+      return { ...prev, [currentBoard]: next };
     });
   };
 
@@ -600,12 +590,12 @@ const Dashboard = () => {
     setBoardColumnOrders(prev => {
       const updated = { ...prev, [currentBoard]: newOrder };
 
-      // Auto-save layout
-      fetch(`${API}/config/board-layout/${currentBoard}`, {
-        method: 'POST',
+      // Persist the new GLOBAL order (admins only reach here).
+      fetch(`${API}/config/board-layout/MASTER`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ hidden_columns: hiddenColumns[currentBoard] || [], column_order: newOrder })
+        body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
       }).catch(err => console.error('Error saving layout:', err));
 
       return updated;
@@ -1691,6 +1681,14 @@ const Dashboard = () => {
               <GanttChart size={18} />
               <span className="sr-only">Gantt</span>
             </button>
+            <button
+              onClick={() => setShowColumnPicker(v => !v)}
+              title="Elegir columnas visibles (solo tu vista)"
+              className="p-2.5 rounded-lg hover:bg-royal/10 text-muted-foreground hover:text-royal transition-all"
+            >
+              <Table2 size={18} />
+              <span className="sr-only">Columnas visibles</span>
+            </button>
           </div>
 
           <div className="h-8 w-px bg-border/40 mx-2" />
@@ -1736,7 +1734,6 @@ const Dashboard = () => {
               </Popover>
 
               <button onClick={() => setShowImportExcel(true)} title="Importar Excel" className="p-2.5 rounded-lg hover:bg-emerald-600/10 text-emerald-600 transition-all"><FileDown size={18} /></button>
-              <button onClick={() => setShowColumnManager(!showColumnManager)} title="Columnas" className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all"><Settings size={18} /></button>
             </div>
           )}
 
@@ -1745,42 +1742,35 @@ const Dashboard = () => {
       </div>
 
       {/* Column Manager Panel */}
-      {showColumnManager && (
+      {/* Personal column visibility — narrows only THIS user's view; the
+          available columns and order come from Columnas Globales. */}
+      {showColumnPicker && (
         <div className={`border-b px-6 py-4 transition-all animate-in slide-in-from-top-2 duration-300 ${isDark ? 'bg-navy/40 border-white/5' : 'bg-muted/30 border-gray-100'}`}>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <Settings className="w-4 h-4 text-royal" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Gestión de Columnas: {currentBoard}</span>
+              <Eye className="w-4 h-4 text-royal" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Mis columnas visibles</span>
+              <span className="text-[10px] text-muted-foreground/60 italic normal-case tracking-normal">— solo afecta tu vista, no cambia la configuración global</span>
             </div>
-            <button onClick={() => setShowColumnManager(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
+            <button onClick={() => setShowColumnPicker(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
           </div>
           <div className="flex flex-wrap gap-2">
-            {columns.map(col => {
+            {columns.filter(c => !globalHidden.includes(c.key)).map(col => {
               const isHidden = (hiddenColumns[currentBoard] || []).includes(col.key);
               return (
-                <div key={col.key} className="flex items-center gap-1 group/col">
-                  <button
-                    onClick={() => handleToggleColumnVisibility(col.key)}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
-                      isHidden
-                        ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60"
-                        : "bg-background border-border text-foreground hover:border-royal/50"
-                    )}
-                  >
-                    {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
-                    {col.label}
-                  </button>
-                  {isAdmin && col.custom && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteColumn(col.key); }}
-                      className="p-1.5 rounded-md text-destructive opacity-0 group-hover/col:opacity-100 hover:bg-destructive/10 transition-all"
-                      title="Eliminar Columna"
-                    >
-                      <X size={12} />
-                    </button>
+                <button
+                  key={col.key}
+                  onClick={() => handleTogglePersonalColumn(col.key)}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
+                    isHidden
+                      ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60"
+                      : "bg-background border-border text-foreground hover:border-royal/50"
                   )}
-                </div>
+                >
+                  {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
+                  {col.label}
+                </button>
               );
             })}
           </div>
@@ -2136,7 +2126,7 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={isAdmin} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
                           <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
