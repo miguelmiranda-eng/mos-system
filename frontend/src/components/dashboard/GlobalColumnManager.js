@@ -274,7 +274,9 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const custom_columns = cols.filter(c => c.custom).map(({ custom, ...rest }) => rest);
+      // Keep the `custom: true` flag so other consumers (form-fields manager,
+      // new-order form) can still identify custom columns.
+      const custom_columns = cols.filter(c => c.custom).map(c => ({ ...c, custom: true }));
       const reqs = [
         fetch(`${API}/config/columns`, {
           method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",

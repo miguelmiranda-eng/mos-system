@@ -171,9 +171,14 @@ async def get_form_fields(request: Request):
 async def save_form_fields(request: Request):
     await require_admin(request)
     body = await request.json()
+    update = {"config_id": "main", "fields": body.get("fields", []), "updated_at": datetime.now(timezone.utc).isoformat()}
+    # Explicitly-hidden form fields, so new global columns can default to visible
+    # while the admin's hide choices persist.
+    if "hidden_fields" in body:
+        update["hidden_fields"] = body.get("hidden_fields", [])
     await db.form_fields_config.update_one(
         {"config_id": "main"},
-        {"$set": {"config_id": "main", "fields": body.get("fields", []), "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": update},
         upsert=True
     )
     return {"message": "Form fields saved"}

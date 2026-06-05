@@ -6,12 +6,6 @@ import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
 import { NewOrderForm } from "./NewOrderForm";
 
-const HARDCODED_DEFAULTS = [
-  'order_number', 'customer_po', 'style', 'client', 'branding', 
-  'priority', 'quantity', 'due_date', 'blank_source', 'blank_status', 
-  'production_status', 'notes'
-];
-
 import { LoadingOverlay } from "./LoadingOverlay";
 
 export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig, columns = [] }) => {
@@ -19,7 +13,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
   const [loading, setLoading] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState(null);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
-  const [formFieldKeys, setFormFieldKeys] = useState(HARDCODED_DEFAULTS);
+  const [formConfig, setFormConfig] = useState({ fields: null, hidden: null });
 
   // The field universe is the GLOBAL column set (Columnas Globales): `columns`
   // already excludes removed defaults and includes customs. Fall back to the
@@ -27,22 +21,29 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
   const allColumns = columns.length ? columns : DEFAULT_COLUMNS;
   const validKeys = new Set(allColumns.map(c => c.key));
 
+  // Which fields actually render, in order. New global columns default to
+  // VISIBLE; only explicitly-hidden fields are dropped.
+  const formFieldKeys = (() => {
+    if (!formConfig.fields?.length) {
+      return ['order_number', 'customer_po', 'style', 'client', 'branding',
+        'priority', 'quantity', 'due_date', 'notes'].filter(k => validKeys.has(k));
+    }
+    const order = formConfig.fields.filter(k => validKeys.has(k));
+    allColumns.forEach(c => { if (!order.includes(c.key)) order.push(c.key); });
+    const hidden = Array.isArray(formConfig.hidden)
+      ? new Set(formConfig.hidden)
+      : new Set(allColumns.filter(c => !formConfig.fields.includes(c.key) && !c.custom).map(c => c.key));
+    return order.filter(k => !hidden.has(k));
+  })();
+
   useEffect(() => {
     if (isOpen) {
       fetch(`${API}/config/form-fields`, { credentials: 'include' })
         .then(r => r.ok ? r.json() : {})
-        .then(data => { 
-          if (data.fields?.length) {
-            // Priority 1: User defined fields from config
-            setFormFieldKeys(data.fields); 
-          } else {
-            // Priority 2: Safe fallback if no config exists
-            setFormFieldKeys([
-              'order_number', 'customer_po', 'style', 'client', 'branding', 
-              'priority', 'quantity', 'due_date', 'notes'
-            ]);
-          }
-        })
+        .then(data => setFormConfig({
+          fields: data.fields || null,
+          hidden: Array.isArray(data.hidden_fields) ? data.hidden_fields : null,
+        }))
         .catch(() => {});
     }
   }, [isOpen]);

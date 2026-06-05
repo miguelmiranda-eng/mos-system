@@ -25,11 +25,12 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
   const [removedDefaults, setRemovedDefaults] = useState([]);
 
   // Field universe = the GLOBAL column set defined in Columnas Globales:
-  // default columns minus the removed ones, plus custom columns.
+  // default columns minus the removed ones, plus every custom column. We match
+  // on key (not the `custom` flag) because stored custom columns may lack it.
   const defaultKeys = new Set(DEFAULT_COLUMNS.map(c => c.key));
   const allColumns = [
     ...DEFAULT_COLUMNS.filter(c => !removedDefaults.includes(c.key)),
-    ...columns.filter(c => c.custom && !defaultKeys.has(c.key)),
+    ...columns.filter(c => !defaultKeys.has(c.key)),
   ];
 
   // Drag state
@@ -58,7 +59,7 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
       const dk = new Set(DEFAULT_COLUMNS.map(c => c.key));
       const currentAllCols = [
         ...DEFAULT_COLUMNS.filter(c => !removed.includes(c.key)),
-        ...(colsData.custom_columns || []).filter(c => c.custom && !dk.has(c.key)),
+        ...(colsData.custom_columns || []).filter(c => !dk.has(c.key)),
       ];
       const validKeys = new Set(currentAllCols.map(c => c.key));
 
@@ -68,7 +69,18 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
         const ordered = formData.fields.filter(k => validKeys.has(k));
         currentAllCols.forEach(c => { if (!ordered.includes(c.key)) ordered.push(c.key); });
         setSelectedFields(ordered);
-        setHiddenFields(currentAllCols.filter(c => !formData.fields.includes(c.key)).map(c => c.key));
+        if (Array.isArray(formData.hidden_fields)) {
+          // Explicit hidden list: respect it. New global columns (not in fields
+          // and not in hidden) stay VISIBLE by default.
+          setHiddenFields(formData.hidden_fields.filter(k => validKeys.has(k)));
+        } else {
+          // Legacy config (no hidden list): hide what's not in saved fields,
+          // but show custom columns (they used to be dropped entirely).
+          const customKeys = new Set((colsData.custom_columns || []).map(c => c.key));
+          setHiddenFields(currentAllCols
+            .filter(c => !formData.fields.includes(c.key) && !customKeys.has(c.key))
+            .map(c => c.key));
+        }
       } else {
         setSelectedFields(currentAllCols.map(c => c.key));
         setHiddenFields(currentAllCols.filter(c => !HARDCODED_DEFAULTS.includes(c.key)).map(c => c.key));
@@ -114,11 +126,12 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Visible fields in their current order
+      // Visible fields in their current order + the explicit hidden list, so
+      // new global columns default to visible on later loads.
       const fieldsToSave = selectedFields.filter(k => !hiddenFields.includes(k));
       const res = await fetch(`${API}/config/form-fields`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ fields: fieldsToSave })
+        body: JSON.stringify({ fields: fieldsToSave, hidden_fields: hiddenFields })
       });
       if (res.ok) { toast.success("Campos del formulario actualizados"); onClose(); }
       else toast.error("Error al guardar");
