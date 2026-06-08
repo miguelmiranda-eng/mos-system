@@ -259,9 +259,9 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && window.location.pathname !== '/operator') {
-        // Force pickers to stay in their dedicated view
-        navigate('/operator', { replace: true });
+      } else if (user.role === 'picker' && !['/operator', '/pda'].includes(window.location.pathname)) {
+        // Force pickers to stay in their dedicated views (PDA picking or legacy operator).
+        navigate('/pda', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);
@@ -377,7 +377,9 @@ const LandingPage = () => {
   useEffect(() => {
     // Only redirect if user is confirmed authenticated (has a real user_id)
     if (user && user.user_id) {
-      if (user.role === 'operator' || user.role === 'picker') {
+      if (user.role === 'picker') {
+        navigate('/pda', { replace: true });
+      } else if (user.role === 'operator') {
         navigate('/operator', { replace: true });
       } else if (['admin', 'supersu', 'ceo'].includes(user.role)) {
         navigate('/dashboard', { replace: true });
@@ -401,7 +403,9 @@ const LandingPage = () => {
         setUser(userData);
         if (userData.role === 'ceo') {
           navigate('/dashboard', { replace: true });
-        } else if (userData.role === 'operator' || userData.role === 'picker') {
+        } else if (userData.role === 'picker') {
+          navigate('/pda', { replace: true });
+        } else if (userData.role === 'operator') {
           navigate('/operator', { replace: true });
         } else {
           navigate('/dashboard', { replace: true });
@@ -650,6 +654,7 @@ const LandingPage = () => {
 import Dashboard from "./components/Dashboard";
 import WMS from "./components/WMS";
 import OperatorView from "./components/OperatorView";
+import PdaPicker from "./components/pda/PdaPicker";
 import HomeDashboard from "./components/HomeDashboard";
 import AutomationCenter from "./components/AutomationCenter";
 import ActivityLogCenter from "./components/ActivityLogCenter";
@@ -786,6 +791,11 @@ function AppRouter() {
       <Route path="/operator" element={
         <ProtectedRoute>
           <OperatorView />
+        </ProtectedRoute>
+      } />
+      <Route path="/pda" element={
+        <ProtectedRoute>
+          <PdaPicker />
         </ProtectedRoute>
       } />
       <Route path="/automation-center" element={
