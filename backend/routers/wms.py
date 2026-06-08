@@ -2206,6 +2206,64 @@ def apply_picking_strategy(size_locations: dict, strategy: str) -> dict:
     return size_locations
 
 
+async def _compute_size_locations(style: str, color: str, sizes: dict, strategy: str = "default") -> dict:
+    """Build {size: {locations:[...], total_available}} from CURRENT inventory.
+
+    Used so pickers always see live availability (not the snapshot captured when
+    the ticket was created). Color is matched exactly first; if a size finds no
+    location that way it retries with a contains match (handles naming variants
+    like 'OLIVE' vs 'OLIVE GREEN') so available stock isn't hidden by a label
+    mismatch.
+    """
+    style = (style or "").strip()
+    color = (color or "").strip()
+    size_locations: dict = {}
+    if not style:
+        return size_locations
+
+    async def _run(q):
+        recs = await db.wms_inventory.find(
+            q, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}
+        ).sort("units_on_hand", -1).to_list(50)
+        locs = [{
+            "location": r.get("location", ""),
+            "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0),
+            "boxes": r.get("total_boxes", 0),
+            "country_of_origin": r.get("country_of_origin", ""),
+        } for r in recs if r.get("location")]
+        return [l for l in locs if l["available"] > 0]
+
+    for sz, qty in (sizes or {}).items():
+        try:
+            qn = int(qty) if qty else 0
+        except (TypeError, ValueError):
+            qn = 0
+        if qn <= 0:
+            continue
+        base = {
+            "$or": [
+                {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+                {"sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+            ],
+            "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"},
+            "units_on_hand": {"$gt": 0},
+        }
+        if color:
+            exact = dict(base); exact["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+            locs = await _run(exact)
+            if not locs:
+                loose = dict(base); loose["color"] = {"$regex": re.escape(color), "$options": "i"}
+                locs = await _run(loose)
+        else:
+            locs = await _run(base)
+        total = sum(l["available"] for l in locs)
+        for l in locs:
+            l["percentage"] = round((l["available"] / total) * 100) if total > 0 else 0
+        size_locations[sz] = {"locations": locs, "total_available": total}
+
+    return apply_picking_strategy(size_locations, strategy if strategy in PICK_STRATEGIES else "default")
+
+
 async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     """
     Internal function to create a pick ticket.
@@ -2629,6 +2687,19 @@ async def get_operator_tickets(request: Request):
         "status": {"$ne": "confirmed"}
     }
     tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("assigned_at", -1).to_list(200)
+    # Refresh available pick locations from CURRENT inventory so the operator
+    # always sees where the stock actually is now (the stored size_locations is
+    # only a snapshot taken when the ticket was created).
+    for tk in tickets:
+        if tk.get("picking_status") == "completed":
+            continue
+        try:
+            tk["size_locations"] = await _compute_size_locations(
+                tk.get("style", ""), tk.get("color", ""), tk.get("sizes", {}),
+                tk.get("strategy", "default"),
+            )
+        except Exception as e:
+            logger.error(f"[my-tickets] live size_locations failed for {tk.get('ticket_id')}: {e}")
     return tickets
 
 @router.get("/operator/completed-tickets")
@@ -3293,6 +3364,19 @@ _ASN_HEADER_KEYWORDS = {
 # Required fields — if any is missing after detection the import refuses.
 _ASN_REQUIRED_FIELDS = ("part_number", "qty")
 
+# Box statuses that mean the units already LEFT inventory (consumed/in process/
+# shipped). Anything else with units>0 is considered still on hand. Whitelisting
+# the "out" set keeps legacy/empty statuses counted as in-stock.
+_BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed"}
+
+def _box_in_stock(b) -> bool:
+    units = int(b.get("units") or b.get("qty") or 0)
+    return units > 0 and (b.get("status") or "") not in _BOX_OUT_STATUSES
+
+def _box_keys(b) -> set:
+    """Identifiers a box can be matched to an ASN line by."""
+    return {str(b.get(k) or "").strip().upper() for k in ("upc", "sku", "style") if b.get(k)}
+
 def _normalize_header(s) -> str:
     """Lowercase, strip accents, collapse whitespace, drop punctuation."""
     if s is None:
@@ -3516,6 +3600,117 @@ def _parse_packing_list(ws) -> tuple[list[dict], str, dict[str, int]]:
     return items, po_number, col_map
 
 
+def _parse_packing_list_pdf(contents: bytes) -> dict:
+    """Parse an aduanal-style 'Lista de Empaque / Packing List' PDF.
+
+    Layout: a key/value header (NO. FACTURA / INVOICE = the ASN number,
+    REMITENTE / SHIPPER = vendor, VENDEDOR / SELLER = brand) followed by a
+    merchandise table where each item begins with '(N) <part_number>'. On that
+    same line the quantity is the positive WHOLE number (net weight is
+    fractional; bulk/package qty are zero), and 'Pais Origen:' gives the COO.
+    Header values are read via word coordinates because the page has 3 columns.
+
+    Returns { asn_id, vendor, brand, customer, po_number, items }.
+    """
+    import pdfplumber
+
+    lines: list[str] = []
+    header_words: list[dict] = []
+    with pdfplumber.open(io.BytesIO(contents)) as pdf:
+        for pi, page in enumerate(pdf.pages):
+            lines.extend((page.extract_text(x_tolerance=1.5) or "").split("\n"))
+            if pi == 0:
+                header_words = page.extract_words(x_tolerance=1.5)
+    full = "\n".join(lines)
+
+    # Header value sitting directly below a label word, kept within the label's
+    # column so 3-column layouts don't bleed into the neighbour.
+    def value_below(*labels):
+        lab = None
+        for w in header_words:
+            up = w["text"].upper()
+            if any(l in up for l in labels):
+                lab = w
+                break
+        if not lab:
+            return ""
+        lx, ltop = lab["x0"], lab["top"]
+        below = [w for w in header_words if w["top"] > ltop + 2 and (lx - 20) <= w["x0"] <= (lx + 200)]
+        if not below:
+            return ""
+        below.sort(key=lambda w: (w["top"], w["x0"]))
+        first_top = below[0]["top"]
+        row_words = [w for w in below if abs(w["top"] - first_top) <= 4]
+        return " ".join(w["text"] for w in sorted(row_words, key=lambda w: w["x0"])).strip()
+
+    asn_id = ""
+    m = re.search(r"(?:NO\.?\s*FACTURA|INVOICE)\s*[:/#]*\s*([0-9][0-9A-Za-z\-]{2,})", full, re.I)
+    if m:
+        asn_id = m.group(1).strip()
+
+    vendor = value_below("SHIPPER", "REMITENTE")
+    seller = value_below("SELLER", "VENDEDOR")
+    brand = (seller.split()[0] if seller else "").upper()
+
+    NUM = re.compile(r"\d[\d,]*\.\d+|\d[\d,]*")
+    item_re = re.compile(r"^\((\d+)\)\s*(\S+)?")
+    items: list[dict] = []
+    cur: dict | None = None
+
+    def flush():
+        nonlocal cur
+        if cur and cur.get("part_number"):
+            desc = " ".join(cur.pop("_desc", [])).strip()
+            cur["description"] = desc
+            cur["fabric_content"] = _extract_fabric_from_description(desc)
+            items.append(cur)
+        cur = None
+
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        mi = item_re.match(s)
+        if mi:
+            flush()
+            part = (mi.group(2) or "").strip().upper()
+            rest = s[mi.end():]
+            nums = [float(x.replace(",", "")) for x in NUM.findall(rest)]
+            whole_pos = [n for n in nums if n > 0 and abs(n - round(n)) < 1e-6]
+            qty = int(round(whole_pos[0])) if whole_pos else (int(round(max(nums))) if nums else 0)
+            cur = {
+                "line_no": int(mi.group(1)),
+                "part_number": part,
+                "_desc": [],
+                "qty_expected": qty,
+                "qty_received": 0,
+                "country": "",
+                "brand": brand,
+            }
+            continue
+        if cur is None:
+            continue
+        u = s.upper()
+        cm = re.match(r"PA[IÍ]S\s*ORIGEN\s*[:]?\s*([A-Za-z]{2,3})", u)
+        if cm:
+            cur["country"] = cm.group(1).upper()
+            continue
+        if u.startswith(("FRACCION", "FRACCIÓN", "PO:", "LOT:", "PESO", "NET WT", "U.M.C", "UMC")):
+            continue
+        if not s.startswith("(") and len(cur["_desc"]) < 4:
+            cur["_desc"].append(s)
+    flush()
+
+    return {
+        "asn_id": asn_id,
+        "vendor": (vendor or "").upper(),
+        "brand": brand,
+        "customer": vendor or "",
+        "po_number": "",
+        "items": items,
+    }
+
+
 @router.post("/asn")
 async def create_asn(request: Request):
     """Manual ASN creation. Caller supplies asn_id; we don't auto-generate so the
@@ -3568,6 +3763,62 @@ async def list_asn(request: Request):
     await require_auth(request)
     return await db.wms_asn.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
+# NOTE: declared BEFORE /asn/{asn_id} so "trace-sku" isn't captured as an asn_id.
+@router.get("/asn/trace-sku")
+async def trace_sku(request: Request, q: str = Query(...)):
+    """Given a SKU/style/UPC, return which ASN(s) it came from, with how much is
+    still in stock, where, and the box counts/dates. Boxes without an
+    asn_reference are grouped under '(SIN ASN)'."""
+    await require_auth(request)
+    qn = (q or "").strip().upper()
+    if not qn:
+        raise HTTPException(400, "Parámetro 'q' requerido")
+    rx = {"$regex": f"^{re.escape(qn)}$", "$options": "i"}
+    boxes = await db.wms_boxes.find({"$or": [{"sku": rx}, {"style": rx}, {"upc": qn}]}, {"_id": 0}).to_list(20000)
+    if not boxes:
+        contains = {"$regex": re.escape(qn), "$options": "i"}
+        boxes = await db.wms_boxes.find({"$or": [{"sku": contains}, {"style": contains}]}, {"_id": 0}).to_list(20000)
+
+    groups: dict[str, dict] = {}
+    for b in boxes:
+        ref = (b.get("asn_reference") or "").strip() or "(SIN ASN)"
+        u = int(b.get("units") or b.get("qty") or 0)
+        g = groups.setdefault(ref, {
+            "asn_reference": ref, "units_in_stock": 0, "units_total": 0,
+            "boxes": 0, "boxes_in_stock": 0, "locations": set(), "skus": set(),
+            "first_at": None, "last_at": None,
+        })
+        g["boxes"] += 1
+        g["units_total"] += u
+        if _box_in_stock(b):
+            g["units_in_stock"] += u
+            g["boxes_in_stock"] += 1
+            if b.get("location"):
+                g["locations"].add(str(b["location"]).strip())
+        if b.get("sku") or b.get("style"):
+            g["skus"].add(str(b.get("sku") or b.get("style")).strip())
+        ca = b.get("created_at")
+        if ca:
+            g["first_at"] = min(g["first_at"], ca) if g["first_at"] else ca
+            g["last_at"] = max(g["last_at"], ca) if g["last_at"] else ca
+
+    results = []
+    for ref, g in groups.items():
+        asn = None
+        if ref != "(SIN ASN)":
+            asn = await db.wms_asn.find_one({"asn_id": ref}, {"_id": 0, "vendor": 1, "po_number": 1, "status": 1})
+        results.append({
+            **g,
+            "locations": sorted(g["locations"]),
+            "skus": sorted(g["skus"]),
+            "vendor": (asn or {}).get("vendor", ""),
+            "po_number": (asn or {}).get("po_number", ""),
+            "asn_status": (asn or {}).get("status", ""),
+            "exists": asn is not None,
+        })
+    results.sort(key=lambda x: (-x["units_in_stock"], x["asn_reference"]))
+    return {"query": qn, "total_boxes": len(boxes), "groups": results}
+
 @router.get("/asn/{asn_id}")
 async def get_asn_detail(asn_id: str, request: Request):
     """Return ASN doc + every receiving event + every box tied to this ASN.
@@ -3600,6 +3851,44 @@ async def get_asn_detail(asn_id: str, request: Request):
     first_at = min(dates) if dates else None
     last_at = max(dates) if dates else None
 
+    # ── Traceability: split current stock vs material that already left ──────
+    units_expected = sum(int(it.get("qty_expected") or 0) for it in asn.get("items", []))
+    units_received = sum(int(it.get("qty_received") or 0) for it in asn.get("items", []))
+    in_stock_boxes = [b for b in boxes if _box_in_stock(b)]
+    units_in_stock = sum(int(b.get("units") or b.get("qty") or 0) for b in in_stock_boxes)
+    boxes_in_stock = len(in_stock_boxes)
+    units_out = max(0, units_received - units_in_stock)
+
+    # In-stock units grouped by location, and by SKU (what's left and where).
+    by_location: dict[str, dict] = {}
+    by_sku: dict[str, dict] = {}
+    for b in in_stock_boxes:
+        u = int(b.get("units") or b.get("qty") or 0)
+        loc = (b.get("location") or "—").strip() or "—"
+        l = by_location.setdefault(loc, {"location": loc, "units": 0, "boxes": 0})
+        l["units"] += u; l["boxes"] += 1
+        sku = (b.get("sku") or b.get("style") or "—").strip() or "—"
+        s = by_sku.setdefault(sku, {"sku": sku, "style": b.get("style") or "", "color": b.get("color") or "", "size": b.get("size") or "", "units": 0, "boxes": 0, "locations": set()})
+        s["units"] += u; s["boxes"] += 1; s["locations"].add(loc)
+    by_sku_list = [{**v, "locations": sorted(v["locations"])} for v in by_sku.values()]
+
+    # Per ASN line: how much of that line is still on hand (best-effort match by
+    # part_number against each box's upc/sku/style).
+    by_line = []
+    for it in asn.get("items", []):
+        pn = str(it.get("part_number") or "").strip().upper()
+        line_stock = sum(
+            int(b.get("units") or b.get("qty") or 0)
+            for b in in_stock_boxes if pn and pn in _box_keys(b)
+        )
+        by_line.append({
+            "line_no": it.get("line_no"),
+            "part_number": it.get("part_number"),
+            "qty_expected": int(it.get("qty_expected") or 0),
+            "qty_received": int(it.get("qty_received") or 0),
+            "qty_in_stock": line_stock,
+        })
+
     summary = {
         "total_units": total_units,
         "total_boxes": total_boxes,
@@ -3609,6 +3898,15 @@ async def get_asn_detail(asn_id: str, request: Request):
         "distinct_locations": distinct_locations,
         "first_received_at": first_at,
         "last_received_at": last_at,
+        # Traceability
+        "units_expected": units_expected,
+        "units_received": units_received,
+        "units_in_stock": units_in_stock,
+        "units_out": units_out,
+        "boxes_in_stock": boxes_in_stock,
+        "by_location": sorted(by_location.values(), key=lambda x: -x["units"]),
+        "by_sku": sorted(by_sku_list, key=lambda x: -x["units"]),
+        "by_line": by_line,
     }
 
     return {"asn": asn, "boxes": boxes, "receivings": receivings, "summary": summary}
@@ -3713,6 +4011,68 @@ async def import_asn(
         raise HTTPException(400, f"No se pudo leer el archivo subido: {e}")
     if not contents:
         raise HTTPException(400, "Archivo vacio o no recibido")
+
+    # ── PDF branch: aduanal "Lista de Empaque / Packing List" ────────────────
+    is_pdf = (file.filename or "").lower().endswith(".pdf") or \
+             (file.content_type or "").lower() == "application/pdf" or \
+             contents[:5] == b"%PDF-"
+    if is_pdf:
+        try:
+            parsed = _parse_packing_list_pdf(contents)
+        except Exception as e:
+            logger.exception("ASN import: PDF parse failed")
+            raise HTTPException(400, f"No se pudo leer el PDF del packing list: {e}")
+        asn_id = parsed.get("asn_id") or ""
+        items = parsed.get("items") or []
+        if not asn_id:
+            raise HTTPException(400, "No se encontró el número de factura/INVOICE en el PDF")
+        if not items:
+            raise HTTPException(400, "No se detectaron líneas de mercancía en el PDF")
+        PDF_SHEET = "PACKING LIST (PDF)"
+
+        # Phase 1: inspect → present a single virtual sheet for confirmation.
+        if not sheet_name:
+            return {"action": "select_sheet", "filename": file.filename, "sheets": [{
+                "name": PDF_SHEET,
+                "kind": "pdf",
+                "detected_asn_id": asn_id,
+                "detected_customer": parsed.get("vendor") or "",
+                "row_count": len(items),
+                "detected_columns": {"part_number": "PDF", "qty": "PDF", "country": "PDF"},
+                "missing_required": [],
+            }]}
+
+        # Phase 2: persist.
+        if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
+            raise HTTPException(409, f"ASN {asn_id} ya existe en el sistema")
+        doc = {
+            "asn_id": asn_id,
+            "po_number": parsed.get("po_number") or "",
+            "customer": parsed.get("customer") or "",
+            "vendor": parsed.get("vendor") or "",
+            "expected_date": now_iso(),
+            "source_sheet": PDF_SHEET,
+            "source_file": file.filename or "",
+            "items": items,
+            "status": AsnStatus.PENDING,
+            "created_at": now_iso(),
+            "created_by": user.get("user_id"),
+        }
+        await db.wms_asn.insert_one(doc)
+        await log_movement(user, MovementType.ASN_IMPORTED, {
+            "asn_id": asn_id, "items": len(items), "source": "pdf",
+            "total_qty": sum(it.get("qty_expected", 0) for it in items),
+        })
+        return {
+            "status": "success",
+            "asn_id": asn_id,
+            "po_number": doc["po_number"],
+            "vendor": doc["vendor"],
+            "items_count": len(items),
+            "total_qty_expected": sum(it.get("qty_expected", 0) for it in items),
+            "detected_columns": {},
+        }
+
     try:
         wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
     except Exception as e:

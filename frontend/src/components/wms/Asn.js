@@ -38,6 +38,24 @@ export const AsnModule = ({ currentUser }) => {
   const [detailData, setDetailData] = useState(null); // {asn, boxes}
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // SKU → ASN trace (Fase 2)
+  const [showTrace, setShowTrace] = useState(false);
+  const [traceQuery, setTraceQuery] = useState("");
+  const [traceResults, setTraceResults] = useState(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const runTrace = async () => {
+    const q = traceQuery.trim();
+    if (!q) return;
+    setTraceLoading(true); setTraceResults(null);
+    try {
+      const data = await fetcher(`/asn/trace-sku?q=${encodeURIComponent(q)}`);
+      setTraceResults(data);
+    } catch (err) {
+      logLoadError('trace sku')(err);
+      toast.error("No se pudo rastrear el SKU");
+    } finally { setTraceLoading(false); }
+  };
+
   // Edit mode (super-user only)
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(null);   // { vendor, po_number, expected_date, items: [...] }
@@ -333,10 +351,18 @@ export const AsnModule = ({ currentUser }) => {
             <FileUp className="w-4 h-4" />
             Exportar
           </button>
-          <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={handleFilePick} />
+          <button
+            onClick={() => { setShowTrace(true); setTraceResults(null); setTraceQuery(""); }}
+            className="flex items-center gap-2 px-6 py-3 bg-secondary/60 hover:bg-secondary text-foreground rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg border border-border"
+            title="Rastrear de qué ASN proviene un SKU"
+          >
+            <Search className="w-4 h-4" />
+            Rastrear SKU
+          </button>
+          <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls,.pdf" className="hidden" onChange={handleFilePick} />
           <label htmlFor="asn-import" className={`flex items-center gap-2 px-6 py-3 bg-indigo-500 text-white rounded-2xl cursor-pointer text-xs font-black uppercase tracking-widest hover:scale-105 transition-all shadow-lg ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-            Importar ASN Excel
+            Importar ASN (Excel / PDF)
           </label>
         </div>
       </div>
@@ -598,21 +624,22 @@ export const AsnModule = ({ currentUser }) => {
                   {/* Trazabilidad: summary cards + recepciones agregadas */}
                   {detailData.summary && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Unidades recibidas</div>
-                        <div className="text-2xl font-black tabular-nums text-emerald-400">{(detailData.summary.total_units || 0).toLocaleString()}</div>
-                      </div>
                       <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cajas (LPNs)</div>
-                        <div className="text-2xl font-black tabular-nums text-blue-400">{(detailData.summary.total_boxes || 0).toLocaleString()}</div>
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Recibido</div>
+                        <div className="text-2xl font-black tabular-nums text-blue-400">{(detailData.summary.units_received ?? detailData.summary.total_units ?? 0).toLocaleString()}</div>
                       </div>
-                      <div className="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Recepciones</div>
-                        <div className="text-2xl font-black tabular-nums text-purple-400">{detailData.summary.total_receivings || 0}</div>
+                      <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">En inventario</div>
+                        <div className="text-2xl font-black tabular-nums text-emerald-400">{(detailData.summary.units_in_stock || 0).toLocaleString()}</div>
+                        <div className="text-[9px] font-bold text-muted-foreground/70 mt-0.5">{(detailData.summary.boxes_in_stock || 0)} cajas</div>
                       </div>
                       <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Salido / consumido</div>
+                        <div className="text-2xl font-black tabular-nums text-amber-400">{(detailData.summary.units_out || 0).toLocaleString()}</div>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/20">
                         <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Ubicaciones</div>
-                        <div className="text-2xl font-black tabular-nums text-amber-400">{(detailData.summary.distinct_locations || []).length}</div>
+                        <div className="text-2xl font-black tabular-nums text-purple-400">{(detailData.summary.by_location || detailData.summary.distinct_locations || []).length}</div>
                       </div>
                       {detailData.summary.first_received_at && (
                         <div className="md:col-span-2 p-3 rounded-xl bg-secondary/30 border border-border/30">
@@ -636,6 +663,33 @@ export const AsnModule = ({ currentUser }) => {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Inventario restante por ubicación (trazabilidad) */}
+                  {(detailData.summary?.by_location || []).length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">Inventario restante por ubicación</h4>
+                      <div className="border border-border/30 rounded-2xl overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-secondary/40">
+                            <tr>
+                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
+                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
+                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/10">
+                            {detailData.summary.by_location.map(l => (
+                              <tr key={l.location} className="hover:bg-secondary/30">
+                                <td className="p-3 text-xs font-mono text-emerald-400">{l.location}</td>
+                                <td className="p-3 text-xs text-right tabular-nums">{(l.boxes || 0).toLocaleString()}</td>
+                                <td className="p-3 text-xs text-right tabular-nums font-bold">{(l.units || 0).toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
 
@@ -722,6 +776,7 @@ export const AsnModule = ({ currentUser }) => {
                             <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Marca</th>
                             <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Esperado</th>
                             <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido</th>
+                            {!editing && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">En inventario</th>}
                             <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-32">{editing ? '' : 'Progreso'}</th>
                           </tr>
                         </thead>
@@ -756,6 +811,7 @@ export const AsnModule = ({ currentUser }) => {
                                   <td className="p-3 text-xs">{it.brand || '—'}</td>
                                   <td className="p-3 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
                                   <td className={`p-3 text-xs text-right tabular-nums font-bold ${done ? 'text-emerald-400' : rcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
+                                  <td className="p-3 text-xs text-right tabular-nums font-bold text-emerald-400">{((detailData.summary?.by_line || []).find(l => l.line_no === it.line_no)?.qty_in_stock ?? 0).toLocaleString()}</td>
                                   <td className="p-3">
                                     <div className="h-1.5 bg-secondary/40 rounded-full overflow-hidden">
                                       <div className={`h-full ${done ? 'bg-emerald-500' : rcv > 0 ? 'bg-amber-500' : 'bg-blue-500/40'}`} style={{ width: `${pct}%` }} />
@@ -814,6 +870,82 @@ export const AsnModule = ({ currentUser }) => {
                   </div>
                 </div>
               ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SKU → ASN trace modal (Fase 2) */}
+      {showTrace && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
+                  <Search className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Rastrear SKU → ASN</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold">¿De qué ASN vino y cuánto queda en inventario?</p>
+                </div>
+              </div>
+              <button onClick={() => setShowTrace(false)} className="p-2 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="p-5 border-b border-border/20 flex gap-2">
+              <input
+                autoFocus
+                value={traceQuery}
+                onChange={(e) => setTraceQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') runTrace(); }}
+                placeholder="SKU, estilo o UPC (ej. 103-HEATHER DUST-XL)"
+                className="flex-1 h-11 px-4 bg-secondary/60 border border-border rounded-xl text-sm focus:outline-none focus:border-primary"
+              />
+              <button onClick={runTrace} disabled={traceLoading || !traceQuery.trim()} className="px-6 h-11 bg-indigo-500 text-white rounded-xl text-[11px] font-black uppercase tracking-widest disabled:opacity-50 flex items-center gap-2">
+                {traceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Buscar
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5">
+              {traceLoading ? (
+                <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-indigo-400" /></div>
+              ) : !traceResults ? (
+                <div className="text-center py-16 text-xs text-muted-foreground/50 font-bold uppercase tracking-widest italic">Escribe un SKU y busca</div>
+              ) : traceResults.groups.length === 0 ? (
+                <div className="text-center py-16 text-xs text-muted-foreground/50 font-bold uppercase tracking-widest italic">Sin coincidencias para “{traceResults.query}”</div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-[11px] font-bold text-muted-foreground">{traceResults.total_boxes} caja(s) encontradas en {traceResults.groups.length} grupo(s)</div>
+                  {traceResults.groups.map(g => (
+                    <div key={g.asn_reference} className="border border-border/30 rounded-2xl p-4">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-black uppercase tracking-tighter text-sm text-primary">{g.asn_reference}</span>
+                          {g.vendor && <span className="text-[11px] text-muted-foreground font-bold truncate">· {g.vendor}</span>}
+                          {!g.exists && g.asn_reference !== '(SIN ASN)' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 uppercase">ASN borrado</span>}
+                        </div>
+                        <div className="flex items-center gap-4 text-right">
+                          <div>
+                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">En inventario</div>
+                            <div className="text-lg font-black tabular-nums text-emerald-400">{(g.units_in_stock || 0).toLocaleString()}</div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Total cajas</div>
+                            <div className="text-lg font-black tabular-nums text-blue-400">{g.boxes_in_stock || 0}/{g.boxes || 0}</div>
+                          </div>
+                        </div>
+                      </div>
+                      {(g.locations || []).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {g.locations.map(l => (
+                            <span key={l} className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[10px] font-mono">{l}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
