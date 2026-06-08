@@ -242,6 +242,18 @@ const PickingInterface = ({ ticket, onSave, saving }) => {
                   </div>
                 );
               })()}
+
+              {isExpanded && locsArr.length === 0 && (
+                <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-amber-500/5">
+                  <div className="flex items-center gap-2 text-amber-500">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-xs font-bold">Sin stock disponible para surtir esta talla en este color.</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    No hay inventario de <strong>{ticket.style}</strong> · <strong>{ticket.color}</strong> · talla <strong>{sz}</strong>. Verifica si el material ya se recibió/ubicó o si el color está mal etiquetado.
+                  </p>
+                </div>
+              )}
             </div>
           );
         })}

@@ -2256,6 +2256,26 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
                 locs = await _run(loose)
         else:
             locs = await _run(base)
+        # Merge rows that share the SAME physical location (inventory is also
+        # split by country_of_origin/fabric, so one shelf can yield several rows).
+        # Without this the picker sees duplicate inputs for the same location and
+        # typing in one mirrors the other.
+        merged: dict = {}
+        for l in locs:
+            key = l["location"]
+            if key in merged:
+                m = merged[key]
+                m["available"] += l["available"]
+                m["boxes"] += l.get("boxes", 0)
+                coo = l.get("country_of_origin")
+                if coo and coo not in m["_origins"]:
+                    m["_origins"].append(coo)
+            else:
+                merged[key] = {**l, "_origins": [l["country_of_origin"]] if l.get("country_of_origin") else []}
+        locs = []
+        for m in merged.values():
+            m["country_of_origin"] = ", ".join(o for o in m.pop("_origins", []) if o)
+            locs.append(m)
         total = sum(l["available"] for l in locs)
         for l in locs:
             l["percentage"] = round((l["available"] / total) * 100) if total > 0 else 0
