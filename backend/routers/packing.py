@@ -12,6 +12,24 @@ import json
 router = APIRouter(prefix="/api/packing")
 templates = Jinja2Templates(directory="templates/packing")
 
+
+async def _parse_payload(request: Request):
+    """Accept the packing payload either as a JSON body (fetch) or as a
+    form-encoded 'data' field (the print/pallet forms submitted in a new tab).
+    The urlencoded body is parsed manually so we don't depend on python-multipart."""
+    content_type = request.headers.get('content-type', '')
+    if 'application/json' in content_type:
+        return await request.json()
+
+    body = await request.body()
+    text = body.decode('utf-8') if body else ''
+    if 'application/x-www-form-urlencoded' in content_type or text.startswith('data='):
+        from urllib.parse import parse_qs
+        parsed = parse_qs(text, keep_blank_values=True)
+        if 'data' in parsed and parsed['data']:
+            return json.loads(parsed['data'][0])
+    return json.loads(text or '{}')
+
 def build_excel(data, base_dir="."):
     meta = data.get('meta', {})
     rows = data.get('rows', [])
@@ -451,7 +469,9 @@ def build_excel(data, base_dir="."):
         c2.fill = label_fill; c2.font = Font(bold=True, size=9); c2.alignment = center_align
         for c in range(3, 5): ws.cell(row=current_row, column=c).border = all_border
         
-        sz_headers = ["XS or OSFA", "SM", "MD", "LG", "XL", "2XL", "3XL", "4XL", "TOTAL"]
+        default_sz_labels = ["XS or OSFA", "SM", "MD", "LG", "XL", "2XL", "3XL", "4XL"]
+        sz_labels = data.get('sizeLabels') or default_sz_labels
+        sz_headers = list(sz_labels) + ["TOTAL"]
         for i, h in enumerate(sz_headers):
             cell = ws.cell(row=current_row, column=5+i, value=h)
             cell.fill = label_fill; cell.font = Font(bold=True, size=9); cell.alignment = center_align
@@ -527,7 +547,7 @@ def build_excel(data, base_dir="."):
 async def export_excel(request: Request):
     await require_auth(request)
     try:
-        data = await request.json()
+        data = await _parse_payload(request)
         wb, filename = build_excel(data, base_dir=".")
         
         output = io.BytesIO()
@@ -546,7 +566,7 @@ async def export_excel(request: Request):
 async def print_preview(request: Request):
     await require_auth(request)
     try:
-        data = await request.json()
+        data = await _parse_payload(request)
         return templates.TemplateResponse("print_preview.html", {"request": request, "data": data})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -555,7 +575,7 @@ async def print_preview(request: Request):
 async def pallet_label(request: Request):
     await require_auth(request)
     try:
-        data = await request.json()
+        data = await _parse_payload(request)
         pallets = {}
         rows = data.get('rows', [])
         meta = data.get('meta', {})

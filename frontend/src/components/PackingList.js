@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Printer, FileText, Download, Home, Box, Globe, Plus, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Printer, FileText, Download, Home, Box, Globe } from 'lucide-react';
 import { API } from '../lib/constants';
 import '../styles/packing.css';
 
@@ -15,6 +15,16 @@ const SUMMARY_ROWS_DEF = [
     { id: 'damagedGarment', label: 'DAMAGED (Garment):', readonly: false },
     { id: 'extra', label: 'Extra:', readonly: false }
 ];
+
+const STORE_OPTIONS = [
+    'SPIRIT', 'SPENCERS', "BUC-EE'S", 'TRACTOR SUPPLY', 'ROSS', 'TARGET', 'HOT TOPIC',
+    'FASHION NOVA', 'PACSUN', 'FOREVER 21', 'URBAN OUTFITTERS', 'MEIJER', 'BUCKLE',
+    'TILLYS', 'AEROPOSTALE', "ALTARD'S STATE", 'FRED MEYER', 'AMERICAN WHOLESALE',
+    'MARDEL', 'NORDSTROM', 'FOCO', 'TREVCO', 'JAKO ENTERPRISES', 'MIDSTATES', 'WALMART',
+    'TJMAX', 'MARSHALLS', 'BRUCE SPRINGSTEEN', "DD'S", 'ULTRA', 'MANDEE', 'JC PENNEY'
+];
+
+const CLIENT_OPTIONS = ['GOODIE TWO SLEEVES', 'SCREENWORKS', 'ROCK REBEL'];
 
 const PERC_OPTIONS = [
     '-', '100% Cotton', '100% Cotton Combed', '60% Cotton - 40% Polyester', '90% Cotton - 10% Polyester',
@@ -33,6 +43,9 @@ const ORIG_OPTIONS = [
 export default function PackingListTool() {
     const [activeTab, setActiveTab] = useState('packing_summary');
     const [isLoading, setIsLoading] = useState(false);
+
+    const tableBodyRef = useRef(null);
+    const focusNewRowRef = useRef(false);
 
     // Form State
     const [meta, setMeta] = useState({
@@ -64,18 +77,26 @@ export default function PackingListTool() {
 
     const [rows, setRows] = useState([createEmptyRow()]);
 
-    const addRow = () => setRows([...rows, createEmptyRow()]);
+    const addRow = () => setRows(prev => [...prev, createEmptyRow()]);
+
+    const addRowAndFocus = () => {
+        focusNewRowRef.current = true;
+        setRows(prev => [...prev, createEmptyRow()]);
+    };
+
     const removeRow = (id) => {
-        const newRows = rows.filter(r => r.id !== id);
-        setRows(newRows.length === 0 ? [createEmptyRow()] : newRows);
+        setRows(prev => {
+            const remaining = prev.filter(r => r.id !== id);
+            return remaining.length === 0 ? [createEmptyRow()] : remaining;
+        });
     };
 
     const handleRowChange = (id, field, value) => {
-        setRows(rows.map(r => r.id === id ? { ...r, [field]: value } : r));
+        setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
     };
 
     const handleCheckboxChange = (id, field) => {
-        setRows(rows.map(r => {
+        setRows(prev => prev.map(r => {
             if (r.id === id) {
                 if (field === 'newBoxes') return { ...r, newBoxes: !r.newBoxes, recycledBoxes: false };
                 if (field === 'recycledBoxes') return { ...r, recycledBoxes: !r.recycledBoxes, newBoxes: false };
@@ -84,6 +105,19 @@ export default function PackingListTool() {
         }));
     };
 
+    // Focus the first input of the newly added row (Enter key behaviour)
+    useEffect(() => {
+        if (focusNewRowRef.current && tableBodyRef.current) {
+            focusNewRowRef.current = false;
+            const lastTr = tableBodyRef.current.lastElementChild;
+            if (lastTr) {
+                const first = lastTr.querySelector('input');
+                if (first) first.focus();
+            }
+        }
+    }, [rows]);
+
+    // Auto-compute New vs Recycled box totals
     useEffect(() => {
         let nBoxes = 0;
         let rBoxes = 0;
@@ -95,28 +129,48 @@ export default function PackingListTool() {
         setMeta(prev => ({ ...prev, newBoxes: nBoxes, recycledBoxes: rBoxes }));
     }, [rows]);
 
-    useEffect(() => {
-        const handleGlobalKeyDown = (e) => {
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
-                if (!isInput && rows.some(r => r.selected)) {
-                    setRows(prev => {
-                        const remaining = prev.filter(r => !r.selected);
-                        return remaining.length === 0 ? [createEmptyRow()] : remaining;
-                    });
-                }
-            }
-        };
-        window.addEventListener('keydown', handleGlobalKeyDown);
-        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-    }, [rows]);
+    // Keyboard handling on main table cells (Enter = add row, Delete = remove empty, arrows = navigate)
+    const handleCellKeyDown = (e, rowId) => {
+        const input = e.target;
+        const tr = input.closest('tr');
+        if (!tr) return;
+        const inputs = Array.from(tr.querySelectorAll('input'));
+        const currentIndex = inputs.indexOf(input);
 
-    // Safety check: Always keep at least one row
-    useEffect(() => {
-        if (rows.length === 0) {
-            setRows([createEmptyRow()]);
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addRowAndFocus();
+            return;
         }
-    }, [rows]);
+        if (e.key === 'Delete') {
+            if (input.value === '') {
+                e.preventDefault();
+                removeRow(rowId);
+            }
+            return;
+        }
+        if (e.key === 'ArrowRight') {
+            const next = inputs[currentIndex + 1];
+            if (next) next.focus();
+        } else if (e.key === 'ArrowLeft') {
+            const prev = inputs[currentIndex - 1];
+            if (prev) prev.focus();
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const nextTr = tr.nextElementSibling;
+            if (nextTr) {
+                const target = nextTr.querySelectorAll('input')[currentIndex];
+                if (target) target.focus();
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prevTr = tr.previousElementSibling;
+            if (prevTr) {
+                const target = prevTr.querySelectorAll('input')[currentIndex];
+                if (target) target.focus();
+            }
+        }
+    };
 
     // Summary Grid State
     const [summaryData, setSummaryData] = useState(() => {
@@ -132,6 +186,38 @@ export default function PackingListTool() {
             ...prev,
             [rowId]: { ...prev[rowId], [sz]: value }
         }));
+    };
+
+    // Arrow navigation inside the summary grid (matches the source app)
+    const handleSummaryKeyDown = (e) => {
+        const input = e.target;
+        const tr = input.closest('tr');
+        if (!tr) return;
+        const sz = input.dataset.sz;
+
+        if (e.key === 'ArrowRight') {
+            const inputs = Array.from(tr.querySelectorAll('input.sg-input:not([readonly])'));
+            const i = inputs.indexOf(input);
+            if (inputs[i + 1]) inputs[i + 1].focus();
+        } else if (e.key === 'ArrowLeft') {
+            const inputs = Array.from(tr.querySelectorAll('input.sg-input:not([readonly])'));
+            const i = inputs.indexOf(input);
+            if (inputs[i - 1]) inputs[i - 1].focus();
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const nextTr = tr.nextElementSibling;
+            if (nextTr) {
+                const target = nextTr.querySelector(`input[data-sz="${sz}"]:not([readonly])`);
+                if (target) target.focus();
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prevTr = tr.previousElementSibling;
+            if (prevTr) {
+                const target = prevTr.querySelector(`input[data-sz="${sz}"]:not([readonly])`);
+                if (target) target.focus();
+            }
+        }
     };
 
     // Size Tables (Warehouse)
@@ -154,6 +240,25 @@ export default function PackingListTool() {
         }));
     };
 
+    // RESIZE: rename each size for the Import & Export section (free text per size)
+    const [resizeMap, setResizeMap] = useState(() => {
+        const init = {};
+        SIZE_LABELS.forEach(sz => { init[sz] = ''; });
+        return init;
+    });
+
+    const handleResizeChange = (sz, value) => {
+        setResizeMap(prev => ({ ...prev, [sz]: value }));
+    };
+
+    // Effective labels used by Import & Export: new size replaces the original when provided
+    const effectiveSizeLabels = useMemo(() => {
+        return SIZE_LABELS.map(l => {
+            const renamed = (resizeMap[l] || '').trim();
+            return renamed || l;
+        });
+    }, [resizeMap]);
+
     // Computations
     const computedRows = useMemo(() => {
         return rows.map(r => {
@@ -165,7 +270,7 @@ export default function PackingListTool() {
 
     const computedSummary = useMemo(() => {
         const result = { ...summaryData };
-        
+
         // Compute Total Shipped from main rows
         const shipped = { id: 'totalShipped', label: 'TOTAL SHIPPED:', xs: 0, sm: 0, md: 0, lg: 0, xl: 0, xxl: 0, xxxl: 0, xxxxl: 0 };
         computedRows.forEach(r => {
@@ -203,9 +308,9 @@ export default function PackingListTool() {
                 const perc = r.perc;
                 const orig = r.orig;
                 const qty = parseInt(r.qty) || 0;
-                
+
                 if (qty === 0 && perc === '-' && orig === '-') return;
-                
+
                 const key = `${perc}|${orig}`;
                 if (!map[key]) {
                     map[key] = { perc, orig, xs: '', sm: '', md: '', lg: '', xl: '', xxl: '', xxxl: '', xxxxl: '', total: 0 };
@@ -224,7 +329,7 @@ export default function PackingListTool() {
     // Data packaging for API
     const collectData = () => {
         const sGridData = SUMMARY_ROWS_DEF.map(rDef => computedSummary[rDef.id]);
-        
+
         const sTablesData = SIZE_LABELS.map(sz => {
             const tRows = sizeTables[sz];
             const total = tRows.reduce((acc, r) => acc + (parseInt(r.qty) || 0), 0);
@@ -237,6 +342,7 @@ export default function PackingListTool() {
             summaryGridData: sGridData,
             breakdowns: computedBreakdowns,
             sizeTablesData: sTablesData,
+            sizeLabels: effectiveSizeLabels,
             grandTotalQty
         };
     };
@@ -255,7 +361,7 @@ export default function PackingListTool() {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `${meta.dynamicTitle || 'Packing_List'}.xlsx`;
+                a.download = `${meta.dynamicTitle || 'Packing List'}.xlsx`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -288,300 +394,318 @@ export default function PackingListTool() {
     };
 
     return (
-        <div className="packing-container bg-background min-h-screen text-foreground p-2">
+        <div className="packing-container">
             {isLoading && (
                 <div className="overlay" style={{ display: 'flex' }}>
                     <div className="spinner"></div>
                     <p>Generating Excel file...</p>
                 </div>
             )}
-            
-            <header className="header flex justify-between items-center mb-6">
-                <div className="logo-area flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                        <img src="/prosper_logo.jpg" alt="Prosper Manufacturing" className="h-12 w-auto object-contain" />
+
+            <div className="container">
+                <header className="header">
+                    <div className="logo-area">
+                        <img src="/prosper_logo.jpg" alt="Prosper Logo" />
+                        <input
+                            type="text"
+                            className="title-input"
+                            value={meta.dynamicTitle}
+                            onChange={(e) => setMeta({ ...meta, dynamicTitle: e.target.value })}
+                        />
                     </div>
-                    <div className="h-8 w-px bg-border mx-2"></div>
-                    <input type="text" className="title-input text-xl font-bold bg-transparent focus:outline-none text-royal" value={meta.dynamicTitle} onChange={(e) => setMeta({...meta, dynamicTitle: e.target.value})} />
-                </div>
-                <div className="actions flex gap-3">
-                    <button onClick={() => handlePrint('preview')} className="btn-secondary px-4 py-2 flex items-center gap-2 bg-muted/50 rounded-xl hover:bg-muted transition-all">
-                        <Printer size={18} /> <span>Imprimir</span>
-                    </button>
-                    <button onClick={() => handlePrint('pallet_label')} className="btn-secondary px-4 py-2 flex items-center gap-2 bg-royal text-white rounded-xl hover:bg-royal/90 transition-all border-none">
-                        <FileText size={18} /> <span>Generar Papeleta</span>
-                    </button>
-                    <button onClick={handleExport} className="btn-primary px-4 py-2 flex items-center gap-2 bg-[#4a69a5] text-white rounded-xl hover:bg-[#3a5385] transition-all">
-                        <Download size={18} /> <span>Guardar Excel</span>
-                    </button>
-                </div>
-            </header>
+                    <div className="actions" style={{ display: 'flex', gap: '12px' }}>
+                        <button type="button" className="btn-secondary" onClick={() => handlePrint('preview')}>
+                            <Printer size={20} /> Imprimir
+                        </button>
+                        <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ backgroundColor: '#6366f1', color: 'white', border: 'none' }}
+                            onClick={() => handlePrint('pallet_label')}
+                        >
+                            <FileText size={20} /> Generar Papeleta
+                        </button>
+                        <button type="button" className="btn-primary" onClick={handleExport}>
+                            <Download size={20} /> Guardar Excel
+                        </button>
+                    </div>
+                </header>
 
-            <nav className="tab-navigation mb-6 grid grid-cols-3 gap-4">
-                <button onClick={() => setActiveTab('packing_summary')} className={`px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${activeTab === 'packing_summary' ? 'bg-royal text-white shadow-lg scale-[1.02]' : 'bg-white text-muted-foreground hover:bg-muted/30'}`}>
-                    <Home size={18} /> Packing Department
-                </button>
-                <button onClick={() => setActiveTab('warehouse')} className={`px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${activeTab === 'warehouse' ? 'bg-royal text-white shadow-lg scale-[1.02]' : 'bg-white text-muted-foreground hover:bg-muted/30'}`}>
-                    <Box size={18} /> Warehouse
-                </button>
-                <button onClick={() => setActiveTab('import_export')} className={`px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${activeTab === 'import_export' ? 'bg-royal text-white shadow-lg scale-[1.02]' : 'bg-white text-muted-foreground hover:bg-muted/30'}`}>
-                    <Globe size={18} /> Import & Export
-                </button>
-            </nav>
+                <nav className="tab-navigation">
+                    <button type="button" className={`tab-btn ${activeTab === 'packing_summary' ? 'active' : ''}`} onClick={() => setActiveTab('packing_summary')}>
+                        <Home size={20} /> Packing Department
+                    </button>
+                    <button type="button" className={`tab-btn ${activeTab === 'warehouse' ? 'active' : ''}`} onClick={() => setActiveTab('warehouse')}>
+                        <Box size={20} /> Warehouse
+                    </button>
+                    <button type="button" className={`tab-btn ${activeTab === 'import_export' ? 'active' : ''}`} onClick={() => setActiveTab('import_export')}>
+                        <Globe size={20} /> Import &amp; Export
+                    </button>
+                </nav>
 
-            <div className="tab-content-container">
-                {activeTab === 'packing_summary' && (
-                    <div id="packing_summary" className="space-y-6">
-                        <section className="meta-section card bg-card p-4 rounded-xl border border-border shadow-sm">
-                            <h2 className="text-lg font-bold mb-4 border-b pb-2">Packing Department</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">VENDOR PO</label>
-                                    <input type="text" name="vendorPO" value={meta.vendorPO} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs" placeholder="e.g. PO-1234" />
+                <form id="packingForm" onSubmit={(e) => e.preventDefault()}>
+                    {/* Packing Department Tab */}
+                    <div className={`tab-content ${activeTab === 'packing_summary' ? 'active' : ''}`}>
+                        <section className="meta-section card" style={{ marginBottom: '24px' }}>
+                            <h2 style={{ marginBottom: '20px', borderBottom: '2px solid var(--primary-color)', paddingBottom: '8px' }}>Packing Department</h2>
+                            <div className="grid-layout">
+                                <div className="form-group">
+                                    <label htmlFor="vendorPO">VENDOR PO</label>
+                                    <input type="text" id="vendorPO" name="vendorPO" value={meta.vendorPO} onChange={handleMetaChange} placeholder="e.g. PO-1234" />
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">CLIENT PO</label>
-                                    <input type="text" name="clientPO" value={meta.clientPO} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs" placeholder="e.g. CPO-5678" />
+                                <div className="form-group">
+                                    <label htmlFor="clientPO">CLIENT PO</label>
+                                    <input type="text" id="clientPO" name="clientPO" value={meta.clientPO} onChange={handleMetaChange} placeholder="e.g. CPO-5678" />
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">STORE NAME</label>
-                                    <select name="storeName" value={meta.storeName} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs">
+                                <div className="form-group">
+                                    <label htmlFor="storeName">STORE NAME</label>
+                                    <select id="storeName" name="storeName" className="custom-select" value={meta.storeName} onChange={handleMetaChange}>
                                         <option value="">-- Select --</option>
-                                        <option value="SPIRIT">SPIRIT</option>
-                                        <option value="SPENCERS">SPENCERS</option>
-                                        <option value="BUC-EE'S">BUC-EE'S</option>
-                                        <option value="TRACTOR SUPPLY">TRACTOR SUPPLY</option>
+                                        {STORE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">Client</label>
-                                    <select name="client" value={meta.client} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs">
+                                <div className="form-group">
+                                    <label htmlFor="client">Client</label>
+                                    <select id="client" name="client" className="custom-select" value={meta.client} onChange={handleMetaChange}>
                                         <option value="">-- Select --</option>
-                                        <option value="GOODIE TWO SLEEVES">GOODIE TWO SLEEVES</option>
-                                        <option value="SCREENWORKS">SCREENWORKS</option>
-                                        <option value="ROCK REBEL">ROCK REBEL</option>
+                                        {CLIENT_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                                     </select>
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">Date Packed:</label>
-                                    <input type="date" name="datePacked" value={meta.datePacked} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs" />
+                                <div className="form-group">
+                                    <label htmlFor="datePacked">Date Packed:</label>
+                                    <input type="date" id="datePacked" name="datePacked" value={meta.datePacked} onChange={handleMetaChange} />
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">Packer Name:</label>
-                                    <input type="text" name="packerName" value={meta.packerName} onChange={handleMetaChange} className="border p-1 rounded bg-background text-xs" placeholder="Your Name" />
+                                <div className="form-group">
+                                    <label htmlFor="packerName">Packer Name:</label>
+                                    <input type="text" id="packerName" name="packerName" value={meta.packerName} onChange={handleMetaChange} placeholder="Your Name" />
                                 </div>
                             </div>
                         </section>
 
-                        <section className="table-section card bg-card p-2 rounded-xl border border-border shadow-sm overflow-x-auto">
-                            <table className="w-full text-xs border-collapse styled-table">
-                                <thead>
-                                    <tr className="bg-muted text-muted-foreground">
-                                        <th className="border p-1 w-8 text-center"><input type="checkbox" onChange={(e) => {
-                                            if (e.target.checked) setRows(rows.map(r => ({...r, selected: true})));
-                                            else setRows(rows.map(r => ({...r, selected: false})));
-                                        }} /></th>
-                                        <th className="border p-1">STORE PO</th>
-                                        <th className="border p-1">DESIGN CODE</th>
-                                        <th className="border p-1">GARMENT TYPE</th>
-                                        <th className="border p-1">GARMENT COLOR</th>
-                                        {SIZE_LABELS.map(sz => <th key={sz} className="border p-1">{sz}</th>)}
-                                        <th className="border p-1 bg-royal/10 text-royal">TOTAL</th>
-                                        <th className="border p-1">BOX QTY</th>
-                                        <th className="border p-1 text-[9px] leading-tight">PCS PER<br/>BOX</th>
-                                        <th className="border p-1">NEW</th>
-                                        <th className="border p-1 text-[9px] leading-tight">RECYCLED</th>
-                                        <th className="border p-1 text-[9px] leading-tight">BOX DIM<br/>(LXWXH)</th>
-                                        <th className="border p-1 text-[9px] leading-tight">BOX WT<br/>(LBS)</th>
-                                        <th className="border p-1">PALLET #</th>
-                                        <th className="border p-1 text-[9px] leading-tight">PALLET DIM<br/>(LXWXH)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {computedRows.map((r, idx) => (
-                                        <tr key={r.id} className={`hover:bg-muted/50 ${r.selected ? 'bg-royal/5' : ''}`}>
-                                            <td className="border p-1 text-center"><input type="checkbox" checked={!!r.selected} onChange={(e) => handleRowChange(r.id, 'selected', e.target.checked)} className="w-4 h-4" /></td>
-                                            <td className="border p-1"><input type="text" className="w-16 bg-transparent text-xs" value={r.storePO} onChange={(e)=>handleRowChange(r.id, 'storePO', e.target.value)} placeholder="Store PO" /></td>
-                                            <td className="border p-1"><input type="text" className="w-20 bg-transparent text-xs" value={r.designCode} onChange={(e)=>handleRowChange(r.id, 'designCode', e.target.value)} placeholder="Design" /></td>
-                                            <td className="border p-1"><input type="text" className="w-20 bg-transparent text-xs" value={r.garmentType} onChange={(e)=>handleRowChange(r.id, 'garmentType', e.target.value)} placeholder="Type" /></td>
-                                            <td className="border p-1"><input type="text" className="w-20 bg-transparent text-xs" value={r.garmentColor} onChange={(e)=>handleRowChange(r.id, 'garmentColor', e.target.value)} placeholder="Color" /></td>
-                                            {SIZE_KEYS.map(sz => (
-                                                <td key={sz} className="border p-1"><input type="number" min="0" className="w-8 text-center bg-transparent text-xs" value={r[sz]} onChange={(e)=>handleRowChange(r.id, sz, e.target.value)} placeholder="0" /></td>
-                                            ))}
-                                            <td className="border p-1 bg-royal/5 font-bold text-center text-xs">{r.total}</td>
-                                            <td className="border p-1"><input type="number" min="0" className="w-12 text-center bg-transparent text-xs" value={r.boxQty} onChange={(e)=>handleRowChange(r.id, 'boxQty', e.target.value)} placeholder="0" /></td>
-                                            <td className="border p-1"><input type="number" min="0" className="w-12 text-center bg-transparent text-xs" value={r.pcsPerBox} onChange={(e)=>handleRowChange(r.id, 'pcsPerBox', e.target.value)} placeholder="0" /></td>
-                                            <td className="border p-1 text-center"><input type="checkbox" checked={r.newBoxes} onChange={()=>handleCheckboxChange(r.id, 'newBoxes')} className="w-4 h-4" /></td>
-                                            <td className="border p-1 text-center"><input type="checkbox" checked={r.recycledBoxes} onChange={()=>handleCheckboxChange(r.id, 'recycledBoxes')} className="w-4 h-4" /></td>
-                                            <td className="border p-1"><input type="text" className="w-16 bg-transparent text-xs text-center" value={r.boxDim} onChange={(e)=>handleRowChange(r.id, 'boxDim', e.target.value)} placeholder="L x W x H" /></td>
-                                            <td className="border p-1"><input type="number" step="0.1" className="w-12 bg-transparent text-xs text-center" value={r.boxWeight} onChange={(e)=>handleRowChange(r.id, 'boxWeight', e.target.value)} placeholder="0" /></td>
-                                            <td className="border p-1"><input type="text" className="w-12 bg-transparent text-xs text-center" value={r.palletNo} onChange={(e)=>handleRowChange(r.id, 'palletNo', e.target.value)} placeholder="#" /></td>
-                                            <td className="border p-1"><input type="text" className="w-16 bg-transparent text-xs text-center" value={r.palletDim} onChange={(e)=>handleRowChange(r.id, 'palletDim', e.target.value)} placeholder="L x W x H" /></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            <div className="flex justify-between items-center mt-3 px-2">
-                                <button onClick={addRow} className="flex items-center gap-2 px-4 py-2 bg-royal/10 text-royal rounded-lg hover:bg-royal/20 transition-all font-bold text-sm">
-                                    <Plus size={16} /> Add Row
-                                </button>
-                                {rows.some(r => r.selected) && (
-                                    <button onClick={() => {
-                                        const remaining = rows.filter(r => !r.selected);
-                                        setRows(remaining.length === 0 ? [createEmptyRow()] : remaining);
-                                    }} className="flex items-center gap-2 text-red-600 hover:text-red-700 font-bold text-sm">
-                                        <X size={16} /> Borrar seleccionados (Delete)
-                                    </button>
-                                )}
-                            </div>
-                        </section>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mt-6">
-                            <div className="lg:col-span-3 card bg-card p-6 rounded-xl border shadow-sm overflow-x-auto">
-                                <h3 className="text-xl font-bold mb-4 text-royal">Summary</h3>
-                                <table className="w-full text-xs border-collapse styled-table">
+                        <section className="table-section card">
+                            <div className="table-container">
+                                <table id="mainTable">
                                     <thead>
-                                        <tr className="bg-muted">
-                                            <th className="border p-2"></th>
-                                            {SIZE_LABELS.map(sz => <th key={sz} className="border p-2">{sz}</th>)}
-                                            <th className="border p-2 bg-royal/10 text-royal">TOTAL</th>
+                                        <tr>
+                                            <th>STORE PO</th>
+                                            <th>Design Code</th>
+                                            <th>Garment Type</th>
+                                            <th>Garment Color</th>
+                                            {SIZE_LABELS.map(sz => <th key={sz}>{sz}</th>)}
+                                            <th className="highlight-col">TOTAL</th>
+                                            <th>Box Qty</th>
+                                            <th>Pcs per box</th>
+                                            <th className="checkbox-col">New</th>
+                                            <th className="checkbox-col">Recycled</th>
+                                            <th>Box Dim (LxWxH)</th>
+                                            <th>Box Wt (lbs)</th>
+                                            <th>Pallet #</th>
+                                            <th>Pallet Dim (LxWxH)</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        {SUMMARY_ROWS_DEF.map(rDef => {
-                                            const rowData = computedSummary[rDef.id];
-                                            const isBlueRow = ['totalShipped', 'ejemplosLicense', 'orderedQty', 'difference', 'damagedMisprint', 'damagedGarment', 'extra'].includes(rDef.id);
-                                            return (
-                                                <tr key={rDef.id} className={isBlueRow ? 'bg-royal/5' : ''}>
-                                                    <td className="border p-2 font-bold">{rDef.label}</td>
-                                                    {SIZE_KEYS.map(sz => (
-                                                        <td key={sz} className="border p-1">
-                                                            {rDef.readonly ? (
-                                                                <div className="text-center font-bold">{rowData[sz] || 0}</div>
-                                                            ) : (
-                                                                <input type="number" className="w-full bg-transparent text-center" value={rowData[sz]} onChange={(e) => handleSummaryChange(rDef.id, sz, e.target.value)} placeholder="0" />
-                                                            )}
-                                                        </td>
-                                                    ))}
-                                                    <td className="border p-1 bg-royal/10 text-center font-bold text-royal">{rowData.total}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                        <tr>
-                                            <td className="border p-2 font-bold">NOTE:</td>
-                                            <td colSpan={SIZE_KEYS.length + 1} className="border p-1">
-                                                <input type="text" className="w-full bg-transparent p-1" value={meta.note} name="note" onChange={handleMetaChange} placeholder="Additional notes..." />
-                                            </td>
-                                        </tr>
+                                    <tbody ref={tableBodyRef}>
+                                        {computedRows.map(r => (
+                                            <tr key={r.id}>
+                                                <td><input type="text" className="text-input" value={r.storePO} placeholder="Store PO" onChange={(e) => handleRowChange(r.id, 'storePO', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.designCode} placeholder="Design" onChange={(e) => handleRowChange(r.id, 'designCode', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.garmentType} placeholder="Type" onChange={(e) => handleRowChange(r.id, 'garmentType', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.garmentColor} placeholder="Color" onChange={(e) => handleRowChange(r.id, 'garmentColor', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                {SIZE_KEYS.map(sz => (
+                                                    <td key={sz}><input type="number" min="0" className="size-input" value={r[sz]} placeholder="0" onChange={(e) => handleRowChange(r.id, sz, e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                ))}
+                                                <td className="highlight-col"><input type="number" className="size-input row-total readonly-input" readOnly value={r.total} /></td>
+                                                <td><input type="number" min="0" className="size-input" value={r.boxQty} placeholder="0" onChange={(e) => handleRowChange(r.id, 'boxQty', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="number" min="0" className="size-input" value={r.pcsPerBox} placeholder="0" onChange={(e) => handleRowChange(r.id, 'pcsPerBox', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td className="checkbox-col"><input type="checkbox" checked={r.newBoxes} onChange={() => handleCheckboxChange(r.id, 'newBoxes')} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td className="checkbox-col"><input type="checkbox" checked={r.recycledBoxes} onChange={() => handleCheckboxChange(r.id, 'recycledBoxes')} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.boxDim} placeholder="L x W x H" onChange={(e) => handleRowChange(r.id, 'boxDim', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="number" step="0.1" className="size-input" value={r.boxWeight} placeholder="0" onChange={(e) => handleRowChange(r.id, 'boxWeight', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.palletNo} placeholder="#" onChange={(e) => handleRowChange(r.id, 'palletNo', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                                <td><input type="text" className="text-input" value={r.palletDim} placeholder="L x W x H" onChange={(e) => handleRowChange(r.id, 'palletDim', e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, r.id)} /></td>
+                                            </tr>
+                                        ))}
                                     </tbody>
                                 </table>
                             </div>
+                            <div className="table-actions">
+                                <button type="button" className="btn-secondary" onClick={addRow}>+ Add Row</button>
+                            </div>
+                        </section>
 
-                            <div className="lg:col-span-1 space-y-6">
-                                <div className="card bg-card p-6 rounded-xl border shadow-sm">
-                                    <h3 className="text-xl font-bold mb-4 text-royal">Box Details</h3>
-                                    <div className="space-y-4">
-                                        <div className="bg-muted/30 p-4 rounded-xl border">
-                                            <label className="text-xs font-bold text-muted-foreground uppercase mb-2 block">New Boxes</label>
-                                            <div className="text-3xl font-bold text-royal bg-royal/5 p-3 rounded-lg text-center border border-royal/20">{meta.newBoxes}</div>
-                                        </div>
-                                        <div className="bg-muted/30 p-4 rounded-xl border">
-                                            <label className="text-xs font-bold text-muted-foreground uppercase mb-2 block">Recycled Boxes</label>
-                                            <div className="text-3xl font-bold text-royal bg-royal/5 p-3 rounded-lg text-center border border-royal/20">{meta.recycledBoxes}</div>
-                                        </div>
-                                    </div>
+                        <section className="summary-grid-section card" style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', marginTop: '24px' }}>
+                            <div className="summary-grid-content" style={{ flex: 1, minWidth: 0 }}>
+                                <h3>Summary</h3>
+                                <div className="table-container">
+                                    <table className="styled-table" id="summaryGridTable">
+                                        <thead>
+                                            <tr>
+                                                <th></th>
+                                                {SIZE_LABELS.map(sz => <th key={sz}>{sz}</th>)}
+                                                <th className="highlight-col">TOTAL</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {SUMMARY_ROWS_DEF.map(rDef => {
+                                                const rowData = computedSummary[rDef.id];
+                                                return (
+                                                    <tr key={rDef.id} data-row-id={rDef.id}>
+                                                        <td><strong>{rDef.label}</strong></td>
+                                                        {SIZE_KEYS.map(sz => (
+                                                            <td key={sz}>
+                                                                {rDef.readonly ? (
+                                                                    <input type="number" className="sg-input readonly-input" data-sz={sz} readOnly value={rowData[sz] || 0} />
+                                                                ) : (
+                                                                    <input type="number" min="0" className="sg-input" data-sz={sz} value={rowData[sz]} placeholder="0" onChange={(e) => handleSummaryChange(rDef.id, sz, e.target.value)} onKeyDown={handleSummaryKeyDown} />
+                                                                )}
+                                                            </td>
+                                                        ))}
+                                                        <td className="highlight-col"><input type="number" className="sg-total readonly-input" readOnly value={rowData.total} /></td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            <tr data-row-id="note">
+                                                <td><strong>NOTE:</strong></td>
+                                                <td colSpan={SIZE_KEYS.length + 1}>
+                                                    <input type="text" className="text-input sg-note" name="note" value={meta.note} placeholder="Additional notes..." onChange={handleMetaChange} />
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'warehouse' && (
-                    <div id="warehouse" className="space-y-6">
-                        <section className="card bg-card p-4 rounded-xl border shadow-sm">
-                            <h2 className="text-lg font-bold mb-4 border-b pb-2">Warehouse Info</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">Picking Date</label>
-                                    <input type="date" name="pickingDate" value={meta.pickingDate} onChange={handleMetaChange} className="border p-2 rounded bg-background" />
+                            <div className="box-details-content" style={{ width: '220px', flexShrink: 0, paddingLeft: '20px', borderLeft: '1px solid var(--border-color)' }}>
+                                <h3>Box Details</h3>
+                                <div className="form-group" style={{ marginTop: '12px' }}>
+                                    <label htmlFor="newBoxes">NEW BOXES</label>
+                                    <input type="number" id="newBoxes" name="newBoxes" className="readonly-input" readOnly value={meta.newBoxes} />
                                 </div>
-                                <div className="form-group flex flex-col gap-1">
-                                    <label className="text-xs font-bold text-muted-foreground">Picker Name</label>
-                                    <input type="text" name="pickerNameWarehouse" value={meta.pickerNameWarehouse} onChange={handleMetaChange} className="border p-2 rounded bg-background" />
+                                <div className="form-group" style={{ marginTop: '12px' }}>
+                                    <label htmlFor="recycledBoxes">RECYCLED BOXES</label>
+                                    <input type="number" id="recycledBoxes" name="recycledBoxes" className="readonly-input" readOnly value={meta.recycledBoxes} />
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    {/* Warehouse Tab */}
+                    <div className={`tab-content ${activeTab === 'warehouse' ? 'active' : ''}`}>
+                        <section className="meta-section card" style={{ marginBottom: '24px' }}>
+                            <h2 style={{ marginBottom: '20px', borderBottom: '2px solid var(--primary-color)', paddingBottom: '8px' }}>Warehouse Info</h2>
+                            <div className="grid-layout">
+                                <div className="form-group">
+                                    <label htmlFor="pickingDate">Picking Date</label>
+                                    <input type="date" id="pickingDate" name="pickingDate" value={meta.pickingDate} onChange={handleMetaChange} />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="pickerNameWarehouse">Picker Name</label>
+                                    <input type="text" id="pickerNameWarehouse" name="pickerNameWarehouse" value={meta.pickerNameWarehouse} onChange={handleMetaChange} placeholder="Picker's Name" />
                                 </div>
                             </div>
                         </section>
 
-                        <section className="card bg-card p-4 rounded-xl border shadow-sm">
-                            <h3 className="font-bold mb-4">Sizes Breakdown by Material & Origin</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {SIZE_LABELS.map((sz) => {
+                        <div className="card breakdown-card">
+                            <h3>Sizes Breakdown by Material &amp; Origin (Warehouse)</h3>
+                            <div className="size-tables-grid">
+                                {SIZE_LABELS.map(sz => {
                                     const tRows = sizeTables[sz];
                                     const tTotal = tRows.reduce((a, b) => a + (parseInt(b.qty) || 0), 0);
                                     return (
-                                        <div key={sz} className="border rounded-lg overflow-hidden">
-                                            <h4 className="bg-royal text-white text-center py-2 font-bold text-sm">SIZE {sz}</h4>
-                                            <table className="w-full text-xs">
-                                                <thead className="bg-muted">
-                                                    <tr><th className="p-1">Percentage</th><th className="p-1">Origin</th><th className="p-1">Qty</th></tr>
+                                        <div key={sz} className="size-table-container">
+                                            <h4>SIZE {sz}</h4>
+                                            <table className="styled-table size-table" style={{ tableLayout: 'fixed' }}>
+                                                <colgroup>
+                                                    <col style={{ width: '45%' }} />
+                                                    <col style={{ width: '35%' }} />
+                                                    <col style={{ width: '20%' }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th>Percentage</th>
+                                                        <th>Country of Origin</th>
+                                                        <th>Qty</th>
+                                                    </tr>
                                                 </thead>
                                                 <tbody>
                                                     {tRows.map(tr => (
-                                                        <tr key={tr.id}>
-                                                            <td className="p-1 border-t border-r"><select value={tr.perc} onChange={(e)=>handleSizeTableChange(sz, tr.id, 'perc', e.target.value)} className="w-full bg-transparent"><option value="-">-</option>{PERC_OPTIONS.filter(o=>o!=='-').map(o=><option key={o} value={o}>{o}</option>)}</select></td>
-                                                            <td className="p-1 border-t border-r"><select value={tr.orig} onChange={(e)=>handleSizeTableChange(sz, tr.id, 'orig', e.target.value)} className="w-full bg-transparent"><option value="-">-</option>{ORIG_OPTIONS.filter(o=>o!=='-').map(o=><option key={o} value={o}>{o}</option>)}</select></td>
-                                                            <td className="p-1 border-t"><input type="number" min="0" value={tr.qty} onChange={(e)=>handleSizeTableChange(sz, tr.id, 'qty', e.target.value)} className="w-full bg-transparent text-center" /></td>
+                                                        <tr key={tr.id} className="b-row">
+                                                            <td><select className="select-input b-perc" value={tr.perc} onChange={(e) => handleSizeTableChange(sz, tr.id, 'perc', e.target.value)}>{PERC_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                                                            <td><select className="select-input b-orig" value={tr.orig} onChange={(e) => handleSizeTableChange(sz, tr.id, 'orig', e.target.value)}>{ORIG_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                                                            <td><input type="number" min="0" className="size-input b-qty" value={tr.qty} placeholder="0" onChange={(e) => handleSizeTableChange(sz, tr.id, 'qty', e.target.value)} /></td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
-                                                <tfoot className="bg-muted/50">
+                                                <tfoot>
                                                     <tr>
-                                                        <td colSpan={2} className="p-1 text-right font-bold border-t">Total:</td>
-                                                        <td className="p-1 text-center font-bold border-t">{tTotal}</td>
+                                                        <td style={{ background: '#e0e8f7' }}></td>
+                                                        <td style={{ textAlign: 'right', fontWeight: 'bold', background: '#e0e8f7' }}>Total:</td>
+                                                        <td className="b-table-total" style={{ fontWeight: 'bold', background: '#e0e8f7', textAlign: 'center' }}>{tTotal}</td>
                                                     </tr>
                                                 </tfoot>
                                             </table>
                                         </div>
-                                    )
+                                    );
                                 })}
                             </div>
-                        </section>
-                    </div>
-                )}
+                        </div>
 
-                {activeTab === 'import_export' && (
-                    <div id="import_export">
-                        <section className="card bg-card p-4 rounded-xl border shadow-sm overflow-x-auto">
-                            <h3 className="font-bold mb-4">Summary (Import & Export)</h3>
-                            <table className="w-full text-xs border-collapse styled-table">
-                                <thead className="bg-muted">
-                                    <tr>
-                                        <th className="border p-1">Percentage</th>
-                                        <th className="border p-1">Country of Origin</th>
-                                        {SIZE_LABELS.map(sz => <th key={sz} className="border p-1">{sz}</th>)}
-                                        <th className="border p-1 bg-royal/10 text-royal">TOTAL</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {computedBreakdowns.map((bd, i) => (
-                                        <tr key={i} className="hover:bg-muted/50">
-                                            <td className="border p-2">{bd.perc}</td>
-                                            <td className="border p-2">{bd.orig}</td>
-                                            {SIZE_KEYS.map(sz => <td key={sz} className="border p-2 text-center">{bd[sz] || ''}</td>)}
-                                            <td className="border p-2 text-center font-bold">{bd.total}</td>
+                        <div className="card breakdown-card">
+                            <h3>RESIZE</h3>
+                            <div className="size-table-container" style={{ maxWidth: '400px' }}>
+                                <table className="styled-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Size</th>
+                                            <th>New size</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                                <tfoot>
-                                    <tr>
-                                        <td colSpan={10} className="border p-2 text-right font-bold">Total Qty:</td>
-                                        <td className="border p-2 text-center font-bold text-royal bg-royal/10">{grandTotalQty}</td>
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </section>
+                                    </thead>
+                                    <tbody>
+                                        {SIZE_LABELS.map(sz => (
+                                            <tr key={sz}>
+                                                <td style={{ fontWeight: 700, paddingLeft: '8px' }}>{sz}</td>
+                                                <td><input type="text" value={resizeMap[sz]} placeholder="New size..." onChange={(e) => handleResizeChange(sz, e.target.value)} /></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                )}
+
+                    {/* Import & Export Tab */}
+                    <div className={`tab-content ${activeTab === 'import_export' ? 'active' : ''}`}>
+                        <div className="card">
+                            <h3>Summary (Import &amp; Export)</h3>
+                            <div className="table-container summary-table-container">
+                                <table id="summaryTable" className="styled-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Percentage</th>
+                                            <th>Country of Origin</th>
+                                            {effectiveSizeLabels.map((sz, i) => <th key={i}>{sz}</th>)}
+                                            <th className="highlight-col">TOTAL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="summaryTableBody">
+                                        {computedBreakdowns.map((bd, i) => (
+                                            <tr key={i}>
+                                                <td>{bd.perc}</td>
+                                                <td>{bd.orig}</td>
+                                                {SIZE_KEYS.map(sz => <td key={sz} style={{ textAlign: 'center' }}>{bd[sz] || ''}</td>)}
+                                                <td style={{ fontWeight: 'bold', textAlign: 'center' }}>{bd.total}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colSpan={10} style={{ textAlign: 'right', fontWeight: 'bold' }}>Total Qty:</td>
+                                            <td id="grandTotalQty" className="highlight-col" style={{ fontWeight: 'bold', textAlign: 'center' }}>{grandTotalQty}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </form>
             </div>
         </div>
     );
