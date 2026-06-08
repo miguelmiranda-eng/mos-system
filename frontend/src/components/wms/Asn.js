@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check } from "lucide-react";
+import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, deleter, putter, logLoadError } from "./lib";
+import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STATUS_STYLES = {
@@ -81,6 +81,37 @@ export const AsnModule = ({ currentUser }) => {
     setEditing(true);
   };
   const cancelEdit = () => { setEditing(false); setEditDraft(null); };
+
+  // Finish the receiving process (records discrepancies even if expected != received).
+  const [closing, setClosing] = useState(false);
+  const refreshDetail = async () => {
+    const fresh = await fetcher(`/asn/${encodeURIComponent(detailFor)}`);
+    setDetailData(fresh);
+    loadAsns();
+  };
+  const closeReceiving = async () => {
+    if (!window.confirm("¿Terminar el recibo de este ASN? Se registrarán las discrepancias y no se podrá recibir más (salvo reabrir).")) return;
+    const note = window.prompt("Nota de cierre (opcional):", "") ?? "";
+    setClosing(true);
+    try {
+      const res = await poster(`/asn/${encodeURIComponent(detailFor)}/close`, { note });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || "No se pudo cerrar el recibo"); return; }
+      toast.success("Recibo terminado");
+      await refreshDetail();
+    } catch (err) { logLoadError('close asn')(err); toast.error("Error de conexión"); }
+    finally { setClosing(false); }
+  };
+  const reopenReceiving = async () => {
+    if (!window.confirm("¿Reabrir el recibo de este ASN para poder recibir más?")) return;
+    setClosing(true);
+    try {
+      const res = await poster(`/asn/${encodeURIComponent(detailFor)}/reopen`, {});
+      if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || "No se pudo reabrir"); return; }
+      toast.success("Recibo reabierto");
+      await refreshDetail();
+    } catch (err) { logLoadError('reopen asn')(err); toast.error("Error de conexión"); }
+    finally { setClosing(false); }
+  };
   const setItem = (i, field, value) =>
     setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [field]: value } : it) }));
   const addItem = () =>
@@ -563,7 +594,12 @@ export const AsnModule = ({ currentUser }) => {
                   <Package className="w-5 h-5 text-indigo-400" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm truncate">ASN {detailFor}</h3>
+                  <h3 className="font-black uppercase tracking-tighter text-sm truncate flex items-center gap-2">
+                    ASN {detailFor}
+                    {detailData?.asn?.closed && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] tracking-widest"><Lock className="w-3 h-3" /> CERRADO</span>
+                    )}
+                  </h3>
                   {detailData?.asn && (
                     <p className="text-[11px] text-muted-foreground font-bold truncate">
                       <span className="text-primary">{detailData.asn.vendor || '—'}</span>
@@ -597,6 +633,27 @@ export const AsnModule = ({ currentUser }) => {
                       Cancelar
                     </button>
                   </>
+                )}
+                {!editing && detailData && !detailData.asn?.closed && (
+                  <button
+                    onClick={closeReceiving}
+                    disabled={closing}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
+                    title="Terminar el proceso de recibo"
+                    data-testid="asn-close-receiving"
+                  >
+                    {closing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Terminar recibo
+                  </button>
+                )}
+                {!editing && detailData?.asn?.closed && isSupersu && (
+                  <button
+                    onClick={reopenReceiving}
+                    disabled={closing}
+                    className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
+                    title="Reabrir recibo (Super Usuario)"
+                  >
+                    {closing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reabrir
+                  </button>
                 )}
                 {!editing && (
                   <button
@@ -754,6 +811,66 @@ export const AsnModule = ({ currentUser }) => {
                       </div>
                     </div>
                   )}
+
+                  {/* Discrepancy log */}
+                  {!editing && (() => {
+                    const asn = detailData.asn || {};
+                    const disc = asn.closed
+                      ? (asn.discrepancies || [])
+                      : (asn.items || []).map(it => {
+                          const exp = it.qty_expected || 0, rcv = it.qty_received || 0, d = rcv - exp;
+                          return d !== 0 ? { line_no: it.line_no, part_number: it.part_number, qty_expected: exp, qty_received: rcv, difference: d, type: d > 0 ? 'SOBRANTE' : 'FALTANTE' } : null;
+                        }).filter(Boolean);
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground">
+                            Registro de discrepancias {asn.closed ? '' : <span className="text-amber-400/70 normal-case tracking-normal">(en vivo)</span>}
+                          </h4>
+                          {disc.length > 0 && <span className="text-[10px] font-black text-amber-400">{disc.length} línea(s)</span>}
+                        </div>
+                        {asn.closed && (
+                          <div className="mb-2 text-[11px] text-muted-foreground bg-secondary/30 border border-border/30 rounded-xl p-3">
+                            Cerrado por <b className="text-foreground/80">{asn.closed_by_name || '—'}</b>
+                            {asn.closed_at && <> · {new Date(asn.closed_at).toLocaleString()}</>}
+                            {asn.closure_note && <div className="mt-1 italic">“{asn.closure_note}”</div>}
+                          </div>
+                        )}
+                        {disc.length === 0 ? (
+                          <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">
+                            <CheckCircle2 className="w-4 h-4" /><span className="text-xs font-bold">Sin discrepancias — recibido coincide con lo esperado.</span>
+                          </div>
+                        ) : (
+                          <div className="border border-amber-500/20 rounded-2xl overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead className="bg-amber-500/10">
+                                <tr>
+                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">#</th>
+                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Part Number</th>
+                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Esperado</th>
+                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido</th>
+                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Diferencia</th>
+                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tipo</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border/10">
+                                {disc.map((d, i) => (
+                                  <tr key={i} className="hover:bg-secondary/30">
+                                    <td className="p-3 text-xs font-mono text-muted-foreground">{d.line_no}</td>
+                                    <td className="p-3 text-xs font-mono font-black text-primary">{d.part_number}</td>
+                                    <td className="p-3 text-xs text-right tabular-nums">{(d.qty_expected || 0).toLocaleString()}</td>
+                                    <td className="p-3 text-xs text-right tabular-nums">{(d.qty_received || 0).toLocaleString()}</td>
+                                    <td className={`p-3 text-xs text-right tabular-nums font-black ${d.difference > 0 ? 'text-amber-400' : 'text-red-400'}`}>{d.difference > 0 ? '+' : ''}{d.difference.toLocaleString()}</td>
+                                    <td className="p-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${d.difference > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>{d.type}</span></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Expected vs received table */}
                   <div>

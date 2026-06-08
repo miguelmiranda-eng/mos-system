@@ -1024,6 +1024,12 @@ async def create_receiving(request: Request):
 
     if not style:
         raise HTTPException(400, "Style requerido")
+    # Block receiving against an ASN whose receiving process was finished.
+    asn_ref = str(body.get("asn_reference", "")).strip()
+    if asn_ref:
+        ref_asn = await db.wms_asn.find_one({"asn_id": asn_ref}, {"_id": 0, "closed": 1})
+        if ref_asn and ref_asn.get("closed"):
+            raise HTTPException(409, f"El ASN {asn_ref} ya cerró su recibo. Reábrelo para recibir más.")
     if not country_of_origin:
         raise HTTPException(400, "País de origen (country_of_origin) es obligatorio")
     if not fabric_content:
@@ -4009,6 +4015,73 @@ async def update_asn(asn_id: str, request: Request):
         "asn_id": asn_id, "edited": True,
         "fields": [k for k in update if k not in ("updated_at", "updated_by")],
     })
+    return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+
+
+def _asn_discrepancies(asn: dict) -> list:
+    """Per-line expected vs received differences (snapshot of the discrepancy log)."""
+    out = []
+    for it in asn.get("items", []):
+        exp = int(it.get("qty_expected") or 0)
+        rcv = int(it.get("qty_received") or 0)
+        diff = rcv - exp
+        if diff != 0:
+            out.append({
+                "line_no": it.get("line_no"),
+                "part_number": it.get("part_number"),
+                "description": it.get("description", ""),
+                "qty_expected": exp,
+                "qty_received": rcv,
+                "difference": diff,
+                "type": "SOBRANTE" if diff > 0 else "FALTANTE",
+            })
+    return out
+
+
+@router.post("/asn/{asn_id}/close")
+async def close_asn(asn_id: str, request: Request):
+    """Finish the receiving process for an ASN even with discrepancies. Snapshots
+    the per-line discrepancy log, marks the ASN closed (and status received), and
+    blocks further receiving against it until reopened."""
+    user = await require_auth(request)
+    body = await request.json()
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+    if not asn:
+        raise HTTPException(404, f"ASN {asn_id} no encontrado")
+
+    discrepancies = _asn_discrepancies(asn)
+    update = {
+        "closed": True,
+        "closed_at": now_iso(),
+        "closed_by": user.get("user_id"),
+        "closed_by_name": user.get("name", user.get("email", "")),
+        "closure_note": str(body.get("note", "")).strip(),
+        "discrepancies": discrepancies,
+        "status": AsnStatus.RECEIVED,
+        "received_at": asn.get("received_at") or now_iso(),
+    }
+    await db.wms_asn.update_one({"asn_id": asn_id}, {"$set": update})
+    await log_movement(user, MovementType.ASN_RECEIPT, {
+        "asn_id": asn_id, "closed": True, "discrepancy_lines": len(discrepancies),
+    })
+    return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+
+
+@router.post("/asn/{asn_id}/reopen")
+async def reopen_asn(asn_id: str, request: Request):
+    """Reopen a closed ASN so receiving can continue. Super-user only."""
+    user = await require_supersu(request)
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+    if not asn:
+        raise HTTPException(404, f"ASN {asn_id} no encontrado")
+    total_exp = sum(int(it.get("qty_expected") or 0) for it in asn.get("items", []))
+    total_rcv = sum(int(it.get("qty_received") or 0) for it in asn.get("items", []))
+    status = AsnStatus.PENDING if total_rcv <= 0 else (AsnStatus.RECEIVED if total_rcv >= total_exp else AsnStatus.PARTIAL)
+    await db.wms_asn.update_one({"asn_id": asn_id}, {
+        "$set": {"closed": False, "status": status},
+        "$unset": {"closed_at": "", "closed_by": "", "closed_by_name": "", "closure_note": "", "discrepancies": ""},
+    })
+    await log_movement(user, MovementType.ASN_RECEIPT, {"asn_id": asn_id, "reopened": True})
     return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
 
 @router.post("/asn/import")
