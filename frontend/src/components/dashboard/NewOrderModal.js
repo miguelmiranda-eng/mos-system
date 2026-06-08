@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { Dialog, DialogPortal, DialogOverlay } from "../ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
@@ -19,22 +19,26 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
   // already excludes removed defaults and includes customs. Fall back to the
   // built-in defaults only if it hasn't loaded yet.
   const allColumns = columns.length ? columns : DEFAULT_COLUMNS;
-  const validKeys = new Set(allColumns.map(c => c.key));
 
   // Which fields actually render, in order. New global columns default to
-  // VISIBLE; only explicitly-hidden fields are dropped.
-  const formFieldKeys = (() => {
+  // VISIBLE; only explicitly-hidden fields are dropped. MEMOIZED so the array
+  // reference stays stable across re-renders — otherwise NewOrderForm's
+  // key-sync effect would reset the form (wiping typed fields) every time the
+  // modal re-renders (e.g. the order-number duplicate check).
+  const formFieldKeys = useMemo(() => {
+    const cols = columns.length ? columns : DEFAULT_COLUMNS;
+    const valid = new Set(cols.map(c => c.key));
     if (!formConfig.fields?.length) {
       return ['order_number', 'customer_po', 'style', 'client', 'branding',
-        'priority', 'quantity', 'due_date', 'notes'].filter(k => validKeys.has(k));
+        'priority', 'quantity', 'due_date', 'notes'].filter(k => valid.has(k));
     }
-    const order = formConfig.fields.filter(k => validKeys.has(k));
-    allColumns.forEach(c => { if (!order.includes(c.key)) order.push(c.key); });
+    const order = formConfig.fields.filter(k => valid.has(k));
+    cols.forEach(c => { if (!order.includes(c.key)) order.push(c.key); });
     const hidden = Array.isArray(formConfig.hidden)
       ? new Set(formConfig.hidden)
-      : new Set(allColumns.filter(c => !formConfig.fields.includes(c.key) && !c.custom).map(c => c.key));
+      : new Set(cols.filter(c => !formConfig.fields.includes(c.key) && !c.custom).map(c => c.key));
     return order.filter(k => !hidden.has(k));
-  })();
+  }, [columns, formConfig]);
 
   useEffect(() => {
     if (isOpen) {
@@ -137,7 +141,7 @@ export const NewOrderModal = ({ isOpen, onClose, onCreate, options, groupConfig,
         >
         <LoadingOverlay isLoading={loading} message={t('processing')} />
         <NewOrderForm
-          formFieldKeys={formFieldKeys.filter(k => validKeys.has(k))}
+          formFieldKeys={formFieldKeys}
           options={options}
           groupConfig={groupConfig}
           allColumns={allColumns}
