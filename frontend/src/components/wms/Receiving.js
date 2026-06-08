@@ -889,10 +889,10 @@ export const ReceivingModule = () => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.country_of_origin && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} disabled={!!upcDoc?.country_of_origin} />
+                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
               </div>
             </div>
             <div>
