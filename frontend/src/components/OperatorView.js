@@ -4,8 +4,9 @@ import { Toaster, toast } from "sonner";
 import MachineOperatorView from "./MachineOperatorView";
 import {
   ClipboardCheck, MapPin, CheckCircle, Package, Loader2, LogOut,
-  ChevronDown, ChevronUp, Save, Check, AlertTriangle, Bell, MessageSquare, Send, X
+  ChevronDown, ChevronUp, Save, Check, AlertTriangle, Bell, MessageSquare
 } from "lucide-react";
+import { CommentsModal } from "./dashboard/CommentsModal";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
@@ -54,83 +55,6 @@ const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all ${progress === 100 ? 'bg-green-500' : progress > 0 ? 'bg-yellow-500' : 'bg-gray-500'}`} style={{ width: `${progress}%` }} />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Comments on the pick ticket's CRM order (resolved by order_number on the backend).
-const CommentsModal = ({ orderNumber, isOpen, onClose }) => {
-  const [comments, setComments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [text, setText] = useState("");
-  const [posting, setPosting] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen || !orderNumber) return;
-    setLoading(true); setComments([]); setText("");
-    fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}/comments`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : [])
-      .then(setComments)
-      .catch(() => toast.error("No se pudieron cargar los comentarios"))
-      .finally(() => setLoading(false));
-  }, [isOpen, orderNumber]);
-
-  const send = async () => {
-    const content = text.trim();
-    if (!content) return;
-    setPosting(true);
-    try {
-      const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}/comments`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ content }),
-      });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); toast.error(e.detail || "No se pudo comentar"); return; }
-      const created = await r.json();
-      setComments(prev => [...prev, created]);
-      setText("");
-    } catch { toast.error("Error de conexión"); }
-    finally { setPosting(false); }
-  };
-  const fmt = (ts) => { const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleString(); };
-
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 p-4 border-b border-border">
-          <MessageSquare className="w-5 h-5 text-sky-400" />
-          <div className="flex-1">
-            <div className="text-sm font-black uppercase tracking-tight">Comentarios</div>
-            <div className="text-xs text-muted-foreground">Orden {orderNumber}</div>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary text-muted-foreground"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5 min-h-[140px]">
-          {loading ? (
-            <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-sky-400" /></div>
-          ) : comments.length === 0 ? (
-            <div className="text-center text-muted-foreground/60 text-xs font-bold uppercase tracking-widest py-10">Sin comentarios</div>
-          ) : comments.map((c, i) => (
-            <div key={c.comment_id || i} className="bg-secondary/30 border border-border/40 rounded-xl p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[12px] font-black text-sky-500">{c.user_name || "—"}</span>
-                <span className="text-[10px] font-mono text-muted-foreground">{fmt(c.created_at)}</span>
-              </div>
-              <div className="text-sm mt-1 whitespace-pre-wrap break-words">{c.content}</div>
-            </div>
-          ))}
-        </div>
-        <div className="p-3 border-t border-border flex items-end gap-2">
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="Escribe un comentario…"
-            className="flex-1 bg-secondary/40 border border-border rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:border-primary max-h-32" />
-          <button onClick={send} disabled={posting || !text.trim()}
-            className="h-11 w-11 rounded-xl bg-sky-600 hover:bg-sky-500 text-white flex items-center justify-center disabled:opacity-40 shrink-0">
-            {posting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          </button>
         </div>
       </div>
     </div>
@@ -397,6 +321,16 @@ function PickerView() {
   const [newTicketAlert, setNewTicketAlert] = useState(false);
   const wsRef = useRef(null);
 
+  // Resolve the pick ticket's order_number to the real CRM order so the CRM
+  // CommentsModal (which keys everything off order_id) works identically here.
+  const openComments = async (orderNumber) => {
+    try {
+      const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}`, { credentials: 'include' });
+      if (r.ok) setCommentsOrder(await r.json());
+      else toast.error('No se encontró la orden');
+    } catch { toast.error('Error de conexión'); }
+  };
+
   const loadTickets = useCallback(async () => {
     try {
       const data = await fetcher('/operator/my-tickets');
@@ -529,7 +463,7 @@ function PickerView() {
                   </h3>
                   <div className="space-y-2">
                     {inProgressTickets.map(t => (
-                      <TicketCard key={t.ticket_id} ticket={t} onSelect={setSelectedTicket} isActive={selectedTicket?.ticket_id === t.ticket_id} onComments={setCommentsOrder} />
+                      <TicketCard key={t.ticket_id} ticket={t} onSelect={setSelectedTicket} isActive={selectedTicket?.ticket_id === t.ticket_id} onComments={openComments} />
                     ))}
                   </div>
                 </div>
@@ -541,7 +475,7 @@ function PickerView() {
                   </h3>
                   <div className="space-y-2">
                     {assignedTickets.map(t => (
-                      <TicketCard key={t.ticket_id} ticket={t} onSelect={setSelectedTicket} isActive={selectedTicket?.ticket_id === t.ticket_id} onComments={setCommentsOrder} />
+                      <TicketCard key={t.ticket_id} ticket={t} onSelect={setSelectedTicket} isActive={selectedTicket?.ticket_id === t.ticket_id} onComments={openComments} />
                     ))}
                   </div>
                 </div>
@@ -561,7 +495,7 @@ function PickerView() {
                >
                  <LogOut className="w-4 h-4 rotate-180" /> Volver a la lista de pedidos
                </button>
-               <PickingInterface ticket={selectedTicket} onSave={handleSave} saving={saving} onComments={setCommentsOrder} />
+               <PickingInterface ticket={selectedTicket} onSave={handleSave} saving={saving} onComments={openComments} />
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center p-8">
@@ -573,7 +507,7 @@ function PickerView() {
         </main>
       </div>
 
-      <CommentsModal orderNumber={commentsOrder} isOpen={!!commentsOrder} onClose={() => setCommentsOrder(null)} />
+      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => setCommentsOrder(null)} currentUser={user} />
     </div>
   );
 }

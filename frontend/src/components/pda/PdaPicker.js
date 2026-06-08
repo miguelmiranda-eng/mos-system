@@ -4,8 +4,9 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check,
-  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Send, X,
+  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare,
 } from "lucide-react";
+import { CommentsModal } from "../dashboard/CommentsModal";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
@@ -44,36 +45,15 @@ export default function PdaPicker() {
 
   const pending = tickets.filter(t => t.picking_status !== "completed");
 
-  // Comments on the underlying CRM order (pick ticket ↔ order_number).
-  const [commentsFor, setCommentsFor] = useState(null); // order_number
-  const [comments, setComments] = useState([]);
-  const [loadingC, setLoadingC] = useState(false);
-  const [newC, setNewC] = useState("");
-  const [postingC, setPostingC] = useState(false);
-
+  // Comments: open the SAME CRM CommentsModal. Resolve the pick ticket's
+  // order_number to the real CRM order (the modal keys off order_id).
+  const [commentsOrder, setCommentsOrder] = useState(null);
   const openComments = async (orderNumber) => {
-    setCommentsFor(orderNumber); setComments([]); setNewC(""); setLoadingC(true);
     try {
-      const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}/comments`, { credentials: "include" });
-      setComments(r.ok ? await r.json() : []);
-    } catch { toast.error("No se pudieron cargar los comentarios"); }
-    finally { setLoadingC(false); }
-  };
-  const postComment = async () => {
-    const text = newC.trim();
-    if (!text || !commentsFor) return;
-    setPostingC(true);
-    try {
-      const r = await fetch(`${ORDERS_API}/${encodeURIComponent(commentsFor)}/comments`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ content: text }),
-      });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); toast.error(e.detail || "No se pudo comentar"); return; }
-      const c = await r.json();
-      setComments(prev => [...prev, c]);
-      setNewC("");
+      const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}`, { credentials: "include" });
+      if (r.ok) setCommentsOrder(await r.json());
+      else toast.error("No se encontró la orden");
     } catch { toast.error("Error de conexión"); }
-    finally { setPostingC(false); }
   };
 
   const handleSave = async (ticketId, pickedSizes, isComplete) => {
@@ -131,64 +111,7 @@ export default function PdaPicker() {
         <TicketList tickets={pending} onSelect={setSelected} onComments={openComments} />
       )}
 
-      {commentsFor && (
-        <CommentsSheet
-          orderNumber={commentsFor}
-          comments={comments}
-          loading={loadingC}
-          value={newC}
-          onChange={setNewC}
-          onSend={postComment}
-          posting={postingC}
-          onClose={() => setCommentsFor(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function CommentsSheet({ orderNumber, comments, loading, value, onChange, onSend, posting, onClose }) {
-  const fmt = (ts) => { const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); };
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60" onClick={onClose}>
-      <div className="bg-[#131a2b] rounded-t-3xl max-h-[85vh] flex flex-col border-t border-white/10" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 p-4 border-b border-white/10">
-          <MessageSquare className="w-5 h-5 text-sky-300" />
-          <div className="flex-1">
-            <div className="text-sm font-black">Comentarios</div>
-            <div className="text-[11px] text-slate-400">Orden {orderNumber}</div>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-xl active:bg-white/10"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5 min-h-[120px]">
-          {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-sky-300" /></div>
-          ) : comments.length === 0 ? (
-            <div className="text-center text-slate-500 text-xs font-bold uppercase tracking-widest py-8">Sin comentarios</div>
-          ) : comments.map((c, i) => (
-            <div key={c.comment_id || i} className="bg-black/20 border border-white/10 rounded-2xl p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[12px] font-black text-sky-200">{c.user_name || "—"}</span>
-                <span className="text-[10px] font-mono text-slate-500">{fmt(c.created_at)}</span>
-              </div>
-              <div className="text-sm text-slate-100 mt-1 whitespace-pre-wrap break-words">{c.content}</div>
-            </div>
-          ))}
-        </div>
-        <div className="p-3 border-t border-white/10 flex items-end gap-2" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            rows={1}
-            placeholder="Escribe un comentario…"
-            className="flex-1 bg-black/30 border border-white/10 rounded-2xl px-4 py-3 text-sm resize-none focus:outline-none focus:border-sky-400 max-h-32"
-          />
-          <button onClick={onSend} disabled={posting || !value.trim()}
-            className="h-12 w-12 rounded-2xl bg-sky-600 active:bg-sky-700 flex items-center justify-center disabled:opacity-40 shrink-0">
-            {posting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
+      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => setCommentsOrder(null)} currentUser={user} />
     </div>
   );
 }
