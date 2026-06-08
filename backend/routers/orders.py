@@ -800,15 +800,20 @@ async def react_to_comment(order_id: str, comment_id: str, request: Request):
 @router.get("/{order_id}/comments")
 async def get_comments(order_id: str, request: Request):
     await require_auth(request)
-    comments = await db.comments.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # Accept either order_id or order_number (pick tickets only carry the number).
+    order = await db.orders.find_one({"$or": [{"order_id": order_id}, {"order_number": order_id}]}, {"_id": 0, "order_id": 1})
+    oid = order["order_id"] if order else order_id
+    comments = await db.comments.find({"order_id": oid}, {"_id": 0}).sort("created_at", 1).to_list(500)
     return comments
 
 @router.post("/{order_id}/comments")
 async def create_comment(order_id: str, comment: CommentCreate, request: Request):
     user = await require_auth(request)
-    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    # Accept either order_id or order_number so the picker can comment by number.
+    order = await db.orders.find_one({"$or": [{"order_id": order_id}, {"order_number": order_id}]}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    order_id = order["order_id"]
     comment_id = f"comment_{uuid.uuid4().hex[:12]}"
     # Detect @mentions by matching against real user names/emails
     all_users = await db.users.find({}, {"_id": 0, "email": 1, "user_id": 1, "name": 1}).to_list(200)
