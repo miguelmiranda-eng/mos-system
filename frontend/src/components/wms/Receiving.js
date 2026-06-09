@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, SIZES_ORDER, API } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -158,6 +158,16 @@ export const ReceivingModule = () => {
   const [upcLooking, setUpcLooking] = useState(false);
   const [createUpcOpen, setCreateUpcOpen] = useState(false);
   const [creatingUpc, setCreatingUpc] = useState(false);
+  const [upcEditMode, setUpcEditMode] = useState(false);
+  // Edit/Delete of catalog UPCs is admin-only (backend require_admin), so only
+  // surface those buttons for admin/supersu/ceo.
+  const [canManageUpc, setCanManageUpc] = useState(false);
+  useEffect(() => {
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setCanManageUpc(['admin', 'supersu', 'ceo'].includes(u?.role)))
+      .catch(() => {});
+  }, []);
   const [upcDraft, setUpcDraft] = useState({
     upc: '', customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '', brand: '',
@@ -410,23 +420,58 @@ export const ReceivingModule = () => {
       fabric_content: form.fabric_content || '',
       brand: '',
     });
+    setUpcEditMode(false);
     setCreateUpcOpen(true);
   };
 
-  const handleCreateUpc = async () => {
+  // Open the modal pre-filled with the resolved UPC for editing (admin only).
+  const openEditUpc = () => {
+    if (!upcDoc) return;
+    setUpcDraft({
+      upc: upcDoc.upc || '',
+      customer: upcDoc.customer || '',
+      manufacturer: upcDoc.manufacturer || '',
+      style: upcDoc.style || '',
+      color: upcDoc.color || '',
+      size: upcDoc.size || '',
+      description: upcDoc.description || '',
+      country_of_origin: upcDoc.country_of_origin || '',
+      fabric_content: upcDoc.fabric_content || '',
+      brand: upcDoc.brand || '',
+    });
+    setUpcEditMode(true);
+    setCreateUpcOpen(true);
+  };
+
+  const handleDeleteUpc = async () => {
+    if (!upcDoc) return;
+    if (!window.confirm(`¿Eliminar el UPC ${upcDoc.upc} del catálogo? Los recibos ya hechos NO se afectan.`)) return;
+    try {
+      await deleter(`/upc/${encodeURIComponent(upcDoc.upc)}`);
+      toast.success(`UPC ${upcDoc.upc} eliminado del catálogo`);
+      setUpcDoc(null);
+      setUpc('');
+    } catch {
+      toast.error('No se pudo eliminar (¿permisos de admin?)');
+    }
+  };
+
+  const handleSaveUpc = async () => {
     const code = upcDraft.upc.trim().toUpperCase();
     if (!code) { toast.error('Captura el UPC'); return; }
     if (!upcDraft.style?.trim()) { toast.error('Style es obligatorio'); return; }
     setCreatingUpc(true);
     try {
-      const res = await poster('/upc', { ...upcDraft, upc: code });
+      const res = upcEditMode
+        ? await putter(`/upc/${encodeURIComponent(code)}`, { ...upcDraft, upc: code })
+        : await poster('/upc', { ...upcDraft, upc: code });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo crear el UPC');
+        toast.error(err.detail || (upcEditMode ? 'No se pudo actualizar el UPC' : 'No se pudo crear el UPC'));
         return;
       }
       const doc = await res.json();
-      toast.success(`UPC ${doc.upc} guardado en catálogo`);
+      toast.success(`UPC ${doc.upc} ${upcEditMode ? 'actualizado' : 'guardado'} en catálogo`);
       setUpcDoc(doc);
       setUpc(doc.upc);
       // Aplicar valores del catálogo al form para reflejar el lock visual.
@@ -442,6 +487,7 @@ export const ReceivingModule = () => {
         fabric_content: doc.fabric_content || p.fabric_content,
       }));
       setCreateUpcOpen(false);
+      setUpcEditMode(false);
     } catch {
       toast.error('Error de conexión');
     } finally { setCreatingUpc(false); }
@@ -814,6 +860,28 @@ export const ReceivingModule = () => {
                   >
                     <Plus className="w-3.5 h-3.5" /> Crear UPC
                   </button>
+                )}
+                {upcDoc && canManageUpc && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={openEditUpc}
+                      className="px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
+                      title="Editar UPC del catálogo"
+                      data-testid="rcv-upc-edit"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteUpc}
+                      className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
+                      title="Eliminar UPC del catálogo"
+                      data-testid="rcv-upc-delete"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
                 )}
                 {upcDoc && (
                   <button
@@ -1263,14 +1331,16 @@ export const ReceivingModule = () => {
                   <Package className="w-5 h-5 text-indigo-400" />
                 </div>
                 <div>
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Crear UPC en catálogo</h3>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">{upcEditMode ? 'Editar UPC del catálogo' : 'Crear UPC en catálogo'}</h3>
                   <p className="text-[11px] text-muted-foreground font-bold">
-                    Este producto se guardará como master — futuros recibos del mismo UPC heredarán estos datos.
+                    {upcEditMode
+                      ? 'Editas el master del catálogo. Los recibos pasados NO cambian; solo los futuros heredan estos datos.'
+                      : 'Este producto se guardará como master — futuros recibos del mismo UPC heredarán estos datos.'}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setCreateUpcOpen(false)}
+                onClick={() => { setCreateUpcOpen(false); setUpcEditMode(false); }}
                 disabled={creatingUpc}
                 className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"
               >
@@ -1287,8 +1357,10 @@ export const ReceivingModule = () => {
                   value={upcDraft.upc}
                   onChange={e => setUpcDraft(p => ({ ...p, upc: e.target.value.trim().toUpperCase() }))}
                   placeholder="Código del UPC"
-                  className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold"
+                  className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                   data-testid="upc-draft-code"
+                  disabled={upcEditMode}
+                  title={upcEditMode ? 'El código del UPC no se puede cambiar; elimina y crea uno nuevo si necesitas otro código.' : undefined}
                 />
               </div>
 
@@ -1346,16 +1418,16 @@ export const ReceivingModule = () => {
 
             <div className="flex gap-2 p-5 border-t border-border/20">
               <button
-                onClick={handleCreateUpc}
+                onClick={handleSaveUpc}
                 disabled={creatingUpc || !upcDraft.upc.trim() || !upcDraft.style.trim()}
                 className="flex-1 px-4 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                 data-testid="upc-draft-submit"
               >
                 {creatingUpc ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Guardar UPC
+                {upcEditMode ? 'Actualizar UPC' : 'Guardar UPC'}
               </button>
               <button
-                onClick={() => setCreateUpcOpen(false)}
+                onClick={() => { setCreateUpcOpen(false); setUpcEditMode(false); }}
                 disabled={creatingUpc}
                 className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
               >
