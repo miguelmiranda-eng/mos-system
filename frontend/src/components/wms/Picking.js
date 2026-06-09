@@ -527,6 +527,13 @@ export const PickingModule = () => {
                   testId="pick-order-select"
                 />
               )}
+              {!editingTicket && (
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  {form.order_number && !orders.some(o => o.order_number === form.order_number)
+                    ? <span className="text-amber-500 font-bold">⚠ Orden manual (no está en el sistema) — llena Customer / Style / tallas</span>
+                    : '¿No aparece la orden? Escríbela y elige «Agregar …» para crear un ticket manual.'}
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
