@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useTransition } from "
 import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, logLoadError } from "./lib";
+import { API, fetcher, poster, deleter, logLoadError } from "./lib";
 
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
@@ -13,6 +13,9 @@ const SYSTEM_TRANSIT_NAMES = new Set([
 export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
   const isSupersu = currentUser?.role === 'supersu';
+  // Deleting inventory content from a location is admin-only (backend require_admin).
+  const canDeleteInv = ['admin', 'supersu'].includes(currentUser?.role);
+  const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -170,6 +173,38 @@ export const LocationsModule = ({ currentUser }) => {
       toast.error('No se pudo cargar el detalle de la ubicación');
     } finally { setDetailLoading(false); }
   }, [activeLocLoaded]);
+
+  // Delete one inventory line (and its boxes) from the open location.
+  const deleteInvLine = useCallback(async (it) => {
+    if (!it.inventory_id) { toast.error('Este renglón no tiene inventory_id; no se puede borrar individualmente'); return; }
+    const label = `${it.style || ''}${it.color ? '-' + it.color : ''}${it.size ? '-' + it.size : ''}`;
+    const units = (it.on_hand ?? it.units_on_hand ?? 0).toLocaleString();
+    if (!window.confirm(`¿Borrar ${label} (${units} pzs) de ${detailLoc?.name}? Se elimina el inventario de esta ubicación.`)) return;
+    try {
+      await deleter(`/inventory/${encodeURIComponent(it.inventory_id)}`);
+      setDetailItems(prev => prev.filter(x => x.inventory_id !== it.inventory_id));
+      toast.success('Renglón eliminado de la ubicación');
+      load();
+    } catch {
+      toast.error('No se pudo borrar (¿permisos de admin?)');
+    }
+  }, [detailLoc, load]);
+
+  // Clear ALL inventory content from the open location.
+  const clearLocation = useCallback(async () => {
+    const items = detailItems.filter(x => x.inventory_id);
+    if (items.length === 0) { toast.error('No hay renglones con inventory_id para borrar'); return; }
+    if (!window.confirm(`¿VACIAR por completo ${detailLoc?.name}? Se eliminarán ${items.length} renglón(es) de inventario. No se puede deshacer.`)) return;
+    setClearingLoc(true);
+    let ok = 0;
+    for (const it of items) {
+      try { await deleter(`/inventory/${encodeURIComponent(it.inventory_id)}`); ok++; } catch { /* keep going */ }
+    }
+    setClearingLoc(false);
+    toast.success(`${ok}/${items.length} renglones eliminados`);
+    if (detailLoc) openDetail(detailLoc);
+    load();
+  }, [detailItems, detailLoc, load, openDetail]);
 
   const findBox = useCallback(async () => {
     const lpn = (lpnSearch || '').trim().toUpperCase();
@@ -962,6 +997,7 @@ export const LocationsModule = ({ currentUser }) => {
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">On hand</th>
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Disponible</th>
+                          {canDeleteInv && <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground w-10">Acción</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1000,12 +1036,24 @@ export const LocationsModule = ({ currentUser }) => {
                                 </td>
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-emerald-500">{onHand.toLocaleString()}</td>
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-blue-400">{available.toLocaleString()}</td>
+                                {canDeleteInv && (
+                                  <td className="p-2.5 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
+                                      className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500"
+                                      title="Borrar este renglón de la ubicación"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                )}
                               </tr>
 
                               {/* LPN drawer expands below the row when clicked */}
                               {hasBoxes && (
                                 <tr>
-                                  <td colSpan={10} className="p-0 border-b border-border/20">
+                                  <td colSpan={canDeleteInv ? 11 : 10} className="p-0 border-b border-border/20">
                                     <div className="bg-secondary/15 px-4 py-3">
                                       <div className="flex items-center gap-2 mb-2">
                                         <div className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
@@ -1162,12 +1210,25 @@ export const LocationsModule = ({ currentUser }) => {
               <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
                 {detailItems.length} línea{detailItems.length === 1 ? '' : 's'} en esta ubicación
               </span>
-              <button
-                onClick={() => setDetailLoc(null)}
-                className="px-5 py-2 bg-secondary/60 hover:bg-secondary text-foreground rounded-xl text-xs font-bold uppercase tracking-widest transition-all"
-              >
-                Cerrar
-              </button>
+              <div className="flex items-center gap-2">
+                {canDeleteInv && detailItems.length > 0 && (
+                  <button
+                    onClick={clearLocation}
+                    disabled={clearingLoc}
+                    className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50 flex items-center gap-2"
+                    title="Eliminar todo el inventario de esta ubicación"
+                  >
+                    {clearingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    Vaciar ubicación
+                  </button>
+                )}
+                <button
+                  onClick={() => setDetailLoc(null)}
+                  className="px-5 py-2 bg-secondary/60 hover:bg-secondary text-foreground rounded-xl text-xs font-bold uppercase tracking-widest transition-all"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>

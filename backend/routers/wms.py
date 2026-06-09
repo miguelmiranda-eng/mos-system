@@ -4539,6 +4539,29 @@ async def add_inventory_manual(request: Request):
     }
 
 
+@router.delete("/inventory/{inventory_id}")
+async def delete_inventory_row(inventory_id: str, request: Request):
+    """Admin-only: remove a single inventory line (and its linked LPN boxes)
+    from a location. Used by the Locations detail modal to clear contents.
+    Matches strictly by inventory_id, so it never touches other locations or
+    duplicate rows of the same SKU."""
+    user = await require_admin(request)
+    inv = await db.wms_inventory.find_one({"inventory_id": inventory_id})
+    if not inv:
+        raise HTTPException(404, "Inventario no encontrado")
+    await db.wms_inventory.delete_one({"inventory_id": inventory_id})
+    box_res = await db.wms_boxes.delete_many({"inventory_id": inventory_id})
+    await log_movement(user, "inventory_deleted", {
+        "inventory_id": inventory_id,
+        "sku": inv.get("sku"), "style": inv.get("style"),
+        "color": inv.get("color"), "size": inv.get("size"),
+        "location": inv.get("location"),
+        "units_removed": inv.get("units_on_hand", 0),
+        "boxes_removed": box_res.deleted_count,
+    })
+    return {"message": "Inventario eliminado", "inventory_id": inventory_id, "boxes_removed": box_res.deleted_count}
+
+
 # ==================== IMPORT INVENTORY ====================
 
 @router.post("/import/inventory")
