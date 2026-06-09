@@ -38,6 +38,16 @@ export const TransitModule = () => {
   const [locOptions, setLocOptions] = useState([]); // [{name, zone}]
   const [showLocDrop, setShowLocDrop] = useState(false);
   const destRef = useRef(null);
+  const destInputRef = useRef(null);
+  // When the operator selects the first box (0 -> >0), jump the cursor straight
+  // to the destination-location field so they can type/scan it immediately.
+  const prevSelSizeRef = useRef(0);
+  useEffect(() => {
+    if (prevSelSizeRef.current === 0 && selected.size > 0) {
+      requestAnimationFrame(() => destInputRef.current?.focus());
+    }
+    prevSelSizeRef.current = selected.size;
+  }, [selected]);
   // Edit-box modal state.
   const [editBox, setEditBox] = useState(null); // box doc being edited, or null
   const [editDraft, setEditDraft] = useState({});
@@ -307,6 +317,7 @@ export const TransitModule = () => {
           <div className="flex-1 min-w-[240px] relative" ref={destRef}>
             <MapPin className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
+              ref={destInputRef}
               type="text"
               value={destination}
               onChange={e => { setDestination(e.target.value.toUpperCase()); setShowLocDrop(true); }}
