@@ -74,6 +74,8 @@ export default function WMS() {
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
   const [currentUser, setCurrentUser] = useState(null);
+  // Pickers see a simple 2-option launcher (Picking / Putaway) on entry.
+  const [pickerHome, setPickerHome] = useState(true);
   const [historyOrder, setHistoryOrder] = useState(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -145,7 +147,8 @@ export default function WMS() {
     if (currentUser?.role === 'customer') {
       setActiveModule('dashboard');
     } else if (currentUser?.role === 'picker') {
-      setActiveModule('directed');
+      // Pickers land on a 2-option launcher (Picking / Putaway), not a module.
+      setPickerHome(true);
     }
   }, [currentUser]);
 
@@ -194,6 +197,60 @@ export default function WMS() {
     }
   };
 
+  // Picker launcher: two big buttons (Picking / Putaway). Picking one enters
+  // that module; the sidebar then only exposes those same two.
+  if (currentUser?.role === 'picker' && pickerHome) {
+    const opts = MODULES.filter(m => ['picking', 'transit'].includes(m.id));
+    const firstName = (currentUser?.name || '').trim().split(' ')[0];
+    return (
+      <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
+        <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+        <header className="flex items-center justify-between p-4 border-b border-border/40">
+          <span className="font-barlow font-black text-lg italic flex items-center gap-1.5">
+            <Warehouse className="w-5 h-5 text-primary" /> MOS <span className="text-primary not-italic ml-0.5">WMS</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleTheme} title={isDark ? t('light_mode') : t('dark_mode')}
+              className="p-2 rounded-xl bg-secondary/20 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all border border-border/20">
+              {isDark ? <Sun className="w-4 h-4 text-primary" /> : <Moon className="w-4 h-4 text-indigo-400" />}
+            </button>
+            <button onClick={handleLogout} title="Cerrar Sesión"
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20">
+              <LogOut className="w-4 h-4" /> <span className="text-[11px] font-bold uppercase tracking-wider">Salir</span>
+            </button>
+          </div>
+        </header>
+        <div className="flex-1 flex flex-col items-center justify-center gap-10 p-6">
+          <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-center">
+            {firstName ? `Hola, ${firstName}` : 'Hola'} — ¿Qué vas a hacer?
+          </h1>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-3xl">
+            {opts.map(m => {
+              const Icon = m.icon;
+              const badgeCount = m.id === 'transit' ? (badges.putaway || 0) : (badges[m.id] || 0);
+              return (
+                <button key={m.id} onClick={() => { setActiveModule(m.id); setPickerHome(false); }}
+                  data-testid={`picker-launch-${m.id}`}
+                  className="relative flex flex-col items-center justify-center gap-5 p-10 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
+                  {badgeCount > 0 && (
+                    <span className="absolute top-4 right-4 min-w-[26px] h-[26px] px-2 rounded-full bg-primary text-primary-foreground text-xs font-black flex items-center justify-center">
+                      {badgeCount}
+                    </span>
+                  )}
+                  <div className="p-6 rounded-2xl bg-primary/10">
+                    <Icon className={`w-16 h-16 ${m.color}`} />
+                  </div>
+                  <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">{m.label}</span>
+                  <span className="text-xs text-muted-foreground text-center max-w-[220px]">{m.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <WmsContext.Provider value={wmsCtx}>
     <div className="h-screen bg-background flex flex-col text-foreground overflow-hidden">
@@ -206,9 +263,9 @@ export default function WMS() {
         <div className="p-4 border-b border-border/40 flex flex-col gap-4">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/dashboard')}
+              onClick={() => currentUser?.role === 'picker' ? setPickerHome(true) : navigate('/dashboard')}
               className="p-1.5 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group"
-              title={t('wms_back_main')}          >
+              title={currentUser?.role === 'picker' ? 'Inicio' : t('wms_back_main')}          >
               <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
             </button>
             {!sidebarCollapsed && (
@@ -252,7 +309,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['directed', 'picking', 'neck_cutting', 'transit'].includes(m.id);
+            if (currentUser?.role === 'picker') return ['picking', 'transit'].includes(m.id);
             return true;
           }).map(m => {
             const Icon = m.icon;
