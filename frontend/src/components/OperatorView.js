@@ -14,7 +14,9 @@ const WS_URL = `${process.env.REACT_APP_BACKEND_URL}`.replace(/^http/, 'ws') + '
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
 const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
 
-const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
+// Adult sizes first, then youth. The view filters to qty>0, so adult tickets
+// never show youth rows — only youth tickets surface YS/YM/YL/etc.
+const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
 
 const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
   const sizes = ticket.sizes || {};

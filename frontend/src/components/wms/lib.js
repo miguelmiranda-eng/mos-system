@@ -32,6 +32,11 @@ export const toastActionError = (what) => (err) => { console.error(`[WMS] ${what
 
 // ─── Shared constants ───────────────────────────────────────────────────────
 export const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
+// Youth sizes. Kept separate so adult pick tickets are never shown youth rows
+// (operators would get confused). The picking grid only switches to these when
+// the selected style's inventory is actually youth.
+export const YOUTH_SIZES = ['YXS', 'YS', 'YM', 'YL', 'YXL'];
+export const ALL_SIZES = [...SIZES_ORDER, ...YOUTH_SIZES];
 
 // ─── WMS Context (badges + cross-module actions) ────────────────────────────
 export const WmsContext = createContext({ badges: {}, refreshBadges: () => {} });

@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER } from "./lib";
+import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
 export const PickingModule = () => {
@@ -43,7 +43,7 @@ export const PickingModule = () => {
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
-  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: { XS: '', S: '', M: '', L: '', XL: '', '2X': '', '3X': '', '4X': '', '5X': '' } };
+  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
   // Progressive ticket loading state
@@ -128,11 +128,15 @@ export const PickingModule = () => {
   const getSizeLocs = (sz) => sizeLocations[sz]?.locations || (Array.isArray(sizeLocations[sz]) ? sizeLocations[sz] : []);
   const getTotalAvail = (sz) => getSizeLocs(sz).reduce((sum, loc) => sum + (loc.available || 0), 0);
   const totalPick = Object.values(form.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
+  // Show youth size rows only when the selected style's inventory is youth (its
+  // location lookup returns Y-prefixed sizes). Adult styles keep the adult grid
+  // unchanged so operators don't get confused.
+  const gridSizes = Object.keys(sizeLocations).some(s => String(s).toUpperCase().startsWith('Y')) ? YOUTH_SIZES : SIZES_ORDER;
 
   const openEdit = (t) => {
     setEditingTicket(t);
     const sizesObj = {};
-    SIZES_ORDER.forEach(sz => { sizesObj[sz] = t.sizes?.[sz] || ''; });
+    ALL_SIZES.forEach(sz => { sizesObj[sz] = t.sizes?.[sz] || ''; });
     setForm({
       order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
       style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
@@ -210,8 +214,8 @@ export const PickingModule = () => {
     if (!pw) { toast.error(t('allow_popups')); return; }
     const sizes = ticket.sizes || {};
     const sizeLocs = ticket.size_locations || {};
-    const totalQty = SIZES_ORDER.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
-    const gridRows = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0).map(sz => {
+    const totalQty = ALL_SIZES.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
+    const gridRows = ALL_SIZES.filter(sz => parseInt(sizes[sz]) > 0).map(sz => {
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => {
         let s = `${l.location} (${l.available})`;
@@ -598,7 +602,7 @@ export const PickingModule = () => {
             <table className="w-full text-sm">
               <thead><tr className="text-xs uppercase text-muted-foreground"><th className="p-1 text-center w-16">{t('size')}</th><th className="p-1 text-center w-20">{t('qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('available')}</th></tr></thead>
               <tbody>
-                {SIZES_ORDER.map(sz => (
+                {gridSizes.map(sz => (
                   <tr key={sz} className="border-b border-border/50">
                     <td className="p-1 text-center font-bold">{sz}</td>
                     <td className="p-1"><input type="number" min="0" value={form.sizes[sz]} onChange={e => updateSize(sz, e.target.value)} placeholder="0" className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono text-foreground" data-testid={`pick-size-${sz}`} /></td>

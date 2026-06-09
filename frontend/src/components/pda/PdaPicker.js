@@ -13,7 +13,9 @@ const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
 const putter = (url, body) => fetch(`${API}${url}`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
 
-const SIZES_ORDER = ["XS", "S", "M", "L", "XL", "2X", "3X", "4X", "5X"];
+// Adult sizes first, then youth. Views filter to qty>0, so adult tickets never
+// show youth rows — only youth tickets surface YS/YM/YL/etc.
+const SIZES_ORDER = ["XS", "S", "M", "L", "XL", "2X", "3X", "4X", "5X", "YXS", "YS", "YM", "YL", "YXL"];
 const norm = (s) => String(s || "").trim().toUpperCase();
 
 // PDA-optimized picking surface (Zebra/Honeywell). The scanner is configured in
