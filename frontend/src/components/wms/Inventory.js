@@ -168,7 +168,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const emptyManualForm = {
     style: '', color: '', size: '',
     zone: '', location: '',
-    customer: '', description: '', country_of_origin: '', category: '',
+    customer: '', description: '', country_of_origin: '', fabric_content: '', category: '',
     total_boxes: 0, total_units: 0,
   };
   const [manualForm, setManualForm] = useState(emptyManualForm);
@@ -341,6 +341,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
         customer: info.customer || f.customer,
         description: info.description || f.description,
         country_of_origin: info.country_of_origin || f.country_of_origin,
+        fabric_content: info.fabric_content || f.fabric_content,
         category: info.category || f.category,
       }));
     } catch (err) {
@@ -357,6 +358,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const onLocationChange = useCallback(loc => setManualForm(f => ({ ...f, location: loc })), []);
   const onCustomerChange = useCallback(c => setManualForm(f => ({ ...f, customer: c })), []);
   const onCooChange = useCallback(co => setManualForm(f => ({ ...f, country_of_origin: co })), []);
+  const onFabricChange = useCallback(fc => setManualForm(f => ({ ...f, fabric_content: fc })), []);
   const onCategoryChange = useCallback(cat => setManualForm(f => ({ ...f, category: cat })), []);
 
   const submitManualAdd = async () => {
@@ -382,7 +384,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
         category: (manualForm.category || styleInfo?.category || '').toUpperCase(),
         manufacturer: styleInfo?.manufacturer || '',
         size_header: styleInfo?.size_header || '',
-        fabric_content: styleInfo?.fabric_content || '',
+        fabric_content: (manualForm.fabric_content || styleInfo?.fabric_content || '').toUpperCase(),
       };
       const res = await fetch(`${API}/inventory`, {
         method: 'POST',
@@ -971,6 +973,16 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     options={filters.countries || EMPTY}
                     placeholder="Escribe… ej: HON"
                     testid="manual-coo"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Contenido de tela (%)</label>
+                  <Typeahead
+                    value={manualForm.fabric_content}
+                    onChange={onFabricChange}
+                    options={filters.fabrics || EMPTY}
+                    placeholder="Escribe… ej: 100% COTTON"
+                    testid="manual-fabric"
                   />
                 </div>
                 <div>
