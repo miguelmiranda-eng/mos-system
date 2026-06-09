@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { History, Tag, Search, X, Loader2, User } from "lucide-react";
+import { History, Tag, Search, X, Loader2, User, Pencil, Trash2, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, logLoadError } from "./lib";
+import { fetcher, putter, deleter, logLoadError, SIZES_ORDER } from "./lib";
 
 const TABS = [
   { id: 'movements', label: 'Movimientos', icon: History },
@@ -104,6 +105,17 @@ const UpcsTab = () => {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [userFilter, setUserFilter] = useState('');
+  // Edit/Delete of catalog UPCs is admin-only (backend require_admin).
+  const [canManage, setCanManage] = useState(false);
+  useEffect(() => {
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setCanManage(['admin', 'supersu', 'ceo'].includes(u?.role)))
+      .catch(() => {});
+  }, []);
+  const [editing, setEditing] = useState(null); // upc doc being edited
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 300);
@@ -136,6 +148,42 @@ const UpcsTab = () => {
     if (!userFilter) return upcs;
     return upcs.filter(u => (u.created_by_name || '') === userFilter);
   }, [upcs, userFilter]);
+
+  const openEdit = (u) => { setEditing(u); setDraft({ ...u }); };
+  const closeEdit = () => { setEditing(null); setDraft(null); };
+
+  const saveEdit = async () => {
+    if (!draft?.style?.trim()) { toast.error('Style es obligatorio'); return; }
+    setSaving(true);
+    try {
+      const res = await putter(`/upc/${encodeURIComponent(editing.upc)}`, draft);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        toast.error(e.detail || 'No se pudo actualizar el UPC');
+        return;
+      }
+      const doc = await res.json();
+      setUpcs(prev => prev.map(x => x.upc === doc.upc ? { ...x, ...doc } : x));
+      toast.success(`UPC ${doc.upc} actualizado`);
+      closeEdit();
+    } catch {
+      toast.error('Error de conexión');
+    } finally { setSaving(false); }
+  };
+
+  const removeUpc = async (u) => {
+    if (!window.confirm(`¿Eliminar el UPC ${u.upc} del catálogo? Los recibos ya hechos NO se afectan.`)) return;
+    try {
+      await deleter(`/upc/${encodeURIComponent(u.upc)}`);
+      setUpcs(prev => prev.filter(x => x.upc !== u.upc));
+      toast.success(`UPC ${u.upc} eliminado del catálogo`);
+    } catch {
+      toast.error('No se pudo eliminar (¿permisos de admin?)');
+    }
+  };
+
+  const field = (k) => draft?.[k] ?? '';
+  const setField = (k, v) => setDraft(p => ({ ...p, [k]: v }));
 
   return (
     <div className="space-y-4">
@@ -184,18 +232,19 @@ const UpcsTab = () => {
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Descripción</th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Creado por</th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
+                {canManage && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Acciones</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={canManage ? 8 : 7} className="py-16 text-center text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-20 text-center">
+                  <td colSpan={canManage ? 8 : 7} className="py-20 text-center">
                     <Tag className="w-12 h-12 mx-auto opacity-20 mb-2 text-indigo-400" />
                     <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
                       {upcs.length === 0 ? 'No hay UPCs en el catálogo' : 'Sin coincidencias'}
@@ -226,6 +275,14 @@ const UpcsTab = () => {
                     <td className="p-3 font-mono text-[10px] text-muted-foreground whitespace-nowrap">
                       {u.created_at ? new Date(u.created_at).toLocaleString() : '—'}
                     </td>
+                    {canManage && (
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-500" title="Editar UPC"><Pencil className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => removeUpc(u)} className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500" title="Eliminar UPC"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -233,6 +290,82 @@ const UpcsTab = () => {
           </table>
         </div>
       </div>
+
+      {editing && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-border/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center"><Pencil className="w-5 h-5 text-amber-500" /></div>
+                <div>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Editar UPC del catálogo</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold">Los recibos pasados NO cambian; solo los futuros heredan estos datos.</p>
+                </div>
+              </div>
+              <button onClick={closeEdit} disabled={saving} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">UPC</label>
+                <input value={field('upc')} disabled title="El código del UPC no se puede cambiar; elimina y crea uno nuevo si necesitas otro código." className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold opacity-60 cursor-not-allowed" />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
+                  <input value={field('customer')} onChange={e => setField('customer', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
+                  <input value={field('manufacturer')} onChange={e => setField('manufacturer', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Marca</label>
+                  <input value={field('brand')} onChange={e => setField('brand', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Style <span className="text-red-400">*</span></label>
+                  <input value={field('style')} onChange={e => setField('style', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
+                  <input value={field('color')} onChange={e => setField('color', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
+                  <select value={field('size')} onChange={e => setField('size', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono">
+                    <option value="">—</option>
+                    {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                <input value={field('description')} onChange={e => setField('description', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                  <input value={field('country_of_origin')} onChange={e => setField('country_of_origin', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
+                  <input value={field('fabric_content')} onChange={e => setField('fabric_content', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-5 border-t border-border/20">
+              <button onClick={saveEdit} disabled={saving || !field('style').trim()} className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Actualizar UPC
+              </button>
+              <button onClick={closeEdit} disabled={saving} className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
