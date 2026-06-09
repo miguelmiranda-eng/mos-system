@@ -229,7 +229,7 @@ export default function WMS() {
               const Icon = m.icon;
               const badgeCount = m.id === 'transit' ? (badges.putaway || 0) : (badges[m.id] || 0);
               return (
-                <button key={m.id} onClick={() => { setActiveModule(m.id); setPickerHome(false); }}
+                <button key={m.id} onClick={() => { if (m.id === 'picking') { navigate('/pda'); } else { setActiveModule(m.id); setPickerHome(false); } }}
                   data-testid={`picker-launch-${m.id}`}
                   className="relative flex flex-col items-center justify-center gap-5 p-10 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
                   {badgeCount > 0 && (
@@ -309,7 +309,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['picking', 'transit'].includes(m.id);
+            if (currentUser?.role === 'picker') return ['transit'].includes(m.id);
             return true;
           }).map(m => {
             const Icon = m.icon;

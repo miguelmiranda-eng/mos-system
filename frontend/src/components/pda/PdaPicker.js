@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
-  ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check,
+  ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check, LayoutGrid,
   MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
@@ -95,6 +95,9 @@ export default function PdaPicker() {
         )}
         {selected && (
           <button onClick={() => openComments(selected.order_number)} className="p-2 rounded-xl text-sky-300 active:bg-white/10" title="Comentarios"><MessageSquare className="w-5 h-5" /></button>
+        )}
+        {!selected && (
+          <button onClick={() => navigate('/wms')} className="p-2 rounded-xl text-amber-300 active:bg-white/10" title="Menú (Picking / Putaway)"><LayoutGrid className="w-5 h-5" /></button>
         )}
         <button onClick={loadTickets} className="p-2 rounded-xl active:bg-white/10"><RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} /></button>
         <button onClick={logout} className="p-2 rounded-xl text-red-400 active:bg-red-500/10"><LogOut className="w-5 h-5" /></button>

@@ -259,9 +259,10 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && window.location.pathname !== '/wms') {
-        // Pickers now work inside the WMS (Picking + Putaway 2.0). Keep them
-        // there from any entry point, including the iPad PWA that opens /pda.
+      } else if (user.role === 'picker' && !['/wms', '/pda'].includes(window.location.pathname)) {
+        // Pickers use the WMS launcher: "Picking" returns to their original /pda
+        // view, "Putaway 2.0" is the WMS module. Allow both; bounce anything else
+        // back to the launcher (covers the iPad PWA entry too).
         navigate('/wms', { replace: true });
       }
     }

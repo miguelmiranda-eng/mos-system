@@ -2,7 +2,7 @@
   "short_name": "MOS Picker",
   "name": "MOS Surtido (PDA)",
   "description": "Surtido de pedidos para dispositivos PDA Android",
-  "start_url": "/pda",
+  "start_url": "/wms",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
