@@ -133,10 +133,10 @@
             posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
                 api_host: "https://us.i.posthog.com",
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well,
-                session_recording: {
-                    recordCrossOriginIframes: true,
-                    capturePerformance: false,
-                },
+                // Session replay OFF: it continuously serializes DOM mutations and was
+                // bogging down the warehouse iPads on Safari (Firefox blocks PostHog via
+                // tracking protection, which is why it felt faster). Pageviews/analytics stay on.
+                disable_session_recording: true,
             });
         </script>
     </body>
