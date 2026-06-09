@@ -813,6 +813,22 @@ const Dashboard = () => {
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   useEffect(() => { if (currentBoard === 'SCHEDULING') fetchExtra(); }, [currentBoard, fetchExtra]);
+  // Active-search match test — used to render ONLY matching rows while searching
+  // (instead of rendering the whole board and just highlighting matches), which
+  // keeps search snappy on iPad Safari.
+  const matchesSearch = useCallback((order) => {
+    if (!debouncedSearchQuery) return true;
+    const sq = debouncedSearchQuery.toLowerCase();
+    const getVal = (v) => {
+      if (!v) return "";
+      if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
+      return String(v).trim().toLowerCase();
+    };
+    return [order.order_number, order.client, order.store_po, order.customer_po,
+            order.job_title_a, order.job_title_b, order.branding, order.notes]
+      .some(f => getVal(f).includes(sq));
+  }, [debouncedSearchQuery]);
+
   const renderOrderRow = useCallback((order) => {
     const sq = debouncedSearchQuery.toLowerCase();
     const getVal = (v) => {
@@ -1115,7 +1131,12 @@ const Dashboard = () => {
 
 
   const renderTableBody = () => {
-    const visibleOrders = (orders && Array.isArray(orders) ? orders : []).slice(0, displayLimit);
+    const _allOrders = (orders && Array.isArray(orders) ? orders : []);
+    // While searching, render only the matches (small set) instead of all
+    // displayLimit rows — this is what made search laggy on iPad.
+    const visibleOrders = debouncedSearchQuery
+      ? _allOrders.filter(matchesSearch).slice(0, 500)
+      : _allOrders.slice(0, displayLimit);
 
     if (isMobile) {
       return (
