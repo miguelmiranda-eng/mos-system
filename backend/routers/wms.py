@@ -1672,12 +1672,19 @@ async def _update_inventory_enhanced(
         elif operation == "allocate":
             await db.wms_inventory.update_one(doc_key, {"$inc": {"units_allocated": qty}, "$set": {"updated_at": now_iso()}})
         elif operation == "deallocate":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
+            # Guard: allocation can never go below zero.
+            new_alloc = max(0, inv.get("units_allocated", 0) - qty)
+            await db.wms_inventory.update_one(doc_key, {"$set": {"units_allocated": new_alloc, "updated_at": now_iso()}})
         elif operation == "deduct":
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
+            # Guard: never let stock or allocation go below zero. Stock for the
+            # same SKU/location can be split across duplicate rows, so deducting
+            # the full picked qty from one row could otherwise drive it negative
+            # while its twin still holds positive stock (see RP04-B42 incident).
+            new_hand = max(0, inv.get("units_on_hand", 0) - qty)
+            new_alloc = max(0, inv.get("units_allocated", 0) - qty)
+            await db.wms_inventory.update_one(doc_key, {"$set": {"units_on_hand": new_hand, "units_allocated": new_alloc, "updated_at": now_iso()}})
 
             # WMS 2.0 Cycle Count Trigger
-            new_hand = inv.get("units_on_hand", 0) - qty
             if new_hand < 50:
                 existing_cc = await db.wms_tasks.find_one({"task_type": "cycle_count", "context.sku": sku, "status": "pending"})
                 if not existing_cc:
@@ -1687,8 +1694,10 @@ async def _update_inventory_enhanced(
                         "created_at": now_iso(),
                     })
         elif operation == "pick_to_neck":
-            # 1. Deduct from current shelf
-            await db.wms_inventory.update_one(doc_key, {"$inc": {"units_on_hand": -qty, "units_allocated": -qty}, "$set": {"updated_at": now_iso()}})
+            # 1. Deduct from current shelf (clamped at zero, same guard as deduct)
+            new_hand = max(0, inv.get("units_on_hand", 0) - qty)
+            new_alloc = max(0, inv.get("units_allocated", 0) - qty)
+            await db.wms_inventory.update_one(doc_key, {"$set": {"units_on_hand": new_hand, "units_allocated": new_alloc, "updated_at": now_iso()}})
             # 2. Add to CUTTING_NECK (keep it allocated/reserved for the order)
             # Use the same sku/style as the source record for consistency
             inv_sku = inv.get("sku") or inv.get("style") or sku
