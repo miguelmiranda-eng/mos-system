@@ -375,7 +375,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
         const src = (key.startsWith('http') || key.startsWith('/api/uploads/')) 
           ? key 
           : `${API}/uploads/${key}`;
-        return <img key={i} src={src} alt="Imagen" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(src, '_blank')} data-testid="comment-image" />;
+        return <img key={i} src={src} alt="Imagen" loading="lazy" decoding="async" className="max-w-full max-h-60 rounded-lg mt-1 cursor-pointer" onClick={() => window.open(src, '_blank')} data-testid="comment-image" />;
       }
       
       // Handle [file] tags
@@ -525,7 +525,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                   {/* Header row */}
                   <div className="flex items-center gap-2 mb-1">
                     {comment.user_picture ? (
-                      <img src={comment.user_picture} alt="" className="w-6 h-6 rounded-full border border-border/50" />
+                      <img src={comment.user_picture} alt="" loading="lazy" decoding="async" className="w-6 h-6 rounded-full border border-border/50" />
                     ) : (
                       <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">{comment.user_name?.charAt(0)}</div>
                     )}
