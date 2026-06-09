@@ -3349,7 +3349,9 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
 @router.get("/export/inventory")
 async def export_inventory(request: Request):
     await require_auth(request)
-    inventory = await db.wms_inventory.find({}, {"_id": 0}).sort("sku", 1).to_list(20000)
+    # to_list(None) returns ALL rows. A fixed cap (e.g. 20000) silently dropped
+    # the alphabetical tail (W/X/Y/Z SKUs) once the catalog grew past it.
+    inventory = await db.wms_inventory.find({}, {"_id": 0}).sort("sku", 1).to_list(None)
     import xlsxwriter
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)
