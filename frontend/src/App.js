@@ -259,9 +259,10 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && !['/operator', '/pda'].includes(window.location.pathname)) {
-        // Force pickers to stay in their dedicated views (PDA picking or legacy operator).
-        navigate('/pda', { replace: true });
+      } else if (user.role === 'picker' && window.location.pathname !== '/wms') {
+        // Pickers now work inside the WMS (Picking + Putaway 2.0). Keep them
+        // there from any entry point, including the iPad PWA that opens /pda.
+        navigate('/wms', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);
@@ -378,7 +379,7 @@ const LandingPage = () => {
     // Only redirect if user is confirmed authenticated (has a real user_id)
     if (user && user.user_id) {
       if (user.role === 'picker') {
-        navigate('/pda', { replace: true });
+        navigate('/wms', { replace: true });
       } else if (user.role === 'operator') {
         navigate('/operator', { replace: true });
       } else if (['admin', 'supersu', 'ceo'].includes(user.role)) {
@@ -404,7 +405,7 @@ const LandingPage = () => {
         if (userData.role === 'ceo') {
           navigate('/dashboard', { replace: true });
         } else if (userData.role === 'picker') {
-          navigate('/pda', { replace: true });
+          navigate('/wms', { replace: true });
         } else if (userData.role === 'operator') {
           navigate('/operator', { replace: true });
         } else {

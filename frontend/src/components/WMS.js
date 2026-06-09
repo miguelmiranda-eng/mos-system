@@ -252,7 +252,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['directed', 'picking', 'neck_cutting'].includes(m.id);
+            if (currentUser?.role === 'picker') return ['directed', 'picking', 'neck_cutting', 'transit'].includes(m.id);
             return true;
           }).map(m => {
             const Icon = m.icon;
