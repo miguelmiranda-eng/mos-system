@@ -204,7 +204,10 @@ function PickScreen({ ticket, onSave, saving }) {
 
   // Scanner (DataWedge keyboard mode): types the code + Enter into this box.
   const handleScan = (raw) => {
-    const code = norm(raw);
+    // Strip any scanner preamble/prefix (e.g. "%-") before matching — the label
+    // barcodes are clean Code128 of the location name. Locations always start
+    // with a letter/digit, so dropping leading non-alphanumerics is safe.
+    const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
     setScan("");
     if (!code) return;
     for (const sz of activeSizes) {

@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -351,7 +351,7 @@ export const ReceivingModule = () => {
   // Any other non-2xx (401/403/5xx) surfaces a toast + console.log so we don't
   // silently fall back to "sin catálogo" when the real cause is auth or net.
   useEffect(() => {
-    const code = upc.trim().toUpperCase();
+    const code = cleanScan(upc);
     if (!code) { setUpcDoc(null); return; }
     setUpcLooking(true);
     const handle = setTimeout(async () => {
@@ -1355,7 +1355,7 @@ export const ReceivingModule = () => {
                 </label>
                 <input
                   value={upcDraft.upc}
-                  onChange={e => setUpcDraft(p => ({ ...p, upc: e.target.value.trim().toUpperCase() }))}
+                  onChange={e => setUpcDraft(p => ({ ...p, upc: cleanScan(e.target.value) }))}
                   placeholder="Código del UPC"
                   className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                   data-testid="upc-draft-code"

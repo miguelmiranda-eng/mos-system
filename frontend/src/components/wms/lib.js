@@ -26,6 +26,16 @@ export const poster = (url, body) => apiFetch(`${API}${url}`, { method: 'POST', 
 export const putter = (url, body) => apiFetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 export const deleter = (url) => apiFetch(`${API}${url}`, { method: 'DELETE' }).then(r => r.ok ? r.json() : Promise.reject(r));
 
+// ─── Scanner input sanitizer ────────────────────────────────────────────────
+// Some handheld scanners are configured with a preamble/prefix (e.g. "%-") or
+// transmit an AIM symbology identifier before the payload. The label barcodes
+// themselves are clean Code128 of the raw name/LPN, so we strip any leading
+// non-alphanumeric junk before matching. Safe: every location/LPN/SKU starts
+// with a letter or digit (RP10-A26, CARRO 1, BOX-000143, style 2000…).
+// Only the leading prefix is removed; interior dashes/spaces (e.g. "CARRO 1")
+// are preserved, and trailing whitespace is trimmed.
+export const cleanScan = (raw) => (raw || "").toUpperCase().replace(/^[^A-Z0-9]+/, "").trimEnd();
+
 // ─── Error helpers — replace silent `catch {}` patterns ─────────────────────
 export const logLoadError = (what) => (err) => console.error(`[WMS] Failed to load ${what}:`, err);
 export const toastActionError = (what) => (err) => { console.error(`[WMS] ${what} failed:`, err); toast.error(`No se pudo ${what}`); };

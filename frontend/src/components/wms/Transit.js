@@ -4,7 +4,7 @@ import {
   Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
   ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2,
 } from "lucide-react";
-import { fetcher, poster, putter, logLoadError } from "./lib";
+import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -185,7 +185,7 @@ export const TransitModule = () => {
 
   // Step 1 — lock the destination location before any box is scanned.
   const confirmLocation = () => {
-    const dst = (destination || "").trim().toUpperCase();
+    const dst = cleanScan(destination);
     if (!dst) { toast.error("Escribe o escanea la ubicación destino"); return; }
     const match = locOptions.find(l => (l.name || "").toUpperCase() === dst);
     if (!match) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
@@ -208,7 +208,7 @@ export const TransitModule = () => {
   // Step 2 — scan a box into the current batch.
   const handleBoxScan = (e) => {
     if (e) e.preventDefault();
-    const id = (boxScan || "").trim().toUpperCase();
+    const id = cleanScan(boxScan);
     if (!id) return;
     const box = boxes.find(b => (b.box_id || "").toUpperCase() === id);
     if (!box) {

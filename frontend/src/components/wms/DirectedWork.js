@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Warehouse, Loader2, ScanLine, Link2, MapPin, ClipboardList, CheckCircle } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, logLoadError, useWms } from "./lib";
+import { fetcher, poster, logLoadError, useWms, cleanScan } from "./lib";
 
 export const DirectedWorkModule = () => {
   const { t } = useLang();
@@ -144,7 +144,7 @@ export const DirectedWorkModule = () => {
               autoFocus
               placeholder="ESCANEAR LPN PARA VALIDAR"
               value={scan}
-              onChange={e => setScan(e.target.value.toUpperCase())}
+              onChange={e => setScan(cleanScan(e.target.value))}
               className="w-full pl-16 pr-6 py-6 bg-background/80 border-2 border-border/20 rounded-[2.5rem] focus:border-primary focus:ring-4 focus:ring-primary/10 text-xl font-black font-mono transition-all text-center placeholder:text-muted-foreground/30"
             />
           </div>
