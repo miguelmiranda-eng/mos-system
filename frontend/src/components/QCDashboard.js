@@ -5,12 +5,13 @@ import {
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
   ClipboardList, BadgeX, Camera, Image as ImageIcon,
   Link2, Bell, Download, BarChart2, ChevronLeft, ChevronRight,
-  History, Clock, Lock, LockOpen, Tag, MessageSquare,
+  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts';
 import { API } from '../lib/constants';
+import { useAuth } from '../App';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
@@ -908,6 +909,7 @@ const RESULT_TAB_MAP = { PASS: 'pass', CONDITIONAL: 'conditional', FAIL: 'fail' 
 
 export default function QCDashboard() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
@@ -930,6 +932,13 @@ export default function QCDashboard() {
   const [savingStatus, setSavingStatus] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
 
+  // Global order search (like the main dashboard bar) — searches ALL orders
+  // via /orders?search= and lists matches so the inspector can act on any order,
+  // not only those already in "NECESITA QC".
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [globalResults, setGlobalResults] = useState(null); // null = not searched yet
+  const [globalSearching, setGlobalSearching] = useState(false);
+
   // Pagination
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -950,6 +959,9 @@ export default function QCDashboard() {
 
   const canWrite = currentUser && WRITE_ROLES.includes(currentUser.role);
   const canRelease = currentUser && RELEASE_ROLES.includes(currentUser.role);
+  // QC-only roles are isolated to this screen (no main app to go "back" to);
+  // they get a logout button instead of the back-to-dashboard arrow.
+  const isIsolated = currentUser && ['qc', 'inspector_qc'].includes(currentUser.role);
 
   // Fetch current user
   useEffect(() => {
@@ -1141,6 +1153,27 @@ export default function QCDashboard() {
     window.open(`${API}/qc/export/csv?${params}`, '_blank');
   };
 
+  const runGlobalSearch = async () => {
+    const q = globalSearch.trim();
+    if (!q) { setGlobalResults(null); return; }
+    setGlobalSearching(true);
+    try {
+      const res = await fetch(`${API}/orders?search=${encodeURIComponent(q)}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.orders || []);
+        // Hide trashed orders, mirroring the main dashboard's global search.
+        setGlobalResults(list.filter(o => o.board !== 'PAPELERA DE RECICLAJE'));
+      } else {
+        setGlobalResults([]);
+        toast.error('Error al buscar órdenes');
+      }
+    } catch { toast.error('Error de conexión'); setGlobalResults([]); }
+    finally { setGlobalSearching(false); }
+  };
+
+  const clearGlobalSearch = () => { setGlobalSearch(''); setGlobalResults(null); };
+
   const clearFilters = () => { setSearch(''); setFilterSeverity(''); setDateFrom(''); setDateTo(''); setPage(1); };
   const hasFilters = search || filterSeverity || dateFrom || dateTo;
 
@@ -1157,9 +1190,15 @@ export default function QCDashboard() {
       {/* Header */}
       <div className={cn("px-6 py-4 flex items-center justify-between", isDark ? "bg-navy-dark border-none" : "border-b bg-white border-slate-200 shadow-sm")}>
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/dashboard')} className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-slate-100 text-slate-500")}>
-            <ArrowLeft className="w-4 h-4" />
-          </button>
+          {isIsolated ? (
+            <button onClick={logout} title="Cerrar sesión" className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-red-500/15 text-red-400" : "hover:bg-red-50 text-red-500")}>
+              <LogOut className="w-4 h-4" />
+            </button>
+          ) : (
+            <button onClick={() => navigate('/dashboard')} className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-slate-100 text-slate-500")}>
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-royal/10 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5 text-royal" />
@@ -1223,6 +1262,98 @@ export default function QCDashboard() {
       </div>
 
       <div className="flex-1 px-6 py-6 space-y-6 w-full">
+
+        {/* Global order search (all orders, not just QC queue) */}
+        <div className={cn("rounded-xl border p-3", isDark ? "bg-navy-dark border-white/8" : "bg-white border-slate-200 shadow-sm")}>
+          <div className={cn("flex items-center gap-2 rounded-lg border px-3 group focus-within:border-royal transition-colors", isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200")}>
+            <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors flex-shrink-0" />
+            <input
+              type="text"
+              value={globalSearch}
+              onChange={e => setGlobalSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') runGlobalSearch(); }}
+              placeholder="Buscar cualquier orden por # / cliente / PO..."
+              className="w-full bg-transparent border-none text-sm outline-none focus:ring-0 placeholder:text-muted-foreground/50 font-medium py-2"
+            />
+            {globalSearching && <Loader2 className="w-4 h-4 animate-spin text-royal flex-shrink-0" />}
+            {globalResults !== null && !globalSearching && (
+              <button onClick={clearGlobalSearch} className={cn("flex-shrink-0 p-1 rounded transition-colors", isDark ? "hover:bg-white/10 text-white/50" : "hover:bg-slate-200 text-slate-400")} title="Limpiar búsqueda">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+            <button onClick={runGlobalSearch} disabled={globalSearching || !globalSearch.trim()}
+              className="flex-shrink-0 px-3 py-1.5 my-1 bg-royal text-white rounded-lg text-xs font-bold hover:bg-royal/90 disabled:opacity-40 transition-colors">
+              Buscar
+            </button>
+          </div>
+
+          {globalResults !== null && (
+            <div className="mt-3">
+              {globalResults.length === 0 ? (
+                <p className={cn("text-sm text-center py-6", isDark ? "text-white/40" : "text-slate-400")}>
+                  Sin órdenes que coincidan con “{globalSearch.trim()}”
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className={cn("text-[11px] font-bold uppercase tracking-wide px-1 pb-2", isDark ? "text-white/40" : "text-slate-400")}>
+                    {globalResults.length} resultado{globalResults.length !== 1 ? 's' : ''}
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
+                        {['Orden', 'Cliente', 'Estatus', 'Tablero', 'Cantidad', 'Acción'].map(h => (
+                          <th key={h} className="text-left px-4 py-2 whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {globalResults.map(order => (
+                        <tr key={order.order_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
+                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
+                          <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
+                          <td className="px-4 py-3">
+                            <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
+                              {order.production_status || order.status || '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={cn("px-2 py-0.5 rounded text-[11px] font-bold", isDark ? "bg-royal/15 text-royal" : "bg-royal/10 text-royal")}>
+                              {order.board || '—'}
+                            </span>
+                          </td>
+                          <td className={cn("px-4 py-3 font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>{order.quantity || '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              {canWrite && (
+                                <button onClick={() => openNewQC(order)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-royal/10 text-royal border border-royal/20 rounded-lg text-xs font-bold hover:bg-royal hover:text-white transition-all">
+                                  <Plus className="w-3 h-3" /> Crear QC
+                                </button>
+                              )}
+                              {canWrite && (
+                                <button onClick={() => openStatusEditor(order)}
+                                  className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
+                                    isDark ? "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500 hover:text-white" : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-500 hover:text-white")}
+                                  title="Cambiar production status">
+                                  <Tag className="w-3 h-3" /> Estatus
+                                </button>
+                              )}
+                              <button onClick={() => setCommentsOrder(order)}
+                                className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
+                                title="Comentarios">
+                                <MessageSquare className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

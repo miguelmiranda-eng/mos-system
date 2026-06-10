@@ -31,6 +31,11 @@ window.fetch = async function (url, options = {}) {
   return originalFetch.call(this, url, options);
 };
 
+// Roles that are isolated to the QC dashboard only (like operators are locked
+// to /operator). They land on /qc at login and get bounced back if they try to
+// reach any other route. Admin/supersu also use QC but are NOT confined.
+const QC_ROLES = ['qc', 'inspector_qc'];
+
 // Auth Context
 const AuthContext = createContext(null);
 
@@ -192,7 +197,9 @@ const AuthCallback = () => {
               setUser(userData);
               // Small delay to ensure React state propagates before navigation
               await new Promise(r => setTimeout(r, 100));
-              if (['admin', 'supersu'].includes(userData.role)) {
+              if (QC_ROLES.includes(userData.role)) {
+                navigate('/qc', { replace: true });
+              } else if (['admin', 'supersu'].includes(userData.role)) {
                 navigate('/ceo-dashboard', { replace: true });
               } else if (userData.role === 'general') {
                 navigate('/dashboard', { replace: true });
@@ -264,6 +271,9 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         // view, "Putaway 2.0" is the WMS module. Allow both; bounce anything else
         // back to the launcher (covers the iPad PWA entry too).
         navigate('/wms', { replace: true });
+      } else if (QC_ROLES.includes(user.role) && window.location.pathname !== '/qc') {
+        // QC inspectors are locked to the QC dashboard, like operators to /operator.
+        navigate('/qc', { replace: true });
       }
     }
   }, [user, loading, grace, navigate, allowCustomer]);
@@ -299,7 +309,10 @@ const AdminRoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (!['admin', 'supersu', 'inspector_qc', 'qc'].includes(user.role)) {
+      } else if (QC_ROLES.includes(user.role)) {
+        // QC inspectors are isolated to /qc — no access to admin pages.
+        navigate('/qc', { replace: true });
+      } else if (!['admin', 'supersu'].includes(user.role)) {
         if (user.role === 'customer') {
           navigate('/wms', { replace: true });
         } else {
@@ -317,7 +330,7 @@ const AdminRoute = ({ children }) => {
     );
   }
 
-  if (!user || !['admin', 'supersu', 'inspector_qc', 'qc'].includes(user.role)) {
+  if (!user || !['admin', 'supersu'].includes(user.role)) {
     return null;
   }
 
@@ -340,6 +353,8 @@ const CEORoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
+      } else if (QC_ROLES.includes(user.role)) {
+        navigate('/qc', { replace: true });
       } else if (!['admin', 'supersu'].includes(user.role)) {
         navigate('/dashboard', { replace: true });
       }
@@ -383,6 +398,8 @@ const LandingPage = () => {
         navigate('/wms', { replace: true });
       } else if (user.role === 'operator') {
         navigate('/operator', { replace: true });
+      } else if (QC_ROLES.includes(user.role)) {
+        navigate('/qc', { replace: true });
       } else if (['admin', 'supersu', 'ceo'].includes(user.role)) {
         navigate('/dashboard', { replace: true });
       } else {
@@ -403,7 +420,9 @@ const LandingPage = () => {
       if (res.ok) {
         const userData = await res.json();
         setUser(userData);
-        if (userData.role === 'ceo') {
+        if (QC_ROLES.includes(userData.role)) {
+          navigate('/qc', { replace: true });
+        } else if (userData.role === 'ceo') {
           navigate('/dashboard', { replace: true });
         } else if (userData.role === 'picker') {
           navigate('/wms', { replace: true });
