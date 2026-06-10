@@ -4,7 +4,7 @@ import { Toaster, toast } from "sonner";
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
-  ScanLine, X, ChevronRight, Settings, Loader2,
+  ScanLine, X, ChevronRight, Settings, Loader2, Menu,
   Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck,
 } from "lucide-react";
 
@@ -57,6 +57,7 @@ export default function WMS() {
   const { t } = useLang();
   const [activeModule, setActiveModule] = useState('home');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false); // off-canvas drawer on phones/PDAs
   // Short transient flag shown the moment the user clicks a different module
   // so the content area doesn't look frozen until the new module's first paint.
   const [moduleSwitching, setModuleSwitching] = useState(false);
@@ -256,9 +257,11 @@ export default function WMS() {
     <div className="h-screen bg-background flex flex-col text-foreground overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
         <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
-      {/* Sidebar */}
+      {/* Mobile backdrop when the nav drawer is open */}
+      {mobileNav && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />}
+      {/* Sidebar — off-canvas drawer on phones/PDAs, static column on md+ */}
       <aside
-        className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col transition-all duration-300 relative z-20 shadow-2xl`}
+        className={`${sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-72 fixed md:static inset-y-0 left-0 z-40 md:z-20 transform transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 bg-card md:bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col shadow-2xl`}
       >
         <div className="p-4 border-b border-border/40 flex flex-col gap-4">
           <div className="flex items-center gap-3">
@@ -277,7 +280,7 @@ export default function WMS() {
               </div>
             )}
             <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onClick={() => { if (typeof window !== 'undefined' && window.innerWidth < 768) { setMobileNav(false); } else { setSidebarCollapsed(!sidebarCollapsed); } }}
               className="ml-auto p-1.5 rounded-lg hover:bg-secondary/80 text-muted-foreground transition-all"
             >
               {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <X className="w-4 h-4" />}
@@ -319,7 +322,7 @@ export default function WMS() {
             return (
               <button
                 key={m.id}
-                onClick={() => setActiveModule(m.id)}
+                onClick={() => { setActiveModule(m.id); setMobileNav(false); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all relative group
                   ${isActive
                     ? 'bg-primary/10 text-primary shadow-[0_0_15px_rgba(255,193,7,0.1)]'
@@ -386,21 +389,24 @@ export default function WMS() {
           />
         </div>
         {/* Module Header Overlay */}
-        <div className="sticky top-0 z-10 p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
+        <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
           {(() => {
             const m = MODULES.find(mod => mod.id === activeModule);
             const Icon = m?.icon || Package;
             return (
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-2xl bg-card border border-border/40 shadow-xl ${m?.color || 'text-primary'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
+                  <button onClick={() => setMobileNav(true)} className="md:hidden p-2 rounded-xl bg-card border border-border/40 text-muted-foreground active:bg-secondary shrink-0" title="Menú">
+                    <Menu className="w-6 h-6" />
+                  </button>
+                  <div className={`hidden sm:block p-3 rounded-2xl bg-card border border-border/40 shadow-xl ${m?.color || 'text-primary'}`}>
                     <Icon className="w-8 h-8" />
                   </div>
-                  <div>
-                    <h1 className="text-3xl font-black italic uppercase tracking-tighter leading-none mb-1">
+                  <div className="min-w-0">
+                    <h1 className="text-xl sm:text-3xl font-black italic uppercase tracking-tighter leading-none mb-1 truncate">
                       {m?.label}
                     </h1>
-                    <p className="text-sm text-muted-foreground font-medium flex items-center gap-2">
+                    <p className="hidden sm:flex text-sm text-muted-foreground font-medium items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-primary" />
                       {m?.desc}
                     </p>
@@ -421,7 +427,7 @@ export default function WMS() {
         </div>
 
         {/* Component Content — key forces remount on module switch, plus fade-in */}
-        <div className="p-6 pt-2">
+        <div className="p-3 sm:p-6 pt-2">
           {moduleSwitching ? (
             <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-150">
               <Loader2 className="w-10 h-10 animate-spin text-primary" />
