@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
-  Loader2, Package, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
+  Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
+  ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2,
 } from "lucide-react";
 import { fetcher, poster, putter, logLoadError } from "./lib";
 
@@ -32,22 +33,19 @@ export const TransitModule = () => {
   const [legacyCount, setLegacyCount] = useState(0);
   // Selection state — keyed by box_id so it survives reorder/refresh.
   const [selected, setSelected] = useState(() => new Set());
-  // Move-to flow
-  const [destination, setDestination] = useState("");
+  // ── Putaway flow (location-first) ───────────────────────────────────────
+  // Step 1: lock a destination location. Step 2: scan/select the boxes that go
+  // there. "Terminar" raises a warning, then relocates the whole batch.
+  const [destination, setDestination] = useState("");   // step-1 typeahead text
+  const [lockedLocation, setLockedLocation] = useState(""); // confirmed destination
+  const [boxScan, setBoxScan] = useState("");           // step-2 box scanner
+  const [showWarning, setShowWarning] = useState(false);
   const [moving, setMoving] = useState(false);
   const [locOptions, setLocOptions] = useState([]); // [{name, zone}]
   const [showLocDrop, setShowLocDrop] = useState(false);
   const destRef = useRef(null);
   const destInputRef = useRef(null);
-  // When the operator selects the first box (0 -> >0), jump the cursor straight
-  // to the destination-location field so they can type/scan it immediately.
-  const prevSelSizeRef = useRef(0);
-  useEffect(() => {
-    if (prevSelSizeRef.current === 0 && selected.size > 0) {
-      requestAnimationFrame(() => destInputRef.current?.focus());
-    }
-    prevSelSizeRef.current = selected.size;
-  }, [selected]);
+  const boxScanRef = useRef(null);
   // Edit-box modal state.
   const [editBox, setEditBox] = useState(null); // box doc being edited, or null
   const [editDraft, setEditDraft] = useState({});
@@ -185,9 +183,58 @@ export const TransitModule = () => {
     } finally { setEditSaving(false); }
   };
 
-  const handleRelocate = async () => {
+  // Step 1 — lock the destination location before any box is scanned.
+  const confirmLocation = () => {
     const dst = (destination || "").trim().toUpperCase();
-    if (!dst) { toast.error("Escribe la ubicación destino"); return; }
+    if (!dst) { toast.error("Escribe o escanea la ubicación destino"); return; }
+    const match = locOptions.find(l => (l.name || "").toUpperCase() === dst);
+    if (!match) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    setLockedLocation(match.name);
+    setDestination(match.name);
+    setShowLocDrop(false);
+    // Jump to the box scanner so the operator can keep scanning hands-free.
+    requestAnimationFrame(() => boxScanRef.current?.focus());
+  };
+
+  // Reset back to step 1 — pick a different location.
+  const changeLocation = () => {
+    setLockedLocation("");
+    setDestination("");
+    setSelected(new Set());
+    setBoxScan("");
+    requestAnimationFrame(() => destInputRef.current?.focus());
+  };
+
+  // Step 2 — scan a box into the current batch.
+  const handleBoxScan = (e) => {
+    if (e) e.preventDefault();
+    const id = (boxScan || "").trim().toUpperCase();
+    if (!id) return;
+    const box = boxes.find(b => (b.box_id || "").toUpperCase() === id);
+    if (!box) {
+      toast.error(`Caja ${id} no está en los carros de tránsito (usa la pestaña "Todos")`);
+      setBoxScan("");
+      return;
+    }
+    setSelected(prev => {
+      if (prev.has(box.box_id)) { toast.info(`La caja ${box.box_id} ya está en el lote`); return prev; }
+      const next = new Set(prev);
+      next.add(box.box_id);
+      return next;
+    });
+    setBoxScan("");
+  };
+
+  // "Terminar" — raise the warning before committing the move.
+  const handleFinish = () => {
+    if (!lockedLocation) { toast.error("Primero selecciona una ubicación destino"); return; }
+    if (selected.size === 0) { toast.error("Escanea o selecciona al menos una caja"); return; }
+    setShowWarning(true);
+  };
+
+  const handleRelocate = async () => {
+    const dst = (lockedLocation || "").trim().toUpperCase();
+    if (!dst) { toast.error("Primero selecciona una ubicación destino"); return; }
     if (selected.size === 0) { toast.error("Selecciona al menos una caja"); return; }
     // Validate destination exists in active list (avoid a backend 404 surprise).
     const exists = locOptions.some(l => (l.name || "").toUpperCase() === dst);
@@ -198,8 +245,11 @@ export const TransitModule = () => {
       if (res.ok) {
         const data = await res.json();
         toast.success(data.message || "Cajas reubicadas");
+        setShowWarning(false);
         setSelected(new Set());
+        setLockedLocation("");
         setDestination("");
+        setBoxScan("");
         load();
         loadInfo();
       } else {
@@ -308,55 +358,127 @@ export const TransitModule = () => {
         />
       </div>
 
-      {/* Action bar — only when something is selected */}
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-          <div className="text-[11px] font-bold text-amber-500 uppercase tracking-widest">
-            {selected.size} seleccionadas · {totalSelectedUnits.toLocaleString()} unidades
-          </div>
-          <div className="flex-1 min-w-[240px] relative" ref={destRef}>
-            <MapPin className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              ref={destInputRef}
-              type="text"
-              value={destination}
-              onChange={e => { setDestination(e.target.value.toUpperCase()); setShowLocDrop(true); }}
-              onFocus={() => setShowLocDrop(true)}
-              placeholder="Ubicación destino (ej. RP10-A26)"
-              className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-amber-500/50"
-            />
-            {showLocDrop && filteredLocations.length > 0 && (
-              <div className="absolute z-30 mt-1 w-full max-h-60 overflow-y-auto bg-popover border border-border rounded-lg shadow-xl">
-                {filteredLocations.map(l => (
-                  <button
-                    key={l.location_id || l.name}
-                    onClick={() => { setDestination(l.name); setShowLocDrop(false); }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-secondary flex items-center justify-between"
-                  >
-                    <span className="font-mono font-bold">{l.name}</span>
-                    {l.zone && <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
-                  </button>
-                ))}
+      {/* Putaway control panel — location first, then scan boxes, then finish */}
+      <div className="rounded-2xl bg-amber-500/5 border border-amber-500/30 p-4 space-y-3">
+        {!lockedLocation ? (
+          /* STEP 1 — pick / scan the destination location */
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-black">1</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+                <MapPin className="w-4 h-4" /> Escanea o selecciona la ubicación destino
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[240px] relative" ref={destRef}>
+                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" />
+                <input
+                  ref={destInputRef}
+                  type="text"
+                  value={destination}
+                  onChange={e => { setDestination(e.target.value.toUpperCase()); setShowLocDrop(true); }}
+                  onFocus={() => setShowLocDrop(true)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmLocation(); } }}
+                  placeholder="Ubicación destino (ej. RP10-A26) — Enter para confirmar"
+                  className="w-full pl-9 pr-3 py-2 bg-background border border-amber-500/40 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  data-testid="putaway2-loc-scan"
+                />
+                {showLocDrop && filteredLocations.length > 0 && (
+                  <div className="absolute z-30 mt-1 w-full max-h-60 overflow-y-auto bg-popover border border-border rounded-lg shadow-xl">
+                    {filteredLocations.map(l => (
+                      <button
+                        key={l.location_id || l.name}
+                        onClick={() => { setDestination(l.name); setShowLocDrop(false); requestAnimationFrame(() => destInputRef.current?.focus()); }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-secondary flex items-center justify-between"
+                      >
+                        <span className="font-mono font-bold">{l.name}</span>
+                        {l.zone && <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+              <button
+                onClick={confirmLocation}
+                disabled={!destination.trim()}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
+                data-testid="putaway2-loc-confirm"
+              >
+                <MapPin className="w-4 h-4" /> Confirmar ubicación
+              </button>
+            </div>
           </div>
-          <button
-            onClick={handleRelocate}
-            disabled={moving || !destination.trim()}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
-          >
-            {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
-            Mover seleccionadas
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            disabled={moving}
-            className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground"
-          >
-            Limpiar
-          </button>
-        </div>
-      )}
+        ) : (
+          /* STEP 2 — scan the boxes that go to the locked location */
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-amber-500/70">Ubicación destino</div>
+                  <div className="font-mono font-black text-emerald-500 text-lg flex items-center gap-2">
+                    <MapPin className="w-4 h-4" /> {lockedLocation}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={changeLocation}
+                disabled={moving}
+                className="text-[10px] font-black uppercase tracking-widest text-amber-500 hover:underline disabled:opacity-50"
+              >
+                Cambiar ubicación
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-black">2</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+                <ScanLine className="w-4 h-4" /> Escanea las cajas para esta ubicación
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <form onSubmit={handleBoxScan} className="flex-1 min-w-[240px] relative">
+                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" />
+                <input
+                  ref={boxScanRef}
+                  type="text"
+                  value={boxScan}
+                  onChange={e => setBoxScan(e.target.value.toUpperCase())}
+                  placeholder="Escanea LPN de la caja (Enter)"
+                  autoComplete="off"
+                  className="w-full pl-9 pr-3 py-2 bg-background border border-amber-500/40 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  data-testid="putaway2-box-scan"
+                />
+              </form>
+              <div className="text-[11px] font-bold text-amber-500 uppercase tracking-widest">
+                {selected.size} caja(s) · {totalSelectedUnits.toLocaleString()} und
+              </div>
+              <button
+                onClick={handleFinish}
+                disabled={moving || selected.size === 0}
+                className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
+                data-testid="putaway2-finish"
+              >
+                {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+                Terminar ({selected.size})
+              </button>
+              {selected.size > 0 && (
+                <button
+                  onClick={() => setSelected(new Set())}
+                  disabled={moving}
+                  className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                >
+                  Limpiar
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 italic">
+              También puedes hacer clic en las filas de abajo para agregar o quitar cajas del lote.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Table */}
       <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
@@ -451,6 +573,65 @@ export const TransitModule = () => {
           </table>
         </div>
       </div>
+
+      {/* Warning shown before locating the material */}
+      {showWarning && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-card border border-amber-500/40 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-500">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-black uppercase tracking-widest text-sm">Confirmar ubicación</h3>
+              </div>
+              <button onClick={() => setShowWarning(false)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={moving}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-xs text-amber-200/90 font-bold leading-relaxed flex gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+              <span>
+                Estás por ubicar <span className="font-black text-amber-400">{selected.size} caja(s)</span> ({totalSelectedUnits.toLocaleString()} unidades)
+                en <span className="font-black text-amber-400">{lockedLocation}</span>. Verifica que el material físico coincide antes de continuar — esta acción mueve el inventario.
+              </span>
+            </div>
+
+            <div className="bg-secondary/40 rounded-2xl p-4 space-y-2 border border-border/20">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest">Ubicación destino</div>
+                <div className="font-mono font-black text-emerald-500">{lockedLocation}</div>
+              </div>
+              <div className="border-t border-border/20 pt-2 max-h-[160px] overflow-auto custom-scrollbar space-y-1.5 font-mono">
+                {boxes.filter(b => selected.has(b.box_id)).map(b => (
+                  <div key={b.box_id} className="flex items-center justify-between text-[11px]">
+                    <span className="font-black text-foreground">{b.box_id}</span>
+                    <span className="text-muted-foreground">{b.style || b.sku || '—'} · {(b.units || b.qty || 0)} UN</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleRelocate}
+                disabled={moving}
+                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                data-testid="putaway2-confirm"
+              >
+                {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
+                Confirmar y ubicar
+              </button>
+              <button
+                onClick={() => setShowWarning(false)}
+                disabled={moving}
+                className="flex-1 py-3 bg-secondary text-foreground font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-secondary/80 transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit-box modal */}
       {editBox && (
