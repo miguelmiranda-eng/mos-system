@@ -874,15 +874,15 @@ const Dashboard = () => {
         </div>
 
         {/* Quick Actions (Sticky Column 2) */}
-        <div className={`py-2 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
-          <div className="flex flex-col gap-2.5 items-center">
+        <div className={`py-2 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}>
+          <div className="flex flex-row gap-2 items-center justify-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
-              <MessageSquare className="w-5 h-5" />
+              <MessageSquare className="w-4 h-4" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
             {isAdmin && (
               <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title="Historial Extendido">
-                <ClipboardList className="w-5 h-5" />
+                <ClipboardList className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -890,7 +890,7 @@ const Dashboard = () => {
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`py-2 px-3 sticky left-[96px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`py-2 px-3 sticky left-[112px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 200, minWidth: 200, maxWidth: 200 }}
         >
           {/* Order number (centered, large, bold) */}
@@ -2031,16 +2031,16 @@ const Dashboard = () => {
               <>
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
-                  gridTemplateColumns: `48px 48px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
+                  gridTemplateColumns: `48px 64px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
                   minWidth: '100%',
                   width: 'max-content'
                 }}>
 
                   <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
-                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}></div>
+                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[96px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
+                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
