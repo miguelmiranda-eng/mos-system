@@ -190,9 +190,13 @@ export const ReceivingModule = () => {
   // doesn't match any known open ASN — we only show the line picker when we
   // can resolve the ASN against what we already loaded).
   const selectedAsnDoc = openAsns.find(a => a.asn_id === form.asn_reference) || null;
-  const pendingAsnLines = (selectedAsnDoc?.items || []).filter(
-    it => (it.qty_received || 0) < (it.qty_expected || 0)
-  );
+  // Show every ASN line while the ASN is still open (not closed) — even lines
+  // already fully received — so the operator can keep matching against them and
+  // capture discrepancies in BOTH directions (faltante y sobrante). Lines only
+  // disappear once the ASN is closed.
+  const pendingAsnLines = (selectedAsnDoc && !selectedAsnDoc.closed)
+    ? (selectedAsnDoc.items || [])
+    : [];
 
   // Smart autofill from ASN line. STRICT: every field — including Style —
   // only fills when the ASN value resolves to an entry that already exists
@@ -1100,7 +1104,7 @@ export const ReceivingModule = () => {
                     <div className="flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-indigo-400" />
                       <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                        Líneas pendientes ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
+                        Líneas del ASN ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
                       </span>
                     </div>
                     {selectedAsnLine != null && (
@@ -1115,13 +1119,21 @@ export const ReceivingModule = () => {
                   </div>
                   {pendingAsnLines.length === 0 ? (
                     <div className="px-3 py-3 text-[11px] text-muted-foreground italic">
-                      Este ASN ya no tiene líneas pendientes — puedes recibir manualmente sin matchear.
+                      Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.
                     </div>
                   ) : (
                     <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border/10">
                       {pendingAsnLines.map(line => {
-                        const remaining = (line.qty_expected || 0) - (line.qty_received || 0);
+                        const expected = line.qty_expected || 0;
+                        const received = line.qty_received || 0;
+                        const remaining = expected - received;
                         const isSel = selectedAsnLine === line.line_no;
+                        // remaining > 0 → faltante (pendiente); < 0 → sobrante; 0 → completo
+                        const badge = remaining > 0
+                          ? { value: remaining.toLocaleString(), label: 'pendientes', cls: 'text-foreground' }
+                          : remaining < 0
+                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-500' }
+                            : { value: '0', label: 'completo', cls: 'text-emerald-500' };
                         return (
                           <button
                             key={line.line_no}
@@ -1145,8 +1157,9 @@ export const ReceivingModule = () => {
                               )}
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <div className="text-xs font-black tabular-nums">{remaining.toLocaleString()}</div>
-                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">pendientes</div>
+                              <div className={`text-xs font-black tabular-nums ${badge.cls}`}>{badge.value}</div>
+                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">{badge.label}</div>
+                              <div className="text-[9px] tabular-nums text-muted-foreground mt-0.5">{received.toLocaleString()} / {expected.toLocaleString()}</div>
                             </div>
                           </button>
                         );
