@@ -210,18 +210,26 @@ function PickScreen({ ticket, onSave, saving }) {
     const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
     setScan("");
     if (!code) return;
+    // A single shelf can hold several sizes of the same style. Collect EVERY
+    // active size that has this location so the operator sees all of them, not
+    // just the first match (the old loop returned on the first hit).
+    const matches = [];
+    let matchedLocation = "";
     for (const sz of activeSizes) {
       const hit = locsFor(sz).find(l => norm(l.location) === code);
-      if (hit) {
-        setOpenSize(sz);
-        setScanHit({ sz, location: hit.location });
-        toast.success(`Ubicación ${hit.location} · talla ${sz}`);
-        if (navigator.vibrate) navigator.vibrate(60);
-        return;
-      }
+      if (hit) { matches.push(sz); matchedLocation = hit.location; }
     }
-    toast.error(`Ubicación "${code}" no pertenece a este surtido`);
-    if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+    if (matches.length === 0) {
+      toast.error(`Ubicación "${code}" no pertenece a este surtido`);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return;
+    }
+    setOpenSize(matches[0]);
+    setScanHit({ location: matchedLocation, sizes: matches });
+    toast.success(matches.length > 1
+      ? `Ubicación ${matchedLocation} · tallas ${matches.join(", ")}`
+      : `Ubicación ${matchedLocation} · talla ${matches[0]}`);
+    if (navigator.vibrate) navigator.vibrate(60);
   };
 
   const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
@@ -292,7 +300,7 @@ function PickScreen({ ticket, onSave, saving }) {
                     </div>
                   ) : locs.map((l, i) => {
                     const cur = data.details[l.location] || 0;
-                    const hit = scanHit && scanHit.sz === sz && scanHit.location === l.location;
+                    const hit = scanHit && scanHit.location === l.location;
                     const need = required - picked + cur;
                     return (
                       <div key={i} className={`rounded-xl border p-3 ${hit ? "border-blue-400 ring-2 ring-blue-400/40 bg-blue-500/10" : "border-white/10 bg-black/20"}`}>

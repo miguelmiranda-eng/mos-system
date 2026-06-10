@@ -9,7 +9,7 @@ from wms_constants import (
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
 )
 from datetime import datetime, timezone, timedelta
-import uuid, io, json, logging, re
+import uuid, io, json, logging, re, asyncio
 
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
@@ -2725,16 +2725,23 @@ async def get_operator_tickets(request: Request):
     # Refresh available pick locations from CURRENT inventory so the operator
     # always sees where the stock actually is now (the stored size_locations is
     # only a snapshot taken when the ticket was created).
-    for tk in tickets:
-        if tk.get("picking_status") == "completed":
-            continue
-        try:
-            tk["size_locations"] = await _compute_size_locations(
-                tk.get("style", ""), tk.get("color", ""), tk.get("sizes", {}),
-                tk.get("strategy", "default"),
-            )
-        except Exception as e:
-            logger.error(f"[my-tickets] live size_locations failed for {tk.get('ticket_id')}: {e}")
+    # Recompute in parallel (was sequential — N round-trips in series for an
+    # operator with many tickets). A semaphore bounds concurrency so we don't
+    # flood the Mongo connection pool when a picker has a large queue.
+    pending = [tk for tk in tickets if tk.get("picking_status") != "completed"]
+    sem = asyncio.Semaphore(8)
+
+    async def _attach(tk):
+        async with sem:
+            try:
+                tk["size_locations"] = await _compute_size_locations(
+                    tk.get("style", ""), tk.get("color", ""), tk.get("sizes", {}),
+                    tk.get("strategy", "default"),
+                )
+            except Exception as e:
+                logger.error(f"[my-tickets] live size_locations failed for {tk.get('ticket_id')}: {e}")
+
+    await asyncio.gather(*[_attach(tk) for tk in pending])
     return tickets
 
 @router.get("/operator/completed-tickets")
@@ -2761,6 +2768,15 @@ async def save_pick_progress(ticket_id: str, request: Request):
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
     if not ticket:
         raise HTTPException(404, "Pick ticket no encontrado")
+
+    # Authorization: an operator may only save progress on a ticket assigned to
+    # them. Unassigned tickets are left open (operators never see those in
+    # /my-tickets, so this only guards direct API calls). Admin/supersu/ceo bypass.
+    assignee = (ticket.get("assigned_to") or "").strip()
+    caller_ids = {user.get("user_id", ""), user.get("email", "")}
+    elevated = user.get("role") in {"admin", "supersu", "ceo"}
+    if assignee and assignee not in caller_ids and not elevated:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
 
     picking_status = "completed" if is_complete else "in_progress"
     update = {

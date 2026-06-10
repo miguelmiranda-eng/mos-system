@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
+import JsBarcode from "jsbarcode";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
@@ -26,8 +27,11 @@ export const PickingModule = () => {
   const [operators, setOperators] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [incidentTicket, setIncidentTicket] = useState(null);
+  const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado' });
+  const [incidentSaving, setIncidentSaving] = useState(false);
+  const [confirmTicket, setConfirmTicket] = useState(null);
+  const [confirmSaving, setConfirmSaving] = useState(false);
   const [editingTicket, setEditingTicket] = useState(null);
-  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
@@ -50,7 +54,9 @@ export const PickingModule = () => {
   const [ticketsTotal, setTicketsTotal] = useState(0);
   const [loadingMoreTickets, setLoadingMoreTickets] = useState(false);
   const TICKETS_PAGE_SIZE = 50;
-  const TICKETS_CHUNK_DELAY_MS = 1500;
+  // Small throttle between chunks so the UI can paint without hammering the API.
+  // (Was 1500ms, which made a 500-ticket board take ~15s to fully load.)
+  const TICKETS_CHUNK_DELAY_MS = 250;
   const loadGenRef = useRef(0);
 
   const loadTickets = useCallback(() => {
@@ -177,13 +183,44 @@ export const PickingModule = () => {
     finally { setLoading(false); }
   };
 
-  const handleConfirm = async (ticket) => {
-    if (!window.confirm(t('confirm_ticket'))) return;
+  // Open the confirm modal (replaces the old blocking window.confirm).
+  const handleConfirm = (ticket) => setConfirmTicket(ticket);
+
+  const doConfirm = async () => {
+    const ticket = confirmTicket;
+    if (!ticket) return;
+    setConfirmSaving(true);
     try {
       const res = await putter(`/pick-tickets/${ticket.ticket_id}/confirm`, { lines: ticket.lines || [] });
-      if (res.ok) { toast.success(t('pick_confirmed')); loadTickets(); loadStats(); }
+      if (res.ok) { toast.success(t('pick_confirmed')); setConfirmTicket(null); loadTickets(); loadStats(); }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
     } catch { toast.error(t('conn_error')); }
+    finally { setConfirmSaving(false); }
+  };
+
+  const openIncident = (ticket) => {
+    setIncidentTicket(ticket);
+    setIncidentDraft({ sku: ticket.style || '', qty: '1', reason: 'Dañado' });
+  };
+
+  const submitIncident = async () => {
+    if (!incidentTicket) return;
+    const qty = parseInt(incidentDraft.qty);
+    if (Number.isNaN(qty) || qty < 1) { toast.error(t('qty') + ' ≥ 1'); return; }
+    setIncidentSaving(true);
+    try {
+      const res = await poster(`/pick-tickets/${incidentTicket.ticket_id}/incidents`, {
+        sku: incidentDraft.sku, qty, reason: incidentDraft.reason,
+      });
+      if (res.ok) {
+        toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
+        setIncidentTicket(null);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al reportar');
+      }
+    } catch { toast.error('Error de conexión'); }
+    finally { setIncidentSaving(false); }
   };
 
   const handleQuickStatus = async (ticket_id, new_status) => {
@@ -212,6 +249,14 @@ export const PickingModule = () => {
   const handlePrint = (ticket) => {
     const pw = window.open('', '_blank');
     if (!pw) { toast.error(t('allow_popups')); return; }
+    // Render the barcode locally (no external CDN) so labels print even when the
+    // warehouse PC is offline. Serialize an off-DOM <svg> into the popup markup.
+    let barcodeMarkup = '';
+    try {
+      const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      JsBarcode(svgEl, ticket.ticket_id, { width: 1.5, height: 35, displayValue: false, margin: 0 });
+      barcodeMarkup = new XMLSerializer().serializeToString(svgEl);
+    } catch (e) { barcodeMarkup = ''; }
     const sizes = ticket.sizes || {};
     const sizeLocs = ticket.size_locations || {};
     const totalQty = ALL_SIZES.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
@@ -225,7 +270,7 @@ export const PickingModule = () => {
       }).join(', ') || '-';
       return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${sizes[sz]}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
-    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0"><svg id="barcode"></svg></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${ticket.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script><script>try{JsBarcode("#barcode","${ticket.ticket_id}",{width:1.5,height:35,displayValue:false,margin:0})}catch(e){}setTimeout(function(){window.print()},500);<\/script></body></html>`);
+    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0">${barcodeMarkup}</div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${ticket.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
   };
 
@@ -387,7 +432,7 @@ export const PickingModule = () => {
           {!ticket.is_virtual && (
             <>
               <button
-                onClick={() => setIncidentTicket(ticket)}
+                onClick={() => openIncident(ticket)}
                 className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
                 title={t('wms_report_incident') || 'Reportar Problema'}
               >
@@ -712,7 +757,7 @@ export const PickingModule = () => {
             ].map(s => {
               const Icon = s.icon;
               return (
-                <div key={s.label} className="bg-card/60 backdrop-blur-sm border border-border/40 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
+                <div key={s.key} className="bg-card/60 backdrop-blur-sm border border-border/40 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
                   <div className={`absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity`}>
                     <Icon className="w-16 h-16" />
                   </div>
@@ -788,7 +833,8 @@ export const PickingModule = () => {
               <div>
                 <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU / ITEM</label>
                 <select
-                  id="incident-sku"
+                  value={incidentDraft.sku}
+                  onChange={e => setIncidentDraft(p => ({ ...p, sku: e.target.value }))}
                   className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
                 >
                   <option value={incidentTicket.style}>{incidentTicket.style}</option>
@@ -801,11 +847,20 @@ export const PickingModule = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('qty') || 'Cantidad'}</label>
-                  <input id="incident-qty" type="number" defaultValue="1" min="1" className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                  <input
+                    type="number" min="1"
+                    value={incidentDraft.qty}
+                    onChange={e => setIncidentDraft(p => ({ ...p, qty: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold"
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('reason') || 'Razón'}</label>
-                  <select id="incident-reason" className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold">
+                  <select
+                    value={incidentDraft.reason}
+                    onChange={e => setIncidentDraft(p => ({ ...p, reason: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold"
+                  >
                     <option value="Dañado">Dañado</option>
                     <option value="Manchado">Manchado</option>
                     <option value="Incompleto">Incompleto</option>
@@ -817,25 +872,50 @@ export const PickingModule = () => {
 
             <div className="flex gap-2 pt-2">
               <button
-                onClick={async () => {
-                  const sku = document.getElementById('incident-sku').value;
-                  const qty = document.getElementById('incident-qty').value;
-                  const reason = document.getElementById('incident-reason').value;
-                  try {
-                    const res = await poster(`/pick-tickets/${incidentTicket.ticket_id}/incidents`, { sku, qty, reason });
-                    if (res.ok) {
-                      toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
-                      setIncidentTicket(null);
-                    } else {
-                      toast.error('Error al reportar');
-                    }
-                  } catch { toast.error('Error de conexión'); }
-                }}
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-red-500/20"
+                onClick={submitIncident}
+                disabled={incidentSaving}
+                className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-red-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
               >
+                {incidentSaving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {t('confirm') || 'Confirmar'}
               </button>
-              <button onClick={() => setIncidentTicket(null)} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all">
+              <button onClick={() => setIncidentTicket(null)} disabled={incidentSaving} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
+                {t('cancel') || 'Cancelar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmTicket && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-500">
+                <CheckCircle className="w-5 h-5" />
+                <h3 className="font-black uppercase tracking-widest text-sm">{t('confirm') || 'Confirmar'}</h3>
+              </div>
+              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="p-1 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+              {t('confirm_ticket') || '¿Confirmar este pick ticket? Se descontará el inventario.'}
+            </p>
+            <div className="bg-secondary/40 rounded-xl p-3 border border-border/20 text-xs font-bold font-mono">
+              <span className="text-primary">{confirmTicket.ticket_id}</span>
+              <span className="text-muted-foreground"> · #{confirmTicket.order_number} · {confirmTicket.customer || ''} · {confirmTicket.style || ''}</span>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={doConfirm}
+                disabled={confirmSaving}
+                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {confirmSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                {t('confirm') || 'Confirmar'}
+              </button>
+              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
                 {t('cancel') || 'Cancelar'}
               </button>
             </div>
