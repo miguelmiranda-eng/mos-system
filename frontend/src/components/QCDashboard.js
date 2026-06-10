@@ -1301,7 +1301,7 @@ export default function QCDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
-                        {['Orden', 'Cliente', 'Estatus', 'Tablero', 'Cantidad', 'Acción'].map(h => (
+                        {['Orden', 'Cliente', 'Estatus', 'Tablero', 'Cantidad', 'Job Title', 'Acción'].map(h => (
                           <th key={h} className="text-left px-4 py-2 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1322,6 +1322,20 @@ export default function QCDashboard() {
                             </span>
                           </td>
                           <td className={cn("px-4 py-3 font-mono text-xs", isDark ? "text-white/60" : "text-slate-500")}>{order.quantity || '—'}</td>
+                          <td className="px-4 py-3 max-w-[200px]">
+                            {(() => {
+                              const val = order.job_title_a;
+                              if (!val) return <span className="text-xs italic opacity-40">—</span>;
+                              const url = typeof val === 'object' ? val.url : val;
+                              const desc = typeof val === 'object' ? val.desc : val;
+                              if (!url || !String(url).startsWith('http')) return <span className="text-xs truncate block">{desc || '—'}</span>;
+                              return (
+                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-royal hover:underline flex items-center gap-1 truncate" title={desc}>
+                                  <Link2 className="w-3 h-3 flex-shrink-0" /> {desc}
+                                </a>
+                              );
+                            })()}
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
                               {canWrite && (
