@@ -91,6 +91,9 @@ const UserManagementCenter = () => {
 
   const handleCreateUser = async () => {
     if (!newEmail.trim() || !newPassword) { toast.error('Email y contraseña requeridos'); return; }
+    // Validate length client-side so the user gets instant feedback instead of
+    // a fleeting 400 toast from the backend (which rejects passwords < 6 chars).
+    if (newPassword.length < 6) { toast.error('La contraseña debe tener al menos 6 caracteres'); return; }
     setCreating(true);
     try {
       const res = await fetch(`${API}/auth/create-user`, {
@@ -385,6 +388,9 @@ const UserManagementCenter = () => {
                         {showCreatePw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
+                    {newPassword.length > 0 && newPassword.length < 6 && (
+                      <p className="text-[10px] font-bold text-red-400">Mínimo 6 caracteres ({newPassword.length}/6)</p>
+                    )}
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol</label>
