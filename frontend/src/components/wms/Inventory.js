@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, ListFilter } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
@@ -162,6 +162,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   // Manual inventory entry modal — cascading dropdowns only (no free text).
   const [showAddManual, setShowAddManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  // 'add' = meter (entrada) · 'remove' = sacar (salida / ajuste a la baja)
+  const [manualOp, setManualOp] = useState('add');
   const [locationsByZone, setLocationsByZone] = useState({}); // { zone: [locName,...] }
   const [styleInfo, setStyleInfo] = useState(null); // colors, sizes, template
   const [loadingStyleInfo, setLoadingStyleInfo] = useState(false);
@@ -170,7 +172,10 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     zone: '', location: '',
     customer: '', description: '', country_of_origin: '', fabric_content: '', category: '',
     total_boxes: 0, total_units: 0,
+    reason: '',
   };
+  // Motivos de salida (ajuste a la baja) para la bitácora de auditoría.
+  const REMOVE_REASONS = ['MERMA', 'AJUSTE DE CONTEO', 'DAÑO / DEFECTO', 'TRASLADO', 'DEVOLUCIÓN A PROVEEDOR', 'OTRO'];
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const zoneOptions = useMemo(() => Object.keys(locationsByZone).sort(), [locationsByZone]);
   const locationsInZone = useMemo(
@@ -307,6 +312,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
 
   const openAddManual = async () => {
     setManualForm(emptyManualForm);
+    setManualOp('add');
     setStyleInfo(null);
     setShowAddManual(true);
     // Lazy-load zone → locations map (only on first open).
@@ -371,12 +377,15 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     if (!location) { toast.error('Ubicación es requerida'); return; }
     if (units <= 0) { toast.error('Unidades debe ser mayor a 0'); return; }
     if (boxes < 0) { toast.error('Cajas no puede ser negativo'); return; }
+    if (manualOp === 'remove' && !manualForm.reason) { toast.error('Selecciona el motivo de la salida'); return; }
     setSavingManual(true);
     try {
       // Editable form fields override the style template; everything else is
       // inherited so the new row stays consistent with that SKU's inventory.
       const payload = {
         style, color, size, location,
+        operation: manualOp,
+        reason: manualOp === 'remove' ? manualForm.reason : '',
         total_units: units, total_boxes: boxes,
         customer: (manualForm.customer || styleInfo?.customer || '').toUpperCase(),
         description: (manualForm.description || styleInfo?.description || '').toUpperCase(),
@@ -394,9 +403,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       });
       if (res.ok) {
         const data = await res.json();
-        const msg = data.mode === 'accumulated'
-          ? `Inventario acumulado (+${data.added_units} pzs)`
-          : `Inventario creado (${data.added_units} pzs)`;
+        const msg = data.mode === 'removed'
+          ? `Material retirado (-${data.removed_units} pzs)`
+          : data.mode === 'accumulated'
+            ? `Inventario acumulado (+${data.added_units} pzs)`
+            : `Inventario creado (${data.added_units} pzs)`;
         toast.success(msg);
         setShowAddManual(false);
         // Show what we just added by setting the search to the style — the
@@ -882,16 +893,22 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       {/* Manual inventory entry modal */}
       {showAddManual && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-emerald-500/40 rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className={`bg-card border rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150 ${manualOp === 'remove' ? 'border-rose-500/40' : 'border-emerald-500/40'}`}>
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                  <Plus className="w-5 h-5 text-emerald-400" />
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${manualOp === 'remove' ? 'bg-rose-500/10' : 'bg-emerald-500/10'}`}>
+                  {manualOp === 'remove'
+                    ? <Minus className="w-5 h-5 text-rose-400" />
+                    : <Plus className="w-5 h-5 text-emerald-400" />}
                 </div>
                 <div className="min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm truncate">Agregar inventario manual</h3>
+                  <h3 className="font-black uppercase tracking-tighter text-sm truncate">
+                    {manualOp === 'remove' ? 'Sacar inventario manual' : 'Agregar inventario manual'}
+                  </h3>
                   <p className="text-[11px] text-muted-foreground font-bold truncate">
-                    Si la combinación SKU+color+talla+ubicación ya existe, se acumula.
+                    {manualOp === 'remove'
+                      ? 'Resta de una línea existente (SKU+color+talla+ubicación).'
+                      : 'Si la combinación SKU+color+talla+ubicación ya existe, se acumula.'}
                   </p>
                 </div>
               </div>
@@ -901,6 +918,42 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
+              {/* Toggle Meter / Sacar */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-secondary/40 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setManualOp('add')}
+                  disabled={savingManual}
+                  data-testid="manual-op-add"
+                  className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${manualOp === 'add' ? 'bg-emerald-500 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Plus className="w-4 h-4" /> Meter (entrada)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setManualOp('remove')}
+                  disabled={savingManual}
+                  data-testid="manual-op-remove"
+                  className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${manualOp === 'remove' ? 'bg-rose-500 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Minus className="w-4 h-4" /> Sacar (salida)
+                </button>
+              </div>
+
+              {manualOp === 'remove' && (
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Motivo de la salida *</label>
+                  <select
+                    value={manualForm.reason}
+                    onChange={e => setManualForm(f => ({ ...f, reason: e.target.value }))}
+                    data-testid="manual-reason"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
+                  >
+                    <option value="">Selecciona un motivo…</option>
+                    {REMOVE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Style / SKU *</label>
@@ -1040,11 +1093,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
               <button
                 onClick={submitManualAdd}
                 disabled={savingManual}
-                className="px-5 py-2 bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:bg-emerald-600 disabled:opacity-50"
+                className={`px-5 py-2 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all disabled:opacity-50 ${manualOp === 'remove' ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'}`}
                 data-testid="manual-submit-btn"
               >
-                {savingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Guardar
+                {savingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : (manualOp === 'remove' ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}
+                {manualOp === 'remove' ? 'Sacar' : 'Guardar'}
               </button>
             </div>
           </div>

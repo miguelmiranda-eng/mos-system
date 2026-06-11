@@ -4453,6 +4453,9 @@ async def add_inventory_manual(request: Request):
     size = s("size")
     now = now_iso()
 
+    # Operation: "add" (default, entrada) or "remove" (salida / ajuste a la baja).
+    operation = str(body.get("operation", "add")).strip().lower()
+
     # Wider key so two batches of the same SKU with different fabric/COO
     # stay as separate inventory rows (mirrors the import + receiving keys).
     fabric_key = s("fabric_content")
@@ -4461,6 +4464,62 @@ async def add_inventory_manual(request: Request):
         "style": style, "color": color, "size": size, "location": location,
         "fabric_content": fabric_key, "country_of_origin": coo_key,
     })
+
+    # ── Salida manual (remove): resta de una línea existente ──────────────────
+    if operation == "remove":
+        # Fall back to the core key when fabric/COO weren't supplied so the
+        # operator can pull stock out without re-typing every metadata field.
+        if not existing:
+            existing = await db.wms_inventory.find_one(
+                {"style": style, "color": color, "size": size, "location": location},
+                sort=[("units_on_hand", -1)],
+            )
+        if not existing:
+            raise HTTPException(404, "No existe inventario para esa combinación (SKU+color+talla+ubicación)")
+
+        reason = s("reason")
+        if not reason:
+            raise HTTPException(400, "El motivo de la salida es obligatorio")
+
+        on_hand = int(existing.get("units_on_hand", 0) or 0)
+        allocated = int(existing.get("units_allocated", 0) or 0)
+        cur_boxes = int(existing.get("total_boxes", 0) or 0)
+        if total_units > on_hand:
+            raise HTTPException(400, f"No puedes sacar {total_units}: solo hay {on_hand} en existencia")
+        if on_hand - total_units < allocated:
+            raise HTTPException(
+                400,
+                f"No puedes sacar {total_units}: {allocated} están comprometidas (allocated). Disponible libre: {on_hand - allocated}",
+            )
+        if total_boxes > cur_boxes:
+            raise HTTPException(400, f"No puedes sacar {total_boxes} cajas: solo hay {cur_boxes} registradas")
+
+        inventory_id = existing["inventory_id"]
+        await db.wms_inventory.update_one(
+            {"inventory_id": inventory_id},
+            {"$inc": {"total_boxes": -total_boxes, "units_on_hand": -total_units},
+             "$set": {"updated_at": now}},
+        )
+        # Drop the oldest LPN boxes for this row to match the case count removed.
+        if total_boxes > 0:
+            old_box_ids = [
+                b["box_id"] for b in await db.wms_boxes.find(
+                    {"inventory_id": inventory_id}, {"_id": 0, "box_id": 1}
+                ).sort("created_at", 1).to_list(total_boxes)
+            ]
+            if old_box_ids:
+                await db.wms_boxes.delete_many({"box_id": {"$in": old_box_ids}})
+
+        await log_movement(user, "manual_inventory_remove", {
+            "inventory_id": inventory_id, "mode": "removed",
+            "style": style, "color": color, "size": size, "location": location,
+            "removed_boxes": total_boxes, "removed_units": total_units,
+        })
+        return {
+            "inventory_id": inventory_id, "mode": "removed", "location_created": False,
+            "removed_boxes": total_boxes, "removed_units": total_units,
+            "added_boxes": -total_boxes, "added_units": -total_units,
+        }
 
     if existing:
         inventory_id = existing["inventory_id"]
