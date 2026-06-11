@@ -221,31 +221,33 @@ export default function WMS() {
             </button>
           </div>
         </header>
-        <div className="flex-1 flex flex-col items-center justify-center gap-10 p-6">
-          <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-center">
-            {firstName ? `Hola, ${firstName}` : 'Hola'} — ¿Qué vas a hacer?
-          </h1>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-3xl">
-            {opts.map(m => {
-              const Icon = m.icon;
-              const badgeCount = m.id === 'transit' ? (badges.putaway || 0) : (badges[m.id] || 0);
-              return (
-                <button key={m.id} onClick={() => { if (m.id === 'picking') { navigate('/pda'); } else { setActiveModule(m.id); setPickerHome(false); } }}
-                  data-testid={`picker-launch-${m.id}`}
-                  className="relative flex flex-col items-center justify-center gap-5 p-10 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
-                  {badgeCount > 0 && (
-                    <span className="absolute top-4 right-4 min-w-[26px] h-[26px] px-2 rounded-full bg-primary text-primary-foreground text-xs font-black flex items-center justify-center">
-                      {badgeCount}
-                    </span>
-                  )}
-                  <div className="p-6 rounded-2xl bg-primary/10">
-                    <Icon className={`w-16 h-16 ${m.color}`} />
-                  </div>
-                  <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">{m.label}</span>
-                  <span className="text-xs text-muted-foreground text-center max-w-[220px]">{m.desc}</span>
-                </button>
-              );
-            })}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="min-h-full flex flex-col items-center justify-center gap-8 sm:gap-10">
+            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-center">
+              {firstName ? `Hola, ${firstName}` : 'Hola'} — ¿Qué vas a hacer?
+            </h1>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6 w-full max-w-3xl">
+              {opts.map(m => {
+                const Icon = m.icon;
+                const badgeCount = m.id === 'transit' ? (badges.putaway || 0) : (badges[m.id] || 0);
+                return (
+                  <button key={m.id} onClick={() => { if (m.id === 'picking') { navigate('/pda'); } else { setActiveModule(m.id); setPickerHome(false); } }}
+                    data-testid={`picker-launch-${m.id}`}
+                    className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
+                    {badgeCount > 0 && (
+                      <span className="absolute top-4 right-4 min-w-[26px] h-[26px] px-2 rounded-full bg-primary text-primary-foreground text-xs font-black flex items-center justify-center">
+                        {badgeCount}
+                      </span>
+                    )}
+                    <div className="p-4 sm:p-6 rounded-2xl bg-primary/10">
+                      <Icon className={`w-12 h-12 sm:w-16 sm:h-16 ${m.color}`} />
+                    </div>
+                    <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">{m.label}</span>
+                    <span className="text-xs text-muted-foreground text-center max-w-[220px]">{m.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
