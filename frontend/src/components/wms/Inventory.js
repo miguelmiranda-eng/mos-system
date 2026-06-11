@@ -174,7 +174,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     total_boxes: 0, total_units: 0,
     reason: '',
   };
-  // Motivos de salida (ajuste a la baja) para la bitácora de auditoría.
+  // Motivos para la bitácora de auditoría (entrada y salida).
+  const ADD_REASONS = ['RECEPCIÓN', 'AJUSTE DE CONTEO', 'DEVOLUCIÓN DE CLIENTE', 'PRODUCCIÓN', 'TRASLADO', 'OTRO'];
   const REMOVE_REASONS = ['MERMA', 'AJUSTE DE CONTEO', 'DAÑO / DEFECTO', 'TRASLADO', 'DEVOLUCIÓN A PROVEEDOR', 'OTRO'];
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const zoneOptions = useMemo(() => Object.keys(locationsByZone).sort(), [locationsByZone]);
@@ -377,7 +378,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     if (!location) { toast.error('Ubicación es requerida'); return; }
     if (units <= 0) { toast.error('Unidades debe ser mayor a 0'); return; }
     if (boxes < 0) { toast.error('Cajas no puede ser negativo'); return; }
-    if (manualOp === 'remove' && !manualForm.reason) { toast.error('Selecciona el motivo de la salida'); return; }
+    if (!manualForm.reason) { toast.error(`Selecciona el motivo de la ${manualOp === 'remove' ? 'salida' : 'entrada'}`); return; }
     setSavingManual(true);
     try {
       // Editable form fields override the style template; everything else is
@@ -385,7 +386,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       const payload = {
         style, color, size, location,
         operation: manualOp,
-        reason: manualOp === 'remove' ? manualForm.reason : '',
+        reason: manualForm.reason,
         total_units: units, total_boxes: boxes,
         customer: (manualForm.customer || styleInfo?.customer || '').toUpperCase(),
         description: (manualForm.description || styleInfo?.description || '').toUpperCase(),
@@ -940,20 +941,20 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 </button>
               </div>
 
-              {manualOp === 'remove' && (
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Motivo de la salida *</label>
-                  <select
-                    value={manualForm.reason}
-                    onChange={e => setManualForm(f => ({ ...f, reason: e.target.value }))}
-                    data-testid="manual-reason"
-                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
-                  >
-                    <option value="">Selecciona un motivo…</option>
-                    {REMOVE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </div>
-              )}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                  {manualOp === 'remove' ? 'Motivo de la salida *' : 'Motivo de la entrada *'}
+                </label>
+                <select
+                  value={manualForm.reason}
+                  onChange={e => setManualForm(f => ({ ...f, reason: e.target.value }))}
+                  data-testid="manual-reason"
+                  className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
+                >
+                  <option value="">Selecciona un motivo…</option>
+                  {(manualOp === 'remove' ? REMOVE_REASONS : ADD_REASONS).map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Style / SKU *</label>

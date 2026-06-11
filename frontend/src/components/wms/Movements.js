@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { History, Tag, Search, X, Loader2, User, Pencil, Trash2, CheckCircle2 } from "lucide-react";
+import { History, Tag, Search, X, Loader2, User, Pencil, Trash2, CheckCircle2, ArrowDownUp, Download, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, putter, deleter, logLoadError, SIZES_ORDER } from "./lib";
 
 const TABS = [
-  { id: 'movements', label: 'Movimientos', icon: History },
-  { id: 'upcs',      label: 'UPCs',        icon: Tag },
+  { id: 'movements', label: 'Movimientos',       icon: History },
+  { id: 'inout',     label: 'Entradas / Salidas', icon: ArrowDownUp },
+  { id: 'upcs',      label: 'UPCs',              icon: Tag },
 ];
 
 const MovementsTab = () => {
@@ -94,6 +96,184 @@ const MovementsTab = () => {
             <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_movements')}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+// ── Entradas / Salidas (ajustes manuales de inventario) ───────────────────────
+const InOutTab = () => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [dir, setDir] = useState('all'); // 'all' | 'in' | 'out'
+  const [search, setSearch] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [adds, removes] = await Promise.all([
+        fetcher('/movements?movement_type=manual_inventory_add&limit=1000'),
+        fetcher('/movements?movement_type=manual_inventory_remove&limit=1000'),
+      ]);
+      const norm = (m) => {
+        const d = m.details || {};
+        const isIn = m.type === 'manual_inventory_add';
+        return {
+          created_at: m.created_at,
+          direction: isIn ? 'ENTRADA' : 'SALIDA',
+          isIn,
+          reason: d.reason || (isIn ? (d.mode === 'accumulated' ? 'ACUMULADO' : 'NUEVO') : ''),
+          style: d.style || '',
+          color: d.color || '',
+          size: d.size || '',
+          location: d.location || '',
+          units: isIn ? (d.added_units ?? 0) : (d.removed_units ?? 0),
+          boxes: isIn ? (d.added_boxes ?? 0) : (d.removed_boxes ?? 0),
+          user: m.user_name || m.user_id || 'Sistema',
+        };
+      };
+      const merged = [...(adds || []), ...(removes || [])]
+        .map(norm)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setRows(merged);
+    } catch (err) {
+      logLoadError('entradas/salidas')(err);
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    let r = rows;
+    if (dir !== 'all') r = r.filter(x => (dir === 'in' ? x.isIn : !x.isIn));
+    const q = search.trim().toUpperCase();
+    if (q) r = r.filter(x =>
+      `${x.style} ${x.color} ${x.size} ${x.location} ${x.reason} ${x.user}`.toUpperCase().includes(q)
+    );
+    return r;
+  }, [rows, dir, search]);
+
+  const totals = useMemo(() => ({
+    in: filtered.filter(x => x.isIn).reduce((s, x) => s + (Number(x.units) || 0), 0),
+    out: filtered.filter(x => !x.isIn).reduce((s, x) => s + (Number(x.units) || 0), 0),
+  }), [filtered]);
+
+  const exportExcel = () => {
+    if (filtered.length === 0) { toast.error('No hay registros para exportar'); return; }
+    const data = filtered.map(x => ({
+      'Fecha': x.created_at ? new Date(x.created_at).toLocaleString() : '',
+      'Tipo': x.direction,
+      'Motivo': x.reason,
+      'Style / SKU': x.style,
+      'Color': x.color,
+      'Talla': x.size,
+      'Ubicación': x.location,
+      'Unidades': Number(x.units) || 0,
+      'Cajas': Number(x.boxes) || 0,
+      'Usuario': x.user,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, { wch: 8 }, { wch: 22 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Entradas_Salidas');
+    XLSX.writeFile(wb, `entradas_salidas_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const dirTabs = [
+    { id: 'all', label: 'Todas' },
+    { id: 'in',  label: 'Entradas' },
+    { id: 'out', label: 'Salidas' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1.5 p-1 bg-secondary/30 rounded-xl border border-border/10">
+          {dirTabs.map(d => (
+            <button
+              key={d.id}
+              onClick={() => setDir(d.id)}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${dir === d.id ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 min-w-[240px]">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar style / color / ubicación / motivo / usuario…"
+            className="w-full pl-9 pr-9 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/40"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-[11px] font-mono font-bold">
+          <span className="text-emerald-500">+{totals.in.toLocaleString()}</span>
+          <span className="text-rose-500">-{totals.out.toLocaleString()}</span>
+          <span className="text-muted-foreground">{filtered.length.toLocaleString()} reg.</span>
+        </div>
+        <button
+          onClick={exportExcel}
+          data-testid="inout-export-btn"
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-black uppercase tracking-wider transition-all"
+        >
+          <Download className="w-4 h-4" /> Exportar Excel
+        </button>
+      </div>
+
+      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+        <div className="overflow-auto max-h-[600px] custom-scrollbar">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-secondary/80 backdrop-blur-md border-b border-border/40">
+              <tr>
+                {['Fecha', 'Tipo', 'Motivo', 'Style / SKU', 'Color · Talla', 'Ubicación', 'Unidades', 'Cajas', 'Usuario'].map(h => (
+                  <th key={h} className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={9} className="py-16 text-center text-muted-foreground"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></td></tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-20 text-center">
+                    <ArrowDownUp className="w-12 h-12 mx-auto opacity-20 mb-2 text-primary" />
+                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Sin entradas ni salidas manuales</p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((x, i) => (
+                  <tr key={i} className="border-b border-border/10 hover:bg-primary/5">
+                    <td className="p-3 font-mono text-[10px] text-muted-foreground whitespace-nowrap">{x.created_at ? new Date(x.created_at).toLocaleString() : '—'}</td>
+                    <td className="p-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${x.isIn ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                        {x.isIn ? <ArrowDownCircle className="w-3 h-3" /> : <ArrowUpCircle className="w-3 h-3" />}
+                        {x.direction}
+                      </span>
+                    </td>
+                    <td className="p-3 text-[11px] font-bold">{x.reason || '—'}</td>
+                    <td className="p-3 font-mono text-[11px] font-bold text-primary truncate max-w-[200px]" title={x.style}>{x.style || '—'}</td>
+                    <td className="p-3 font-mono text-[11px]">
+                      <span className="text-foreground">{x.color || '—'}</span>
+                      <span className="mx-1 opacity-20">·</span>
+                      <span className="text-primary">{x.size || '—'}</span>
+                    </td>
+                    <td className="p-3 font-mono text-[11px]">{x.location || '—'}</td>
+                    <td className={`p-3 text-right font-mono font-black ${x.isIn ? 'text-emerald-500' : 'text-rose-500'}`}>{x.isIn ? '+' : '-'}{(Number(x.units) || 0).toLocaleString()}</td>
+                    <td className="p-3 text-right font-mono">{(Number(x.boxes) || 0).toLocaleString()}</td>
+                    <td className="p-3 text-[11px] flex items-center gap-1.5"><User className="w-3 h-3 text-muted-foreground" />{x.user}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -391,7 +571,7 @@ export const MovementsModule = () => {
           );
         })}
       </div>
-      {tab === 'movements' ? <MovementsTab /> : <UpcsTab />}
+      {tab === 'movements' ? <MovementsTab /> : tab === 'inout' ? <InOutTab /> : <UpcsTab />}
     </div>
   );
 };

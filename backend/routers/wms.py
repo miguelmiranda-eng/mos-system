@@ -4599,6 +4599,7 @@ async def add_inventory_manual(request: Request):
     await log_movement(user, "manual_inventory_add", {
         "inventory_id": inventory_id,
         "mode": mode,
+        "reason": s("reason"),
         "style": style,
         "color": color,
         "size": size,
