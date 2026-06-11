@@ -3983,10 +3983,10 @@ async def delete_asn(asn_id: str, request: Request):
 
 @router.put("/asn/{asn_id}")
 async def update_asn(asn_id: str, request: Request):
-    """Edit an ASN's header and packing-list lines. Super-user only.
+    """Edit an ASN's header and packing-list lines. Admin / super-user.
     Received quantities are preserved (matched by line_no, then part_number),
     and status is recomputed from expected vs received."""
-    user = await require_supersu(request)
+    user = await require_admin(request)
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")
@@ -4096,8 +4096,8 @@ async def close_asn(asn_id: str, request: Request):
 
 @router.post("/asn/{asn_id}/reopen")
 async def reopen_asn(asn_id: str, request: Request):
-    """Reopen a closed ASN so receiving can continue. Super-user only."""
-    user = await require_supersu(request)
+    """Reopen a closed ASN so receiving can continue. Admin / super-user."""
+    user = await require_admin(request)
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")

@@ -22,7 +22,8 @@ const TABS = [
 
 export const AsnModule = ({ currentUser }) => {
   const { t } = useLang();
-  const isSupersu = currentUser?.role === 'supersu';
+  // Admin y Super Usuario pueden crear/editar/reabrir ASN.
+  const isSupersu = ['admin', 'supersu'].includes(currentUser?.role);
   const [asns, setAsns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
