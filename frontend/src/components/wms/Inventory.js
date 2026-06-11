@@ -16,13 +16,14 @@ const EMPTY = [];
  */
 const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, placeholder, mono, options }) {
   const active = !!(value || '').trim();
-  const [query, setQuery] = useState('');
+  // The typed text IS the filter (works even when there's no options list, e.g.
+  // location/description). The options below are quick-picks filtered by it.
   const filtered = useMemo(() => {
     const list = Array.isArray(options) ? options : [];
-    const q = (query || '').trim().toUpperCase();
+    const q = (value || '').trim().toUpperCase();
     if (!q) return list.slice(0, 200);
     return list.filter(o => String(o).toUpperCase().includes(q)).slice(0, 200);
-  }, [options, query]);
+  }, [options, value]);
 
   return (
     <div className="flex items-center gap-1.5">
@@ -42,15 +43,15 @@ const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, 
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
             {active && (
-              <button onClick={() => { onChange(''); setQuery(''); }} className="text-[10px] font-bold text-destructive hover:underline uppercase">
+              <button onClick={() => onChange('')} className="text-[10px] font-bold text-destructive hover:underline uppercase">
                 Limpiar
               </button>
             )}
           </div>
           <input
             autoFocus
-            value={query}
-            onChange={e => setQuery(e.target.value)}
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
             placeholder={placeholder}
             className={`w-full h-8 px-2 bg-secondary/50 border border-border rounded text-xs ${mono ? 'font-mono' : ''} focus:ring-1 focus:ring-primary outline-none mb-1.5`}
           />
@@ -136,9 +137,10 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [customerFilter, setCustomerFilter] = useState(initialCustomer);
   const [categoryFilter, setCategoryFilter] = useState('');
   // Per-column filters mostrados como popover (ícono ListFilter) en el header.
-  // Solo 3 columnas: Customer, País de origen, Fabric %. Debounce antes de fetch.
+  // Todas las columnas de datos. El backend soporta cada key como regex i.
   const [colFilters, setColFilters] = useState({
-    customer: '', country_of_origin: '', fabric_content: '',
+    customer: '', sku: '', color: '', description: '', location: '',
+    country_of_origin: '', fabric_content: '',
   });
   const [debouncedColFilters, setDebouncedColFilters] = useState(colFilters);
   useEffect(() => {
@@ -591,10 +593,18 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                   <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={filters.customers} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_style_sku')}</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_col_sz')}</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('description')}</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('wms_style_sku')} value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={filters.styles} />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('wms_col_sz')} value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder="Descripción…" />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder="Ubicación…" mono />
+                </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                   <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={filters.countries} />
                 </th>
