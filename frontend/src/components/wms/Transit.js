@@ -285,52 +285,80 @@ export const TransitModule = () => {
         </div>
       </div>
 
-      {/* Cart tabs */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => setActiveCart("")}
-          className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
-            activeCart === ""
-              ? "bg-amber-500 text-white border-amber-500"
-              : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
-          }`}
-        >
-          Todos
-          <span className="text-[10px] opacity-80 font-mono">
-            {(cartInfo.reduce((s, c) => s + (c.boxes || 0), 0) + legacyCount).toLocaleString()}
-          </span>
-        </button>
-        {cartInfo.map(c => (
-          <button
-            key={c.name}
-            onClick={() => setActiveCart(c.name)}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
-              activeCart === c.name
-                ? "bg-amber-500 text-white border-amber-500"
-                : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
-            }`}
-            data-testid={`putaway2-tab-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
-          >
-            <Truck className="w-3.5 h-3.5" />
-            {c.name}
-            <span className="text-[10px] opacity-80 font-mono">{(c.boxes || 0).toLocaleString()}</span>
-          </button>
-        ))}
-        {legacyCount > 0 && (
-          <button
-            onClick={() => setActiveCart(TRANSIT_LEGACY)}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
-              activeCart === TRANSIT_LEGACY
-                ? "bg-amber-500 text-white border-amber-500"
-                : "bg-card/40 text-muted-foreground border-amber-500/30 hover:border-amber-500/60 hover:text-foreground"
-            }`}
-            title="Cajas recibidas antes de los carros — siguen aquí hasta que las reubiques."
-          >
-            ⏸ Temporal (legacy)
-            <span className="text-[10px] opacity-80 font-mono">{legacyCount.toLocaleString()}</span>
-          </button>
-        )}
-      </div>
+      {/* Cart selector — only carts with stock (or the active one) show as tabs;
+          every cart stays reachable through the "Ir a carro" dropdown. */}
+      {(() => {
+        const activeCarts = cartInfo.filter(c => (c.boxes || 0) > 0 || c.name === activeCart)
+        const withStock = cartInfo.filter(c => (c.boxes || 0) > 0).length
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setActiveCart("")}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                activeCart === ""
+                  ? "bg-amber-500 text-white border-amber-500"
+                  : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+              }`}
+            >
+              Todos
+              <span className="text-[10px] opacity-80 font-mono">
+                {(cartInfo.reduce((s, c) => s + (c.boxes || 0), 0) + legacyCount).toLocaleString()}
+              </span>
+            </button>
+
+            {activeCarts.map(c => (
+              <button
+                key={c.name}
+                onClick={() => setActiveCart(c.name)}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                  activeCart === c.name
+                    ? "bg-amber-500 text-white border-amber-500"
+                    : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+                }`}
+                data-testid={`putaway2-tab-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
+              >
+                <Truck className="w-3.5 h-3.5" />
+                {c.name}
+                <span className="text-[10px] opacity-80 font-mono">{(c.boxes || 0).toLocaleString()}</span>
+              </button>
+            ))}
+
+            {legacyCount > 0 && (
+              <button
+                onClick={() => setActiveCart(TRANSIT_LEGACY)}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                  activeCart === TRANSIT_LEGACY
+                    ? "bg-amber-500 text-white border-amber-500"
+                    : "bg-card/40 text-muted-foreground border-amber-500/30 hover:border-amber-500/60 hover:text-foreground"
+                }`}
+                title="Cajas recibidas antes de los carros — siguen aquí hasta que las reubiques."
+              >
+                ⏸ Temporal (legacy)
+                <span className="text-[10px] opacity-80 font-mono">{legacyCount.toLocaleString()}</span>
+              </button>
+            )}
+
+            {/* Jump to any cart, including the empty ones. */}
+            <select
+              value={activeCart && activeCart !== TRANSIT_LEGACY ? activeCart : ""}
+              onChange={e => setActiveCart(e.target.value)}
+              title="Ir a cualquier carro"
+              className="px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border border-dashed border-border/60 bg-card/40 text-muted-foreground hover:border-amber-500/40 hover:text-foreground transition-all cursor-pointer focus:outline-none focus:border-amber-500/50"
+            >
+              <option value="">Ir a carro…</option>
+              {cartInfo.map(c => (
+                <option key={c.name} value={c.name}>
+                  {c.name}{c.boxes ? ` · ${c.boxes} cajas` : " · vacío"}
+                </option>
+              ))}
+            </select>
+
+            <span className="text-[10px] font-mono text-muted-foreground/60 ml-auto">
+              {withStock}/{cartInfo.length} carros con stock
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

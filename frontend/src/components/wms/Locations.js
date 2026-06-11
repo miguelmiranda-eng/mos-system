@@ -7,7 +7,8 @@ import { API, fetcher, poster, deleter, logLoadError } from "./lib";
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
 const SYSTEM_TRANSIT_NAMES = new Set([
-  'UBICACION TEMPORAL', 'CARRO 1', 'CARRO 2', 'CARRO 3', 'CARRO 4', 'CARRO 5',
+  'UBICACION TEMPORAL',
+  ...Array.from({ length: 50 }, (_, i) => `CARRO ${i + 1}`),
 ]);
 
 export const LocationsModule = ({ currentUser }) => {

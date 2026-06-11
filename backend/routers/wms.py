@@ -34,10 +34,10 @@ def gen_id(prefix="wms"):
 # move-location, aggregations) treats it like any other slot.
 TRANSIT_LOCATION_NAME = "UBICACION TEMPORAL"
 
-# Five physical carts the Receiving operator can choose between when parking
-# boxes before putaway. Each cart is a regular wms_location with type="transit"
-# so the rest of the system (inventory, movements) treats them like any slot.
-TRANSIT_CART_NAMES = ["CARRO 1", "CARRO 2", "CARRO 3", "CARRO 4", "CARRO 5"]
+# Physical carts the Receiving operator can choose between when parking boxes
+# before putaway. Each cart is a regular wms_location with type="transit" so the
+# rest of the system (inventory, movements) treats them like any slot.
+TRANSIT_CART_NAMES = [f"CARRO {i}" for i in range(1, 51)]
 
 # Every location managed by the Putaway 2.0 module. Legacy UBICACION TEMPORAL
 # is kept so boxes received before the carts existed still surface.
@@ -45,7 +45,7 @@ SYSTEM_TRANSIT_LOCATIONS = [TRANSIT_LOCATION_NAME] + TRANSIT_CART_NAMES
 
 
 async def _ensure_transit_location():
-    """Idempotently insert UBICACION TEMPORAL + the 5 carts if they aren't in
+    """Idempotently insert UBICACION TEMPORAL + the carts if they aren't in
     wms_locations yet. Safe to call on every request that may need to write
     there — bulk find + (optional) inserts."""
     existing = await db.wms_locations.find({
@@ -477,7 +477,7 @@ async def move_location_bulk(request: Request):
 
 @router.get("/transit/info")
 async def transit_info(request: Request):
-    """Tell the frontend the canonical transit location, the 5 cart names and
+    """Tell the frontend the canonical transit location, the cart names and
     how many boxes each one currently holds. Receiving uses this to populate
     its 'Recibir a Carro' dropdown; the Putaway 2.0 module uses it for tabs."""
     await require_auth(request)
@@ -511,7 +511,7 @@ async def transit_info(request: Request):
 @router.get("/transit/boxes")
 async def transit_boxes(request: Request, customer: str = "", style: str = "",
                         search: str = "", cart: str = "", limit: int = 1000):
-    """List every box currently sitting in a transit slot (the 5 carts +
+    """List every box currently sitting in a transit slot (the carts +
     legacy UBICACION TEMPORAL). Optional `cart` narrows to a single slot;
     text filters help triage when there are hundreds of pending boxes."""
     await require_auth(request)

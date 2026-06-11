@@ -1207,11 +1207,9 @@ export const ReceivingModule = () => {
                 </button>
                 {showCartMenu && (
                   <div className="absolute z-30 right-0 mt-1 w-56 bg-popover border border-amber-500/30 rounded-lg shadow-2xl overflow-hidden">
-                    {(transitCarts.length > 0 ? transitCarts : [
-                      { name: 'CARRO 1', boxes: 0 }, { name: 'CARRO 2', boxes: 0 },
-                      { name: 'CARRO 3', boxes: 0 }, { name: 'CARRO 4', boxes: 0 },
-                      { name: 'CARRO 5', boxes: 0 },
-                    ]).map(c => (
+                    {(transitCarts.length > 0 ? transitCarts :
+                      Array.from({ length: 50 }, (_, i) => ({ name: `CARRO ${i + 1}`, boxes: 0 }))
+                    ).map(c => (
                       <button
                         key={c.name}
                         onClick={() => { setShowCartMenu(false); handleSubmit({ toLocation: c.name }); }}
