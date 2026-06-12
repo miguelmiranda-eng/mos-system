@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package } from "lucide-react";
+import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2 } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
@@ -37,6 +37,8 @@ export const PickingModule = () => {
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
   // Duplicate-ticket warning: holds the existing ticket returned by the 409 guard
   const [dupWarning, setDupWarning] = useState(null); // null | { pendingPayload, existing_ticket }
+
+  const isAdmin = ['admin', 'supersu', 'ceo'].includes(currentUser?.role);
 
   // Load all customers on mount
   useEffect(() => {
@@ -261,6 +263,15 @@ export const PickingModule = () => {
     } catch { toast.error(t('conn_error')); }
   };
 
+  const handleDismissPreticket = async (orderNumber) => {
+    if (!window.confirm("¿Estás seguro de que quieres ocultar este pre-ticket?")) return;
+    try {
+      await fetcher(`/pick-tickets/virtual/${orderNumber}/dismiss`, { method: 'PUT' });
+      toast.success('Pre-ticket ocultado correctamente');
+      loadTickets();
+    } catch { toast.error('Error al ocultar pre-ticket'); }
+  };
+
   const handleQuickAssign = async (ticket_id, user_val) => {
     try {
       const op = operators.find(o => o.user_id === user_val || o.email === user_val) || {};
@@ -481,6 +492,15 @@ export const PickingModule = () => {
                 <Zap className="w-4 h-4 group-hover/hot:scale-125 transition-transform" />
               </button>
             </>
+          )}
+          {ticket.is_virtual && isAdmin && (
+            <button
+              onClick={() => handleDismissPreticket(ticket.order_number)}
+              className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-xl transition-all mr-1"
+              title="Eliminar Pre-Ticket (Admin)"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           )}
           {showEdit && currentStatus !== PickingStatus.COMPLETED && (
             <button

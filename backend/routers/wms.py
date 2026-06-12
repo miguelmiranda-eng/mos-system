@@ -314,6 +314,99 @@ async def delete_catalog_value(ctype: str, request: Request):
 
 # ==================== LOCATIONS ====================
 
+# ==================== LOCATION HOLDS (SAT) ====================
+# Locations placed on HOLD (e.g. SAT customs hold) must NOT be touched — no
+# putaway, picking, moves or edits — until a SUPERUSER releases them. The flag
+# lives on the wms_locations doc (on_hold=True) so the Locations module and the
+# inventory export can surface/filter it without a second collection.
+
+async def _hold_location_names():
+    """UPPERCASE names of every location currently on HOLD."""
+    docs = await db.wms_locations.find({"on_hold": True}, {"_id": 0, "name": 1}).to_list(20000)
+    return {(d.get("name") or "").strip().upper() for d in docs if d.get("name")}
+
+
+async def _assert_not_on_hold(user, *locations):
+    """Raise 423 if a non-supersu tries to touch a HOLD location. Supersu is the
+    only role allowed to move stock in/out of a hold or release it."""
+    if (user or {}).get("role") == "supersu":
+        return
+    wanted = {(l or "").strip().upper() for l in locations if l and str(l).strip()}
+    if not wanted:
+        return
+    held = await db.wms_locations.find_one(
+        {"on_hold": True, "name": {"$in": list(wanted)}}, {"_id": 0, "name": 1}
+    )
+    if held:
+        raise HTTPException(
+            status_code=423,
+            detail=f"Locación {held.get('name')} está en HOLD (SAT) — no se puede tocar hasta que un superusuario la libere.",
+        )
+
+
+@router.get("/location-holds")
+async def list_location_holds(request: Request):
+    """Read the hold list (any authenticated user — used by the UI badge and the
+    export 'exclude hold' option)."""
+    await require_auth(request)
+    docs = await db.wms_locations.find(
+        {"on_hold": True},
+        {"_id": 0, "name": 1, "hold_reason": 1, "hold_at": 1, "hold_by_name": 1},
+    ).sort("name", 1).to_list(20000)
+    return {"count": len(docs), "locations": docs}
+
+
+@router.post("/location-holds")
+async def add_location_holds(request: Request):
+    """Place one or more locations on HOLD (supersu only). Body:
+    { locations: ["RP09-A03", ...] } or { location: "RP09-A03" }, optional reason."""
+    user = await require_supersu(request)
+    body = await request.json()
+    raw = body.get("locations") or ([body.get("location")] if body.get("location") else [])
+    names = sorted({(n or "").strip().upper() for n in raw if (n or "").strip()})
+    if not names:
+        raise HTTPException(400, "Proporciona al menos una locación")
+    reason = (body.get("reason") or "SAT").strip()
+    hold_meta = {
+        "on_hold": True, "hold_reason": reason, "hold_at": now_iso(),
+        "hold_by": user.get("user_id"), "hold_by_name": user.get("name", ""),
+    }
+    updated, created = 0, 0
+    for name in names:
+        res = await db.wms_locations.update_one(
+            {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}},
+            {"$set": hold_meta},
+        )
+        if res.matched_count:
+            updated += 1
+        else:
+            await db.wms_locations.insert_one({
+                "location_id": gen_id("loc"), "name": name,
+                "zone": name.split("-")[0] if "-" in name else "HOLD",
+                "type": "rack", "active": True, "is_custom": False,
+                "created_at": now_iso(), **hold_meta,
+            })
+            created += 1
+    await log_movement(user, "location_hold_add", {"count": len(names), "reason": reason})
+    return {"status": "ok", "held": len(names), "updated": updated, "created": created}
+
+
+@router.delete("/location-holds/{name}")
+async def release_location_hold(name: str, request: Request):
+    """Release a location from HOLD (supersu only)."""
+    user = await require_supersu(request)
+    clean = (name or "").strip()
+    res = await db.wms_locations.update_one(
+        {"name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+        {"$set": {"on_hold": False, "hold_released_at": now_iso(),
+                  "hold_released_by": user.get("user_id"), "hold_released_by_name": user.get("name", "")}},
+    )
+    if not res.matched_count:
+        raise HTTPException(404, f"Locación {clean} no encontrada")
+    await log_movement(user, "location_hold_release", {"location": clean.upper()})
+    return {"status": "released", "location": clean.upper()}
+
+
 @router.post("/locations")
 async def create_location(request: Request):
     user = await require_auth(request)
@@ -419,6 +512,7 @@ async def move_location_bulk(request: Request):
         raise HTTPException(404, f"Ubicación origen '{src}' no encontrada")
     if not dst_loc:
         raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
+    await _assert_not_on_hold(user, src, dst)
 
     # 1. Bulk move boxes (no merge logic needed; box_id is unique)
     box_res = await db.wms_boxes.update_many(
@@ -574,6 +668,7 @@ async def transit_relocate(request: Request):
     if not dst_loc:
         raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
     dst_name = dst_loc.get("name", dst)
+    await _assert_not_on_hold(user, dst_name)
 
     # Pull the boxes that ACTUALLY are in any transit slot right now (5 carts
     # + legacy UBICACION TEMPORAL).
@@ -1432,6 +1527,7 @@ async def update_box(box_id: str, request: Request):
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
         raise HTTPException(404, f"Caja {box_id} no encontrada")
+    await _assert_not_on_hold(user, box.get("location"))
 
     update_doc = {}
     for k, v in body.items():
@@ -1656,6 +1752,7 @@ async def putaway_box(request: Request):
     loc = await db.wms_locations.find_one({"name": location})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")
+    await _assert_not_on_hold(user, location)
 
     box = await db.wms_boxes.find_one({"box_id": box_id})
     if not box:
@@ -1664,6 +1761,7 @@ async def putaway_box(request: Request):
             boxes = await db.wms_boxes.find({"receiving_id": box_id.lower()}).to_list(1000)
             if not boxes:
                 raise HTTPException(404, f"No se encontraron cajas para el Receiving ID: {box_id}")
+            await _assert_not_on_hold(user, *{b.get("location") for b in boxes})
             for b in boxes:
                 old_loc = b.get("location")
                 await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored"}})
@@ -1674,6 +1772,7 @@ async def putaway_box(request: Request):
         raise HTTPException(404, "Caja no encontrada")
 
     old_location = box.get("location")
+    await _assert_not_on_hold(user, old_location)
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
     await _move_box_inventory(box, old_location, location)
@@ -1693,6 +1792,7 @@ async def putaway_bulk(request: Request):
             box = await db.wms_boxes.find_one({"box_id": box_id})
             if box:
                 old_loc = box.get("location")
+                await _assert_not_on_hold(user, location, old_loc)
                 await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
                 await _move_box_inventory(box, old_loc, location)
                 results.append({"box_id": box_id, "location": location})
@@ -1827,6 +1927,7 @@ async def get_inventory(
     customer: str = "", category: str = "", style: str = "",
     description: str = "", country_of_origin: str = "", fabric_content: str = "",
     paginated: bool = False, skip: int = 0, limit: int = 5000,
+    exclude_hold: bool = False,
 ):
     """List inventory rows.
       - Default (legacy): returns bare array, all rows up to 5000.
@@ -1848,6 +1949,11 @@ async def get_inventory(
     if description: query["description"] = {"$regex": description, "$options": "i"}
     if country_of_origin: query["country_of_origin"] = {"$regex": country_of_origin, "$options": "i"}
     if fabric_content: query["fabric_content"] = {"$regex": fabric_content, "$options": "i"}
+    # Optionally hide stock parked in SAT-held locations.
+    if exclude_hold and not location:
+        held = await _hold_location_names()
+        if held:
+            query["location"] = {"$nin": list(held)}
 
     skip = max(0, skip)
     limit = max(1, min(limit, 5000))
@@ -2727,10 +2833,15 @@ async def list_pick_tickets(
     if (not status or status == "pending") and (not paginated or skip == 0):
         existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
         
+        # Also exclude admin-dismissed pre-tickets
+        dismissed_docs = await db.wms_dismissed_pretickets.find({}, {"_id": 0, "order_number": 1}).to_list(2000)
+        dismissed_order_numbers = {d["order_number"] for d in dismissed_docs if d.get("order_number")}
+        excluded_order_numbers = list(existing_order_numbers | dismissed_order_numbers)
+        
         virtual_query = {
             "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
             "wms_status": {"$ne": "picked"},
-            "order_number": {"$nin": list(existing_order_numbers)}
+            "order_number": {"$nin": excluded_order_numbers}
         }
         
         # Limit to 500 to avoid performance issues
@@ -2769,6 +2880,30 @@ async def list_pick_tickets(
     # has_more is based on real tickets only; virtual tickets are computed every call
     has_more = (skip + len(real_tickets)) < total
     return {"items": real_tickets, "total": total, "has_more": has_more}
+
+@router.put("/pick-tickets/virtual/{order_number}/dismiss")
+async def dismiss_preticket(order_number: str, request: Request):
+    """Admin-only: permanently hide a virtual pre-ticket (order without a real pick ticket).
+    Stores the order_number in wms_dismissed_pretickets so the virtual query excludes it."""
+    user = await require_auth(request)
+    role = user.get("role", "")
+    if role not in ("admin", "supersu", "ceo"):
+        raise HTTPException(status_code=403, detail="Solo administradores pueden eliminar pre-tickets")
+    
+    # Idempotent upsert — safe to call multiple times
+    await db.wms_dismissed_pretickets.update_one(
+        {"order_number": order_number},
+        {"$set": {
+            "order_number": order_number,
+            "dismissed_by": user.get("user_id"),
+            "dismissed_by_name": user.get("name", ""),
+            "dismissed_at": now_iso()
+        }},
+        upsert=True
+    )
+    await log_movement(user, "preticket_dismissed", {"order_number": order_number})
+    return {"message": "Pre-ticket ocultado correctamente", "order_number": order_number}
+
 
 @router.post("/pick-tickets/{ticket_id}/incidents")
 async def report_incident(ticket_id: str, request: Request):
@@ -2905,6 +3040,12 @@ async def save_pick_progress(ticket_id: str, request: Request):
     if assignee and assignee not in caller_ids and not elevated:
         raise HTTPException(403, "Este pick ticket está asignado a otro operador")
 
+    # HOLD guard: stock in a SAT-held location can't be picked until released.
+    picked_locs = [loc for d in picked_sizes.values() if isinstance(d, dict)
+                   for loc in (d.get("details") or {}).keys()]
+    if picked_locs:
+        await _assert_not_on_hold(user, *picked_locs)
+
     picking_status = "completed" if is_complete else "in_progress"
     update = {
         "picked_sizes": picked_sizes,
@@ -2974,6 +3115,13 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     # Guard: skip if already processed by pick-progress completion
     if ticket.get("status") in ("confirmed", "in_neck_cutting"):
         return {"message": "Pick ya fue procesado previamente", "ticket_id": target_id}
+
+    # HOLD guard: stock in a SAT-held location can't be picked until released.
+    confirm_locs = [line.get("location") for line in confirmed_lines if line.get("location")]
+    confirm_locs += [loc for d in (ticket.get("picked_sizes") or {}).values()
+                     if isinstance(d, dict) for loc in (d.get("details") or {}).keys()]
+    if confirm_locs:
+        await _assert_not_on_hold(user, *confirm_locs)
 
     is_neck_cutting = ticket.get("destination") == "neck_cutting"
     inv_operation = "pick_to_neck" if is_neck_cutting else "deduct"
@@ -3249,6 +3397,7 @@ async def production_move(request: Request):
         box = await db.wms_boxes.find_one({"box_id": box_id})
         if not box:
             continue
+        await _assert_not_on_hold(user, box.get("location"))
         old_state = box.get("state", "raw")
         await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"state": target_state, "status": "in_production" if target_state == "wip" else ("finished" if target_state == "finished" else box.get("status"))}})
         moved.append({"box_id": box_id, "from": old_state, "to": target_state})
@@ -3523,7 +3672,7 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
 # ==================== EXPORT ====================
 
 @router.get("/export/inventory")
-async def export_inventory(request: Request):
+async def export_inventory(request: Request, exclude_hold: bool = False):
     await require_auth(request)
     # to_list(None) returns ALL rows. A fixed cap (e.g. 20000) silently dropped
     # the alphabetical tail (W/X/Y/Z SKUs) once the catalog grew past it.
@@ -3538,6 +3687,12 @@ async def export_inventory(request: Request):
         ]},
         {"_id": 0},
     ).sort("sku", 1).to_list(None)
+    # Optionally drop rows sitting in SAT-held locations (case-insensitive match
+    # against the hold list).
+    if exclude_hold:
+        held = await _hold_location_names()
+        if held:
+            inventory = [r for r in inventory if (r.get("location") or "").strip().upper() not in held]
     import xlsxwriter
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)

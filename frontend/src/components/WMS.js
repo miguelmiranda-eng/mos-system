@@ -42,7 +42,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
-    case 'picking':      return <PickingModule />;
+    case 'picking':      return <PickingModule currentUser={ctx.currentUser} />;
     case 'neck_cutting': return <NeckCuttingModule />;
     case 'finished':     return <FinishedGoodsModule />;
     case 'movements':    return <MovementsModule />;
