@@ -691,6 +691,7 @@ import ArtModule from "./components/ArtModule";
 import SmartAgenda from "./components/SmartAgenda";
 import ShippingModule from "./components/ShippingModule";
 import PackingListTool from "./components/PackingList";
+import ScheduledReports from "./components/ScheduledReports";
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -832,6 +833,11 @@ function AppRouter() {
       <Route path="/catalog-center" element={
         <AdminRoute>
           <CatalogCenter />
+        </AdminRoute>
+      } />
+      <Route path="/reportes-programados" element={
+        <AdminRoute>
+          <ScheduledReports />
         </AdminRoute>
       } />
       <Route path="/operators-center" element={

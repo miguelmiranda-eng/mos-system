@@ -876,44 +876,34 @@ async def get_production_analytics(request: Request, date_from: str = None, date
         set_cache(cache_key, result)
         return result
 
-@router.post("/production-report")
-async def generate_production_report(request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    fmt = body.get("format", "excel")
-    preset = body.get("preset")
-    filters = body.get("filters", {})
-    
+async def build_production_report(fmt="excel", preset=None, filters=None):
+    """Build the production report (excel|pdf) and return {data, content_type, filename}.
+
+    Pure data → file builder with no Request dependency, so it is reused by both the
+    POST /production-report endpoint and the daily report scheduler (report_scheduler.py).
+    """
+    filters = filters or {}
+
     # Build query using helper
     query = _get_preset_query(preset, filters.get("date_from"), filters.get("date_to"))
     if filters.get("shift"): query["shift"] = filters["shift"]
     if filters.get("supervisor"): query["supervisor"] = {"$regex": filters["supervisor"], "$options": "i"}
     if filters.get("machine"): query["machine"] = filters["machine"]
-    
+
     logger.info(f"Generating report: format={fmt}, preset={preset}, filters={filters}")
-    logger.info(f"Final Query: {query}")
-    
     logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", 1).to_list(50000)
     logger.info(f"Found {len(logs)} logs for report")
-    
-    # Save debug info to a file we can read
-    with open("report_debug.log", "a") as f:
-        f.write(f"\n[{datetime.now().isoformat()}] Report Request: {fmt}, {preset}, {filters}\n")
-        f.write(f"Query: {query}\n")
-        f.write(f"Logs found: {len(logs)}\n")
-        if logs:
-            f.write(f"Sample log date: {logs[0].get('created_at')}\n")
-    
+
     # Summary calculation for the report
     total_produced = sum(l.get("quantity_produced", 0) for l in logs)
     setup_logs = [l.get("setup", 0) for l in logs if l.get("setup", 0) > 0]
     avg_setup = sum(setup_logs) / max(len(setup_logs), 1)
-    
+
     # Get target quantity for summary per PO
     order_ids = list(set(l.get("order_id") for l in logs if l.get("order_id")))
     orders_info = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "quantity": 1, "order_number": 1, "client": 1}).to_list(10000)
     order_map = {o["order_id"]: o for o in orders_info}
-    
+
     by_po = {}
     by_machine = {}
     by_client = {}
@@ -922,13 +912,13 @@ async def generate_production_report(request: Request):
         if oid:
             if oid not in by_po: by_po[oid] = {"order_number": l.get("order_number", "?"), "client": l.get("client", ""), "target": order_map.get(oid, {}).get("quantity", 0), "produced": 0}
             by_po[oid]["produced"] += l.get("quantity_produced", 0)
-        
+
         m = l.get("machine", "Desconocida")
         by_machine[m] = by_machine.get(m, 0) + l.get("quantity_produced", 0)
-        
+
         c = l.get("client", "Sin Cliente")
         by_client[c] = by_client.get(c, 0) + l.get("quantity_produced", 0)
-    
+
     summary = {
         "total_produced": total_produced,
         "avg_setup": int(round(avg_setup)),
@@ -940,7 +930,7 @@ async def generate_production_report(request: Request):
 
     # Generate a unique timestamped filename
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    
+
     if fmt == "pdf":
         result = await _generate_pdf_report(logs, summary, filters)
         result["filename"] = f"DASHBOARD_CEO_{ts}.pdf"
@@ -949,6 +939,17 @@ async def generate_production_report(request: Request):
         result = await _generate_excel_report(logs, summary, filters)
         result["filename"] = f"ANALISIS_CEO_{ts}.xlsx"
         return result
+
+
+@router.post("/production-report")
+async def generate_production_report(request: Request):
+    await require_auth(request)
+    body = await request.json()
+    return await build_production_report(
+        fmt=body.get("format", "excel"),
+        preset=body.get("preset"),
+        filters=body.get("filters", {}),
+    )
 
 async def _generate_excel_report(logs, summary, filters):
     import xlsxwriter, io, base64

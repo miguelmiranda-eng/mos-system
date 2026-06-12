@@ -112,6 +112,7 @@ from routers.agenda import router as agenda_router
 from routers.google_calendar import router as google_calendar_router
 from routers.shipping import router as shipping_router
 from routers.packing import router as packing_router
+from routers.report_scheduler import router as report_scheduler_router, start_report_scheduler
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -133,6 +134,7 @@ app.include_router(agenda_router)
 app.include_router(google_calendar_router)
 app.include_router(shipping_router)
 app.include_router(packing_router)
+app.include_router(report_scheduler_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -143,6 +145,8 @@ async def startup_event():
         logging.info("MongoDB connection: OK")
     except Exception as e:
         logging.error(f"MongoDB connection: FAILED - {e}")
+    # Daily production report scheduler (no-op if disabled / apscheduler missing).
+    start_report_scheduler()
 
 @app.get("/ping")
 async def ping():

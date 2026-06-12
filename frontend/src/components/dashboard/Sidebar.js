@@ -24,6 +24,7 @@ import {
   Folder,
   Wrench,
   ClipboardList,
+  CalendarClock,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -310,6 +311,10 @@ const Sidebar = ({
                   <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Catálogos" : ""}>
                     <Box size={15} className={iconCls(false)} />
                     {(isOpen || !isCollapsed) && <span>Catálogos</span>}
+                  </button>
+                  <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Reportes Programados" : ""}>
+                    <CalendarClock size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>Reportes Programados</span>}
                   </button>
                 </nav>
               </>
