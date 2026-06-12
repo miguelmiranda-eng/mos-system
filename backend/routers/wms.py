@@ -1168,10 +1168,12 @@ async def create_receiving(request: Request):
     if items:
         for item in items:
             item_size = item.get("size") or ""
+            item_boxes = int(item.get("boxes", 1))
             inv_id = await _update_inventory_enhanced(
                 style, color, item_size,
-                int(item.get("boxes", 1)) * int(item.get("units_per_box", 1)),
+                item_boxes * int(item.get("units_per_box", 1)),
                 "add", customer, inv_location, is_bpo, **meta,
+                box_count=item_boxes,
             )
             if inv_id:
                 inv_id_by_size[item_size] = inv_id
@@ -1314,15 +1316,28 @@ async def delete_receiving(receiving_id: str, request: Request):
         box_color = box.get("color")
         box_size = box.get("size")
         box_units = box.get("units", 0)
-        box_customer = box.get("customer")
         box_location = box.get("location")
-        box_is_bpo = box.get("is_bpo", False)
-        
+
         if box_style and box_units > 0:
-            await _update_inventory_enhanced(
-                box_style, box_color, box_size, box_units, 
-                "remove", box_customer, box_location, box_is_bpo
-            )
+            # Revert the units AND the box this receiving added. ("remove" was
+            # never a real op in _update_inventory_enhanced, so deletes used to
+            # leave inventory inflated with no boxes behind it.)
+            rev_inv = await db.wms_inventory.find_one({
+                "sku": box_style, "color": box_color or "", "size": box_size or "", "location": box_location or "",
+            }) or await db.wms_inventory.find_one({
+                "style": {"$regex": f"^{re.escape(box_style)}$", "$options": "i"},
+                "color": box_color or "", "size": box_size or "", "location": box_location or "",
+            })
+            if rev_inv:
+                new_hand = max(0, int(rev_inv.get("units_on_hand", 0)) - box_units)
+                new_boxes = max(0, int(rev_inv.get("total_boxes", 0) or 0) - 1)
+                if new_hand == 0 and new_boxes == 0 and int(rev_inv.get("units_allocated", 0) or 0) <= 0:
+                    await db.wms_inventory.delete_one({"_id": rev_inv["_id"]})
+                else:
+                    await db.wms_inventory.update_one(
+                        {"_id": rev_inv["_id"]},
+                        {"$set": {"units_on_hand": new_hand, "total_boxes": new_boxes, "updated_at": now_iso()}},
+                    )
             
     box_ids = [b["box_id"] for b in boxes if "box_id" in b]
     if box_ids:
@@ -1451,9 +1466,13 @@ async def update_box(box_id: str, request: Request):
         })
         if inv:
             new_on_hand = max(0, int(inv.get("units_on_hand", 0)) + delta)
+            # Keep total_boxes in step: this box crossing to/from 0 units adds or
+            # removes exactly one counted box at the slot.
+            box_delta = -1 if (old_units > 0 and new_units == 0) else (1 if (old_units == 0 and new_units > 0) else 0)
+            new_total_boxes = max(0, int(inv.get("total_boxes", 0) or 0) + box_delta)
             await db.wms_inventory.update_one(
                 {"_id": inv["_id"]},
-                {"$set": {"units_on_hand": new_on_hand, "updated_at": now_iso()}},
+                {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
             )
             # If the inventory row is empty AND has no other boxes pointing
             # at it, delete it so it doesn't ghost the Inventory listing.
@@ -1528,6 +1547,30 @@ async def delete_box(box_id: str, request: Request):
 
 # ==================== PUTAWAY ====================
 
+async def _adjust_inventory_boxes(inv_id, delta):
+    """Keep total_boxes in step with a physical box event on a single inventory
+    row. Clamped at zero. Deletes the row if it ends up fully empty (no units,
+    no boxes, no allocation) so a picked-out slot doesn't ghost the listing.
+
+    total_boxes is a denormalized cache of wms_boxes; every path that creates,
+    moves, empties or deletes a box must adjust it here so the two never drift
+    (the cause of "report shows boxes but 0 product")."""
+    if not inv_id or not delta:
+        return
+    row = await db.wms_inventory.find_one({"inventory_id": inv_id})
+    if not row:
+        return
+    new_boxes = max(0, int(row.get("total_boxes", 0) or 0) + delta)
+    if (new_boxes == 0 and int(row.get("units_on_hand", 0) or 0) <= 0
+            and int(row.get("units_allocated", 0) or 0) <= 0):
+        await db.wms_inventory.delete_one({"_id": row["_id"]})
+    else:
+        await db.wms_inventory.update_one(
+            {"_id": row["_id"]},
+            {"$set": {"total_boxes": new_boxes, "updated_at": now_iso()}},
+        )
+
+
 async def _move_box_inventory(box, old_loc, new_loc):
     if old_loc == new_loc:
         return
@@ -1537,23 +1580,69 @@ async def _move_box_inventory(box, old_loc, new_loc):
     qty = box.get("units") or 0
     customer = box.get("customer") or ""
     is_bpo = box.get("is_bpo", False)
-    
-    # 1. Deduct from old location in wms_inventory (only if old_loc exists)
+
+    # 1. Deduct from old location in wms_inventory (units AND the one box we're
+    #    moving out). Only drop the row when it truly empties (no boxes, no units,
+    #    no allocation) — total_boxes alone staying >0 must keep the row alive.
     if old_loc:
         old_inv = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": old_loc})
         if old_inv:
             new_qty = max(0, old_inv.get("units_on_hand", 0) - qty)
-            if new_qty == 0:
+            new_boxes = max(0, int(old_inv.get("total_boxes", 0) or 0) - 1)
+            if new_qty == 0 and new_boxes == 0 and int(old_inv.get("units_allocated", 0) or 0) <= 0:
                 await db.wms_inventory.delete_one({"_id": old_inv["_id"]})
             else:
-                await db.wms_inventory.update_one({"_id": old_inv["_id"]}, {"$set": {"units_on_hand": new_qty, "updated_at": now_iso()}})
-            
-    # 2. Add to new location in wms_inventory
+                await db.wms_inventory.update_one({"_id": old_inv["_id"]}, {"$set": {"units_on_hand": new_qty, "total_boxes": new_boxes, "updated_at": now_iso()}})
+
+    # 2. Add to new location in wms_inventory (units AND the box that arrived).
     await db.wms_inventory.update_one(
         {"sku": sku, "color": color, "size": size, "location": new_loc},
-        {"$inc": {"units_on_hand": qty}, "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}},
+        {"$inc": {"units_on_hand": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}},
         upsert=True
     )
+
+
+async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
+                             customer="", order_number=None, order_id=None):
+    """Deduct `qty` units for a pick from the physical boxes (FIFO) AND the
+    inventory row, keeping wms_boxes / units_on_hand / total_boxes in lockstep.
+    Used by both pick flows so neither leaves boxes full while stock drops (the
+    drift that made a box read 21 units while inventory showed 0). Falls back to
+    an inventory-only deduct for the leftover when no boxes back the slot
+    (e.g. Excel-imported bulk)."""
+    remaining = int(qty or 0)
+    if remaining <= 0:
+        return
+    q = {"$or": [{"sku": style}, {"style": style}], "color": color, "size": size, "units": {"$gt": 0}}
+    if location:
+        q["location"] = location
+    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(500)
+    for box in boxes:
+        if remaining <= 0:
+            break
+        b_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
+        if b_qty <= 0:
+            continue
+        take = min(b_qty, remaining)
+        new_b = b_qty - take
+        upd = {"units": new_b, "qty": new_b}
+        if order_number is not None:
+            upd["order_number"] = order_number
+        if order_id is not None:
+            upd["last_order_id"] = order_id
+        await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+        inv_id = await _update_inventory_enhanced(
+            box.get("sku") or style, box.get("color", color), box.get("size", size),
+            take, inv_operation, location=box.get("location", location),
+            customer=box.get("customer", customer),
+        )
+        if new_b == 0:
+            await _adjust_inventory_boxes(inv_id, -1)
+        remaining -= take
+    # Leftover with no backing box: deduct straight from inventory (legacy/Excel).
+    if remaining > 0:
+        await _update_inventory_enhanced(style, color, size, remaining, inv_operation,
+                                         location=location, customer=customer)
 
 @router.post("/putaway")
 async def putaway_box(request: Request):
@@ -1616,6 +1705,7 @@ async def putaway_bulk(request: Request):
 async def _update_inventory_enhanced(
     sku, color, size, qty, operation, customer="", location="", is_bpo=False,
     *, manufacturer="", description="", country_of_origin="", fabric_content="",
+    box_count=1,
 ):
     """Add/allocate/deallocate/deduct stock. The inventory key is now
     (sku, color, size, location, fabric_content, country_of_origin) so two
@@ -1657,7 +1747,7 @@ async def _update_inventory_enhanced(
             "country_of_origin": country_of_origin or "",
             "fabric_content": fabric_content or "",
             "location": location, "is_bpo": is_bpo,
-            "units_on_hand": qty, "units_allocated": 0, "total_boxes": 1,
+            "units_on_hand": qty, "units_allocated": 0, "total_boxes": max(0, int(box_count or 0)),
             "updated_at": now_iso()
         })
         return new_inv_id
@@ -1678,7 +1768,7 @@ async def _update_inventory_enhanced(
             await db.wms_inventory.update_one(
                 doc_key,
                 {
-                    "$inc": {"units_on_hand": qty, "total_boxes": 1},
+                    "$inc": {"units_on_hand": qty, "total_boxes": max(0, int(box_count or 0))},
                     "$set": {"updated_at": now_iso(), "is_bpo": is_bpo, **backfill},
                 },
             )
@@ -2320,10 +2410,33 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     ticket_id = gen_id("pick")
     order_number = data.get("order_number", "").strip()
     style = data.get("style", "").strip()
-    
+    force_duplicate = bool(data.get("force_duplicate", False))
+
     # Validation for manual creation might be stricter than automated skeleton
     if not order_number:
         raise HTTPException(400, "Numero de orden requerido")
+
+    # --- Duplicate guard -----------------------------------------------------------
+    # Prevent creating multiple active pick tickets for the same order unless the
+    # caller explicitly confirms they want a duplicate (force_duplicate=True).
+    if not force_duplicate:
+        existing = await db.wms_pick_tickets.find_one(
+            {
+                "order_number": order_number,
+                "status": {"$nin": ["confirmed", "cancelled"]},
+            },
+            {"_id": 0, "ticket_id": 1, "created_by_name": 1, "created_at": 1,
+             "style": 1, "color": 1, "total_pick_qty": 1, "status": 1, "picking_status": 1},
+        )
+        if existing:
+            raise HTTPException(
+                409,
+                {
+                    "message": f"Ya existe un pick ticket activo para la orden {order_number}.",
+                    "existing_ticket": existing,
+                },
+            )
+    # -------------------------------------------------------------------------------
 
     sizes = data.get("sizes", {})
     total_qty = sum(int(v) for v in sizes.values() if v)
@@ -2809,21 +2922,23 @@ async def save_pick_progress(ticket_id: str, request: Request):
             color = ticket.get('color', '').strip()
             customer = ticket.get('customer', '')
             # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
+            _ord_no = ticket.get("order_number")
+            _ord_id = ticket.get("order_id")
             for sz, data in picked_sizes.items():
                 if isinstance(data, dict) and "details" in data:
                     for loc, qty in data["details"].items():
                         if qty > 0:
-                            await _update_inventory_enhanced(
-                                style, color, sz.strip(), qty,
-                                inv_op, location=loc, customer=customer
+                            await _deduct_pick_boxes(
+                                style, color, sz.strip(), loc, qty,
+                                inv_op, customer, _ord_no, _ord_id,
                             )
                 else:
                     # Simple format: { "S": 50 }
                     qty = int(data) if not isinstance(data, dict) else int(data.get("total", 0))
                     if qty > 0:
-                        await _update_inventory_enhanced(
-                            style, color, sz.strip(), qty,
-                            inv_op, customer=customer
+                        await _deduct_pick_boxes(
+                            style, color, sz.strip(), "", qty,
+                            inv_op, customer, _ord_no, _ord_id,
                         )
         except Exception as e:
             logger.error(f"Error deducting inventory on pick complete: {e}")
@@ -2881,9 +2996,12 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                     "last_order_id": ticket.get("order_id")
                 }
                 await db.wms_boxes.update_one({"box_id": box_id}, {"$set": box_update})
-                
+
                 # Move to neck process area OR deduct from global
-                await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), pick_qty, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
+                _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), pick_qty, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
+                # Box emptied out -> drop it from the location's box count.
+                if new_qty == 0:
+                    await _adjust_inventory_boxes(_inv_id, -1)
     else:
         # Newer flow: Use picked_sizes to auto-deduct from available boxes
         picked_sizes = ticket.get("picked_sizes") or ticket.get("sizes") or {}
@@ -2914,7 +3032,9 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                                 "last_order_id": ticket.get("order_id")
                             }
                             await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
-                            await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=loc, customer=box.get("customer", ""))
+                            _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=loc, customer=box.get("customer", ""))
+                            if new_b_qty == 0:
+                                await _adjust_inventory_boxes(_inv_id, -1)
                             rem -= take
                         # FALLBACK: If no boxes found (e.g. Excel-imported inventory), deduct directly from wms_inventory
                         if rem > 0:
@@ -2946,7 +3066,9 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                     "last_order_id": ticket.get("order_id")
                 }
                 await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
-                await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
+                _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
+                if new_b_qty == 0:
+                    await _adjust_inventory_boxes(_inv_id, -1)
                 remaining -= take
 
     new_status = "in_neck_cutting" if is_neck_cutting else "confirmed"
@@ -3380,7 +3502,17 @@ async def export_inventory(request: Request):
     await require_auth(request)
     # to_list(None) returns ALL rows. A fixed cap (e.g. 20000) silently dropped
     # the alphabetical tail (W/X/Y/Z SKUs) once the catalog grew past it.
-    inventory = await db.wms_inventory.find({}, {"_id": 0}).sort("sku", 1).to_list(None)
+    # Skip fully-empty orphan rows (no units, no boxes, no allocations) so the
+    # report never shows phantom lines — e.g. a row left behind after a move/pick
+    # decremented one counter but not the other.
+    inventory = await db.wms_inventory.find(
+        {"$or": [
+            {"units_on_hand": {"$gt": 0}},
+            {"total_boxes": {"$gt": 0}},
+            {"units_allocated": {"$gt": 0}},
+        ]},
+        {"_id": 0},
+    ).sort("sku", 1).to_list(None)
     import xlsxwriter
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)

@@ -35,6 +35,8 @@ export const PickingModule = () => {
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
+  // Duplicate-ticket warning: holds the existing ticket returned by the 409 guard
+  const [dupWarning, setDupWarning] = useState(null); // null | { pendingPayload, existing_ticket }
 
   // Load all customers on mount
   useEffect(() => {
@@ -162,12 +164,17 @@ export const PickingModule = () => {
     setShowForm(false);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceDuplicate = false) => {
     if (!form.order_number || !form.style) { toast.error(t('order_style_req')); return; }
     if (totalPick === 0) { toast.error(t('enter_qty_size')); return; }
     setLoading(true);
     try {
-      const payload = { ...form, client: form.customer, sizes: Object.fromEntries(Object.entries(form.sizes).map(([k, v]) => [k, parseInt(v) || 0])) };
+      const payload = {
+        ...form,
+        client: form.customer,
+        sizes: Object.fromEntries(Object.entries(form.sizes).map(([k, v]) => [k, parseInt(v) || 0])),
+        ...(forceDuplicate ? { force_duplicate: true } : {}),
+      };
       let res;
       if (editingTicket && !editingTicket.is_virtual) {
         res = await putter(`/pick-tickets/${editingTicket.ticket_id}/edit`, payload);
@@ -176,11 +183,31 @@ export const PickingModule = () => {
       }
       if (res.ok) {
         toast.success(editingTicket && !editingTicket.is_virtual ? t('ticket_updated') : t('ticket_created'));
+        setDupWarning(null);
         resetForm();
         loadTickets(); loadStats();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+      } else if (res.status === 409) {
+        // Existing active ticket found — show warning modal instead of hard error
+        const err = await res.json().catch(() => ({}));
+        const detail = err.detail || err;
+        setDupWarning({
+          pendingPayload: payload,
+          existing: detail.existing_ticket || {},
+          message: detail.message || 'Ya existe un pick ticket activo para esta orden.',
+        });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || t('error'));
+      }
     } catch { toast.error(t('conn_error')); }
     finally { setLoading(false); }
+  };
+
+  // Called when user clicks "Create anyway" in the duplicate warning modal
+  const handleForceDuplicate = async () => {
+    if (!dupWarning) return;
+    setDupWarning(null);
+    await handleSubmit(true);
   };
 
   // Open the confirm modal (replaces the old blocking window.confirm).
@@ -881,6 +908,50 @@ export const PickingModule = () => {
               </button>
               <button onClick={() => setIncidentTicket(null)} disabled={incidentSaving} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
                 {t('cancel') || 'Cancelar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dupWarning && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-amber-500/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-500">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-black uppercase tracking-widest text-sm">Posible Duplicado</h3>
+              </div>
+              <button onClick={() => setDupWarning(null)} disabled={loading} className="p-1 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-sm text-foreground">
+              <p className="mb-2 font-medium">{dupWarning.message}</p>
+              {dupWarning.existing && Object.keys(dupWarning.existing).length > 0 && (
+                <div className="space-y-1 text-xs text-muted-foreground bg-black/20 p-2 rounded-lg font-mono mt-3">
+                  <div><span className="text-amber-400/70">Ticket:</span> {dupWarning.existing.ticket_id}</div>
+                  <div><span className="text-amber-400/70">Status:</span> {dupWarning.existing.status} / {dupWarning.existing.picking_status}</div>
+                  <div><span className="text-amber-400/70">Creado por:</span> {dupWarning.existing.created_by_name}</div>
+                  <div><span className="text-amber-400/70">Fecha:</span> {new Date(dupWarning.existing.created_at).toLocaleString()}</div>
+                  <div><span className="text-amber-400/70">Qty:</span> {dupWarning.existing.total_pick_qty} unid.</div>
+                </div>
+              )}
+              <p className="mt-3 text-xs italic opacity-80">
+                Si solo necesitas hacer un ajuste, deberías <strong>editar el ticket existente</strong>. ¿Estás seguro que quieres crear uno nuevo adicional para esta orden?
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={handleForceDuplicate}
+                disabled={loading}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-black font-black uppercase tracking-widest text-[10px] py-3 rounded-xl transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                Crear de todos modos
+              </button>
+              <button onClick={() => setDupWarning(null)} disabled={loading} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
+                Cancelar
               </button>
             </div>
           </div>
