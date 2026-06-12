@@ -168,12 +168,16 @@ export const PickingModule = () => {
     if (!form.order_number || !form.style) { toast.error(t('order_style_req')); return; }
     if (totalPick === 0) { toast.error(t('enter_qty_size')); return; }
     setLoading(true);
+    
+    // React passes the SyntheticEvent to onClick handlers. If forceDuplicate is an object, ignore it.
+    const isForce = forceDuplicate === true;
+
     try {
       const payload = {
         ...form,
         client: form.customer,
         sizes: Object.fromEntries(Object.entries(form.sizes).map(([k, v]) => [k, parseInt(v) || 0])),
-        ...(forceDuplicate ? { force_duplicate: true } : {}),
+        ...(isForce ? { force_duplicate: true } : {}),
       };
       let res;
       if (editingTicket && !editingTicket.is_virtual) {
