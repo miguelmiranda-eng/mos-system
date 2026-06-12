@@ -627,20 +627,18 @@ export const ReceivingModule = () => {
       } else {
         // Create Mode
         const totalPieces = parseInt(form.pieces) || 0;
-        const totalBoxes = Math.ceil(parseFloat(form.boxes) || 0);
 
+        // Split into full boxes of `effectiveUpb` (72 standard, or the custom
+        // per-box count) plus a single partial box for the remainder. Applies to
+        // BOTH modes: custom used to skip the split, mislabeling the last partial
+        // box with the full per-box count (e.g. 72) and inflating the box total.
         const items = [];
-        if (totalBoxes > 0) {
-          if (boxMode === 'custom') {
-            // All boxes share the same custom units_per_box, no remainder splitting
-            items.push({ size: form.size, boxes: totalBoxes, units_per_box: effectiveUpb });
-          } else {
-            // Standard: 72-unit boxes + 1 remainder box if needed
-            const fullBoxes = Math.floor(totalPieces / STANDARD_UNITS_PER_BOX);
-            const remainder = totalPieces % STANDARD_UNITS_PER_BOX;
-            if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: STANDARD_UNITS_PER_BOX });
-            if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
-          }
+        const upb = effectiveUpb;
+        if (totalPieces > 0 && upb > 0) {
+          const fullBoxes = Math.floor(totalPieces / upb);
+          const remainder = totalPieces % upb;
+          if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: upb });
+          if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
         }
 
         const payload = {
