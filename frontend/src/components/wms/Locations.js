@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useTransition } from "react";
 import { toast } from "sonner";
-import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight } from "lucide-react";
+import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight, Lock, Unlock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, deleter, logLoadError } from "./lib";
 
@@ -112,6 +112,24 @@ export const LocationsModule = ({ currentUser }) => {
       .then(setLocations)
       .finally(() => setLoading(false));
   }, []);
+
+  // HOLD (SAT): supersu can park a location so nobody touches its stock, or
+  // release it. Mirrors the backend guard in wms.py (_assert_not_on_hold).
+  const toggleHold = async (l) => {
+    try {
+      if (l.on_hold) {
+        await deleter(`/location-holds/${encodeURIComponent(l.name)}`);
+        toast.success(`${l.name} liberada de HOLD`);
+      } else {
+        if (!window.confirm(`¿Poner ${l.name} en HOLD? Nadie podrá mover/surtir su material hasta liberarla.`)) return;
+        await poster('/location-holds', { locations: [l.name], reason: 'SAT' });
+        toast.success(`${l.name} puesta en HOLD`);
+      }
+      load();
+    } catch {
+      toast.error('No se pudo cambiar el HOLD (requiere superusuario)');
+    }
+  };
 
   const openDetail = useCallback(async (loc) => {
     setDetailLoc(loc);
@@ -736,8 +754,13 @@ export const LocationsModule = ({ currentUser }) => {
                       className={`grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 items-center border-b border-border/10 hover:bg-secondary/30 transition-colors border-l-2 ${isEmpty ? 'border-l-transparent opacity-60' : `cursor-pointer ${activeTab === 'system' ? 'border-l-indigo-500/40' : 'border-l-primary/40'}`}`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${isEmpty ? 'text-muted-foreground/40' : 'text-primary'}`} />
+                        <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${l.on_hold ? 'text-red-500' : isEmpty ? 'text-muted-foreground/40' : 'text-primary'}`} />
                         <span className="font-mono font-black text-sm tracking-tighter truncate" title={l.name}>{l.name}</span>
+                        {l.on_hold && (
+                          <span className="flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 border border-red-500/30 rounded px-1 py-0.5 flex-shrink-0" title={`En HOLD (${l.hold_reason || 'SAT'}) — solo un superusuario puede liberarla`}>
+                            <Lock className="w-2.5 h-2.5" /> HOLD
+                          </span>
+                        )}
                       </div>
                       <span className={`text-right font-mono font-black text-sm tabular-nums ${isEmpty ? 'text-muted-foreground/40' : 'text-emerald-500'}`}>
                         {(summary.total_units || 0).toLocaleString()}
@@ -771,6 +794,15 @@ export const LocationsModule = ({ currentUser }) => {
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
+                        {isSupersu && (
+                          <button
+                            onClick={() => toggleHold(l)}
+                            className={`p-1.5 rounded-md transition-all ${l.on_hold ? 'text-red-500 hover:bg-red-500/10' : 'text-muted-foreground hover:text-red-500 hover:bg-red-500/10'}`}
+                            title={l.on_hold ? `Liberar ${l.name} de HOLD` : `Poner ${l.name} en HOLD (SAT)`}
+                          >
+                            {l.on_hold ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         {!isEmpty && (
                           <button
                             onClick={() => setMoveBulk({ from: l, to: '' })}

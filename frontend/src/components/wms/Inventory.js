@@ -294,7 +294,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     load();
   }, [load, hasAnyFilter]);
 
-  const exportExcel = () => window.open(`${API}/export/inventory`, '_blank');
+  const [excludeHold, setExcludeHold] = useState(false);
+  const exportExcel = () => window.open(`${API}/export/inventory${excludeHold ? '?exclude_hold=true' : ''}`, '_blank');
 
   const handleImport = async (e) => {
     const file = e.target.files?.[0];
@@ -487,6 +488,10 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
             {importing ? t('wms_importing') : t('wms_import_excel')}
             <input type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" disabled={importing} />
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
+            <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk" />
+            Excluir HOLD
           </label>
           <button onClick={exportExcel} className="p-2 bg-secondary/80 text-foreground border border-border/40 rounded-xl hover:bg-secondary flex items-center gap-1.5 transition-all" data-testid="export-inv-btn">
             <Download className="w-4 h-4 text-primary" />
