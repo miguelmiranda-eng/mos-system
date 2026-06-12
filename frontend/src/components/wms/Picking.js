@@ -7,7 +7,7 @@ import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
-export const PickingModule = () => {
+export const PickingModule = ({ currentUser } = {}) => {
   const { t } = useLang();
   const handlePrioritize = async (ticketId) => {
     try {
