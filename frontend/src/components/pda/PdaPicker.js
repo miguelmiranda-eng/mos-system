@@ -4,12 +4,13 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check, LayoutGrid,
-  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare,
+  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
+const OPTIONS_URL = `${process.env.REACT_APP_BACKEND_URL}/api/config/options`;
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
 const putter = (url, body) => fetch(`${API}${url}`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
 
@@ -172,12 +173,58 @@ function PickScreen({ ticket, onSave, saving }) {
   const [scan, setScan] = useState("");
   const [scanHit, setScanHit] = useState(null); // {sz, location}
   const scanRef = useRef(null);
+  // True while a qty field is being edited — suspends the scan box's aggressive
+  // auto-refocus so the operator can actually type a quantity (instead of being
+  // forced to tap −/+ one unit at a time).
+  const editingRef = useRef(false);
+
+  // MOS blank status — let the operator update the order's blank_status from the
+  // picking screen. Resolved from the real CRM order (the ticket only carries
+  // the order_number).
+  const [orderId, setOrderId] = useState(null);
+  const [blankStatus, setBlankStatus] = useState("");
+  const [blankOptions, setBlankOptions] = useState([]);
+  const [savingStatus, setSavingStatus] = useState(false);
 
   useEffect(() => {
     setPickedSizes(ticket.picked_sizes || {});
     setOpenSize(null);
     setScanHit(null);
   }, [ticket]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${ORDERS_API}/${encodeURIComponent(ticket.order_number)}`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(o => { if (alive && o) { setOrderId(o.order_id); setBlankStatus(o.blank_status || ""); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [ticket.order_number]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(OPTIONS_URL, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : {}))
+      .then(o => { if (alive) setBlankOptions(o.blank_statuses || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const updateBlankStatus = async (val) => {
+    if (!orderId) { toast.error("Orden aún no carga, intenta de nuevo"); return; }
+    const prev = blankStatus;
+    setBlankStatus(val);
+    setSavingStatus(true);
+    try {
+      const r = await fetch(`${ORDERS_API}/${orderId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ blank_status: val }),
+      });
+      if (r.ok) { toast.success("Blank status actualizado"); }
+      else { setBlankStatus(prev); toast.error("No se pudo actualizar el status"); }
+    } catch { setBlankStatus(prev); toast.error("Error de conexión"); }
+    finally { setSavingStatus(false); }
+  };
 
   const sizes = ticket.sizes || {};
   const sizeLocs = ticket.size_locations || {};
@@ -253,6 +300,29 @@ function PickScreen({ ticket, onSave, saving }) {
           <div className="mt-1.5 h-2.5 bg-white/10 rounded-full overflow-hidden">
             <div className={`h-full ${isComplete ? "bg-emerald-500" : totalPicked > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${totalRequired > 0 ? Math.round((totalPicked / totalRequired) * 100) : 0}%` }} />
           </div>
+
+          {/* MOS blank status — editable from the picking screen */}
+          <div className="mt-3 pt-3 border-t border-white/10">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Tag className="w-3.5 h-3.5 text-blue-300" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blank Status (MOS)</span>
+              {savingStatus && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300 ml-auto" />}
+            </div>
+            <select
+              value={blankStatus}
+              onChange={(e) => updateBlankStatus(e.target.value)}
+              onFocus={() => { editingRef.current = true; }}
+              onBlur={() => { editingRef.current = false; setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50); }}
+              disabled={savingStatus || !orderId}
+              className="w-full h-12 bg-black/30 border border-white/10 rounded-xl px-3 text-base font-bold focus:outline-none focus:border-blue-400 disabled:opacity-50"
+            >
+              <option value="">— Sin status —</option>
+              {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
+              {blankStatus && !blankOptions.includes(blankStatus) && (
+                <option value={blankStatus}>{blankStatus}</option>
+              )}
+            </select>
+          </div>
         </div>
 
         <div className="relative">
@@ -263,7 +333,7 @@ function PickScreen({ ticket, onSave, saving }) {
             value={scan}
             onChange={(e) => setScan(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScan(scan); } }}
-            onBlur={() => setTimeout(() => scanRef.current?.focus(), 50)}
+            onBlur={() => setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50)}
             inputMode="none"
             placeholder="Escanea la ubicación…"
             className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-blue-400"
@@ -312,15 +382,25 @@ function PickScreen({ ticket, onSave, saving }) {
                             </div>
                             <div className="text-[11px] text-slate-400 mt-0.5">Disp: <b className="text-emerald-400">{l.available}</b>{l.country_of_origin ? ` · ${l.country_of_origin}` : ""}</div>
                           </div>
-                          <button onClick={() => updatePicked(sz, l.location, Math.min(need, l.available))}
+                          <button onClick={() => {
+                              updatePicked(sz, l.location, Math.min(need, l.available));
+                              // Drop straight into the field so they can correct the
+                              // amount by typing instead of tapping − repeatedly.
+                              editingRef.current = true;
+                              const el = document.getElementById(`pick-${sz}-${i}`);
+                              if (el) { el.focus(); el.select(); }
+                            }}
                             className="px-3 py-2 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest">MAX</button>
                         </div>
                         <div className="mt-2.5 flex items-center gap-2">
                           <button onClick={() => updatePicked(sz, l.location, cur - 1)} className="w-12 h-12 rounded-xl bg-white/5 active:bg-white/10 text-2xl font-black">−</button>
                           <input
+                            id={`pick-${sz}-${i}`}
                             type="number" inputMode="numeric" min="0" max={l.available}
                             value={cur || ""}
                             onChange={(e) => updatePicked(sz, l.location, e.target.value)}
+                            onFocus={(e) => { editingRef.current = true; e.target.select(); }}
+                            onBlur={() => { editingRef.current = false; setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50); }}
                             placeholder="0"
                             className="flex-1 h-12 bg-black/30 border border-white/10 rounded-xl text-center text-2xl font-mono font-black focus:outline-none focus:border-blue-400"
                           />

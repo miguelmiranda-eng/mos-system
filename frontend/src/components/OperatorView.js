@@ -4,12 +4,13 @@ import { Toaster, toast } from "sonner";
 import MachineOperatorView from "./MachineOperatorView";
 import {
   ClipboardCheck, MapPin, CheckCircle, Package, Loader2, LogOut,
-  ChevronDown, ChevronUp, Save, Check, AlertTriangle, Bell, MessageSquare
+  ChevronDown, ChevronUp, Save, Check, AlertTriangle, Bell, MessageSquare, Tag
 } from "lucide-react";
 import { CommentsModal } from "./dashboard/CommentsModal";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
+const OPTIONS_URL = `${process.env.REACT_APP_BACKEND_URL}/api/config/options`;
 const WS_URL = `${process.env.REACT_APP_BACKEND_URL}`.replace(/^http/, 'ws') + '/api/ws';
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
 const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
@@ -67,10 +68,50 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
   const [pickedSizes, setPickedSizes] = useState({});
   const [expandedSize, setExpandedSize] = useState(null);
 
+  // MOS blank status — editable from the picking screen.
+  const [orderId, setOrderId] = useState(null);
+  const [blankStatus, setBlankStatus] = useState("");
+  const [blankOptions, setBlankOptions] = useState([]);
+  const [savingStatus, setSavingStatus] = useState(false);
+
   useEffect(() => {
     setPickedSizes(ticket.picked_sizes || {});
     setExpandedSize(null);
   }, [ticket]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${ORDERS_API}/${encodeURIComponent(ticket.order_number)}`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(o => { if (alive && o) { setOrderId(o.order_id); setBlankStatus(o.blank_status || ""); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [ticket.order_number]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(OPTIONS_URL, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : {}))
+      .then(o => { if (alive) setBlankOptions(o.blank_statuses || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const updateBlankStatus = async (val) => {
+    if (!orderId) { toast.error("Orden aún no carga, intenta de nuevo"); return; }
+    const prev = blankStatus;
+    setBlankStatus(val);
+    setSavingStatus(true);
+    try {
+      const r = await fetch(`${ORDERS_API}/${orderId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ blank_status: val }),
+      });
+      if (r.ok) { toast.success("Blank status actualizado"); }
+      else { setBlankStatus(prev); toast.error("No se pudo actualizar el status"); }
+    } catch { setBlankStatus(prev); toast.error("Error de conexión"); }
+    finally { setSavingStatus(false); }
+  };
 
   const sizes = ticket.sizes || {};
   const sizeLocs = ticket.size_locations || {};
@@ -128,6 +169,27 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
           <span className="font-mono font-bold text-primary bg-primary/10 px-2 py-1 rounded">{ticket.style}</span>
           <span className="bg-secondary px-2 py-1 rounded">{ticket.color}</span>
           <span className="text-muted-foreground">Qty: {ticket.quantity}</span>
+        </div>
+
+        {/* MOS blank status — editable from the picking screen */}
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Tag className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Blank Status (MOS)</span>
+            {savingStatus && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary ml-auto" />}
+          </div>
+          <select
+            value={blankStatus}
+            onChange={(e) => updateBlankStatus(e.target.value)}
+            disabled={savingStatus || !orderId}
+            className="w-full sm:w-72 h-11 bg-secondary/30 border border-border rounded-lg px-3 text-sm font-bold focus:outline-none focus:border-primary disabled:opacity-50"
+          >
+            <option value="">— Sin status —</option>
+            {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            {blankStatus && !blankOptions.includes(blankStatus) && (
+              <option value={blankStatus}>{blankStatus}</option>
+            )}
+          </select>
         </div>
       </div>
 
