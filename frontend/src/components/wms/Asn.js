@@ -770,6 +770,7 @@ export const AsnModule = ({ currentUser }) => {
                               <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
                               <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
                               <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido por</th>
+                              <th className="p-3 w-10"></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border/10">
@@ -784,6 +785,27 @@ export const AsnModule = ({ currentUser }) => {
                                 <td className="p-3 text-right text-[11px] tabular-nums font-bold">{(r.boxes || []).length}</td>
                                 <td className="p-3 text-right text-[11px] tabular-nums font-bold text-emerald-400">{(r.total_units || 0).toLocaleString()}</td>
                                 <td className="p-3 text-[11px] text-muted-foreground">{r.received_by_name || '—'}</td>
+                                <td className="p-3 text-right">
+                                  {isSupersu && !detailData?.asn?.closed && (
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (!window.confirm(`¿Seguro que deseas eliminar este recibo (${r.receiving_id})?\n\nEsto eliminará las cajas, ajustará el inventario y restará el avance de este ASN.`)) return;
+                                        try {
+                                          await deleter(`/receiving/${encodeURIComponent(r.receiving_id)}`);
+                                          toast.success("Recibo eliminado");
+                                          refreshDetail();
+                                        } catch (err) {
+                                          toast.error("Error al eliminar recibo");
+                                        }
+                                      }}
+                                      className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all"
+                                      title="Eliminar recibo"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>

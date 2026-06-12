@@ -1330,6 +1330,18 @@ async def delete_receiving(receiving_id: str, request: Request):
         await db.wms_boxes.delete_many({"receiving_id": receiving_id})
         
     await db.wms_receiving.delete_one({"receiving_id": receiving_id})
+    
+    # Revert ASN progress if linked
+    asn_ref = doc.get("asn_reference")
+    if asn_ref:
+        pn = (doc.get("sku") or doc.get("style") or "").upper()
+        if pn:
+            await _apply_receiving_to_asn(
+                asn_ref,
+                {pn: -int(doc.get("total_units", 0))},
+                user
+            )
+            
     await log_movement(user, "deallocate", {
         "receiving_id": receiving_id, 
         "details": f"Eliminado registro de receiving y revertidas {len(boxes)} cajas"
@@ -1493,16 +1505,17 @@ async def delete_box(box_id: str, request: Request):
         })
         if inv:
             new_on_hand = max(0, int(inv.get("units_on_hand", 0)) - units)
+            new_total_boxes = max(0, int(inv.get("total_boxes", 0)) - 1)
             still = await db.wms_boxes.count_documents({
                 "sku": sku, "color": color, "size": size, "location": location,
                 "box_id": {"$ne": box_id}, "units": {"$gt": 0},
             })
-            if new_on_hand == 0 and not still:
+            if new_on_hand == 0 and new_total_boxes == 0 and not still:
                 await db.wms_inventory.delete_one({"_id": inv["_id"]})
             else:
                 await db.wms_inventory.update_one(
                     {"_id": inv["_id"]},
-                    {"$set": {"units_on_hand": new_on_hand, "updated_at": now_iso()}},
+                    {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
                 )
 
     await db.wms_boxes.delete_one({"box_id": box_id})
@@ -4011,7 +4024,15 @@ async def update_asn(asn_id: str, request: Request):
         for idx, it in enumerate(incoming, start=1):
             part = str(it.get("part_number", it.get("sku", ""))).strip().upper()
             # Preserve received qty: match by the original line_no, then part_number.
-            src = by_line.get(it.get("line_no")) or by_part.get(part) or {}
+            # IMPORTANT: only fall back to by_part when the item already has a line_no
+            # (i.e. it is an existing line being edited). A brand-new item (no line_no)
+            # must always start with qty_received = 0, even if the same part_number
+            # already appears on another line.
+            line_no_key = it.get("line_no")
+            if line_no_key is not None:
+                src = by_line.get(line_no_key) or by_part.get(part) or {}
+            else:
+                src = by_line.get(line_no_key) or {}   # new item → no inherited qty
             normalized.append({
                 "line_no": idx,
                 "part_number": part,
