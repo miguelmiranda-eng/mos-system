@@ -2728,7 +2728,8 @@ async def list_pick_tickets(
         existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
         
         virtual_query = {
-            "board": {"$regex": "^scheduling$|^blanks$", "$options": "i"},
+            "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
+            "wms_status": {"$ne": "picked"},
             "order_number": {"$nin": list(existing_order_numbers)}
         }
         

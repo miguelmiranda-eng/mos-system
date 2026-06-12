@@ -44,8 +44,7 @@ export const PickingModule = () => {
       setOptions(prev => ({ ...prev, customers: data.customers || [] }));
     }).catch(logLoadError('data'));
   }, []);
-  const [activeTab, setActiveTab] = useState('pending'); // pending | completed | dashboard
-  const [activeBoardFilter, setActiveBoardFilter] = useState('ALL'); // ALL | SCHEDULING | BLANKS
+  const [activeTab, setActiveTab] = useState('pretickets'); // pretickets | tickets | completed | dashboard
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
@@ -321,11 +320,9 @@ export const PickingModule = () => {
     );
   });
 
-  const pendingTicketsRaw = filteredTickets.filter(t => t.status !== TicketStatus.CONFIRMED);
-  const pendingTickets = activeBoardFilter === 'ALL'
-    ? pendingTicketsRaw
-    : pendingTicketsRaw.filter(t => (t.board_category || 'UNSET') === activeBoardFilter);
-  const completedTickets = filteredTickets.filter(t => t.status === TicketStatus.CONFIRMED || t.picking_status === PickingStatus.COMPLETED);
+  const preTickets = filteredTickets.filter(t => t.is_virtual);
+  const activeTickets = filteredTickets.filter(t => !t.is_virtual && t.status !== TicketStatus.CONFIRMED && t.picking_status !== PickingStatus.COMPLETED);
+  const completedTickets = filteredTickets.filter(t => !t.is_virtual && (t.status === TicketStatus.CONFIRMED || t.picking_status === PickingStatus.COMPLETED));
   const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
 
   // New ticket card renderer (Premium Kanban style)
@@ -511,7 +508,8 @@ export const PickingModule = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 bg-secondary/30 p-1 rounded-2xl border border-border/20">
           {[
-            { id: 'pending', label: t('wms_picking_pending'), icon: ClipboardList, count: pendingTickets.length },
+            { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
+            { id: 'tickets', label: 'TICKETS (ACTIVOS)', icon: ClipboardCheck, count: activeTickets.length },
             { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedTickets.length },
             { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
           ].map(tab => {
@@ -534,31 +532,6 @@ export const PickingModule = () => {
               </button>
             );
           })}
-        </div>
-        <div className="flex items-center gap-2">
-          {activeTab === 'pending' && (
-            <div className="flex items-center bg-secondary/30 rounded-xl p-1 border border-border/20 mr-2">
-              {[t('all'), 'SCHEDULING', 'BLANKS'].map(board => {
-                const val = (board === 'TODOS' || board === 'ALL' || board === t('all')) ? 'ALL' : board;
-                const isActive = activeBoardFilter === val;
-                return (
-                  <button
-                    key={board}
-                    onClick={() => setActiveBoardFilter(val)}
-                    className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${isActive ? 'bg-primary text-black shadow' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
-                  >
-                    {board}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <button
-            onClick={() => { resetForm(); setShowForm(true); }}
-            className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" /> {t('wms_new_pick')}
-          </button>
         </div>
       </div>
 
@@ -723,34 +696,31 @@ export const PickingModule = () => {
         </div>
       )}
       {/* Tab Content */}
-      {activeTab === 'pending' && (
-        <div className="space-y-8" data-testid="pick-pending-list">
-          {Object.entries(
-            pendingTickets.reduce((acc, ticket) => {
-              const cat = ticket.board_category || 'UNSET';
-              if (!acc[cat]) acc[cat] = [];
-              acc[cat].push(ticket);
-              return acc;
-            }, {})
-          ).map(([category, tickets]) => (
-            <div key={category} className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="h-[1px] flex-1 bg-border/40" />
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/20 shadow-sm">
-                  {category}
-                </span>
-                <div className="h-[1px] flex-1 bg-border/40" />
-              </div>
-              <div className="flex flex-col gap-2">
-                {tickets.map(ticket => renderTicket(ticket))}
-              </div>
-            </div>
-          ))}
-          {pendingTickets.length === 0 && (
+      {activeTab === 'pretickets' && (
+        <div className="space-y-4" data-testid="pick-pretickets-list">
+          <div className="flex flex-col gap-2">
+            {preTickets.map(ticket => renderTicket(ticket))}
+          </div>
+          {preTickets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
               <ClipboardList className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_pending_picks')}</p>
-              <p className="text-xs mt-1">{t('wms_all_picked_hint')}</p>
+              <p className="font-bold uppercase tracking-widest text-sm italic">NO HAY PRE-TICKETS PENDIENTES</p>
+              <p className="text-xs mt-1">Todas las órdenes en MOS ya tienen tickets generados.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'tickets' && (
+        <div className="space-y-4" data-testid="pick-tickets-list">
+          <div className="flex flex-col gap-2">
+            {activeTickets.map(ticket => renderTicket(ticket))}
+          </div>
+          {activeTickets.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+              <ClipboardCheck className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">NO HAY TICKETS ACTIVOS</p>
+              <p className="text-xs mt-1">Inicia un Pre-Ticket para comenzar a trabajar.</p>
             </div>
           )}
         </div>
