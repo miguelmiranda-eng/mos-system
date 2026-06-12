@@ -3099,9 +3099,33 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
         raise HTTPException(400, "No se puede editar un ticket confirmado/completado")
 
     update = {}
+    force_duplicate = bool(body.get("force_duplicate", False))
+    new_order_number = body.get("order_number", ticket.get("order_number", "")).strip()
+
+    # --- Duplicate guard for edits -------------------------------------------------
+    if not force_duplicate and new_order_number:
+        existing = await db.wms_pick_tickets.find_one(
+            {
+                "order_number": new_order_number,
+                "ticket_id": {"$ne": ticket_id},
+                "status": {"$nin": ["confirmed", "cancelled"]},
+            },
+            {"_id": 0, "ticket_id": 1, "created_by_name": 1, "created_at": 1,
+             "style": 1, "color": 1, "total_pick_qty": 1, "status": 1, "picking_status": 1},
+        )
+        if existing:
+            raise HTTPException(
+                409,
+                {
+                    "message": f"Ya existe otro pick ticket activo para la orden {new_order_number}.",
+                    "existing_ticket": existing,
+                },
+            )
+    # -------------------------------------------------------------------------------
+
     for field in ["order_number", "customer", "client", "manufacturer", "style", "color", "quantity", "destination"]:
         if field in body:
-            update[field] = body[field]
+            update[field] = str(body[field]).strip() if isinstance(body[field], str) else body[field]
     if "sizes" in body:
         update["sizes"] = {k: int(v) for k, v in body["sizes"].items()}
         update["total_pick_qty"] = sum(update["sizes"].values())
