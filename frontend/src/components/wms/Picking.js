@@ -302,6 +302,12 @@ export const PickingModule = () => {
   };
 
   const filteredTickets = tickets.filter(t => {
+    // Si el formulario de edicion esta abierto para este ticket, lo ocultamos de la lista
+    // para evitar que el usuario se confunda pensando que esta duplicado.
+    if (showForm && editingTicket && t.ticket_id === editingTicket.ticket_id) {
+      return false;
+    }
+
     const term = search.toLowerCase();
     return (
       t.ticket_id.toLowerCase().includes(term) ||
