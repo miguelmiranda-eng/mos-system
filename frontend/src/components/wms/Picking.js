@@ -27,7 +27,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [operators, setOperators] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [incidentTicket, setIncidentTicket] = useState(null);
-  const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado' });
+  const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado', replacement_sizes: {}, replacement_description: '', notes: '' });
   const [incidentSaving, setIncidentSaving] = useState(false);
   const [confirmTicket, setConfirmTicket] = useState(null);
   const [confirmSaving, setConfirmSaving] = useState(false);
@@ -232,7 +232,8 @@ export const PickingModule = ({ currentUser } = {}) => {
 
   const openIncident = (ticket) => {
     setIncidentTicket(ticket);
-    setIncidentDraft({ sku: ticket.style || '', qty: '1', reason: 'Dañado' });
+    const initSizes = Object.keys(ticket.sizes || {}).reduce((acc, sz) => ({ ...acc, [sz]: '' }), {});
+    setIncidentDraft({ sku: ticket.style || '', qty: '1', reason: 'Dañado', replacement_sizes: initSizes, replacement_description: '', notes: '' });
   };
 
   const submitIncident = async () => {
@@ -241,11 +242,29 @@ export const PickingModule = ({ currentUser } = {}) => {
     if (Number.isNaN(qty) || qty < 1) { toast.error(t('qty') + ' ≥ 1'); return; }
     setIncidentSaving(true);
     try {
+      const replacement_sizes = Object.fromEntries(
+        Object.entries(incidentDraft.replacement_sizes).map(([k, v]) => [k, parseInt(v) || 0])
+      );
+      const replacement_qty = Object.values(replacement_sizes).reduce((s, v) => s + v, 0);
       const res = await poster(`/pick-tickets/${incidentTicket.ticket_id}/incidents`, {
-        sku: incidentDraft.sku, qty, reason: incidentDraft.reason,
+        sku: incidentDraft.sku,
+        qty,
+        reason: incidentDraft.reason,
+        replacement_sizes,
+        replacement_qty,
+        replacement_description: incidentDraft.replacement_description,
+        notes: incidentDraft.notes,
       });
       if (res.ok) {
-        toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
+        const result = await res.json();
+        if (result.replacement_qty > 0) {
+          toast.success(result.inventory_deducted
+            ? `Incidencia reportada — ${result.replacement_qty} prendas descontadas del inventario`
+            : 'Incidencia reportada (revisa el inventario manualmente)'
+          );
+        } else {
+          toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
+        }
         setIncidentTicket(null);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -525,7 +544,7 @@ export const PickingModule = ({ currentUser } = {}) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 bg-secondary/30 p-1 rounded-2xl border border-border/20">
           {[
             { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
@@ -553,6 +572,20 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })}
         </div>
+        <button
+          onClick={() => {
+            setEditingTicket(null);
+            setForm(emptyForm);
+            setSizeLocations({});
+            setOptions(prev => ({ ...prev, manufacturers: [], styles: [], colors: [] }));
+            setShowForm(true);
+            setActiveTab('tickets');
+          }}
+          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-black text-xs font-black uppercase tracking-wider rounded-xl hover:scale-105 transition-all shadow-lg shadow-primary/20 whitespace-nowrap"
+        >
+          <Plus className="w-4 h-4" />
+          Nuevo Pick Ticket
+        </button>
       </div>
 
       {/* Progressive load indicator */}
@@ -856,24 +889,41 @@ export const PickingModule = ({ currentUser } = {}) => {
               {t('wms_incident_ticket') || 'Ticket'}: <span className="text-foreground">{incidentTicket.ticket_id}</span>
             </p>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU / ITEM</label>
-                <select
-                  value={incidentDraft.sku}
-                  onChange={e => setIncidentDraft(p => ({ ...p, sku: e.target.value }))}
-                  className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
-                >
-                  <option value={incidentTicket.style}>{incidentTicket.style}</option>
-                  {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
-                    <option key={sz} value={`${incidentTicket.style}-${sz}`}>{incidentTicket.style} ({sz})</option>
-                  ))}
-                </select>
+            <div className="space-y-3">
+              {/* SKU + Talla */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU / ITEM</label>
+                  <select
+                    value={incidentDraft.sku}
+                    onChange={e => setIncidentDraft(p => ({ ...p, sku: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
+                  >
+                    <option value={incidentTicket.style}>{incidentTicket.style}</option>
+                    {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
+                      <option key={sz} value={`${incidentTicket.style}-${sz}`}>{incidentTicket.style} ({sz})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Talla</label>
+                  <select
+                    value={incidentDraft.size}
+                    onChange={e => setIncidentDraft(p => ({ ...p, size: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
+                  >
+                    <option value="">— Todas —</option>
+                    {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
+                      <option key={sz} value={sz}>{sz}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* Qty + Razón */}
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('qty') || 'Cantidad'}</label>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Cant. afectada</label>
                   <input
                     type="number" min="1"
                     value={incidentDraft.qty}
@@ -882,7 +932,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('reason') || 'Razón'}</label>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Razón</label>
                   <select
                     value={incidentDraft.reason}
                     onChange={e => setIncidentDraft(p => ({ ...p, reason: e.target.value }))}
@@ -891,8 +941,66 @@ export const PickingModule = ({ currentUser } = {}) => {
                     <option value="Dañado">Dañado</option>
                     <option value="Manchado">Manchado</option>
                     <option value="Incompleto">Incompleto</option>
+                    <option value="Faltante">Faltante</option>
+                    <option value="Talla incorrecta">Talla incorrecta</option>
                     <option value="Otro">Otro</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Reposición */}
+              <div className="border-t border-border/30 pt-3 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Prendas a reponer por talla</p>
+
+                {/* Size grid */}
+                {(() => {
+                  const ticketSizes = Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0);
+                  const totalRep = Object.values(incidentDraft.replacement_sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
+                  return (
+                    <div>
+                      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(ticketSizes.length, 6)}, minmax(0,1fr))` }}>
+                        {ticketSizes.map(sz => (
+                          <div key={sz} className="flex flex-col items-center gap-1">
+                            <span className="text-[10px] font-black uppercase text-muted-foreground">{sz}</span>
+                            <span className="text-[9px] text-muted-foreground/50">({incidentTicket.sizes[sz]})</span>
+                            <input
+                              type="number" min="0"
+                              value={incidentDraft.replacement_sizes[sz] || ''}
+                              onChange={e => setIncidentDraft(p => ({ ...p, replacement_sizes: { ...p.replacement_sizes, [sz]: e.target.value } }))}
+                              placeholder="0"
+                              className="w-full text-center bg-background border border-border rounded-lg p-1.5 text-sm font-bold text-red-400 focus:ring-2 focus:ring-red-500/20 focus:border-red-500/50 transition-all"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      {totalRep > 0 && (
+                        <div className="mt-2 text-right text-xs font-black text-red-400">
+                          Total a reponer: <span className="text-foreground">{totalRep} prendas</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Descripción / Contenido a reponer</label>
+                  <input
+                    type="text"
+                    value={incidentDraft.replacement_description}
+                    onChange={e => setIncidentDraft(p => ({ ...p, replacement_description: e.target.value }))}
+                    placeholder="Ej: Camiseta 5000 Blanca"
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Notas</label>
+                  <input
+                    type="text"
+                    value={incidentDraft.notes}
+                    onChange={e => setIncidentDraft(p => ({ ...p, notes: e.target.value }))}
+                    placeholder="Observaciones adicionales..."
+                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm"
+                  />
                 </div>
               </div>
             </div>

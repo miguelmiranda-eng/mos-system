@@ -96,16 +96,36 @@ def run_import():
         r['updated_at'] = pd.Timestamp.now().isoformat()
     
     print(f"Limpieza completada. Registros unificados: {len(records)}")
-    
-    # Limpiar colección actual y recargar con nombres correctos
-    db['wms_inventory'].drop()
-    
-    print("Insertando en wms_inventory con nombres correctos...")
-    if records:
-        db['wms_inventory'].insert_many(records)
-        print("¡Carga exitosa con nombres estandarizados!")
-    else:
-        print("No hay registros para cargar.")
+
+    # UPSERT — nunca borrar la colección completa para no destruir registros
+    # creados por el flujo normal de receiving del WMS.
+    # Se actualiza cada registro si ya existe (misma clave), o se inserta si es nuevo.
+    print("Aplicando upsert en wms_inventory (sin borrar registros existentes)...")
+    upserted = 0
+    updated = 0
+    for r in records:
+        key = {
+            "style":            r.get("style", ""),
+            "color":            r.get("color", ""),
+            "size":             r.get("size", ""),
+            "location":         r.get("location", ""),
+            "country_of_origin": r.get("country_of_origin", ""),
+            "customer":         r.get("customer", ""),
+        }
+        existing = db['wms_inventory'].find_one(key)
+        if existing:
+            db['wms_inventory'].update_one(
+                {"_id": existing["_id"]},
+                {"$set": {k: v for k, v in r.items() if k not in ("inventory_id",)}}
+            )
+            updated += 1
+        else:
+            db['wms_inventory'].insert_one(r)
+            upserted += 1
+
+    print(f"Registros nuevos insertados: {upserted}")
+    print(f"Registros existentes actualizados: {updated}")
+    print("¡Carga exitosa sin pérdida de datos!")
 
 if __name__ == "__main__":
     run_import()

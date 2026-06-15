@@ -2909,19 +2909,65 @@ async def dismiss_preticket(order_number: str, request: Request):
 async def report_incident(ticket_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
+
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+
+    replacement_sizes = {k: int(v) for k, v in (body.get("replacement_sizes") or {}).items() if int(v or 0) > 0}
+    replacement_qty = sum(replacement_sizes.values())
+
     incident = {
         "incident_id": gen_id("inc"),
         "ticket_id": ticket_id,
+        "order_number": ticket.get("order_number"),
         "sku": body.get("sku"),
         "qty": int(body.get("qty", 1)),
         "reason": body.get("reason", "Dañado"),
+        "replacement_sizes": replacement_sizes,
+        "replacement_qty": replacement_qty,
+        "replacement_description": body.get("replacement_description", ""),
+        "notes": body.get("notes", ""),
+        "inventory_deducted": False,
         "operator_id": user.get("user_id"),
         "operator_name": user.get("name", user.get("email", "")),
         "timestamp": now_iso()
     }
+
+    # Deduct replacement units from inventory (FIFO por caja)
+    if replacement_sizes:
+        style = ticket.get("style", "")
+        color = ticket.get("color", "")
+        deduct_errors = []
+        for size, qty in replacement_sizes.items():
+            try:
+                await _deduct_pick_boxes(
+                    style, color, size, location=None, qty=qty,
+                    inv_operation="incident_replacement",
+                    customer=ticket.get("customer", ""),
+                    order_number=ticket.get("order_number"),
+                )
+            except Exception as e:
+                deduct_errors.append(f"{size}: {str(e)}")
+        incident["inventory_deducted"] = len(deduct_errors) == 0
+        if deduct_errors:
+            incident["deduct_errors"] = deduct_errors
+
     await db.wms_incidents.insert_one(incident)
-    await log_movement(user, "incident_reported", {"ticket_id": ticket_id, "sku": incident["sku"], "qty": incident["qty"]})
-    return {"message": "Incidencia reportada", "incident_id": incident["incident_id"]}
+    await log_movement(user, "incident_reported", {
+        "ticket_id": ticket_id,
+        "sku": incident["sku"],
+        "qty": incident["qty"],
+        "replacement_sizes": replacement_sizes,
+        "replacement_qty": replacement_qty,
+        "inventory_deducted": incident["inventory_deducted"],
+    })
+    return {
+        "message": "Incidencia reportada",
+        "incident_id": incident["incident_id"],
+        "inventory_deducted": incident["inventory_deducted"],
+        "replacement_qty": replacement_qty,
+    }
 
 # ==================== OPERATOR MODULE ====================
 
