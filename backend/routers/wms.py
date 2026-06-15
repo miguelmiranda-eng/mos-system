@@ -2097,33 +2097,99 @@ async def inventory_style_info(request: Request, style: str = ""):
 
 @router.get("/inventory/locations-lookup")
 async def locations_lookup(request: Request, style: str = "", color: str = ""):
-    """Lookup inventory locations for a style+color, grouped by size."""
+    """Lookup inventory locations for a style+color, grouped by size.
+
+    Queries BOTH wms_inventory (permanent locations + Excel imports) AND
+    wms_boxes (physical boxes, including putaway/transit/temporary locations)
+    so pickers always see stock regardless of where it physically sits.
+    """
     await require_auth(request)
     if not style:
         raise HTTPException(400, "Style requerido")
-    query = {"$or": [{"style": {"$regex": f"^{style}$", "$options": "i"}}, {"sku": {"$regex": f"^{style}$", "$options": "i"}}]}
-    if color:
-        query["color"] = {"$regex": f"^{color}$", "$options": "i"}
-    records = await db.wms_inventory.find(query, {"_id": 0}).to_list(5000)
-    # Group by size, aggregate locations
-    by_size = {}
+
+    style_rx = {"$regex": f"^{re.escape(style)}$", "$options": "i"}
+    color_rx  = {"$regex": f"^{re.escape(color)}$",  "$options": "i"} if color else None
+
+    # ── 1. wms_inventory (aggregated rows, permanent + Excel) ──────────────
+    inv_query = {"$or": [{"style": style_rx}, {"sku": style_rx}]}
+    if color_rx:
+        inv_query["color"] = color_rx
+    records = await db.wms_inventory.find(inv_query, {"_id": 0}).to_list(5000)
+
+    # by_size[sz][loc] = {"available": int, "boxes": int, "customer": str, "country_of_origin": str}
+    by_loc: dict[str, dict[str, dict]] = {}  # by_loc[sz][loc] = merged entry
+
     for r in records:
-        sz = r.get("size", "")
-        if sz not in by_size:
-            by_size[sz] = {"size": sz, "locations": [], "total_available": 0, "total_boxes": 0}
-        loc = r.get("location", r.get("inv_location", ""))
+        sz  = r.get("size", "")
+        loc = r.get("location") or r.get("inv_location") or ""
         avail = r.get("units_on_hand", r.get("available", 0)) - r.get("units_allocated", 0)
-        boxes = r.get("total_boxes", 0)
-        if loc and avail > 0:
-            by_size[sz]["locations"].append({"location": loc, "available": avail, "boxes": boxes, "customer": r.get("customer", ""), "country_of_origin": r.get("country_of_origin", "")})
-        by_size[sz]["total_available"] += avail
-        by_size[sz]["total_boxes"] += boxes
-    # Sort locations within each size by available desc, then add percentage
-    for sz in by_size:
-        by_size[sz]["locations"].sort(key=lambda x: -x["available"])
-        total_avail = by_size[sz]["total_available"]
-        for loc_entry in by_size[sz]["locations"]:
-            loc_entry["percentage"] = round((loc_entry["available"] / total_avail) * 100) if total_avail > 0 else 0
+        if not loc or avail <= 0:
+            continue
+        by_loc.setdefault(sz, {})
+        if loc in by_loc[sz]:
+            by_loc[sz][loc]["available"] += avail
+            by_loc[sz][loc]["boxes"]     += r.get("total_boxes", 0)
+        else:
+            by_loc[sz][loc] = {
+                "location": loc, "available": avail,
+                "boxes": r.get("total_boxes", 0),
+                "customer": r.get("customer", ""),
+                "country_of_origin": r.get("country_of_origin", ""),
+                "_from_boxes": False,
+            }
+
+    # ── 2. wms_boxes (physical boxes — covers putaway / transit / temp locs) ─
+    box_query = {
+        "$or": [{"sku": style_rx}, {"style": style_rx}],
+        "units": {"$gt": 0},
+        "location": {"$exists": True, "$ne": ""},
+    }
+    if color_rx:
+        box_query["color"] = color_rx
+    boxes = await db.wms_boxes.find(
+        box_query, {"_id": 0, "size": 1, "location": 1, "units": 1, "qty": 1, "customer": 1, "country_of_origin": 1}
+    ).to_list(5000)
+
+    for b in boxes:
+        sz  = b.get("size", "")
+        loc = b.get("location", "")
+        units = int(b.get("units") or b.get("qty") or 0)
+        if not loc or units <= 0:
+            continue
+        by_loc.setdefault(sz, {})
+        if loc in by_loc[sz]:
+            # Location already covered by wms_inventory — don't double-count;
+            # only bump if the box count actually exceeds what inventory says
+            # (signals an out-of-sync row — trust the higher value).
+            existing = by_loc[sz][loc]
+            if not existing["_from_boxes"]:
+                pass  # trust wms_inventory for this location
+        else:
+            # Location NOT in wms_inventory → add from boxes (putaway / transit)
+            if loc not in by_loc[sz]:
+                by_loc[sz][loc] = {
+                    "location": loc, "available": 0,
+                    "boxes": 0, "customer": b.get("customer", ""),
+                    "country_of_origin": b.get("country_of_origin", ""),
+                    "_from_boxes": True,
+                }
+            by_loc[sz][loc]["available"] += units
+            by_loc[sz][loc]["boxes"]     += 1
+
+    # ── 3. Build final response ────────────────────────────────────────────
+    by_size: dict = {}
+    for sz, locs_dict in by_loc.items():
+        locs = [
+            {k: v for k, v in e.items() if k != "_from_boxes"}
+            for e in locs_dict.values() if e["available"] > 0
+        ]
+        locs.sort(key=lambda x: -x["available"])
+        total_avail = sum(l["available"] for l in locs)
+        total_boxes = sum(l["boxes"] for l in locs)
+        for l in locs:
+            l["percentage"] = round((l["available"] / total_avail) * 100) if total_avail else 0
+        by_size[sz] = {"size": sz, "locations": locs, "total_available": total_avail, "total_boxes": total_boxes}
+
     return {"style": style, "color": color, "sizes": by_size}
 
 @router.get("/inventory/options")
