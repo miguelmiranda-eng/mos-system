@@ -319,8 +319,24 @@ export const PickingModule = ({ currentUser } = {}) => {
     } catch (e) { barcodeMarkup = ''; }
     const sizes = ticket.sizes || {};
     const sizeLocs = ticket.size_locations || {};
-    const totalQty = ALL_SIZES.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
-    const gridRows = ALL_SIZES.filter(sz => parseInt(sizes[sz]) > 0).map(sz => {
+    const pickedSizes = ticket.picked_sizes || {};
+    // Pending per size = required - already picked (handles partials). Reprinting
+    // a partially-picked ticket shows only what's LEFT to pick, not the original qty.
+    const pickedFor = (sz) => {
+      const v = pickedSizes[sz];
+      if (v == null) return 0;
+      return parseInt(typeof v === 'object' ? v.total : v) || 0;
+    };
+    const reqFor = (sz) => parseInt(sizes[sz]) || 0;
+    const pendingFor = (sz) => Math.max(0, reqFor(sz) - pickedFor(sz));
+    const totalQty = ALL_SIZES.reduce((s, sz) => s + reqFor(sz), 0);
+    const totalPending = ALL_SIZES.reduce((s, sz) => s + pendingFor(sz), 0);
+    const isPartial = totalPending < totalQty;
+    const gridRows = ALL_SIZES.filter(sz => pendingFor(sz) > 0).map(sz => {
+      const pend = pendingFor(sz), req = reqFor(sz);
+      const qtyCell = pend < req
+        ? `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span>`
+        : `${pend}`;
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => {
         let s = `${l.location} (${l.available})`;
@@ -328,9 +344,12 @@ export const PickingModule = ({ currentUser } = {}) => {
         if (l.percentage !== undefined) s += ` ${l.percentage}%`;
         return s;
       }).join(', ') || '-';
-      return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${sizes[sz]}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
+      return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${qtyCell}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
-    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0">${barcodeMarkup}</div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${ticket.quantity || ''}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
+    const partialBanner = isPartial
+      ? `<div style="text-align:center;font-size:11px;font-weight:bold;color:#b45309;border:1px dashed #b45309;border-radius:4px;padding:2px 4px;margin:4px 0">PENDIENTE POR SURTIR · ${totalPending} de ${totalQty}</div>`
+      : '';
+    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${totalPending}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalPending}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
   };
 
