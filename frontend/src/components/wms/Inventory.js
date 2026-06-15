@@ -181,9 +181,28 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const REMOVE_REASONS = ['MERMA', 'AJUSTE DE CONTEO', 'DAÑO / DEFECTO', 'TRASLADO', 'DEVOLUCIÓN A PROVEEDOR', 'OTRO'];
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const zoneOptions = useMemo(() => Object.keys(locationsByZone).sort(), [locationsByZone]);
+  // Flat list of EVERY location (all zones, incl. CARRO/TRANSIT/RECEIVING) + a
+  // name→zone map. Ubicación ALWAYS offers every location (filter by typing) so
+  // nothing is hidden behind a zone selection; the zone auto-fills on pick.
+  const allLocations = useMemo(() => {
+    const names = [];
+    for (const z of Object.keys(locationsByZone)) names.push(...(locationsByZone[z] || []));
+    return [...new Set(names)].sort();
+  }, [locationsByZone]);
+  const locZoneMap = useMemo(() => {
+    const map = {};
+    for (const z of Object.keys(locationsByZone)) for (const n of (locationsByZone[z] || [])) map[n] = z;
+    return map;
+  }, [locationsByZone]);
   const locationsInZone = useMemo(
     () => (manualForm.zone ? (locationsByZone[manualForm.zone] || []) : []),
     [locationsByZone, manualForm.zone],
+  );
+  // With a zone chosen, show ONLY that zone's locations (e.g. CARROS → CARRO 1-50);
+  // with no zone, show every location. Falls back to all if the typed zone has none.
+  const locationOptions = useMemo(
+    () => (manualForm.zone && locationsInZone.length ? locationsInZone : allLocations),
+    [manualForm.zone, locationsInZone, allLocations],
   );
   // Progressive loading state
   const [totalRows, setTotalRows] = useState(0);
@@ -365,7 +384,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const onColorChange = useCallback(c => setManualForm(f => ({ ...f, color: c, size: '' })), []);
   const onSizeChange = useCallback(sz => setManualForm(f => ({ ...f, size: sz })), []);
   const onZoneChange = useCallback(z => setManualForm(f => ({ ...f, zone: z, location: '' })), []);
-  const onLocationChange = useCallback(loc => setManualForm(f => ({ ...f, location: loc })), []);
+  const onLocationChange = useCallback(loc => setManualForm(f => ({
+    ...f, location: loc,
+    // Keep the zone in sync with the picked location (auto-fill / correct it).
+    zone: locZoneMap[loc] || f.zone,
+  })), [locZoneMap]);
   const onCustomerChange = useCallback(c => setManualForm(f => ({ ...f, customer: c })), []);
   const onCooChange = useCallback(co => setManualForm(f => ({ ...f, country_of_origin: co })), []);
   const onFabricChange = useCallback(fc => setManualForm(f => ({ ...f, fabric_content: fc })), []);
@@ -1018,9 +1041,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   <Typeahead
                     value={manualForm.location}
                     onChange={onLocationChange}
-                    options={locationsInZone}
-                    placeholder={manualForm.zone ? 'Escribe… ej: B15' : 'Elige zona primero'}
-                    disabled={!manualForm.zone}
+                    options={locationOptions}
+                    placeholder="Escribe o elige… ej: B15"
                     testid="manual-location"
                   />
                 </div>

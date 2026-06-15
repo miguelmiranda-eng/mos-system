@@ -59,7 +59,10 @@ async def _ensure_transit_location():
         doc = {
             "location_id": gen_id("loc"),
             "name": name,
-            "zone": "TRANSIT",
+            # Group the carts under a single "CARROS" zone so they're easy to
+            # find by zone (e.g. the manual-inventory modal). UBICACION TEMPORAL
+            # keeps the generic TRANSIT zone.
+            "zone": "CARROS" if name.upper().startswith("CARRO") else "TRANSIT",
             "type": "transit",
             "active": True,
             "is_custom": True,
@@ -577,9 +580,11 @@ async def transit_info(request: Request):
     await require_auth(request)
     loc = await _ensure_transit_location()
 
-    # Per-location count in a single aggregation.
+    # Per-location count in a single aggregation. Only count boxes that still
+    # hold stock — a box fully picked out (units=0) has left the cart even though
+    # the doc lingers for traceability, so it must not inflate the cart count.
     pipeline = [
-        {"$match": {"location": {"$in": SYSTEM_TRANSIT_LOCATIONS}}},
+        {"$match": {"location": {"$in": SYSTEM_TRANSIT_LOCATIONS}, "units": {"$gt": 0}}},
         {"$group": {"_id": "$location", "n": {"$sum": 1}}},
     ]
     counts = {row["_id"]: row["n"] async for row in db.wms_boxes.aggregate(pipeline)}
@@ -618,6 +623,9 @@ async def transit_boxes(request: Request, customer: str = "", style: str = "",
         query = {"location": cart_norm}
     else:
         query = {"location": {"$in": SYSTEM_TRANSIT_LOCATIONS}}
+    # Hide boxes that have been fully picked out (units=0) — they've physically
+    # left the cart; the doc only survives for traceability.
+    query["units"] = {"$gt": 0}
     if customer:
         query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
     if style:
