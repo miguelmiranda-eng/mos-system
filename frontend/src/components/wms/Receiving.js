@@ -587,14 +587,11 @@ export const ReceivingModule = () => {
     if (!form.style) { toast.error(t('wms_style_req')); return; }
     // Required fields enforced only on CREATE; editing legacy records is allowed
     if (!editingId) {
-      // UPC obligatorio: el catálogo es la fuente de verdad del producto.
+      // UPC opcional — advertencia si falta o no está en catálogo, pero no bloquea.
       if (!upc.trim()) {
-        toast.error('UPC obligatorio — escanea o teclea el UPC del producto');
-        return;
-      }
-      if (!upcDoc) {
-        toast.error(`UPC ${upc.trim().toUpperCase()} no está en el catálogo. Créalo con "+ Crear UPC".`);
-        return;
+        toast.warning('Sin UPC — el recibo se guardará sin referencia de catálogo', { duration: 4000 });
+      } else if (!upcDoc) {
+        toast.warning(`UPC ${upc.trim().toUpperCase()} no está en catálogo — el recibo se guardará de todas formas`, { duration: 4000 });
       }
       if (!form.country_of_origin?.trim()) { toast.error('País de origen es obligatorio'); return; }
       if (!form.fabric_content?.trim()) { toast.error('Contenido / Fabric es obligatorio'); return; }
@@ -824,7 +821,7 @@ export const ReceivingModule = () => {
             <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
               <label className="text-xs uppercase tracking-wider font-bold block mb-1 flex items-center gap-2">
                 <span className="text-indigo-400">UPC</span>
-                <span className="text-red-400">*</span>
+                <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground bg-secondary/60 border border-border/40 px-1.5 py-0.5 rounded">Opcional</span>
                 {upcDoc && (
                   <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
                     <CheckCircle2 className="w-2.5 h-2.5" /> en catálogo
@@ -840,7 +837,7 @@ export const ReceivingModule = () => {
                 <input
                   value={upc}
                   onChange={e => setUpc(e.target.value)}
-                  placeholder="Escanea o teclea el UPC"
+                  placeholder="Escanea o teclea el UPC (opcional)"
                   className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono font-bold ${
                     upcDoc ? 'border-emerald-500/40' : upc.trim() ? 'border-amber-500/40' : 'border-border'
                   }`}
@@ -903,7 +900,7 @@ export const ReceivingModule = () => {
               )}
               {upc.trim() && !upcDoc && !upcLooking && (
                 <p className="text-[10px] text-amber-500 mt-1.5">
-                  UPC <span className="font-mono font-bold">{upc.trim().toUpperCase()}</span> no está en el catálogo. Créalo antes de recibir.
+                  ⚠ UPC <span className="font-mono font-bold">{upc.trim().toUpperCase()}</span> no está en catálogo — puedes recibirlo sin UPC o crearlo primero.
                 </p>
               )}
             </div>
