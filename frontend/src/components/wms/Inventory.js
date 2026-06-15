@@ -8,6 +8,9 @@ import { API, fetcher, logLoadError } from "./lib";
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
 const EMPTY = [];
+// Standard apparel sizes — always offered as suggestions so a brand-new style
+// (not yet in inventory) still shows the usual sizes to choose from.
+const STD_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
 
 /**
  * Header con filtro tipo Dashboard: el label + un icono ListFilter que abre un
@@ -98,13 +101,21 @@ const Typeahead = memo(function Typeahead({ value, onChange, options, placeholde
     return matches.slice(0, 50);
   }, [options, query]);
   const select = useCallback((val) => { onChange(val); setQuery(val); setOpen(false); }, [onChange]);
+  // Free text: commit whatever was typed (not just list picks) so brand-new
+  // styles/colors/sizes/locations can be entered. Commits on blur / Enter to
+  // avoid firing onChange (and any fetch it triggers) on every keystroke.
+  const commitFree = useCallback(() => {
+    const v = (query || '').trim();
+    if (v !== (value || '')) onChange(v);
+  }, [query, value, onChange]);
   return (
     <div className="relative">
       <input
         value={query}
         onChange={e => { setQuery(e.target.value.toUpperCase()); setOpen(true); }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => { commitFree(); setTimeout(() => setOpen(false), 150); }}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitFree(); setOpen(false); } }}
         placeholder={placeholder}
         disabled={disabled}
         className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono disabled:opacity-50"
@@ -203,6 +214,12 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const locationOptions = useMemo(
     () => (manualForm.zone && locationsInZone.length ? locationsInZone : allLocations),
     [manualForm.zone, locationsInZone, allLocations],
+  );
+  // Size suggestions = this style's existing sizes + the standard set, so new
+  // styles still offer the usual sizes (and any value can be typed anyway).
+  const sizeOptions = useMemo(
+    () => [...new Set([...(styleInfo?.sizes || []), ...STD_SIZES])],
+    [styleInfo],
   );
   // Progressive loading state
   const [totalRows, setTotalRows] = useState(0);
@@ -1010,8 +1027,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     value={manualForm.color}
                     onChange={onColorChange}
                     options={styleInfo?.colors || EMPTY}
-                    placeholder={loadingStyleInfo ? 'Cargando…' : (styleInfo ? 'Escribe… ej: BLA → BLACK' : 'Elige style primero')}
-                    disabled={!styleInfo || loadingStyleInfo}
+                    placeholder={loadingStyleInfo ? 'Cargando…' : (manualForm.style ? 'Escribe o elige… ej: BLACK' : 'Elige o escribe style')}
+                    disabled={!manualForm.style || loadingStyleInfo}
                     testid="manual-color"
                   />
                 </div>
@@ -1020,8 +1037,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   <Typeahead
                     value={manualForm.size}
                     onChange={onSizeChange}
-                    options={styleInfo?.sizes || EMPTY}
-                    placeholder={manualForm.color ? 'Escribe… ej: M' : 'Elige color primero'}
+                    options={sizeOptions}
+                    placeholder={manualForm.color ? 'Escribe o elige… ej: M' : 'Elige o escribe color'}
                     disabled={!manualForm.color}
                     testid="manual-size"
                   />
