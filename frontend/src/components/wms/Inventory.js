@@ -229,8 +229,13 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   // Progressive loading state
   const [totalRows, setTotalRows] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [capped, setCapped] = useState(false);
   const PAGE_SIZE = 100;
   const CHUNK_DELAY_MS = 1500; // breathe between chunks so the UI doesn't freeze
+  // Cap how many rows we hold in memory / paint at once. Thousands of <tr> nodes
+  // crush RAM on warehouse PDAs/tablets. The grid stops at this many; the full
+  // dataset is still reachable via the totals/summary and the Excel export.
+  const MAX_GRID_ROWS = 1500;
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(logLoadError('data')); }, []);
 
@@ -266,6 +271,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     const myGen = ++loadGenRef.current;
     setInventory([]);
     setTotalRows(0);
+    setCapped(false);
     setLoadingMore(true);
 
     const fetchChunk = async (skip) => {
@@ -277,7 +283,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
         const items = data.items || [];
         setInventory(prev => [...prev, ...items]);
         setTotalRows(data.total || 0);
-        if (data.has_more) {
+        if (data.has_more && (skip + PAGE_SIZE) < MAX_GRID_ROWS) {
           // Poll-and-resume: if the modal is open we hold off until it closes
           // so the modal's Typeaheads aren't disturbed by chunk re-renders.
           const tick = () => {
@@ -287,6 +293,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           };
           setTimeout(tick, CHUNK_DELAY_MS);
         } else {
+          // Stopped because we hit the row cap (more rows still exist server-side).
+          if (data.has_more) setCapped(true);
           setLoadingMore(false);
         }
       } catch (err) {
@@ -307,6 +315,18 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     fetcher(`/inventory/summary?${summaryParams.toString()}`).then(setSummary).catch(logLoadError('summary'));
   }, [customerFilter]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  // Group rows by customer once per data/flag change instead of re-reducing the
+  // whole array on every render (search keystrokes, chunk arrivals, hovers…).
+  const groupedInventory = useMemo(() => {
+    if (!groupByCustomer) return null;
+    const acc = {};
+    for (const inv of inventory) {
+      const cust = inv.customer || t('no_client');
+      (acc[cust] = acc[cust] || []).push(inv);
+    }
+    return Object.entries(acc);
+  }, [inventory, groupByCustomer, t]);
 
   // Filters (dropdown sources) load once on mount; the inventory itself only
   // loads on-demand when the user actually types a search or applies a filter.
@@ -716,14 +736,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             </thead>
             <tbody className="divide-y divide-border/10">
               {groupByCustomer ? (
-                Object.entries(
-                  inventory.reduce((acc, inv) => {
-                    const cust = inv.customer || t('no_client');
-                    if (!acc[cust]) acc[cust] = [];
-                    acc[cust].push(inv);
-                    return acc;
-                  }, {})
-                ).map(([customer, items]) => (
+                groupedInventory.map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-secondary/30">
                       <td colSpan="12" className="p-3">
@@ -845,6 +858,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">
           {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
         </div>
+        {capped && (
+          <div className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-500">
+            Mostrando los primeros {MAX_GRID_ROWS.toLocaleString()} de {totalRows.toLocaleString()} — refina la búsqueda o usa Exportar para ver todo
+          </div>
+        )}
       </div>
 
       {/* Boxes (LPN) modal — opened from the "Cajas" cell in the inventory table */}

@@ -256,14 +256,14 @@ export default function WMS() {
 
   return (
     <WmsContext.Provider value={wmsCtx}>
-    <div className="h-screen bg-background flex flex-col text-foreground overflow-hidden">
+    <div className="wms-perf h-screen bg-background flex flex-col text-foreground overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
         <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
       {/* Mobile backdrop when the nav drawer is open */}
       {mobileNav && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />}
       {/* Sidebar — off-canvas drawer on phones/PDAs, static column on md+ */}
       <aside
-        className={`${sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-72 fixed md:static inset-y-0 left-0 z-40 md:z-20 transform transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 bg-card md:bg-card/40 backdrop-blur-xl border-r border-border/50 flex flex-col shadow-2xl`}
+        className={`${sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-72 fixed md:static inset-y-0 left-0 z-40 md:z-20 transform transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 bg-card border-r border-border/50 flex flex-col shadow-lg`}
       >
         <div className="p-4 border-b border-border/40 flex flex-col gap-4">
           <div className="flex items-center gap-3">

@@ -11,11 +11,15 @@ const TABS = [
   { id: 'upcs',      label: 'UPCs',              icon: Tag },
 ];
 
+// Audit log can hold tens of thousands of rows; only the most recent matter on
+// screen and rendering them all crushes warehouse-device RAM. Cap the fetch.
+const MOVEMENTS_LIMIT = 500;
+
 const MovementsTab = () => {
   const { t } = useLang();
   const [movements, setMovements] = useState([]);
   const [typeFilter, setTypeFilter] = useState('');
-  const load = useCallback(() => { fetcher(`/movements?movement_type=${typeFilter}`).then(setMovements).catch(logLoadError('data')); }, [typeFilter]);
+  const load = useCallback(() => { fetcher(`/movements?movement_type=${typeFilter}&limit=${MOVEMENTS_LIMIT}`).then(setMovements).catch(logLoadError('data')); }, [typeFilter]);
   useEffect(() => { load(); }, [load]);
   const types = ['', 'receiving', 'putaway', 'allocation', 'deallocate', 'pick_ticket_created', 'pick_confirmed', 'production_move', 'shipment'];
   const typeLabels = {
@@ -94,6 +98,11 @@ const MovementsTab = () => {
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
             <History className="w-16 h-16 mb-4 stroke-[1px]" />
             <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_movements')}</p>
+          </div>
+        )}
+        {movements.length >= MOVEMENTS_LIMIT && (
+          <div className="pt-3 text-center text-[10px] font-black uppercase tracking-[0.15em] text-amber-500">
+            Mostrando los {MOVEMENTS_LIMIT.toLocaleString()} movimientos más recientes — usa los filtros para acotar
           </div>
         )}
       </div>
