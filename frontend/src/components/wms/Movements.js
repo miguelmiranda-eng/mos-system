@@ -1,14 +1,28 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { History, Tag, Search, X, Loader2, User, Pencil, Trash2, CheckCircle2, ArrowDownUp, Download, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { History, Tag, Search, X, Loader2, User, Trash2, CheckCircle2, ArrowDownUp, Download, ArrowDownCircle, ArrowUpCircle, Ruler, AlertTriangle } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, putter, deleter, logLoadError, SIZES_ORDER } from "./lib";
+import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
 
 const TABS = [
   { id: 'movements', label: 'Movimientos',       icon: History },
   { id: 'inout',     label: 'Entradas / Salidas', icon: ArrowDownUp },
   { id: 'upcs',      label: 'UPCs',              icon: Tag },
+];
+
+// Fields the admin can correct on a UPC. style/color/size are "identity" fields:
+// changing them moves the already-received stock to the corrected inventory line.
+const FIX_FIELDS = [
+  { k: 'style', label: 'Style', upper: true, mono: true },
+  { k: 'color', label: 'Color', upper: true },
+  { k: 'size', label: 'Talla', size: true },
+  { k: 'customer', label: 'Cliente', upper: true },
+  { k: 'manufacturer', label: 'Fabricante', upper: true },
+  { k: 'brand', label: 'Marca', upper: true },
+  { k: 'description', label: 'Descripción' },
+  { k: 'country_of_origin', label: 'País de origen', upper: true },
+  { k: 'fabric_content', label: 'Fabric / Contenido' },
 ];
 
 // Audit log can hold tens of thousands of rows; only the most recent matter on
@@ -302,9 +316,61 @@ const UpcsTab = () => {
       .then(u => setCanManage(['admin', 'supersu', 'ceo'].includes(u?.role)))
       .catch(() => {});
   }, []);
-  const [editing, setEditing] = useState(null); // upc doc being edited
-  const [draft, setDraft] = useState(null);
-  const [saving, setSaving] = useState(false);
+
+  // UPC correction tool (admin): fix wrong attributes and cascade to received
+  // stock. style/color/size move the stock between inventory lines; descriptive
+  // fields update in place. Always previews the impact before applying. Can also
+  // be opened by scanning the UPC straight off the label.
+  const [fixing, setFixing] = useState(null);     // original UPC doc
+  const [fixDraft, setFixDraft] = useState(null); // editable copy
+  const [fixPreview, setFixPreview] = useState(null);
+  const [fixBusy, setFixBusy] = useState(false);
+  const [scanCode, setScanCode] = useState('');
+  const openFix = (u) => { setFixing(u); setFixDraft({ ...u }); setFixPreview(null); };
+  const closeFix = () => { setFixing(null); setFixDraft(null); setFixPreview(null); };
+  const setFixField = (k, v) => { setFixDraft(p => ({ ...p, [k]: v })); setFixPreview(null); };
+  const fixChanges = () => {
+    const ch = {};
+    if (!fixing || !fixDraft) return ch;
+    for (const f of FIX_FIELDS) {
+      let v = (fixDraft[f.k] ?? '').toString().trim();
+      let cur = (fixing[f.k] ?? '').toString().trim();
+      if (f.upper) { v = v.toUpperCase(); cur = cur.toUpperCase(); }
+      if (v !== cur) ch[f.k] = v;
+    }
+    return ch;
+  };
+  const runFix = async (apply) => {
+    const changes = fixChanges();
+    if (Object.keys(changes).length === 0) { toast.error('No hay cambios que aplicar'); return; }
+    setFixBusy(true);
+    try {
+      const res = await poster(`/upc/${encodeURIComponent(fixing.upc)}/correct`, { changes, apply });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.detail || 'No se pudo corregir el UPC'); return; }
+      if (apply) {
+        const mv = data.result?.moved_boxes ? ` · ${data.result.moved_boxes} cajas movidas` : '';
+        toast.success(`UPC ${fixing.upc} corregido${mv}`);
+        setUpcs(prev => prev.map(x => x.upc === fixing.upc ? { ...x, ...changes } : x));
+        closeFix();
+      } else {
+        setFixPreview(data.preview);
+      }
+    } catch {
+      toast.error('Error de conexión');
+    } finally { setFixBusy(false); }
+  };
+  const scanToFix = async (raw) => {
+    const code = (raw || '').trim().toUpperCase();
+    if (!code) return;
+    try {
+      const doc = await fetcher(`/upc/${encodeURIComponent(code)}`);
+      if (doc && doc.upc) { openFix(doc); setScanCode(''); }
+      else { toast.error(`UPC ${code} no está en el catálogo`); }
+    } catch {
+      toast.error(`UPC ${code} no está en el catálogo`);
+    }
+  };
 
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 300);
@@ -338,28 +404,6 @@ const UpcsTab = () => {
     return upcs.filter(u => (u.created_by_name || '') === userFilter);
   }, [upcs, userFilter]);
 
-  const openEdit = (u) => { setEditing(u); setDraft({ ...u }); };
-  const closeEdit = () => { setEditing(null); setDraft(null); };
-
-  const saveEdit = async () => {
-    if (!draft?.style?.trim()) { toast.error('Style es obligatorio'); return; }
-    setSaving(true);
-    try {
-      const res = await putter(`/upc/${encodeURIComponent(editing.upc)}`, draft);
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        toast.error(e.detail || 'No se pudo actualizar el UPC');
-        return;
-      }
-      const doc = await res.json();
-      setUpcs(prev => prev.map(x => x.upc === doc.upc ? { ...x, ...doc } : x));
-      toast.success(`UPC ${doc.upc} actualizado`);
-      closeEdit();
-    } catch {
-      toast.error('Error de conexión');
-    } finally { setSaving(false); }
-  };
-
   const removeUpc = async (u) => {
     if (!window.confirm(`¿Eliminar el UPC ${u.upc} del catálogo? Los recibos ya hechos NO se afectan.`)) return;
     try {
@@ -371,13 +415,24 @@ const UpcsTab = () => {
     }
   };
 
-  const field = (k) => draft?.[k] ?? '';
-  const setField = (k, v) => setDraft(p => ({ ...p, [k]: v }));
 
   return (
     <div className="space-y-4">
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
+        {canManage && (
+          <div className="relative min-w-[230px]">
+            <Ruler className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-blue-400" />
+            <input
+              value={scanCode}
+              onChange={e => setScanCode(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); scanToFix(scanCode); } }}
+              placeholder="Escanear UPC para corregir…"
+              title="Escanea o teclea el UPC y presiona Enter para abrir la corrección"
+              className="w-full pl-9 pr-3 py-2 bg-blue-500/5 border border-blue-500/30 rounded-lg text-sm focus:outline-none focus:border-blue-500/60"
+            />
+          </div>
+        )}
         <div className="relative flex-1 min-w-[260px]">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -467,7 +522,7 @@ const UpcsTab = () => {
                     {canManage && (
                       <td className="p-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-500" title="Editar UPC"><Pencil className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => openFix(u)} className="p-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400" title="Corregir UPC (y el stock ya recibido)"><Ruler className="w-3.5 h-3.5" /></button>
                           <button onClick={() => removeUpc(u)} className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500" title="Eliminar UPC"><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
                       </td>
@@ -480,77 +535,73 @@ const UpcsTab = () => {
         </div>
       </div>
 
-      {editing && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+      {fixing && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-150">
+          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center"><Pencil className="w-5 h-5 text-amber-500" /></div>
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center"><Ruler className="w-5 h-5 text-blue-400" /></div>
                 <div>
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Editar UPC del catálogo</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold">Los recibos pasados NO cambian; solo los futuros heredan estos datos.</p>
+                  <h3 className="font-black uppercase tracking-tighter text-sm">Corregir UPC</h3>
+                  <p className="text-[11px] text-muted-foreground font-bold">UPC <span className="font-mono text-indigo-400">{fixing.upc}</span></p>
                 </div>
               </div>
-              <button onClick={closeEdit} disabled={saving} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+              <button onClick={closeFix} disabled={fixBusy} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
 
-            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
-              <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">UPC</label>
-                <input value={field('upc')} disabled title="El código del UPC no se puede cambiar; elimina y crea uno nuevo si necesitas otro código." className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold opacity-60 cursor-not-allowed" />
-              </div>
+            <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
-                  <input value={field('customer')} onChange={e => setField('customer', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
-                  <input value={field('manufacturer')} onChange={e => setField('manufacturer', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Marca</label>
-                  <input value={field('brand')} onChange={e => setField('brand', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-                </div>
+                {FIX_FIELDS.map(f => {
+                  const changed = fixDraft && (fixDraft[f.k] ?? '').toString().trim().toUpperCase() !== (fixing[f.k] ?? '').toString().trim().toUpperCase();
+                  return (
+                    <div key={f.k}>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                        {f.label}{changed && <span className="ml-1 text-blue-400">●</span>}
+                      </label>
+                      {f.size ? (
+                        <select value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, e.target.value)} className={`w-full px-3 py-2 bg-background border rounded text-sm font-mono ${changed ? 'border-blue-500/60' : 'border-border'}`}>
+                          <option value="">—</option>
+                          {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <input value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, f.upper ? e.target.value.toUpperCase() : e.target.value)} className={`w-full px-3 py-2 bg-background border rounded text-sm ${f.mono ? 'font-mono font-bold' : ''} ${changed ? 'border-blue-500/60' : 'border-border'}`} />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Style <span className="text-red-400">*</span></label>
-                  <input value={field('style')} onChange={e => setField('style', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold" />
+
+              {fixPreview && (
+                <div className="rounded-xl border border-border/40 bg-secondary/20 p-3 text-[12px] space-y-1">
+                  <div className="font-black uppercase tracking-widest text-[10px] text-muted-foreground mb-1">Impacto de la corrección</div>
+                  <div className="flex justify-between gap-3"><span>Campos a cambiar</span><span className="font-mono font-bold text-right">{Object.keys(fixPreview.changes || {}).join(', ') || '—'}</span></div>
+                  <div className="flex justify-between"><span>Recibos afectados</span><span className="font-mono font-bold">{fixPreview.receivings}</span></div>
+                  <div className="flex justify-between"><span>Cajas con este UPC</span><span className="font-mono font-bold">{fixPreview.boxes_total}</span></div>
+                  <div className="flex justify-between"><span>Cajas que se mueven</span><span className="font-mono font-bold">{fixPreview.moved_boxes}</span></div>
+                  <div className="flex justify-between"><span>Unidades que se mueven</span><span className="font-mono font-bold">{(fixPreview.moved_units ?? 0).toLocaleString()}</span></div>
+                  {fixPreview.blocked?.length > 0 && (
+                    <div className="mt-2 flex items-start gap-2 text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+                      <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                      <span className="text-[11px] font-bold">Hay unidades asignadas a órdenes en {fixPreview.blocked.length} ubicación(es). Desasigna esas órdenes antes de aplicar.</span>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
-                  <input value={field('color')} onChange={e => setField('color', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
-                  <select value={field('size')} onChange={e => setField('size', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono">
-                    <option value="">—</option>
-                    {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
-                <input value={field('description')} onChange={e => setField('description', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
-                  <input value={field('country_of_origin')} onChange={e => setField('country_of_origin', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
-                  <input value={field('fabric_content')} onChange={e => setField('fabric_content', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
-                </div>
-              </div>
+              )}
+
+              <p className="text-[11px] text-muted-foreground">Cambiar <b>Style, Color o Talla</b> mueve el stock ya recibido a la línea de inventario corregida; los demás campos se actualizan en sitio. Revisa el impacto antes de aplicar.</p>
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">
-              <button onClick={saveEdit} disabled={saving || !field('style').trim()} className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Actualizar UPC
-              </button>
-              <button onClick={closeEdit} disabled={saving} className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50">Cancelar</button>
+              {!fixPreview ? (
+                <button onClick={() => runFix(false)} disabled={fixBusy} className="flex-1 px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
+                  {fixBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Ver impacto
+                </button>
+              ) : (
+                <button onClick={() => runFix(true)} disabled={fixBusy || fixPreview.blocked?.length > 0} className="flex-1 px-4 py-2.5 bg-blue-500 hover:bg-blue-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
+                  {fixBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Aplicar corrección
+                </button>
+              )}
+              <button onClick={closeFix} disabled={fixBusy} className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50">Cancelar</button>
             </div>
           </div>
         </div>

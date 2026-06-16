@@ -5773,6 +5773,197 @@ async def update_upc(upc: str, request: Request):
     return await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
 
 
+@router.post("/upc/{upc}/correct")
+async def correct_upc(upc: str, request: Request):
+    """Admin-only: fix a UPC captured with wrong attributes and cascade the fix
+    to the stock already received with it.
+      - Identity fields (style/sku, color, size) change the inventory line, so we
+        MOVE each affected box's units from its old line to the corrected line
+        (same location), keeping on_hand / total_boxes consistent.
+      - Descriptive fields (description, country_of_origin, fabric_content,
+        customer, manufacturer, brand) are updated in place on the boxes,
+        receivings, catalog and the boxes' inventory lines.
+    dry-run by default; apply=true commits. Refuses if any affected source line
+    has allocated units, so open order allocations never desync."""
+    user = await require_admin(request)
+    code = _norm_upc(upc)
+    body = await request.json()
+    apply = bool(body.get("apply", False))
+    raw_changes = body.get("changes") or {}
+
+    cat = await db.wms_upc_catalog.find_one({"upc": code})
+    if not cat:
+        raise HTTPException(404, f"UPC {code} no encontrado")
+
+    from collections import defaultdict
+
+    UPPER = {"style", "sku", "color", "size", "country_of_origin", "customer", "manufacturer", "brand"}
+    ALLOWED = ["style", "sku", "color", "size", "description", "country_of_origin",
+               "fabric_content", "customer", "manufacturer", "brand"]
+    changes = {}
+    for k in ALLOWED:
+        if k in raw_changes and raw_changes[k] is not None:
+            v = str(raw_changes[k]).strip()
+            v = v.upper() if k in UPPER else v
+            cur = str(cat.get(k, "") or "").strip()
+            cur = cur.upper() if k in UPPER else cur
+            if v != cur:
+                changes[k] = v
+    if not changes:
+        raise HTTPException(400, "No hay cambios para aplicar")
+    # Inventory keys on sku; keep it in lockstep with style.
+    if "style" in changes and "sku" not in changes:
+        changes["sku"] = changes["style"]
+
+    KEY = {"sku", "color", "size"}  # fields that move inventory between lines
+    key_changed = bool(KEY & set(changes.keys()))
+
+    rcvs = await db.wms_receiving.find({"upc": code}, {"receiving_id": 1}).to_list(2000)
+    rcv_ids = [r["receiving_id"] for r in rcvs]
+    or_clauses = [{"upc": code}]
+    if rcv_ids:
+        or_clauses.append({"receiving_id": {"$in": rcv_ids}})
+    boxes = await db.wms_boxes.find({"$or": or_clauses}, {"_id": 0}).to_list(5000)
+
+    def src_key(b):
+        return (b.get("sku") or b.get("style") or "", b.get("color", ""), b.get("size", ""), b.get("location", ""))
+
+    def tgt_key(b):
+        sku = changes.get("sku", b.get("sku") or b.get("style") or "")
+        color = changes.get("color", b.get("color", ""))
+        size = changes.get("size", b.get("size", ""))
+        return (sku, color, size, b.get("location", ""))
+
+    # Guard allocations on the source lines we would move from.
+    blocked, moved_units, moved_boxes = [], 0, 0
+    if key_changed:
+        checked = set()
+        for b in boxes:
+            sk = src_key(b)
+            if sk == tgt_key(b):
+                continue
+            moved_units += int(b.get("units") or b.get("qty") or 0)
+            moved_boxes += 1
+            if sk in checked:
+                continue
+            checked.add(sk)
+            s_sku, s_color, s_size, s_loc = sk
+            inv = await db.wms_inventory.find_one(
+                {"sku": s_sku, "color": s_color, "size": s_size, "location": s_loc}
+            )
+            if inv and int(inv.get("units_allocated", 0) or 0) > 0:
+                blocked.append({"location": s_loc, "allocated": int(inv["units_allocated"])})
+
+    preview = {
+        "upc": code, "changes": changes, "receivings": len(rcv_ids),
+        "boxes_total": len(boxes), "moved_boxes": moved_boxes,
+        "moved_units": moved_units, "key_changed": key_changed, "blocked": blocked,
+    }
+    if not apply:
+        return {"applied": False, "preview": preview}
+    if blocked:
+        raise HTTPException(
+            409,
+            f"No se puede corregir: hay unidades asignadas a ordenes en {len(blocked)} "
+            "ubicacion(es). Desasigna esas ordenes primero.",
+        )
+
+    # 1) Move units between inventory lines for identity changes (per box).
+    if key_changed:
+        for b in boxes:
+            sk, tk = src_key(b), tgt_key(b)
+            if sk == tk:
+                continue
+            units = int(b.get("units") or b.get("qty") or 0)
+            s_sku, s_color, s_size, s_loc = sk
+            t_sku, t_color, t_size, t_loc = tk
+            src_inv = await db.wms_inventory.find_one(
+                {"sku": s_sku, "color": s_color, "size": s_size, "location": s_loc}
+            )
+            if src_inv:
+                noh = max(0, int(src_inv.get("units_on_hand", 0)) - units)
+                ntb = max(0, int(src_inv.get("total_boxes", 0) or 0) - 1)
+                if noh == 0 and ntb == 0:
+                    await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+                else:
+                    await db.wms_inventory.update_one(
+                        {"_id": src_inv["_id"]},
+                        {"$set": {"units_on_hand": noh, "total_boxes": ntb, "updated_at": now_iso()}},
+                    )
+            tgt_inv = await db.wms_inventory.find_one(
+                {"sku": t_sku, "color": t_color, "size": t_size, "location": t_loc}
+            )
+            if tgt_inv:
+                await db.wms_inventory.update_one(
+                    {"_id": tgt_inv["_id"]},
+                    {"$inc": {"units_on_hand": units, "total_boxes": 1}, "$set": {"updated_at": now_iso()}},
+                )
+            else:
+                await db.wms_inventory.insert_one({
+                    "inventory_id": gen_id("inv"),
+                    "sku": t_sku, "style": changes.get("style", b.get("style") or t_sku),
+                    "color": t_color, "size": t_size,
+                    "customer": changes.get("customer", b.get("customer", "")),
+                    "manufacturer": changes.get("manufacturer", b.get("manufacturer", "")),
+                    "description": changes.get("description", b.get("description", "")),
+                    "country_of_origin": changes.get("country_of_origin", b.get("country_of_origin", "") or b.get("coo", "")),
+                    "fabric_content": changes.get("fabric_content", b.get("fabric_content", "")),
+                    "location": t_loc, "is_bpo": b.get("is_bpo", False),
+                    "total_boxes": 1, "units_on_hand": units, "units_allocated": 0,
+                    "updated_at": now_iso(),
+                })
+
+    # 2) Descriptive-only changes: update the boxes' (post-move) inventory lines.
+    meta_inv = {k: v for k, v in changes.items()
+                if k in ("description", "country_of_origin", "fabric_content", "customer", "manufacturer")}
+    if meta_inv:
+        seen = set()
+        for b in boxes:
+            tk = tgt_key(b)
+            if tk in seen:
+                continue
+            seen.add(tk)
+            t_sku, t_color, t_size, t_loc = tk
+            await db.wms_inventory.update_many(
+                {"sku": t_sku, "color": t_color, "size": t_size, "location": t_loc},
+                {"$set": {**meta_inv, "updated_at": now_iso()}},
+            )
+
+    # 3) Update the boxes themselves with every changed field.
+    box_set = dict(changes)
+    if "country_of_origin" in changes:
+        box_set["coo"] = changes["country_of_origin"]
+    box_set["upc"] = code
+    box_set["updated_at"] = now_iso()
+    box_ids = [b["box_id"] for b in boxes]
+    if box_ids:
+        await db.wms_boxes.update_many({"box_id": {"$in": box_ids}}, {"$set": box_set})
+
+    # 4) Update the receiving metadata.
+    if rcv_ids:
+        rcv_set = {k: v for k, v in changes.items()
+                   if k in ("style", "sku", "color", "size", "description",
+                            "country_of_origin", "fabric_content", "customer", "manufacturer")}
+        if rcv_set:
+            rcv_set["updated_at"] = now_iso()
+            await db.wms_receiving.update_many({"receiving_id": {"$in": rcv_ids}}, {"$set": rcv_set})
+
+    # 5) Update the catalog + log + notify.
+    cat_set = dict(changes)
+    cat_set["updated_at"] = now_iso()
+    cat_set["updated_by"] = user.get("user_id")
+    await db.wms_upc_catalog.update_one({"upc": code}, {"$set": cat_set})
+    await log_movement(user, "upc_correction", {
+        "upc": code, "changes": changes, "moved_boxes": moved_boxes,
+        "moved_units": moved_units, "receivings": rcv_ids[:50],
+    })
+    try:
+        await notify_badge_change("all")
+    except Exception:
+        pass
+    return {"applied": True, "result": preview}
+
+
 @router.delete("/upc/{upc}")
 async def delete_upc(upc: str, request: Request):
     """Admin-only delete. Existing receiving records keep their data — they
