@@ -736,7 +736,9 @@ export const ReceivingModule = () => {
           <tr class="row">
             <td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px;color:#000">${box.units}</span></td>
           </tr>
+          ${r.upc ? `<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">${r.upc}</span></td></tr>` : ''}
         </table>
+        ${r.upc ? `<div style="text-align:center;margin-top:8px"><svg id="upcbar-${idx}"></svg></div>` : ''}
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
           <span>${box.box_id}</span>
           <span>${idx + 1} of ${boxes.length}</span>
@@ -753,6 +755,7 @@ export const ReceivingModule = () => {
             JsBarcode("#barcode-${idx}", "${box.box_id}", {
               width: 1.5, height: 40, displayValue: true, fontSize: 10, margin: 0
             });
+            ${r.upc ? `JsBarcode("#upcbar-${idx}", "${r.upc}", { width: 1.4, height: 34, displayValue: true, fontSize: 10, margin: 0 });` : ''}
           `).join('\n')}
           setTimeout(function(){window.print()}, 800);
         } catch(e) {}
