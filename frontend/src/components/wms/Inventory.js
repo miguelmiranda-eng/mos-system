@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter, Check } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
@@ -1025,52 +1025,36 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
-              {/* Toggle Meter / Sacar */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-secondary/40 rounded-xl">
+              {/* Tabs: Entrada · Salida · Crear estilo */}
+              <div className="grid grid-cols-3 gap-2 p-1 bg-secondary/40 rounded-xl border border-border/40">
                 <button
                   type="button"
-                  onClick={() => setManualOp('add')}
+                  onClick={() => { setManualOp('add'); setMultiMode(false); }}
                   disabled={savingManual}
                   data-testid="manual-op-add"
-                  className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${manualOp === 'add' ? 'bg-emerald-500 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'add' && !multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
                 >
-                  <Plus className="w-4 h-4" /> Meter (entrada)
+                  <Plus className="w-3.5 h-3.5" /> Entrada
                 </button>
                 <button
                   type="button"
                   onClick={() => { setManualOp('remove'); setMultiMode(false); }}
                   disabled={savingManual}
                   data-testid="manual-op-remove"
-                  className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${manualOp === 'remove' ? 'bg-rose-500 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'remove' ? 'bg-rose-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
                 >
-                  <Minus className="w-4 h-4" /> Sacar (salida)
+                  <Minus className="w-3.5 h-3.5" /> Salida
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setManualOp('add'); setMultiMode(true); }}
+                  disabled={savingManual}
+                  data-testid="manual-multi-toggle"
+                  className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'add' && multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
+                >
+                  <Tag className="w-3.5 h-3.5" /> Crear estilo
                 </button>
               </div>
-
-              {/* 1 item vs nuevo estilo con varios items (solo entrada) */}
-              {manualOp === 'add' && (
-                <div className="grid grid-cols-2 gap-2 p-1 bg-secondary/40 rounded-xl border border-border/40">
-                  <button
-                    type="button"
-                    onClick={() => setMultiMode(false)}
-                    disabled={savingManual}
-                    aria-pressed={!multiMode}
-                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${!multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
-                  >
-                    {!multiMode && <Check className="w-3.5 h-3.5" />} 1 item
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMultiMode(true)}
-                    disabled={savingManual}
-                    data-testid="manual-multi-toggle"
-                    aria-pressed={multiMode}
-                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
-                  >
-                    {multiMode && <Check className="w-3.5 h-3.5" />} Nuevo estilo (varios items)
-                  </button>
-                </div>
-              )}
 
               {multiMode && manualOp === 'add' && (
                 <p className="text-[11px] text-muted-foreground bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2 leading-relaxed">
