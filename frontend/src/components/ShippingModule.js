@@ -28,7 +28,17 @@ const ShippingModule = () => {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [searchDate, setSearchDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedRecord, setSelectedRecord] = useState(null);
-  
+
+  // Lock the background page scroll while the detail modal is open so iPad/iOS
+  // doesn't scroll the page behind the modal (scroll-chaining) when the user
+  // drags inside the modal to reach the images.
+  useEffect(() => {
+    if (!selectedRecord) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [selectedRecord]);
+
   const getFullUrl = (url) => {
     if (!url) return "";
     if (url.startsWith("http")) return url;
@@ -323,7 +333,7 @@ const ShippingModule = () => {
       {selectedRecord && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setSelectedRecord(null)}></div>
-          <div className="relative bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+          <div className="relative bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-y-auto overscroll-contain max-h-[90vh] animate-in zoom-in-95 duration-300" style={{ WebkitOverflowScrolling: 'touch' }}>
             <div className="p-8 space-y-6">
               <div className="flex justify-between items-start">
                 <div>
