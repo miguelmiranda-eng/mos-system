@@ -56,16 +56,21 @@ export const PickingModule = ({ currentUser } = {}) => {
   // Progressive ticket loading state
   const [ticketsTotal, setTicketsTotal] = useState(0);
   const [loadingMoreTickets, setLoadingMoreTickets] = useState(false);
+  const [ticketsCapped, setTicketsCapped] = useState(false);
   const TICKETS_PAGE_SIZE = 50;
   // Small throttle between chunks so the UI can paint without hammering the API.
   // (Was 1500ms, which made a 500-ticket board take ~15s to fully load.)
   const TICKETS_CHUNK_DELAY_MS = 250;
+  // Cap how many ticket cards we hold/paint at once so big boards don't crush
+  // warehouse-device RAM. Use the search box to narrow beyond this.
+  const MAX_TICKETS = 600;
   const loadGenRef = useRef(0);
 
   const loadTickets = useCallback(() => {
     const myGen = ++loadGenRef.current;
     setTickets([]);
     setTicketsTotal(0);
+    setTicketsCapped(false);
     setLoadingMoreTickets(true);
 
     const fetchChunk = async (skip) => {
@@ -76,9 +81,10 @@ export const PickingModule = ({ currentUser } = {}) => {
         const items = data.items || [];
         setTickets(prev => [...prev, ...items]);
         setTicketsTotal(data.total || 0);
-        if (data.has_more) {
+        if (data.has_more && (skip + TICKETS_PAGE_SIZE) < MAX_TICKETS) {
           setTimeout(() => fetchChunk(skip + TICKETS_PAGE_SIZE), TICKETS_CHUNK_DELAY_MS);
         } else {
+          if (data.has_more) setTicketsCapped(true); // hit the cap; more exist server-side
           setLoadingMoreTickets(false);
         }
       } catch (err) {
@@ -320,8 +326,9 @@ export const PickingModule = ({ currentUser } = {}) => {
     const sizes = ticket.sizes || {};
     const sizeLocs = ticket.size_locations || {};
     const pickedSizes = ticket.picked_sizes || {};
-    // Pending per size = required - already picked (handles partials). Reprinting
-    // a partially-picked ticket shows only what's LEFT to pick, not the original qty.
+    // Reprint shows the FULL order (every requested size). Already-picked sizes are
+    // marked as SURTIDO; partials show how much is left vs required, so the picker
+    // sees the whole ticket and what's still pending, not only the remainder.
     const pickedFor = (sz) => {
       const v = pickedSizes[sz];
       if (v == null) return 0;
@@ -330,13 +337,22 @@ export const PickingModule = ({ currentUser } = {}) => {
     const reqFor = (sz) => parseInt(sizes[sz]) || 0;
     const pendingFor = (sz) => Math.max(0, reqFor(sz) - pickedFor(sz));
     const totalQty = ALL_SIZES.reduce((s, sz) => s + reqFor(sz), 0);
+    const totalPicked = ALL_SIZES.reduce((s, sz) => s + Math.min(pickedFor(sz), reqFor(sz)), 0);
     const totalPending = ALL_SIZES.reduce((s, sz) => s + pendingFor(sz), 0);
-    const isPartial = totalPending < totalQty;
-    const gridRows = ALL_SIZES.filter(sz => pendingFor(sz) > 0).map(sz => {
-      const pend = pendingFor(sz), req = reqFor(sz);
-      const qtyCell = pend < req
-        ? `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span>`
-        : `${pend}`;
+    const isPartial = totalPicked > 0 && totalPending > 0;
+    const gridRows = ALL_SIZES.filter(sz => reqFor(sz) > 0).map(sz => {
+      const req = reqFor(sz), picked = pickedFor(sz), pend = pendingFor(sz);
+      const done = pend === 0;             // size fully picked
+      const started = picked > 0 && !done; // size partially picked
+      const rowBg = done ? 'background:#dcfce7' : (started ? 'background:#fef9c3' : '');
+      let qtyCell;
+      if (done) {
+        qtyCell = `<span style="color:#15803d">&#10003; ${req}</span><div style="font-size:9px;color:#15803d;font-weight:normal">SURTIDO</div>`;
+      } else if (started) {
+        qtyCell = `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span><div style="font-size:9px;color:#b45309;font-weight:normal">surtido ${picked}</div>`;
+      } else {
+        qtyCell = `${req}`;
+      }
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => {
         let s = `${l.location} (${l.available})`;
@@ -344,12 +360,12 @@ export const PickingModule = ({ currentUser } = {}) => {
         if (l.percentage !== undefined) s += ` ${l.percentage}%`;
         return s;
       }).join(', ') || '-';
-      return `<tr><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${qtyCell}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
+      return `<tr style="${rowBg}"><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${qtyCell}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
     const partialBanner = isPartial
-      ? `<div style="text-align:center;font-size:11px;font-weight:bold;color:#b45309;border:1px dashed #b45309;border-radius:4px;padding:2px 4px;margin:4px 0">PENDIENTE POR SURTIR · ${totalPending} de ${totalQty}</div>`
+      ? `<div style="text-align:center;font-size:11px;font-weight:bold;color:#b45309;border:1px dashed #b45309;border-radius:4px;padding:2px 4px;margin:4px 0">SURTIDO PARCIAL · ${totalPicked} de ${totalQty} · FALTAN ${totalPending}</div>`
       : '';
-    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${totalPending}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalPending}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
+    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:4px">${ticket.customer || ''}</div><div style="text-align:center;margin:6px 0">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right"><div style="font-size:9px;color:#666">${t('pick_ticket')}:</div><div style="font-size:11px;font-weight:bold">${ticket.ticket_id}</div><div style="font-size:18px;font-weight:bold">${ticket.style || ''}</div><div style="font-size:14px;font-weight:bold">${totalQty}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">(faltan ${totalPending})</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
   };
 
@@ -615,6 +631,11 @@ export const PickingModule = ({ currentUser } = {}) => {
           <div className="flex-1 h-1 bg-secondary/60 rounded-full overflow-hidden max-w-xs">
             <div className="h-full bg-indigo-400 transition-all" style={{ width: `${ticketsTotal > 0 ? (tickets.length / ticketsTotal) * 100 : 0}%` }} />
           </div>
+        </div>
+      )}
+      {ticketsCapped && (
+        <div className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-500 bg-amber-500/5 border border-amber-500/20 px-3 py-2 rounded-xl">
+          Mostrando los primeros {MAX_TICKETS.toLocaleString()} de {ticketsTotal.toLocaleString()} tickets — usa la búsqueda para acotar
         </div>
       )}
 
