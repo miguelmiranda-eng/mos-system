@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter, Check } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
@@ -175,6 +175,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   // Manual inventory entry modal — cascading dropdowns only (no free text).
   const [showAddManual, setShowAddManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  // "Nuevo estilo con varios items": one style header + a list of color/size
+  // line items, all created in one batch (entrada).
+  const [multiMode, setMultiMode] = useState(false);
+  const [styleItems, setStyleItems] = useState([{ color: '', size: '', zone: '', location: '', total_boxes: 0, total_units: 0 }]);
+  const [multiDone, setMultiDone] = useState(0);
   // 'add' = meter (entrada) · 'remove' = sacar (salida / ajuste a la baja)
   const [manualOp, setManualOp] = useState('add');
   const [locationsByZone, setLocationsByZone] = useState({}); // { zone: [locName,...] }
@@ -354,6 +359,9 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     setManualForm(emptyManualForm);
     setManualOp('add');
     setStyleInfo(null);
+    setMultiMode(false);
+    setStyleItems([{ color: '', size: '', zone: '', location: '', total_boxes: 0, total_units: 0 }]);
+    setMultiDone(0);
     setShowAddManual(true);
     // Lazy-load zone → locations map (only on first open).
     if (Object.keys(locationsByZone).length === 0) {
@@ -467,6 +475,49 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       logLoadError('manual inventory add')(err);
       toast.error(t('error_connection'));
     } finally { setSavingManual(false); }
+  };
+
+  // ── Nuevo estilo con varios items ─────────────────────────────────────────
+  const addStyleItem = () => setStyleItems(items => [...items, { color: '', size: '', zone: '', location: '', total_boxes: 0, total_units: 0 }]);
+  const removeStyleItem = (i) => setStyleItems(items => (items.length > 1 ? items.filter((_, idx) => idx !== i) : items));
+  const updateStyleItem = (i, patch) => setStyleItems(items => items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+
+  const submitMultiAdd = async () => {
+    const style = (manualForm.style || '').trim();
+    if (!style) { toast.error('Style es requerido'); return; }
+    if (!manualForm.reason) { toast.error('Selecciona el motivo de la entrada'); return; }
+    const items = styleItems.filter(it => it.color && it.size && it.location && (Number(it.total_units) || 0) > 0);
+    if (items.length === 0) { toast.error('Agrega al menos un item con color, talla, ubicación y unidades'); return; }
+    const header = {
+      customer: (manualForm.customer || '').toUpperCase(),
+      description: (manualForm.description || '').toUpperCase(),
+      country_of_origin: (manualForm.country_of_origin || '').toUpperCase(),
+      category: (manualForm.category || '').toUpperCase(),
+      fabric_content: (manualForm.fabric_content || '').toUpperCase(),
+    };
+    setSavingManual(true);
+    setMultiDone(0);
+    let ok = 0, fail = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const payload = {
+        style, color: it.color, size: it.size, location: it.location,
+        operation: 'add', reason: manualForm.reason,
+        total_units: Number(it.total_units) || 0, total_boxes: Number(it.total_boxes) || 0,
+        ...header,
+      };
+      try {
+        const res = await fetch(`${API}/inventory`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', body: JSON.stringify(payload),
+        });
+        if (res.ok) ok++; else fail++;
+      } catch { fail++; }
+      setMultiDone(i + 1);
+    }
+    setSavingManual(false);
+    toast.success(`Estilo ${style}: ${ok} item(s) creado(s)${fail ? ` · ${fail} con error` : ''}`);
+    if (ok) { setShowAddManual(false); setSearch(style); loadFilters(); }
   };
 
   const openHistory = async (inv) => {
@@ -987,7 +1038,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setManualOp('remove')}
+                  onClick={() => { setManualOp('remove'); setMultiMode(false); }}
                   disabled={savingManual}
                   data-testid="manual-op-remove"
                   className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${manualOp === 'remove' ? 'bg-rose-500 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
@@ -995,6 +1046,37 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   <Minus className="w-4 h-4" /> Sacar (salida)
                 </button>
               </div>
+
+              {/* 1 item vs nuevo estilo con varios items (solo entrada) */}
+              {manualOp === 'add' && (
+                <div className="grid grid-cols-2 gap-2 p-1 bg-secondary/40 rounded-xl border border-border/40">
+                  <button
+                    type="button"
+                    onClick={() => setMultiMode(false)}
+                    disabled={savingManual}
+                    aria-pressed={!multiMode}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${!multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
+                  >
+                    {!multiMode && <Check className="w-3.5 h-3.5" />} 1 item
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMultiMode(true)}
+                    disabled={savingManual}
+                    data-testid="manual-multi-toggle"
+                    aria-pressed={multiMode}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
+                  >
+                    {multiMode && <Check className="w-3.5 h-3.5" />} Nuevo estilo (varios items)
+                  </button>
+                </div>
+              )}
+
+              {multiMode && manualOp === 'add' && (
+                <p className="text-[11px] text-muted-foreground bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2 leading-relaxed">
+                  Captura los <b className="text-foreground">datos del estilo</b> una vez y agrega cada talla/color como un <b className="text-foreground">item</b> abajo. Al guardar se crean todos juntos.
+                </p>
+              )}
 
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
@@ -1010,17 +1092,23 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   {(manualOp === 'remove' ? REMOVE_REASONS : ADD_REASONS).map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
+              {multiMode && manualOp === 'add' && (
+                <span className="text-xs font-black uppercase tracking-widest text-foreground block border-t border-border/30 pt-3">Datos del estilo</span>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Style / SKU *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+                    {multiMode ? 'Número de estilo / SKU *' : 'Style / SKU *'}
+                  </label>
                   <Typeahead
                     value={manualForm.style}
                     onChange={onStyleChange}
                     options={filters.styles || EMPTY}
-                    placeholder="Escribe para buscar… ej: 1001"
+                    placeholder="Escribe el número de estilo… ej: 1001"
                     testid="manual-style"
                   />
                 </div>
+                {!multiMode && (<>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color *</label>
                   <Typeahead
@@ -1043,6 +1131,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     testid="manual-size"
                   />
                 </div>
+                </>)}
+                {!multiMode && (<>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Zona *</label>
                   <Typeahead
@@ -1063,6 +1153,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     testid="manual-location"
                   />
                 </div>
+                </>)}
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
                   <Typeahead
@@ -1113,6 +1204,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     data-testid="manual-description"
                   />
                 </div>
+                {!multiMode && (<>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cajas</label>
                   <input
@@ -1134,7 +1226,88 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     data-testid="manual-units"
                   />
                 </div>
+                </>)}
               </div>
+
+              {/* Items del nuevo estilo (color/talla/ubicación/cantidad por renglón) */}
+              {multiMode && manualOp === 'add' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between border-t border-border/30 pt-3">
+                    <div>
+                      <span className="text-xs font-black uppercase tracking-widest text-foreground">Items del estilo</span>
+                      <p className="text-[11px] text-muted-foreground">Agrega un renglón por cada talla / color.</p>
+                    </div>
+                    <button
+                      type="button" onClick={addStyleItem} disabled={savingManual}
+                      className="text-[11px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-500 flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2.5 py-1.5 disabled:opacity-50"
+                      data-testid="manual-add-item"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Agregar item
+                    </button>
+                  </div>
+
+                  {styleItems.map((it, i) => {
+                    const itLocOptions = it.zone && (locationsByZone[it.zone] || []).length ? locationsByZone[it.zone] : allLocations;
+                    const lbl = "text-[9px] font-black uppercase tracking-widest text-muted-foreground block mb-0.5";
+                    return (
+                      <div key={i} className="border border-border/50 rounded-xl p-3 bg-secondary/20 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
+                            <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px]">{i + 1}</span>
+                            Item {i + 1}
+                          </span>
+                          {styleItems.length > 1 && (
+                            <button type="button" onClick={() => removeStyleItem(i)} disabled={savingManual}
+                              className="text-[10px] font-bold uppercase tracking-widest text-rose-500 hover:text-rose-400 flex items-center gap-1 disabled:opacity-50"
+                              title="Quitar item">
+                              <X className="w-3.5 h-3.5" /> Quitar
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className={lbl}>Color *</label>
+                            <Typeahead value={it.color} onChange={v => updateStyleItem(i, { color: v })} options={styleInfo?.colors || EMPTY} placeholder="Escribe o elige" testid={`item-color-${i}`} />
+                          </div>
+                          <div>
+                            <label className={lbl}>Talla *</label>
+                            <Typeahead value={it.size} onChange={v => updateStyleItem(i, { size: v })} options={sizeOptions} placeholder="Escribe o elige" testid={`item-size-${i}`} />
+                          </div>
+                          <div>
+                            <label className={lbl}>Zona</label>
+                            <Typeahead value={it.zone} onChange={v => updateStyleItem(i, { zone: v, location: '' })} options={zoneOptions} placeholder="Opcional" testid={`item-zone-${i}`} />
+                          </div>
+                          <div>
+                            <label className={lbl}>Ubicación *</label>
+                            <Typeahead value={it.location} onChange={v => updateStyleItem(i, { location: v, zone: locZoneMap[v] || it.zone })} options={itLocOptions} placeholder="Escribe o elige" testid={`item-loc-${i}`} />
+                          </div>
+                          <div>
+                            <label className={lbl}>Cajas</label>
+                            <input type="number" min="0" value={it.total_boxes} onChange={e => updateStyleItem(i, { total_boxes: e.target.value })} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums" />
+                          </div>
+                          <div>
+                            <label className={lbl}>Unidades *</label>
+                            <input type="number" min="1" value={it.total_units} onChange={e => updateStyleItem(i, { total_units: e.target.value })} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums font-bold" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {savingManual && (
+                    <div>
+                      <div className="flex justify-between text-[11px] font-bold text-muted-foreground mb-1">
+                        <span>Creando items…</span>
+                        <span className="font-mono">{multiDone} / {styleItems.filter(it => it.color && it.size && it.location && (Number(it.total_units) || 0) > 0).length}</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 transition-all duration-150"
+                          style={{ width: `${(() => { const n = styleItems.filter(it => it.color && it.size && it.location && (Number(it.total_units) || 0) > 0).length || 1; return Math.round((multiDone / n) * 100); })()}%` }} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 p-5 border-t border-border/20">
@@ -1146,13 +1319,13 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 Cancelar
               </button>
               <button
-                onClick={submitManualAdd}
+                onClick={multiMode && manualOp === 'add' ? submitMultiAdd : submitManualAdd}
                 disabled={savingManual}
                 className={`px-5 py-2 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all disabled:opacity-50 ${manualOp === 'remove' ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'}`}
                 data-testid="manual-submit-btn"
               >
                 {savingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : (manualOp === 'remove' ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}
-                {manualOp === 'remove' ? 'Sacar' : 'Guardar'}
+                {manualOp === 'remove' ? 'Sacar' : (multiMode ? 'Crear estilo' : 'Guardar')}
               </button>
             </div>
           </div>

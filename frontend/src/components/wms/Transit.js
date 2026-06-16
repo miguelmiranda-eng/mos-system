@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
   Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
-  ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2,
+  ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2, Plus,
 } from "lucide-react";
 import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
+import { useAuth } from "../../App";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -21,6 +22,13 @@ const TRANSIT_LEGACY = "UBICACION TEMPORAL";
  *   - Move them. The backend re-balances inventory and logs a movement.
  */
 export const TransitModule = () => {
+  const { user } = useAuth();
+  const isAdmin = ['admin', 'supersu'].includes(user?.role);
+  // Bulk cart creation (admin) — make N new "CARRO <n>" locations with a progress bar.
+  const [showCreateCarts, setShowCreateCarts] = useState(false);
+  const [cartQty, setCartQty] = useState(10);
+  const [creating, setCreating] = useState(false);
+  const [createDone, setCreateDone] = useState(0);
   const [boxes, setBoxes] = useState([]);
   const [transitName, setTransitName] = useState(TRANSIT_LEGACY);
   const [loading, setLoading] = useState(false);
@@ -62,6 +70,31 @@ export const TransitModule = () => {
   }, []);
 
   useEffect(() => { loadInfo(); }, [loadInfo]);
+
+  // Create `cartQty` new carts, numbered after the highest existing CARRO.
+  // Sequential so the progress bar advances per cart; dups are skipped.
+  const handleCreateCarts = async () => {
+    const qty = Math.max(1, Math.min(50, parseInt(cartQty) || 0));
+    const maxNum = cartInfo.reduce((mx, c) => {
+      const m = /CARRO\s+(\d+)/i.exec(c.name || "");
+      return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
+    }, 0);
+    setCreating(true);
+    setCreateDone(0);
+    let created = 0, skipped = 0;
+    for (let i = 1; i <= qty; i++) {
+      const name = `CARRO ${maxNum + i}`;
+      try {
+        const res = await poster('/locations', { name, zone: 'CARROS', type: 'transit' });
+        if (res?.ok) created++; else skipped++;
+      } catch { skipped++; }
+      setCreateDone(i);
+    }
+    setCreating(false);
+    toast.success(`Carros creados: ${created}${skipped ? ` · ${skipped} omitidos (ya existían)` : ''}`);
+    setShowCreateCarts(false);
+    loadInfo();
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,10 +313,72 @@ export const TransitModule = () => {
             </p>
           </div>
         </div>
-        <div className="text-[11px] font-mono font-bold text-muted-foreground">
-          {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button
+              onClick={() => { setCartQty(10); setShowCreateCarts(true); }}
+              className="px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border border-amber-500/40 text-amber-600 hover:bg-amber-500/10 transition-all flex items-center gap-1.5"
+              data-testid="putaway2-create-carts"
+            >
+              <Plus className="w-3.5 h-3.5" /> Crear carros
+            </button>
+          )}
+          <div className="text-[11px] font-mono font-bold text-muted-foreground">
+            {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
+          </div>
         </div>
       </div>
+
+      {/* Bulk create carts modal */}
+      {showCreateCarts && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !creating && setShowCreateCarts(false)}>
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black uppercase tracking-widest text-sm flex items-center gap-2">
+                <Truck className="w-4 h-4 text-amber-500" /> Crear carros
+              </h3>
+              {!creating && <button onClick={() => setShowCreateCarts(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-5 h-5" /></button>}
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Se crearán carros numerados a partir del último existente (máximo 50 a la vez).
+              Los que ya existan se omiten. Funcionan como ubicaciones de tránsito: reciben material,
+              descuentan inventario al surtir y aparecen en las tareas de surtido.
+            </p>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">¿Cuántos carros? (máx. 50)</label>
+            <input
+              type="number" min="1" max="50" value={cartQty}
+              onChange={e => setCartQty(e.target.value)}
+              disabled={creating}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-lg font-mono font-bold mb-3 disabled:opacity-50"
+              data-testid="create-carts-qty"
+            />
+            {creating && (
+              <div className="mb-3">
+                <div className="flex justify-between text-[11px] font-bold text-muted-foreground mb-1">
+                  <span>Creando…</span>
+                  <span className="font-mono">{createDone} / {Math.max(1, Math.min(50, parseInt(cartQty) || 0))}</span>
+                </div>
+                <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+                  <div className="h-full bg-amber-500 transition-all duration-150"
+                    style={{ width: `${Math.round((createDone / Math.max(1, Math.min(50, parseInt(cartQty) || 1))) * 100)}%` }} />
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              {!creating && <button onClick={() => setShowCreateCarts(false)} className="px-4 py-2 rounded-lg text-xs font-bold text-muted-foreground hover:bg-secondary">Cancelar</button>}
+              <button
+                onClick={handleCreateCarts}
+                disabled={creating}
+                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 flex items-center gap-2"
+                data-testid="create-carts-confirm"
+              >
+                {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {creating ? 'Creando…' : 'Crear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cart selector — only carts with stock (or the active one) show as tabs;
           every cart stays reachable through the "Ir a carro" dropdown. */}
