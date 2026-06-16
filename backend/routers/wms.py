@@ -1444,6 +1444,26 @@ async def delete_receiving(receiving_id: str, request: Request):
     
     # Revert inventory added by this receiving
     boxes = await db.wms_boxes.find({"receiving_id": receiving_id}).to_list(1000)
+
+    # Guard: once a box has been put away / picked / processed, its units may now
+    # live in a different location, so deleting the receiving can no longer cleanly
+    # reverse the inventory — that is exactly what historically left phantom stock
+    # (system shows material that is not physically there). Block it and tell the
+    # user to adjust via Entradas/Salidas instead of deleting the receipt.
+    RAW_STATES = {None, "", "raw"}
+    RAW_STATUSES = {None, "", "putaway_pending", "received", "pending"}
+    moved = [b for b in boxes
+             if (b.get("state") not in RAW_STATES) or (b.get("status") not in RAW_STATUSES)
+             or int(b.get("units_allocated", 0) or 0) > 0]
+    if moved:
+        raise HTTPException(
+            409,
+            f"No se puede eliminar: {len(moved)} de {len(boxes)} caja(s) ya fueron "
+            "movidas (putaway), surtidas o procesadas. Borrar ahora dejaria inventario "
+            "fantasma. Ajusta el inventario con Entradas/Salidas, o regresa/reubica las "
+            "cajas a su estado original, antes de eliminar el recibo.",
+        )
+
     for box in boxes:
         box_style = box.get("style")
         box_color = box.get("color")
