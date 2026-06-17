@@ -966,6 +966,156 @@ async def boxes_relocate(request: Request):
     }
 
 
+@router.post("/move-units")
+async def move_units(request: Request):
+    """Move a partial quantity of ONE sku/color/size from one location to another
+    — the picker 'Mover > Unidades (consolidar)' flow. Consumes source boxes FIFO:
+    a box taken in full is relocated, a box taken in part is split (source box
+    reduced, a fresh box created at the destination). Inventory rows are kept in
+    lockstep with the physical boxes the whole way so the two never drift."""
+    user = await require_auth(request)
+    body = await request.json()
+    src = (body.get("from") or "").strip().upper()
+    dst = (body.get("to") or "").strip().upper()
+    sku = (body.get("sku") or body.get("style") or "").strip()
+    color = (body.get("color") or "").strip()
+    size = (body.get("size") or "").strip()
+    try:
+        units = int(body.get("units") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Cantidad (units) inválida")
+
+    if not src or not dst:
+        raise HTTPException(400, "Ubicación origen y destino son obligatorias")
+    if src == dst:
+        raise HTTPException(400, "El origen y el destino no pueden ser iguales")
+    if not sku:
+        raise HTTPException(400, "SKU/Style es obligatorio")
+    if units <= 0:
+        raise HTTPException(400, "La cantidad debe ser mayor a 0")
+
+    dst_loc = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}}
+    )
+    if not dst_loc:
+        raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
+    dst_name = dst_loc.get("name", dst)
+    await _assert_not_on_hold(user, src, dst_name)
+
+    # Block oversell: can't move more than what's physically at the source
+    # (reuses the same availability check as picking — boxes OR inventory row).
+    avail = await _available_units(sku, color, size, src)
+    if units > avail:
+        raise HTTPException(409, f"No hay suficiente en {src}: pides {units}, disponible {avail}")
+
+    # Consume source boxes FIFO.
+    q = {
+        "$or": [{"sku": sku}, {"style": sku}], "color": color, "size": size,
+        "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"},
+        "units": {"$gt": 0},
+    }
+    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(1000)
+    sample = boxes[0] if boxes else {}
+    remaining = units
+    whole_count = 0   # boxes that left the source entirely
+    split_count = 0   # boxes split → a new partial box created at the destination
+    next_seq = None
+
+    for box in boxes:
+        if remaining <= 0:
+            break
+        b_qty = int((box.get("units") if box.get("units") is not None else box.get("qty", 0)) or 0)
+        if b_qty <= 0:
+            continue
+        take = min(b_qty, remaining)
+        if take >= b_qty:
+            # Whole box relocates to the destination.
+            await db.wms_boxes.update_one(
+                {"_id": box["_id"]},
+                {"$set": {"location": dst_name, "status": "stored"}},
+            )
+            whole_count += 1
+        else:
+            # Partial: shrink the source box, create a fresh box at the destination.
+            await db.wms_boxes.update_one(
+                {"_id": box["_id"]},
+                {"$set": {"units": b_qty - take, "qty": b_qty - take}},
+            )
+            if next_seq is None:
+                last = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
+                next_seq = int((last.get("seq_num", 0) if last else 0) or 0)
+            next_seq += 1
+            new_box_id = f"BOX-{next_seq:06d}"
+            child = {k: v for k, v in box.items() if k != "_id"}
+            child.update({
+                "box_id": new_box_id, "barcode": new_box_id, "lpn_id": new_box_id,
+                "seq_num": next_seq, "location": dst_name,
+                "units": take, "qty": take, "status": "stored",
+                "split_from": box.get("box_id"), "created_at": now_iso(),
+            })
+            child.pop("inventory_id", None)
+            await db.wms_boxes.insert_one(child)
+            split_count += 1
+        remaining -= take
+
+    # Inventory lockstep: decrement the source row by the full requested units and
+    # by the boxes that physically left it; increment/create the destination row by
+    # the units and every box that arrived there (whole + split).
+    boxes_added = whole_count + split_count
+    src_inv = await db.wms_inventory.find_one(
+        {"sku": sku, "color": color, "size": size,
+         "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
+    ) or await db.wms_inventory.find_one(
+        {"style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"},
+         "color": color, "size": size,
+         "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
+    )
+    if src_inv:
+        new_hand = max(0, int(src_inv.get("units_on_hand", 0) or 0) - units)
+        new_boxes = max(0, int(src_inv.get("total_boxes", 0) or 0) - whole_count)
+        if new_hand == 0 and new_boxes == 0 and int(src_inv.get("units_allocated", 0) or 0) <= 0:
+            await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+        else:
+            await db.wms_inventory.update_one(
+                {"_id": src_inv["_id"]},
+                {"$set": {"units_on_hand": new_hand, "total_boxes": new_boxes, "updated_at": now_iso()}},
+            )
+
+    dst_inv = await db.wms_inventory.find_one(
+        {"sku": sku, "color": color, "size": size, "location": dst_name}
+    )
+    if dst_inv:
+        await db.wms_inventory.update_one(
+            {"_id": dst_inv["_id"]},
+            {"$inc": {"units_on_hand": units, "total_boxes": boxes_added},
+             "$set": {"updated_at": now_iso()}},
+        )
+    else:
+        await db.wms_inventory.insert_one({
+            "inventory_id": gen_id("inv"),
+            "sku": sku, "style": sample.get("style") or sku,
+            "color": color, "size": size,
+            "customer": sample.get("customer", ""),
+            "manufacturer": sample.get("manufacturer", ""),
+            "description": sample.get("description", ""),
+            "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
+            "fabric_content": sample.get("fabric_content", ""),
+            "location": dst_name, "total_boxes": boxes_added,
+            "units_on_hand": units, "units_allocated": 0, "updated_at": now_iso(),
+        })
+
+    await log_movement(user, MovementType.BULK_RELOCATION, {
+        "from": src, "to": dst_name, "sku": sku, "color": color, "size": size,
+        "units_moved": units, "boxes_relocated": whole_count, "boxes_split": split_count,
+    })
+    await notify_badge_change("all")
+    return {
+        "message": f"Movidas {units} unidades de {sku} de {src} a {dst_name}",
+        "from": src, "to": dst_name, "units_moved": units,
+        "boxes_relocated": whole_count, "boxes_split": split_count,
+    }
+
+
 @router.delete("/locations/{location_id}")
 async def delete_location(location_id: str, request: Request, force: bool = False):
     """Delete a location. Two guards:

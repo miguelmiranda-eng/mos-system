@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck,
+  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -28,6 +28,7 @@ import { CycleCountModule } from "./wms/CycleCount";
 import { DirectedWorkModule } from "./wms/DirectedWork";
 import { AsnModule } from "./wms/Asn";
 import { TransitModule } from "./wms/Transit";
+import { MoverModule } from "./wms/Mover";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -39,6 +40,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'dashboard':    return <InventoryDashboard customer={ctx.associatedCustomer} apiBase={API} />;
     case 'receiving':    return <ReceivingModule />;
     case 'transit':      return <TransitModule />;
+    case 'mover':        return <MoverModule />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
@@ -105,6 +107,7 @@ export default function WMS() {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
     { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
     { id: 'transit', label: 'Putaway 2.0', icon: Truck, color: 'text-amber-400', desc: 'Carros de tránsito — cajas pendientes de ubicación física' },
+    { id: 'mover', label: 'MOVER', icon: Move, color: 'text-teal-400', desc: 'Mover material entre ubicaciones: toda la ubicación, una caja o unidades' },
     // STANDBY — Putaway 1.0 oculto del sidebar. Reemplazado por Putaway 2.0 (id: 'transit').
     // El import + el case 'putaway' del switch se quedan vivos por si hay que reactivarlo.
     // { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
@@ -201,7 +204,7 @@ export default function WMS() {
   // Picker launcher: two big buttons (Picking / Putaway). Picking one enters
   // that module; the sidebar then only exposes those same two.
   if (currentUser?.role === 'picker' && pickerHome) {
-    const opts = MODULES.filter(m => ['picking', 'transit'].includes(m.id));
+    const opts = MODULES.filter(m => ['picking', 'transit', 'mover'].includes(m.id));
     const firstName = (currentUser?.name || '').trim().split(' ')[0];
     return (
       <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
@@ -314,7 +317,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['transit'].includes(m.id);
+            if (currentUser?.role === 'picker') return ['transit', 'mover'].includes(m.id);
             return true;
           }).map(m => {
             const Icon = m.icon;
