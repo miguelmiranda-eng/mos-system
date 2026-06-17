@@ -1,6 +1,6 @@
 """Users management routes."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_admin, require_supersu, require_auth, log_activity, ADMIN_EMAILS
+from deps import db, require_admin, require_auth, log_activity, ADMIN_EMAILS, SUPERSU_EMAILS
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api")
@@ -64,9 +64,11 @@ async def invite_user(request: Request):
     user = await require_admin(request)
     body = await request.json()
     email = body.get("email", "").strip().lower()
-    # Solo supersu puede asignar un rol distinto a "general"
+    # Admins can invite with any role; only a super admin may mint another supersu.
     requested_role = body.get("role", "general")
-    role = requested_role if user.get("role") == "supersu" else "general"
+    if requested_role == "supersu" and user.get("role") != "supersu":
+        raise HTTPException(status_code=403, detail="Solo un super admin puede asignar el rol de super admin")
+    role = requested_role
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
@@ -84,10 +86,25 @@ async def invite_user(request: Request):
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(user_id: str, request: Request):
-    user = await require_supersu(request)
+    # Admins can manage roles; only a super admin (supersu) may grant or revoke
+    # the supersu role itself, and an admin can't modify an existing super admin.
+    user = await require_admin(request)
+    caller_is_supersu = user.get("role") == "supersu"
     body = await request.json()
     new_role = body.get("role", "general")
     associated_customer = body.get("associated_customer", "")
+
+    target = await db.users.find_one(
+        {"$or": [{"user_id": user_id}, {"email": user_id}]},
+        {"_id": 0, "role": 1, "email": 1},
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not caller_is_supersu:
+        if new_role == "supersu":
+            raise HTTPException(status_code=403, detail="Solo un super admin puede asignar el rol de super admin")
+        if target.get("role") == "supersu" or target.get("email") in SUPERSU_EMAILS:
+            raise HTTPException(status_code=403, detail="No puedes modificar el rol de un super admin")
     # Machine operators get their default board assigned by admin. The
     # MachineOperatorView reads user.assigned_board on login and locks the
     # selector to it. When the role moves away from "operator" we leave the

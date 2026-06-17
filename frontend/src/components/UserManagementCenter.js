@@ -57,6 +57,10 @@ const UserManagementCenter = () => {
   const [currentUser, setCurrentUser] = useState(null);
 
   const isSupersu = currentUser?.role === 'supersu';
+  const isAdmin = currentUser?.role === 'admin';
+  // Admins can assign roles too — but the "supersu" option stays hidden for them,
+  // and they can't edit a user who is already a super admin (enforced below + API).
+  const canAssignRoles = isSupersu || isAdmin;
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -320,7 +324,7 @@ const UserManagementCenter = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol Inicial</label>
-                  {isSupersu ? (
+                  {canAssignRoles ? (
                     <Select value={inviteRole} onValueChange={setInviteRole}>
                       <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
                         <SelectValue />
@@ -328,7 +332,7 @@ const UserManagementCenter = () => {
                       <SelectContent className="bg-popover border-border z-[300]">
                         <SelectItem value="general">Usuario General</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
-                        <SelectItem value="supersu">Super Usuario</SelectItem>
+                        {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
                         <SelectItem value="picker">Picker / Almacén</SelectItem>
                         <SelectItem value="operator">Operador</SelectItem>
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
@@ -394,7 +398,7 @@ const UserManagementCenter = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol</label>
-                  {isSupersu ? (
+                  {canAssignRoles ? (
                     <Select value={newRole} onValueChange={setNewRole}>
                       <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
                         <SelectValue />
@@ -402,7 +406,7 @@ const UserManagementCenter = () => {
                       <SelectContent className="bg-popover border-border z-[300]">
                         <SelectItem value="general">Usuario General</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
-                        <SelectItem value="supersu">Super Usuario</SelectItem>
+                        {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
                         <SelectItem value="picker">Picker / Almacén</SelectItem>
                         <SelectItem value="operator">Operador</SelectItem>
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
@@ -515,7 +519,7 @@ const UserManagementCenter = () => {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {isSupersu ? (
+                    {(isSupersu || (isAdmin && u.role !== 'supersu')) ? (
                       <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
                         <SelectTrigger className="w-32 h-9 bg-secondary/50 border-border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:bg-secondary">
                           <SelectValue />
@@ -523,7 +527,7 @@ const UserManagementCenter = () => {
                         <SelectContent className="bg-popover border-border z-[300]">
                           <SelectItem value="general">General</SelectItem>
                           <SelectItem value="admin">Administrador</SelectItem>
-                          <SelectItem value="supersu">Super Usuario</SelectItem>
+                          {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
                           <SelectItem value="picker">Picker</SelectItem>
                           <SelectItem value="operator">Operador</SelectItem>
                           <SelectItem value="inspector_qc">Inspector QC</SelectItem>
