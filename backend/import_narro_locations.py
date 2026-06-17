@@ -1,5 +1,9 @@
-"""Import the 6,688 NARRO locations (NA01-A01 .. NA22-D76) from
+"""Import the NARRO locations (NA01-A01 .. NA22-D48) from
 Locaciones_NA01_NA22 (1).xlsx into wms_locations under tab="narro".
+
+Positions 49..76 in the source Excel are NOT real warehouse slots — each
+rack level (A/B/C/D) physically has 48 positions only. They are capped on
+import (see MAX_POSITION below), so a re-run never recreates them.
 
 Schema written here matches the rest of wms_locations:
   - location_id: "loc" + 12 hex chars
@@ -23,9 +27,16 @@ Run as:
 """
 import asyncio
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Each rack level (A/B/C/D) only has 48 physical positions (01..48). The source
+# Excel still lists 01..76, so we cap on import — positions 49..76 don't exist in
+# the warehouse and were removed from wms_locations. Names look like "NA01-A07".
+MAX_POSITION = 48
+_NAME_RE = re.compile(r"^(NA\d+)-([A-D])(\d+)$")
 
 import openpyxl
 from dotenv import load_dotenv
@@ -65,6 +76,10 @@ def read_xlsx() -> list[dict]:
             continue
         name = str(locacion).strip().upper()
         zone = str(rack).strip().upper() if rack else ""
+        # Skip positions 49..76 — they aren't real warehouse slots.
+        m = _NAME_RE.match(name)
+        if m and int(m.group(3)) > MAX_POSITION:
+            continue
         rows.append({"name": name, "zone": zone})
     return rows
 
