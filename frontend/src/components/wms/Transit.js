@@ -117,7 +117,8 @@ export const TransitModule = () => {
   // Active locations for the typeahead — `summary=false` skips the expensive
   // inventory aggregation so the dropdown is snappy. We exclude every system
   // transit slot (the 5 carts + legacy temporal) because you can't relocate
-  // FROM a cart TO another cart.
+  // FROM a cart TO another cart. We do NOT filter by `active` so EVERY storage
+  // location is available as a putaway destination (inactive ones included).
   useEffect(() => {
     let cancelled = false;
     const excluded = new Set(
@@ -127,7 +128,7 @@ export const TransitModule = () => {
       .then(rows => {
         if (cancelled) return;
         const filtered = (Array.isArray(rows) ? rows : [])
-          .filter(l => l.active !== false && !excluded.has((l.name || "").toUpperCase()));
+          .filter(l => !excluded.has((l.name || "").toUpperCase()));
         setLocOptions(filtered);
       })
       .catch(logLoadError("locations for transit destination"));
