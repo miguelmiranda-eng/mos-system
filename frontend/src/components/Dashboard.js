@@ -2373,7 +2373,7 @@ const Dashboard = () => {
       </Dialog>
 
       {/* Search Results Modal */}
-      <Dialog open={!!searchResults} onOpenChange={() => setSearchResults(null)}>
+      <Dialog open={!!searchResults} onOpenChange={(open) => { if (!open) { setSearchResults(null); setSearchQuery(''); } }}>
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[92vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
@@ -2397,7 +2397,7 @@ const Dashboard = () => {
                   {searchResults?.map(order => (
                     <div role="row" className="flex border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group" key={order.order_id}
                       data-testid={`search-result-${order.order_id}`}>
-                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); }}>
+                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); setSearchQuery(''); }}>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-black text-royal text-lg hover:underline transition-all">
                             {order.order_number}
@@ -2428,7 +2428,7 @@ const Dashboard = () => {
                       <div role="cell" className="py-3 px-4 min-w-[80px] text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 border-l border-border/30 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <div className="flex items-center gap-1.5 justify-center">
                           <button
-                            onClick={() => { setCommentsOrder(order); setSearchResults(null); }}
+                            onClick={() => { setCommentsOrder(order); setSearchResults(null); setSearchQuery(''); }}
                             className="p-2 rounded-xl bg-secondary/60 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all shadow-sm"
                             title="Ver comentarios"
                           >
