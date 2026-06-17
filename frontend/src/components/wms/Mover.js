@@ -177,8 +177,11 @@ export function MoverModule() {
     poster("/boxes/relocate", { box_ids: selectedBoxes, to: cleanScan(dest) }));
 
   const moveUnits = () => doMove("Mover unidades", poster("/move-units", {
+    // Send the SAME identifier the row shows (style first): Excel-imported rows
+    // can carry sku="None" with the real value in `style`. The backend matches
+    // on sku OR style, so style is the safe, consistent key.
     from: origin, to: cleanScan(dest),
-    sku: selectedLine.sku || selectedLine.style, color: selectedLine.color || "",
+    sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
     size: selectedLine.size || "", units: parseInt(qty) || 0,
   }));
 

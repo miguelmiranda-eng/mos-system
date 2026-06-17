@@ -1071,15 +1071,23 @@ async def move_units(request: Request):
          "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
     )
     if src_inv:
-        new_hand = max(0, int(src_inv.get("units_on_hand", 0) or 0) - units)
-        new_boxes = max(0, int(src_inv.get("total_boxes", 0) or 0) - whole_count)
-        if new_hand == 0 and new_boxes == 0 and int(src_inv.get("units_allocated", 0) or 0) <= 0:
+        # Atomic decrement-and-clamp (same race-free pattern as the picking fix):
+        # one document op so concurrent moves from the same row can't lose an
+        # update or drive stock negative.
+        updated = await db.wms_inventory.find_one_and_update(
+            {"_id": src_inv["_id"]},
+            [{"$set": {
+                "units_on_hand": {"$max": [0, {"$subtract": [{"$ifNull": ["$units_on_hand", 0]}, units]}]},
+                "total_boxes": {"$max": [0, {"$subtract": [{"$ifNull": ["$total_boxes", 0]}, whole_count]}]},
+                "updated_at": now_iso(),
+            }}],
+            return_document=ReturnDocument.AFTER,
+        )
+        # Drop the row only once it is fully empty (no units, no boxes, nothing reserved).
+        if (updated and int(updated.get("units_on_hand", 0) or 0) <= 0
+                and int(updated.get("total_boxes", 0) or 0) <= 0
+                and int(updated.get("units_allocated", 0) or 0) <= 0):
             await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
-        else:
-            await db.wms_inventory.update_one(
-                {"_id": src_inv["_id"]},
-                {"$set": {"units_on_hand": new_hand, "total_boxes": new_boxes, "updated_at": now_iso()}},
-            )
 
     dst_inv = await db.wms_inventory.find_one(
         {"sku": sku, "color": color, "size": size, "location": dst_name}
