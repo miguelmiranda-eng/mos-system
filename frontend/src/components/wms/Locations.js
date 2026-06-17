@@ -150,11 +150,12 @@ export const LocationsModule = ({ currentUser }) => {
     if (!activeLocLoaded) {
       fetcher('/locations?summary=false&limit=20000')
         .then(rows => {
-          const filtered = (Array.isArray(rows) ? rows : []).filter(l => l.active !== false);
-          setActiveLocations(filtered);
+          // Include ALL locations (active and inactive) so any slot is a valid
+          // relocate/move destination.
+          setActiveLocations(Array.isArray(rows) ? rows : []);
           setActiveLocLoaded(true);
         })
-        .catch(logLoadError('active locations for relocate'));
+        .catch(logLoadError('locations for relocate'));
     }
     try {
       // Fetch inventory rows AND every box in this location in parallel so the
@@ -286,7 +287,7 @@ export const LocationsModule = ({ currentUser }) => {
     if (!detailLoc) return;
     if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
     const exists = activeLocations.some(l => (l.name || '').toUpperCase() === dst);
-    if (!exists) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    if (!exists) { toast.error(`'${dst}' no existe en las ubicaciones`); return; }
     setRelocateSaving(true);
     try {
       const res = await poster('/boxes/relocate', { box_ids: [box.box_id], to: dst });
@@ -340,7 +341,7 @@ export const LocationsModule = ({ currentUser }) => {
     if (!detailLoc) return;
     if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
     if (!activeLocations.some(l => (l.name || '').toUpperCase() === dst)) {
-      toast.error(`'${dst}' no existe en las ubicaciones activas`); return;
+      toast.error(`'${dst}' no existe en las ubicaciones`); return;
     }
     setLineSaving(true);
     try {
