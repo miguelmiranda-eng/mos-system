@@ -317,7 +317,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['transit', 'mover'].includes(m.id);
+            if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
             return true;
           }).map(m => {
             const Icon = m.icon;
@@ -327,7 +327,12 @@ export default function WMS() {
             return (
               <button
                 key={m.id}
-                onClick={() => { setActiveModule(m.id); setMobileNav(false); }}
+                onClick={() => {
+                  // Pickers' "Picking" is the dedicated PDA route, not an in-WMS
+                  // module — route there just like the launcher tile does.
+                  if (currentUser?.role === 'picker' && m.id === 'picking') { navigate('/pda'); return; }
+                  setActiveModule(m.id); setMobileNav(false);
+                }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all relative group
                   ${isActive
                     ? 'bg-primary/10 text-primary shadow-[0_0_15px_rgba(255,193,7,0.1)]'
