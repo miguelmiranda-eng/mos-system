@@ -89,6 +89,12 @@ export const LocationsModule = ({ currentUser }) => {
   const [relocatingBoxId, setRelocatingBoxId] = useState(null);
   const [relocateDst, setRelocateDst] = useState('');
   const [relocateSaving, setRelocateSaving] = useState(false);
+  // Per-LINE move: relocate a whole inventory line (all its LPNs) to another
+  // location in one action.
+  const [relocatingLineId, setRelocatingLineId] = useState(null);
+  const [lineDst, setLineDst] = useState('');
+  const [lineSaving, setLineSaving] = useState(false);
+  const [lineDrop, setLineDrop] = useState(false);
   // Active locations cached for the relocate typeahead (lazy-loaded when the
   // modal opens — `summary=false` skips the expensive inventory aggregation).
   const [activeLocations, setActiveLocations] = useState([]);
@@ -312,6 +318,59 @@ export const LocationsModule = ({ currentUser }) => {
       toast.error('Error de conexión');
     } finally { setRelocateSaving(false); }
   }, [relocateDst, detailLoc, activeLocations, load]);
+
+  const startLineMove = useCallback((it) => {
+    setRelocatingLineId(it.inventory_id);
+    setLineDst('');
+    setLineDrop(false);
+  }, []);
+
+  const cancelLineMove = useCallback(() => {
+    setRelocatingLineId(null);
+    setLineDst('');
+    setLineDrop(false);
+  }, []);
+
+  // Move a whole inventory line: gather every LPN of the line and relocate them
+  // all to the destination in one /boxes/relocate call (which rebalances the
+  // inventory at both ends).
+  const confirmLineMove = useCallback(async (it) => {
+    const dst = (lineDst || '').trim().toUpperCase();
+    if (!dst) { toast.error('Escribe la ubicación destino'); return; }
+    if (!detailLoc) return;
+    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
+    if (!activeLocations.some(l => (l.name || '').toUpperCase() === dst)) {
+      toast.error(`'${dst}' no existe en las ubicaciones activas`); return;
+    }
+    setLineSaving(true);
+    try {
+      let boxes = await fetcher(`/boxes?inventory_id=${encodeURIComponent(it.inventory_id)}`);
+      if (!Array.isArray(boxes) || boxes.length === 0) {
+        const loc = detailLoc?.name || it.inv_location || it.location || '';
+        const params = new URLSearchParams({ location: loc });
+        if (it.sku || it.style) params.set('sku', it.sku || it.style);
+        if (it.color) params.set('color', it.color);
+        if (it.size) params.set('size', it.size);
+        boxes = await fetcher(`/boxes?${params.toString()}`);
+      }
+      const boxIds = (Array.isArray(boxes) ? boxes : []).map(b => b.box_id).filter(Boolean);
+      if (boxIds.length === 0) { toast.error('Esta línea no tiene cajas (LPNs) para mover'); return; }
+      const res = await poster('/boxes/relocate', { box_ids: boxIds, to: dst });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(data.message || `Renglón movido a ${dst} (${boxIds.length} cajas)`);
+        cancelLineMove();
+        if (detailLoc) openDetail(detailLoc);
+        load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al mover el renglón');
+      }
+    } catch (err) {
+      logLoadError('move line')(err);
+      toast.error('Error de conexión');
+    } finally { setLineSaving(false); }
+  }, [lineDst, detailLoc, activeLocations, openDetail, load, cancelLineMove]);
 
   const toggleBoxes = useCallback(async (it) => {
     const id = it.inventory_id;
@@ -1070,18 +1129,86 @@ export const LocationsModule = ({ currentUser }) => {
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-emerald-500">{onHand.toLocaleString()}</td>
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-blue-400">{available.toLocaleString()}</td>
                                 {canDeleteInv && (
-                                  <td className="p-2.5 text-right">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
-                                      className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500"
-                                      title="Borrar este renglón de la ubicación"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
+                                  <td className="p-2.5 text-right whitespace-nowrap">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {canExpand && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); startLineMove(it); }}
+                                          className="p-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400"
+                                          title="Mover este renglón a otra ubicación"
+                                        >
+                                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
+                                        className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500"
+                                        title="Borrar este renglón de la ubicación"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </td>
                                 )}
                               </tr>
+
+                              {relocatingLineId === it.inventory_id && (
+                                <tr className="bg-amber-500/10 border-b border-amber-500/20">
+                                  <td colSpan={canDeleteInv ? 11 : 10} className="py-2.5 px-4">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 whitespace-nowrap">
+                                        Mover {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''} →
+                                      </span>
+                                      <div className="relative">
+                                        <input
+                                          autoFocus
+                                          value={lineDst}
+                                          onChange={(e) => { setLineDst(e.target.value.toUpperCase()); setLineDrop(true); }}
+                                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmLineMove(it); } if (e.key === 'Escape') cancelLineMove(); }}
+                                          placeholder="Ubicación destino (ej. RP10-A26)"
+                                          className="w-60 px-3 py-1.5 bg-background border border-amber-500/40 rounded-lg text-sm font-mono focus:outline-none focus:border-amber-500"
+                                        />
+                                        {lineDrop && (() => {
+                                          const q = (lineDst || '').trim().toUpperCase();
+                                          const matches = (q ? activeLocations.filter(l => (l.name || '').toUpperCase().includes(q)) : activeLocations).slice(0, 30);
+                                          return matches.length ? (
+                                            <div className="absolute z-50 mt-1 w-60 max-h-56 overflow-auto bg-card border border-border rounded-lg shadow-xl">
+                                              {matches.map(l => (
+                                                <button
+                                                  key={l.name}
+                                                  type="button"
+                                                  onMouseDown={(e) => { e.preventDefault(); setLineDst((l.name || '').toUpperCase()); setLineDrop(false); }}
+                                                  className="w-full text-left px-3 py-1.5 text-[12px] font-mono hover:bg-primary/10"
+                                                >
+                                                  {l.name}{l.zone ? <span className="text-muted-foreground"> ({l.zone})</span> : ''}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null;
+                                        })()}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={lineSaving || !lineDst.trim()}
+                                        onClick={() => confirmLineMove(it)}
+                                        className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-[11px] font-black uppercase disabled:opacity-50 flex items-center gap-1"
+                                      >
+                                        {lineSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightLeft className="w-3 h-3" />} Mover
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={lineSaving}
+                                        onClick={cancelLineMove}
+                                        className="px-3 py-1.5 rounded-lg bg-secondary text-foreground text-[11px] font-bold uppercase disabled:opacity-50"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
 
                               {/* LPN drawer expands below the row when clicked */}
                               {hasBoxes && (
