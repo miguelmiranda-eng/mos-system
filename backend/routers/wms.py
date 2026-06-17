@@ -1915,6 +1915,16 @@ async def _move_box_inventory(box, old_loc, new_loc):
     )
 
 
+def _ci_eq(v):
+    """Case-insensitive exact match for a Mongo string field. Inventory and boxes
+    store the same color/style with inconsistent casing (e.g. 'Sand' vs 'SAND'),
+    and the picker UI (_compute_size_locations) matches case-insensitively — so
+    the stock check AND the deduction must too. Exact matching here silently found
+    nothing, which blocked legit picks and (before the guard) never deducted →
+    ghost inventory."""
+    return {"$regex": f"^{re.escape(v or '')}$", "$options": "i"}
+
+
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                              customer="", order_number=None, order_id=None):
     """Deduct `qty` units for a pick from the physical boxes (FIFO) AND the
@@ -1926,9 +1936,10 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
     remaining = int(qty or 0)
     if remaining <= 0:
         return
-    q = {"$or": [{"sku": style}, {"style": style}], "color": color, "size": size, "units": {"$gt": 0}}
+    q = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
+         "color": _ci_eq(color), "size": _ci_eq(size), "units": {"$gt": 0}}
     if location:
-        q["location"] = location
+        q["location"] = _ci_eq(location)
     boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(500)
     for box in boxes:
         if remaining <= 0:
@@ -1965,21 +1976,26 @@ async def _available_units(style, color, size, location=""):
     short of the request) without false-rejecting a pick when only one mirror
     lags behind (e.g. Excel-imported rows with no boxes, or boxes whose inventory
     row hasn't caught up)."""
+    style = (style or "").strip()
+    color = (color or "").strip()
     sz = (size or "").strip()
-    base = {"$or": [{"sku": style}, {"style": style}], "color": color or "", "size": sz}
+    # Case-insensitive match (Sand vs SAND) so this agrees with what the picker
+    # sees in _compute_size_locations — otherwise a legit pick is blocked with
+    # "disponible 0" even though the stock is right there.
+    base = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}], "color": _ci_eq(color), "size": _ci_eq(sz)}
 
     box_q = {**base, "units": {"$gt": 0}}
     if location:
-        box_q["location"] = location
+        box_q["location"] = _ci_eq(location)
     box_units = 0
-    for b in await db.wms_boxes.find(box_q, {"_id": 0, "units": 1, "qty": 1}).to_list(2000):
+    for b in await db.wms_boxes.find(box_q, {"_id": 0, "units": 1, "qty": 1}).to_list(5000):
         box_units += int((b.get("units") if b.get("units") is not None else b.get("qty", 0)) or 0)
 
     inv_q = dict(base)
     if location:
-        inv_q["location"] = location
+        inv_q["location"] = _ci_eq(location)
     inv_units = 0
-    for r in await db.wms_inventory.find(inv_q, {"_id": 0, "units_on_hand": 1}).to_list(2000):
+    for r in await db.wms_inventory.find(inv_q, {"_id": 0, "units_on_hand": 1}).to_list(5000):
         inv_units += int(r.get("units_on_hand", 0) or 0)
 
     return max(box_units, inv_units)
