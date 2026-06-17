@@ -9,6 +9,7 @@ from wms_constants import (
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
 )
 from datetime import datetime, timezone, timedelta
+from pymongo import ReturnDocument
 import uuid, io, json, logging, re, asyncio
 
 router = APIRouter(prefix="/api/wms")
@@ -1798,6 +1799,99 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         await _update_inventory_enhanced(style, color, size, remaining, inv_operation,
                                          location=location, customer=customer)
 
+
+async def _available_units(style, color, size, location=""):
+    """Physical units available to pick for a SKU dimension. Stock can live as
+    physical boxes AND/OR as a wms_inventory row, and the two mirrors can drift,
+    so we take the GREATER of the two. That blocks genuine oversell (BOTH mirrors
+    short of the request) without false-rejecting a pick when only one mirror
+    lags behind (e.g. Excel-imported rows with no boxes, or boxes whose inventory
+    row hasn't caught up)."""
+    sz = (size or "").strip()
+    base = {"$or": [{"sku": style}, {"style": style}], "color": color or "", "size": sz}
+
+    box_q = {**base, "units": {"$gt": 0}}
+    if location:
+        box_q["location"] = location
+    box_units = 0
+    for b in await db.wms_boxes.find(box_q, {"_id": 0, "units": 1, "qty": 1}).to_list(2000):
+        box_units += int((b.get("units") if b.get("units") is not None else b.get("qty", 0)) or 0)
+
+    inv_q = dict(base)
+    if location:
+        inv_q["location"] = location
+    inv_units = 0
+    for r in await db.wms_inventory.find(inv_q, {"_id": 0, "units_on_hand": 1}).to_list(2000):
+        inv_units += int(r.get("units_on_hand", 0) or 0)
+
+    return max(box_units, inv_units)
+
+
+async def _open_discrepancy_task(style, color, size, location, requested, available, user):
+    """Open (or reuse) a pending discrepancy cycle-count task so the warehouse
+    reconciles a slot whose system stock fell short of a pick request."""
+    existing = await db.wms_tasks.find_one({
+        "task_type": "discrepancy", "status": "pending",
+        "context.style": style, "context.color": color or "",
+        "context.size": (size or "").strip(), "context.location": location or "",
+    })
+    if existing:
+        return
+    await db.wms_tasks.insert_one({
+        "task_id": gen_id("tsk"), "task_type": "discrepancy", "priority": "HIGH",
+        "status": "pending", "assigned_to": None,
+        "context": {
+            "style": style, "color": color or "", "size": (size or "").strip(),
+            "location": location or "", "requested": int(requested), "available": int(available),
+            "suggested_zone": location or "",
+            "reason": "Pick oversell bloqueado: solicitado > disponible",
+        },
+        "created_by": (user or {}).get("user_id"),
+        "created_at": now_iso(),
+    })
+
+
+async def _assert_pick_stock(style, color, picked_sizes, user):
+    """WMS-002: block a pick (HTTP 409) that asks for more units than physically
+    available, BEFORE any deduction runs, and open a discrepancy task per
+    shortfall so the warehouse reconciles. Standalone Mongo has no multi-document
+    transactions, so we gate up-front; the per-row deduct is also atomic-clamped
+    (_update_inventory_enhanced) as a last-resort guard for the microsecond race
+    on the final units."""
+    style = (style or "").strip()
+    color = (color or "").strip()
+    shortfalls = []
+    for sz, data in (picked_sizes or {}).items():
+        sz_clean = (sz or "").strip()
+        if isinstance(data, dict) and data.get("details"):
+            for loc, qty in data["details"].items():
+                q = int(qty or 0)
+                if q <= 0:
+                    continue
+                avail = await _available_units(style, color, sz_clean, loc)
+                if q > avail:
+                    shortfalls.append({"size": sz_clean, "location": loc, "requested": q, "available": avail})
+        else:
+            q = int(data.get("total", 0)) if isinstance(data, dict) else int(data or 0)
+            if q <= 0:
+                continue
+            avail = await _available_units(style, color, sz_clean, "")
+            if q > avail:
+                shortfalls.append({"size": sz_clean, "location": "", "requested": q, "available": avail})
+
+    if not shortfalls:
+        return
+    for s in shortfalls:
+        await _open_discrepancy_task(style, color, s["size"], s["location"], s["requested"], s["available"], user)
+    detail = "; ".join(
+        f"{style} {color} {s['size']}".strip()
+        + (f" @ {s['location']}" if s["location"] else "")
+        + f": pidió {s['requested']}, disponible {s['available']}"
+        for s in shortfalls
+    )
+    raise HTTPException(409, f"Stock insuficiente para surtir; se abrió conteo de discrepancia. {detail}")
+
+
 @router.post("/putaway")
 async def putaway_box(request: Request):
     user = await require_auth(request)
@@ -1937,13 +2031,22 @@ async def _update_inventory_enhanced(
             new_alloc = max(0, inv.get("units_allocated", 0) - qty)
             await db.wms_inventory.update_one(doc_key, {"$set": {"units_allocated": new_alloc, "updated_at": now_iso()}})
         elif operation == "deduct":
-            # Guard: never let stock or allocation go below zero. Stock for the
-            # same SKU/location can be split across duplicate rows, so deducting
-            # the full picked qty from one row could otherwise drive it negative
-            # while its twin still holds positive stock (see RP04-B42 incident).
-            new_hand = max(0, inv.get("units_on_hand", 0) - qty)
-            new_alloc = max(0, inv.get("units_allocated", 0) - qty)
-            await db.wms_inventory.update_one(doc_key, {"$set": {"units_on_hand": new_hand, "units_allocated": new_alloc, "updated_at": now_iso()}})
+            # ATOMIC deduction (WMS-001). An aggregation-pipeline update lets a
+            # SINGLE document operation subtract-and-clamp-at-zero, so two
+            # concurrent picks can no longer both read the same units_on_hand and
+            # lose an update (the RP04-B42 oversell). True oversell is blocked
+            # up-front by _assert_pick_stock(); this clamp is the last-resort
+            # guard that keeps a row from ever going negative under a race.
+            updated = await db.wms_inventory.find_one_and_update(
+                doc_key,
+                [{"$set": {
+                    "units_on_hand": {"$max": [0, {"$subtract": ["$units_on_hand", qty]}]},
+                    "units_allocated": {"$max": [0, {"$subtract": ["$units_allocated", qty]}]},
+                    "updated_at": now_iso(),
+                }}],
+                return_document=ReturnDocument.AFTER,
+            )
+            new_hand = int((updated or {}).get("units_on_hand", 0) or 0)
 
             # WMS 2.0 Cycle Count Trigger
             if new_hand < 50:
@@ -1955,10 +2058,16 @@ async def _update_inventory_enhanced(
                         "created_at": now_iso(),
                     })
         elif operation == "pick_to_neck":
-            # 1. Deduct from current shelf (clamped at zero, same guard as deduct)
-            new_hand = max(0, inv.get("units_on_hand", 0) - qty)
-            new_alloc = max(0, inv.get("units_allocated", 0) - qty)
-            await db.wms_inventory.update_one(doc_key, {"$set": {"units_on_hand": new_hand, "units_allocated": new_alloc, "updated_at": now_iso()}})
+            # 1. ATOMIC deduct-and-clamp from the current shelf (same race-free
+            #    guard as "deduct" above).
+            await db.wms_inventory.find_one_and_update(
+                doc_key,
+                [{"$set": {
+                    "units_on_hand": {"$max": [0, {"$subtract": ["$units_on_hand", qty]}]},
+                    "units_allocated": {"$max": [0, {"$subtract": ["$units_allocated", qty]}]},
+                    "updated_at": now_iso(),
+                }}],
+            )
             # 2. Add to CUTTING_NECK (keep it allocated/reserved for the order)
             # Use the same sku/style as the source record for consistency
             inv_sku = inv.get("sku") or inv.get("style") or sku
@@ -3217,6 +3326,20 @@ async def save_pick_progress(ticket_id: str, request: Request):
         await _assert_not_on_hold(user, *picked_locs)
 
     picking_status = "completed" if is_complete else "in_progress"
+
+    # WMS-004 idempotency: a completed/confirmed ticket must never deduct again.
+    # Re-calling this endpoint with is_complete=true (double tap, retry, network
+    # replay) used to double-count the stock. Bail out before any deduction.
+    if is_complete and (
+        ticket.get("picking_status") in ("completed", "in_neck_cutting")
+        or ticket.get("status") in ("confirmed", "in_neck_cutting")
+    ):
+        return {
+            "message": "El pick ya estaba completado; no se vuelve a deducir inventario",
+            "ticket_id": ticket_id,
+            "picking_status": ticket.get("picking_status"),
+        }
+
     update = {
         "picked_sizes": picked_sizes,
         "picking_status": picking_status,
@@ -3229,10 +3352,18 @@ async def save_pick_progress(ticket_id: str, request: Request):
         # REAL DEDUCTION: deduct from shelves (or move to CUTTING_NECK) when picker completes
         is_neck = ticket.get("destination") == "neck_cutting"
         inv_op = "pick_to_neck" if is_neck else "deduct"
+        style = ticket.get('style', '').strip()
+        color = ticket.get('color', '').strip()
+        customer = ticket.get('customer', '')
+
+        # WMS-002: block oversell BEFORE mutating anything (raises 409 + opens a
+        # discrepancy task if the request exceeds physical availability).
+        await _assert_pick_stock(style, color, picked_sizes, user)
+
+        # WMS-003: a deduction failure must ABORT the confirm. Previously the
+        # exception was swallowed and the ticket was marked confirmed anyway,
+        # leaving the order "picked" with stock never deducted (ghost inventory).
         try:
-            style = ticket.get('style', '').strip()
-            color = ticket.get('color', '').strip()
-            customer = ticket.get('customer', '')
             # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
             _ord_no = ticket.get("order_number")
             _ord_id = ticket.get("order_id")
@@ -3252,8 +3383,11 @@ async def save_pick_progress(ticket_id: str, request: Request):
                             style, color, sz.strip(), "", qty,
                             inv_op, customer, _ord_no, _ord_id,
                         )
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error deducting inventory on pick complete: {e}")
+            logger.exception("Error deduciendo inventario en pick complete")
+            raise HTTPException(500, "No se pudo descontar inventario; el pick NO fue confirmado")
 
         # Update ticket status based on destination
         if is_neck:
@@ -3327,6 +3461,8 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
         style = ticket.get("style", "")
         color = ticket.get("color", "")
         order_number = ticket.get("order_number")
+        # WMS-002: block oversell before deducting anything in this flow too.
+        await _assert_pick_stock(style, color, picked_sizes, user)
         for sz, data in picked_sizes.items():
             # Handle both old {sz: qty} and new {sz: {total: X, details: {...}}} formats
             qty_to_pick = 0

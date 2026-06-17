@@ -4,6 +4,48 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from pathlib import Path
 
+# WMS-009: the wms_* collections had ZERO indexes, so picking/putaway/inventory
+# queries (by sku/color/size/location/status) were full collection scans. Each
+# entry is (collection, keys, options). Keys is a single field name or a list of
+# (field, direction) tuples for compound indexes. Every create is wrapped in
+# try/except so a pre-existing duplicate (e.g. drifted box_id) can't block boot.
+WMS_INDEXES = [
+    ("wms_inventory", [("sku", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
+    ("wms_inventory", [("style", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
+    ("wms_inventory", "inventory_id", {"unique": True}),
+    ("wms_inventory", "location", {}),
+    ("wms_boxes", [("sku", 1), ("color", 1), ("size", 1), ("location", 1), ("units", 1)], {}),
+    ("wms_boxes", [("style", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
+    ("wms_boxes", "box_id", {"unique": True}),
+    ("wms_boxes", "receiving_id", {}),
+    ("wms_boxes", [("status", 1), ("state", 1)], {}),
+    ("wms_boxes", "seq_num", {}),
+    ("wms_pick_tickets", "ticket_id", {"unique": True}),
+    ("wms_pick_tickets", [("assigned_to", 1), ("status", 1)], {}),
+    ("wms_pick_tickets", "order_id", {}),
+    ("wms_pick_tickets", "status", {}),
+    ("wms_movements", [("created_at", -1)], {}),
+    ("wms_tasks", [("task_type", 1), ("status", 1)], {}),
+    ("wms_locations", "name", {}),
+    ("wms_asn", "asn_id", {}),
+]
+
+
+async def ensure_wms_indexes(db):
+    """Create the WMS indexes if missing. Idempotent and boot-safe: a unique
+    index that can't be built (existing duplicates) is logged and skipped rather
+    than crashing startup, so the lookup indexes still get created."""
+    created, skipped = 0, 0
+    for coll, keys, opts in WMS_INDEXES:
+        try:
+            await db[coll].create_index(keys, **opts)
+            created += 1
+        except Exception as e:
+            skipped += 1
+            print(f"WMS index skipped on {coll} {keys}: {e}")
+    print(f"WMS indexes ensured ({created} ok, {skipped} skipped).")
+
+
 async def main():
     load_dotenv(Path(__file__).parent / '.env')
     mongo_url = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URL')
@@ -100,6 +142,12 @@ async def main():
             print(f"Cleaned up {reset_result.deleted_count} old password resets")
     except Exception as e:
         print(f"Error during cleanup: {e}")
+
+    # WMS-009: ensure WMS collection indexes when run as a standalone script too.
+    try:
+        await ensure_wms_indexes(db)
+    except Exception as e:
+        print(f"Error ensuring WMS indexes: {e}")
 
     print("Optimization finished.")
 
