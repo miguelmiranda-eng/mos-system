@@ -2887,6 +2887,43 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
                     m["_origins"].append(coo)
             else:
                 merged[key] = {**l, "_origins": [l["country_of_origin"]] if l.get("country_of_origin") else []}
+
+        # Surface material that lives only as PHYSICAL BOXES — carts (CARRO N),
+        # transit and putaway-pending slots — so the picker sees stock wherever it
+        # physically sits, even when no inventory row backs it (or the row drifted).
+        # Shelves already covered by wms_inventory keep the inventory figure; we
+        # don't double-count those. Picking from such a location deducts the cart
+        # boxes directly (see _deduct_pick_boxes), which is exactly what we want.
+        box_q = {
+            "$or": [
+                {"sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+                {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+            ],
+            "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"},
+            "units": {"$gt": 0},
+            "location": {"$exists": True, "$ne": ""},
+        }
+        if color:
+            box_q["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+        for b in await db.wms_boxes.find(
+            box_q, {"_id": 0, "location": 1, "units": 1, "qty": 1, "country_of_origin": 1}
+        ).to_list(2000):
+            loc = b.get("location", "")
+            if not loc or loc in merged:
+                continue  # inventory already accounts for this location — trust it
+            u = int((b.get("units") if b.get("units") is not None else b.get("qty", 0)) or 0)
+            if u <= 0:
+                continue
+            e = merged.setdefault(loc, {
+                "location": loc, "available": 0, "boxes": 0,
+                "country_of_origin": b.get("country_of_origin", ""), "_origins": [],
+            })
+            e["available"] += u
+            e["boxes"] += 1
+            coo = b.get("country_of_origin")
+            if coo and coo not in e["_origins"]:
+                e["_origins"].append(coo)
+
         locs = []
         for m in merged.values():
             m["country_of_origin"] = ", ".join(o for o in m.pop("_origins", []) if o)
@@ -3456,6 +3493,28 @@ async def get_operator_completed_tickets(request: Request):
     tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("completed_at", -1).to_list(200)
     return tickets
 
+def _normalize_picked(ps):
+    """Flatten a picked_sizes payload into {size: {location: qty}}.
+
+    picked_sizes arrives as either { "S": { "total": 10, "details": {loc: q} } }
+    or the simple { "S": 10 }. We collapse it to a per-(size, location) map so the
+    incremental deducer can diff it against what was already deducted. The simple
+    format (no shelf chosen) lands under location "" (deduct FIFO across shelves)."""
+    out = {}
+    for sz, data in (ps or {}).items():
+        szk = (sz or "").strip()
+        if isinstance(data, dict) and "details" in data:
+            for loc, q in (data.get("details") or {}).items():
+                qi = int(q or 0)
+                if qi:
+                    out.setdefault(szk, {})[loc] = out.setdefault(szk, {}).get(loc, 0) + qi
+        else:
+            qi = int(data.get("total", 0)) if isinstance(data, dict) else int(data or 0)
+            if qi:
+                out.setdefault(szk, {})[""] = out.setdefault(szk, {}).get("", 0) + qi
+    return out
+
+
 @router.put("/pick-tickets/{ticket_id}/pick-progress")
 async def save_pick_progress(ticket_id: str, request: Request):
     """Operator saves picking progress (partial or complete)."""
@@ -3485,15 +3544,12 @@ async def save_pick_progress(ticket_id: str, request: Request):
 
     picking_status = "completed" if is_complete else "in_progress"
 
-    # WMS-004 idempotency: a completed/confirmed ticket must never deduct again.
-    # Re-calling this endpoint with is_complete=true (double tap, retry, network
-    # replay) used to double-count the stock. Bail out before any deduction.
-    if is_complete and (
-        ticket.get("picking_status") in ("completed", "in_neck_cutting")
-        or ticket.get("status") in ("confirmed", "in_neck_cutting")
-    ):
+    # Idempotency: once a ticket is finalized no more progress is applied here
+    # (further changes go through the edit endpoint). Partial tickets stay open so
+    # the operator can keep picking — each save only deducts the NEW delta below.
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
         return {
-            "message": "El pick ya estaba completado; no se vuelve a deducir inventario",
+            "message": "El pick ya fue finalizado; no se aplican más cambios aquí",
             "ticket_id": ticket_id,
             "picking_status": ticket.get("picking_status"),
         }
@@ -3505,48 +3561,60 @@ async def save_pick_progress(ticket_id: str, request: Request):
         "last_picked_by_name": user.get("name", user.get("email", "")),
         "last_picked_at": now_iso()
     }
+    # INCREMENTAL DEDUCTION (ghost-inventory fix). Stock is deducted AS THE
+    # OPERATOR PICKS — on every save, partial or complete — not only at the end.
+    # We deduct the DELTA between what's picked now and what was already deducted
+    # (tracked in `deducted_map`), so a partial save removes exactly the newly
+    # picked units, re-saving the same numbers is a no-op (no double counting),
+    # and a correction downward returns those units to the shelf.
+    is_neck = ticket.get("destination") == "neck_cutting"
+    inv_op = "pick_to_neck" if is_neck else "deduct"
+    style = ticket.get('style', '').strip()
+    color = ticket.get('color', '').strip()
+    customer = ticket.get('customer', '')
+    _ord_no = ticket.get("order_number")
+    _ord_id = ticket.get("order_id")
+
+    new_map = _normalize_picked(picked_sizes)
+    old_map = ticket.get("deducted_map") or {}
+    pos, neg = [], []
+    cells = {(sz, loc) for sz, locs in new_map.items() for loc in locs} | \
+            {(sz, loc) for sz, locs in old_map.items() for loc in locs}
+    for (sz, loc) in cells:
+        d = new_map.get(sz, {}).get(loc, 0) - old_map.get(sz, {}).get(loc, 0)
+        if d > 0:
+            pos.append((sz, loc, d))
+        elif d < 0:
+            neg.append((sz, loc, -d))
+
+    # WMS-002: block oversell on the NEW units being pulled now (the delta),
+    # before mutating anything (raises 409 + opens a discrepancy task).
+    if pos:
+        delta_ps = {}
+        for sz, loc, d in pos:
+            cell = delta_ps.setdefault(sz, {"total": 0, "details": {}})
+            cell["details"][loc] = cell["details"].get(loc, 0) + d
+            cell["total"] += d
+        await _assert_pick_stock(style, color, delta_ps, user)
+
+    # WMS-003: a failure must ABORT the save — never leave the ticket updated with
+    # stock not deducted (that was a ghost-inventory source).
+    try:
+        for sz, loc, d in pos:
+            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id)
+        for sz, loc, d in neg:
+            # Correction downward: return the units to the shelf they came from.
+            await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error aplicando deducción incremental de picking")
+        raise HTTPException(500, "No se pudo actualizar inventario; no se guardó el progreso")
+
+    update["deducted_map"] = new_map
+
     if is_complete:
         update["completed_at"] = now_iso()
-        # REAL DEDUCTION: deduct from shelves (or move to CUTTING_NECK) when picker completes
-        is_neck = ticket.get("destination") == "neck_cutting"
-        inv_op = "pick_to_neck" if is_neck else "deduct"
-        style = ticket.get('style', '').strip()
-        color = ticket.get('color', '').strip()
-        customer = ticket.get('customer', '')
-
-        # WMS-002: block oversell BEFORE mutating anything (raises 409 + opens a
-        # discrepancy task if the request exceeds physical availability).
-        await _assert_pick_stock(style, color, picked_sizes, user)
-
-        # WMS-003: a deduction failure must ABORT the confirm. Previously the
-        # exception was swallowed and the ticket was marked confirmed anyway,
-        # leaving the order "picked" with stock never deducted (ghost inventory).
-        try:
-            # picked_sizes format: { "S": { "total": 10, "details": { "LOC1": 5, "LOC2": 5 } } }
-            _ord_no = ticket.get("order_number")
-            _ord_id = ticket.get("order_id")
-            for sz, data in picked_sizes.items():
-                if isinstance(data, dict) and "details" in data:
-                    for loc, qty in data["details"].items():
-                        if qty > 0:
-                            await _deduct_pick_boxes(
-                                style, color, sz.strip(), loc, qty,
-                                inv_op, customer, _ord_no, _ord_id,
-                            )
-                else:
-                    # Simple format: { "S": 50 }
-                    qty = int(data) if not isinstance(data, dict) else int(data.get("total", 0))
-                    if qty > 0:
-                        await _deduct_pick_boxes(
-                            style, color, sz.strip(), "", qty,
-                            inv_op, customer, _ord_no, _ord_id,
-                        )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Error deduciendo inventario en pick complete")
-            raise HTTPException(500, "No se pudo descontar inventario; el pick NO fue confirmado")
-
         # Update ticket status based on destination
         if is_neck:
             update["status"] = "in_neck_cutting"
@@ -3577,6 +3645,21 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     # Guard: skip if already processed by pick-progress completion
     if ticket.get("status") in ("confirmed", "in_neck_cutting"):
         return {"message": "Pick ya fue procesado previamente", "ticket_id": target_id}
+
+    # If picking already deducted incrementally (pick-progress with deducted_map),
+    # inventory is settled — just finalize status, NEVER deduct again here, or the
+    # stock would be double-counted.
+    if ticket.get("deducted_map"):
+        new_status = "in_neck_cutting" if ticket.get("destination") == "neck_cutting" else "confirmed"
+        await db.wms_pick_tickets.update_one({"ticket_id": target_id}, {"$set": {
+            "status": new_status,
+            "picking_status": "completed" if new_status == "confirmed" else "in_neck_cutting",
+            "confirmed_at": now_iso(), "confirmed_by": user.get("user_id"),
+        }})
+        await db.orders.update_one({"order_id": ticket.get("order_id")}, {"$set": {"wms_status": "picked"}})
+        await log_movement(user, "pick_confirmed", {"ticket_id": target_id, "items_confirmed": "incremental"})
+        await notify_badge_change("picking")
+        return {"message": "Pick confirmado", "ticket_id": target_id}
 
     # HOLD guard: stock in a SAT-held location can't be picked until released.
     confirm_locs = [line.get("location") for line in confirmed_lines if line.get("location")]
