@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
 import { useAuth } from "../../App";
+import { PutawayWizard } from "./PutawayWizard";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -24,6 +25,18 @@ const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 export const TransitModule = () => {
   const { user } = useAuth();
   const isAdmin = ['admin', 'supersu'].includes(user?.role);
+
+  // PDA / tablet get the guided cart-first wizard; desktop keeps the power-user
+  // table below. Breakpoint at 1024px so phones AND tablets get the touch flow.
+  const [isCompact, setIsCompact] = useState(
+    typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const onChange = (e) => setIsCompact(e.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
   // Bulk cart creation (admin) — make N new "CARRO <n>" locations with a progress bar.
   const [showCreateCarts, setShowCreateCarts] = useState(false);
   const [cartQty, setCartQty] = useState(10);
@@ -298,6 +311,9 @@ export const TransitModule = () => {
 
   const allSelected = selected.size > 0 && selected.size === boxes.length;
   const someSelected = selected.size > 0 && !allSelected;
+
+  // PDA / tablet → guided cart-first wizard. Desktop → the table below.
+  if (isCompact) return <PutawayWizard />;
 
   return (
     <div className="space-y-4">
