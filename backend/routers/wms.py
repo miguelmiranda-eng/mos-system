@@ -29,6 +29,32 @@ def gen_id(prefix="wms"):
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+async def _reserve_box_seqs(n=1):
+    """Atomically reserve `n` sequential box sequence numbers; return the FIRST.
+    Uses the `counters` collection so two concurrent receivings (or a receiving +
+    a move/split) can't mint the same BOX-id — the old read-max-then-+1 race. The
+    counter is seeded from the current max at startup (ensure_wms_indexes); the
+    guard below re-bases it the first time if that seed somehow didn't run, so a
+    freshly-created counter can never hand out ids that collide with existing
+    boxes (box_id is also uniquely indexed as a last-resort backstop)."""
+    n = max(1, int(n or 1))
+    doc = await db.counters.find_one_and_update(
+        {"_id": "wms_box_seq"}, {"$inc": {"seq": n}},
+        upsert=True, return_document=ReturnDocument.AFTER,
+    )
+    end = int(doc.get("seq", 0) or 0)
+    if end <= n:  # counter was just created near zero — re-base off the real max
+        last = await db.wms_boxes.find_one(sort=[("seq_num", -1)], projection={"seq_num": 1})
+        base = int((last or {}).get("seq_num", 0) or 0)
+        if base >= end:
+            doc = await db.counters.find_one_and_update(
+                {"_id": "wms_box_seq"}, {"$set": {"seq": base + n}},
+                return_document=ReturnDocument.AFTER,
+            )
+            end = int(doc.get("seq", base + n))
+    return end - n + 1
+
+
 # Canonical name for the warehouse-wide holding location where boxes wait when
 # they are received without a final destination. Lives next to the regular
 # locations in wms_locations so the rest of the system (Locations module,
@@ -1041,10 +1067,7 @@ async def move_units(request: Request):
                 {"_id": box["_id"]},
                 {"$set": {"units": b_qty - take, "qty": b_qty - take}},
             )
-            if next_seq is None:
-                last = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
-                next_seq = int((last.get("seq_num", 0) if last else 0) or 0)
-            next_seq += 1
+            next_seq = await _reserve_box_seqs(1)
             new_box_id = f"BOX-{next_seq:06d}"
             child = {k: v for k, v in box.items() if k != "_id"}
             child.update({
@@ -1344,10 +1367,11 @@ async def create_receiving(request: Request):
 
     receiving_id = gen_id("rcv")
 
-    # Box generation
-    last_box = await db.wms_boxes.find_one(sort=[("seq_num", -1)])
-    seq = (last_box.get("seq_num", 0) if last_box else 0)
-    
+    # Box generation — reserve a contiguous block of sequence numbers atomically
+    # so two concurrent receivings can't mint the same BOX-id.
+    _total_boxes = sum(int(it.get("boxes", 1) or 1) for it in items) if items else 1
+    seq = await _reserve_box_seqs(_total_boxes) - 1
+
     box_docs = []
     if items:
         for item in items:
@@ -5542,7 +5566,8 @@ async def delete_inventory_row(inventory_id: str, request: Request):
 
 @router.post("/import/inventory")
 async def import_inventory(request: Request, file: UploadFile = File(...)):
-    user = await require_auth(request)
+    # Admin-only: this endpoint REPLACES the entire warehouse (see wipe below).
+    user = await require_admin(request)
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(400, "Solo archivos Excel (.xlsx)")
 
@@ -5649,6 +5674,21 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
                 })
 
     inventory_docs = list(inventory_by_key.values())
+
+    # SAFETY GUARD — this endpoint REPLACES the whole warehouse. Before this guard
+    # existed a wrong/empty Excel wiped everything (real 2026-05-29 incident).
+    # Refuse to wipe when the upload parsed to nothing or skipped most rows
+    # (mis-mapped headers), and snapshot the current data into *_prev collections
+    # in Mongo first so a bad import is recoverable.
+    data_rows = max(0, len(rows) - 1)
+    if not inventory_docs:
+        raise HTTPException(400, "El archivo no produjo inventario válido (¿encabezados mal mapeados?). No se borró nada.")
+    if data_rows and skipped > data_rows * 0.5:
+        raise HTTPException(400, f"Se omitieron {skipped} de {data_rows} filas — revisa el archivo/encabezados. No se borró nada para proteger el inventario.")
+
+    # Durable rollback snapshot (server-side copy) before the destructive replace.
+    await db.wms_inventory.aggregate([{"$out": "wms_inventory_prev"}]).to_list(1)
+    await db.wms_boxes.aggregate([{"$out": "wms_boxes_prev"}]).to_list(1)
 
     # Clear old data (WMS 2.0 Fresh Start)
     await db.wms_inventory.delete_many({})

@@ -28,13 +28,17 @@ WMS_INDEXES = [
     ("wms_tasks", [("task_type", 1), ("status", 1)], {}),
     ("wms_locations", "name", {}),
     ("wms_asn", "asn_id", {}),
+    # Core (non-WMS) uniqueness guards against duplicate generated IDs.
+    ("invoices", "invoice_id", {"unique": True}),
 ]
 
 
 async def ensure_wms_indexes(db):
     """Create the WMS indexes if missing. Idempotent and boot-safe: a unique
     index that can't be built (existing duplicates) is logged and skipped rather
-    than crashing startup, so the lookup indexes still get created."""
+    than crashing startup, so the lookup indexes still get created. Also seeds the
+    atomic box-sequence counter from the current max so concurrent receivings stop
+    minting duplicate BOX-ids (read-max-then-+1 race)."""
     created, skipped = 0, 0
     for coll, keys, opts in WMS_INDEXES:
         try:
@@ -44,6 +48,19 @@ async def ensure_wms_indexes(db):
             skipped += 1
             print(f"WMS index skipped on {coll} {keys}: {e}")
     print(f"WMS indexes ensured ({created} ok, {skipped} skipped).")
+
+    # Seed the box-sequence counter once, from the current highest seq_num, so the
+    # atomic generator (_reserve_box_seqs) never collides with existing BOX-ids.
+    try:
+        if not await db.counters.find_one({"_id": "wms_box_seq"}):
+            last = await db.wms_boxes.find_one(sort=[("seq_num", -1)], projection={"seq_num": 1})
+            max_seq = int((last or {}).get("seq_num", 0) or 0)
+            await db.counters.update_one(
+                {"_id": "wms_box_seq"}, {"$setOnInsert": {"seq": max_seq}}, upsert=True
+            )
+            print(f"Seeded wms_box_seq counter at {max_seq}.")
+    except Exception as e:
+        print(f"Could not seed wms_box_seq counter: {e}")
 
 
 async def main():
