@@ -1298,15 +1298,17 @@ async def create_receiving(request: Request):
     body = await request.json()
     customer = body.get("customer", "").strip()
     manufacturer = body.get("manufacturer", "").strip()
-    style = body.get("style", "").strip()
-    color = body.get("color", "").strip()
-    size = body.get("size", "").strip()
+    # Normalize the identity dimensions to UPPERCASE on write so inventory/boxes
+    # stay consistent (no more 'Sand' vs 'SAND' splitting matches/reports).
+    style = body.get("style", "").strip().upper()
+    color = body.get("color", "").strip().upper()
+    size = body.get("size", "").strip().upper()
     description = body.get("description", "").strip()
     country_of_origin = body.get("country_of_origin", "").strip()
     fabric_content = body.get("fabric_content", "").strip()
     inv_location = body.get("inv_location", "").strip() or "Locación Temporal"
     lot_number = body.get("lot_number", "").strip()
-    sku = body.get("sku", "").strip()
+    sku = body.get("sku", "").strip().upper()
     dozens = int(body.get("dozens", 0) or 0)
     pieces = int(body.get("pieces", 0) or 0)
     units = int(body.get("units", 0) or 0)
@@ -1349,7 +1351,7 @@ async def create_receiving(request: Request):
     box_docs = []
     if items:
         for item in items:
-            item_size = item.get("size", "").strip()
+            item_size = item.get("size", "").strip().upper()
             boxes_count = int(item.get("boxes", 1))
             units_per_box = int(item.get("units_per_box", 1))
             for _ in range(boxes_count):
