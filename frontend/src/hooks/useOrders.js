@@ -128,6 +128,11 @@ export const useOrders = (currentBoard, boardFilters) => {
     try {
       const params = new URLSearchParams();
       if (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS') params.append('board', currentBoard);
+      // Pull every order, not just the newest 1000 (the backend default). MASTER
+      // aggregates all active boards (~1.4k+ and growing); the old cap silently
+      // hid the oldest orders, so filtering MASTER returned fewer rows than the
+      // board itself (e.g. 20 vs 26 in INVENTARIO).
+      params.append('limit', '50000');
       const res = await apiFetch(`${API}/orders?${params}`);
       if (res.ok) {
         let data = await res.json();
@@ -147,7 +152,7 @@ export const useOrders = (currentBoard, boardFilters) => {
   }, [currentBoard, t, applyFilters]);
 
   const fetchAllOrders = useCallback(async () => {
-    try { const res = await apiFetch(`${API}/orders`); if (res.ok) { const data = await res.json(); setAllOrders(data.filter(o => o.board !== 'PAPELERA DE RECICLAJE')); } } catch { /* silent */ }
+    try { const res = await apiFetch(`${API}/orders?limit=50000`); if (res.ok) { const data = await res.json(); setAllOrders(data.filter(o => o.board !== 'PAPELERA DE RECICLAJE')); } } catch { /* silent */ }
   }, []);
 
   const fetchOptions = useCallback(async () => {
