@@ -3,9 +3,14 @@ import os
 import re
 from pymongo import MongoClient
 from difflib import get_close_matches
+from dotenv import load_dotenv
+from pathlib import Path
 
-# Configuración de MongoDB (usando el .env que creamos)
-MONGO_URL = "mongodb://miranda:Mirandam2@187.124.232.150:27017/mos-system?authSource=admin"
+# MongoDB connection from the environment — never hardcode prod credentials here.
+load_dotenv(Path(__file__).parent / ".env")
+MONGO_URL = os.environ.get("MONGO_URL") or os.environ.get("MONGODB_URL") or os.environ.get("MONGODB_URI")
+if not MONGO_URL:
+    raise SystemExit("Define MONGO_URL / MONGODB_URL en el entorno (.env). No hay credencial por defecto.")
 client = MongoClient(MONGO_URL)
 db = client['mos-system']
 inventory_col = db['inventory']

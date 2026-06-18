@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import os
 import random
 import string
 from datetime import datetime
@@ -14,8 +15,17 @@ def generate_lpn():
 
 async def run_migration():
     print("Starting WMS 2.0 Full Migration...")
-    
+
+    # SAFETY: this script WIPES wms_inventory + wms_boxes. Running it without a
+    # guard already caused a production data-loss on 2026-05-29. Require an
+    # explicit APPLY=1 and snapshot to *_prev collections before deleting.
+    if os.environ.get("APPLY") != "1":
+        raise SystemExit("DRY-RUN: re-ejecuta con APPLY=1 para confirmar el borrado/reemplazo del WMS.")
+
     # 1. Clear existing WMS collections (Requirement: Fresh Start)
+    print("Snapshotting current WMS to *_prev before wipe...")
+    await db.wms_inventory.aggregate([{"$out": "wms_inventory_prev"}]).to_list(1)
+    await db.wms_boxes.aggregate([{"$out": "wms_boxes_prev"}]).to_list(1)
     print("Clearing old database state...")
     await db.wms_inventory.delete_many({})
     await db.wms_boxes.delete_many({})

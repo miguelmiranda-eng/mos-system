@@ -16,8 +16,15 @@ ENV = os.environ.get('ENV', 'local').lower()
 IS_PROD = ENV == 'production'
 mongo_url = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URL')
 if not mongo_url:
+    # Fail-CLOSED in production: never silently fall back to an empty localhost DB
+    # and start serving wrong/empty data. Only dev/local gets the convenience.
+    if IS_PROD:
+        raise RuntimeError(
+            "MONGO_URL/MONGODB_URL no está definido en producción. "
+            "Abortando para no conectar a una base equivocada."
+        )
     mongo_url = "mongodb://localhost:27017/mos"
-    print("WARNING: No MongoDB URL found. Falling back to localhost.")
+    print("WARNING: No MongoDB URL found. Falling back to localhost (solo dev).")
 
 client = AsyncIOMotorClient(mongo_url)
 MASTER_API_KEY = os.environ.get("MASTER_API_KEY", "cw_0x689RpI-jtRR7oE8h_eQsKImvJapA8QfGEyS2wA=")
