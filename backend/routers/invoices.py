@@ -164,8 +164,9 @@ async def get_next_invoice_number():
         return 1
     except Exception as e:
         logger.error(f"Counter error: {e}")
-        # Emergency fallback to timestamp if DB counter fails
-        return int(datetime.now().timestamp() % 10000)
+        # FAIL instead of minting a timestamp-based number that can collide with an
+        # already-issued invoice (duplicate billing identity). Caller should retry.
+        raise HTTPException(status_code=503, detail="No se pudo generar el número de factura. Reintenta.")
 
 @router.post("")
 async def create_invoice(invoice_data: InvoiceModel, request: Request):
@@ -463,6 +464,8 @@ async def delete_invoice(invoice_id: str, request: Request):
         
     # If it's already in the trash, perform a PERMANENT delete (Hard Delete)
     if invoice.get("is_deleted"):
+        # Permanent purge cascades to linked orders + work orders — admin-only.
+        await require_admin(request)
         # 1. Hard delete the invoice
         await db.invoices.delete_one({"invoice_id": invoice_id})
         

@@ -387,8 +387,10 @@ async def delete_order(order_id: str, request: Request):
 
 @router.delete("/{order_id}/permanent")
 async def permanent_delete_order(order_id: str, request: Request):
-    user = await require_auth(request)
-    
+    # Permanent purge (with invoice/work-order cascade) is admin-only. The soft
+    # delete to trash (DELETE /{order_id}) stays open to any authenticated user.
+    user = await require_admin(request)
+
     # Debug log to see what ID we are receiving
     logger.info(f"Attempting permanent delete for order: {order_id}")
     
