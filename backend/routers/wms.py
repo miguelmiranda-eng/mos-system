@@ -1147,6 +1147,184 @@ async def move_units(request: Request):
     }
 
 
+@router.post("/boxes/reconcile-lpn")
+async def reconcile_lpn(request: Request):
+    """Reconcile a migrated 'generic' LPN box with the box's REAL physical license
+    plate, on the fly during a relocation.
+
+    The bulk Excel import minted one box per case with a synthetic id
+    (`LPN_xxxx`) — that id is never printed on the carton, which still carries its
+    pre-WMS label (e.g. barcode A2600510001). So the operator can't scan the
+    generic id; instead they identify the box by Location + Product, then scan the
+    physical LPN to stamp it onto the box. 1:1, no split: exactly one pending
+    generic box of that product at that location is matched, its barcode/lpn_id is
+    set to the physical LPN, its quantity is corrected to the real count, and it is
+    moved to the destination slot. The internal `box_id` is deliberately left
+    untouched so nothing that references it (tasks, movements, splits) breaks —
+    scanning the physical LPN resolves via the barcode/lpn_id fallback in get_box.
+
+    Body: { location, sku|style, color, size, physical_lpn, units, destination }
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    location = (body.get("location") or "").strip()
+    sku = (body.get("sku") or body.get("style") or "").strip()
+    color = (body.get("color") or "").strip()
+    size = (body.get("size") or "").strip()
+    physical_lpn = (body.get("physical_lpn") or "").strip().upper()
+    destination = (body.get("destination") or "").strip()
+    try:
+        units = int(body.get("units") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Cantidad (units) inválida")
+
+    if not location:
+        raise HTTPException(400, "Ubicación de origen es obligatoria")
+    if not sku:
+        raise HTTPException(400, "SKU/Style es obligatorio")
+    if not physical_lpn:
+        raise HTTPException(400, "El LPN físico es obligatorio")
+    if not destination:
+        raise HTTPException(400, "Ubicación de destino es obligatoria")
+    if units <= 0:
+        raise HTTPException(400, "La cantidad debe ser mayor a 0")
+
+    # Destination must exist (same rule as the other relocate endpoints).
+    dst_loc = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(destination)}$", "$options": "i"}}
+    )
+    if not dst_loc:
+        raise HTTPException(404, f"Ubicación destino '{destination}' no encontrada. Créala primero.")
+    dst_name = dst_loc.get("name", destination)
+    await _assert_not_on_hold(user, location, dst_name)
+
+    # Guard: a physical LPN must be unique — never collide with an existing
+    # box_id/barcode/lpn_id on a DIFFERENT box (a double-reconcile or a typo).
+    clash = await db.wms_boxes.find_one(
+        {"$or": [{"box_id": physical_lpn}, {"barcode": physical_lpn}, {"lpn_id": physical_lpn}]},
+        {"_id": 0, "box_id": 1, "lpn_id": 1},
+    )
+    if clash:
+        raise HTTPException(
+            409,
+            f"El LPN físico '{physical_lpn}' ya está en uso por la caja {clash.get('box_id')}.",
+        )
+
+    # Find ONE pending generic box of this product still sitting at the origin.
+    # 'Generic' = synthetic import id (LPN_…) that hasn't been reconciled yet.
+    candidate = await db.wms_boxes.find_one(
+        {
+            "$or": [{"sku": _ci_eq(sku)}, {"style": _ci_eq(sku)}],
+            "color": _ci_eq(color), "size": _ci_eq(size),
+            "location": _ci_eq(location),
+            "box_id": {"$regex": "^LPN_", "$options": "i"},
+            "lpn_reconciled_at": {"$exists": False},
+            "units": {"$gt": 0},
+        },
+        sort=[("created_at", 1)],
+    )
+    if not candidate:
+        raise HTTPException(
+            404,
+            f"No hay caja genérica pendiente de {sku} {color} {size} en {location}.",
+        )
+
+    box_id = candidate["box_id"]
+    old_units = int(
+        candidate.get("units") if candidate.get("units") is not None else candidate.get("qty", 0) or 0
+    )
+
+    # 1. Decrement the SOURCE inventory row by the box's CURRENT units + 1 box.
+    #    Match on sku first, then fall back to style (Excel rows can carry the real
+    #    value in `style` with sku missing/"None"). Drop the row only if it empties.
+    src_inv = await db.wms_inventory.find_one(
+        {"sku": sku, "color": color, "size": size,
+         "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}
+    ) or await db.wms_inventory.find_one(
+        {"style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"},
+         "color": color, "size": size,
+         "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}
+    )
+    if src_inv:
+        new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - old_units)
+        new_total_boxes = max(0, int(src_inv.get("total_boxes", 0) or 0) - 1)
+        if (new_on_hand == 0 and new_total_boxes == 0
+                and int(src_inv.get("units_allocated", 0) or 0) <= 0):
+            await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+        else:
+            await db.wms_inventory.update_one(
+                {"_id": src_inv["_id"]},
+                {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes,
+                          "updated_at": now_iso()}},
+            )
+
+    # 2. Stamp the physical LPN onto the box, correct its qty, move it. box_id stays.
+    await db.wms_boxes.update_one(
+        {"_id": candidate["_id"]},
+        {"$set": {
+            "barcode": physical_lpn,
+            "lpn_id": physical_lpn,
+            "units": units,
+            "qty": units,
+            "location": dst_name,
+            "status": "stored",
+            "state": "located",
+            "generic_lpn": box_id,            # remember the synthetic id we replaced
+            "lpn_reconciled_at": now_iso(),
+            "lpn_reconciled_by": user.get("user_id"),
+            "updated_at": now_iso(),
+        }},
+    )
+
+    # 3. Increment (or create) the DESTINATION inventory row by the NEW units + 1 box.
+    dst_inv = await db.wms_inventory.find_one(
+        {"sku": sku, "color": color, "size": size, "location": dst_name}
+    )
+    if dst_inv:
+        await db.wms_inventory.update_one(
+            {"_id": dst_inv["_id"]},
+            {"$inc": {"units_on_hand": units, "total_boxes": 1},
+             "$set": {"updated_at": now_iso()}},
+        )
+    else:
+        await db.wms_inventory.insert_one({
+            "inventory_id": gen_id("inv"),
+            "sku": sku,
+            "style": candidate.get("style") or sku,
+            "color": color,
+            "size": size,
+            "customer": candidate.get("customer", ""),
+            "manufacturer": candidate.get("manufacturer", ""),
+            "description": candidate.get("description", ""),
+            "country_of_origin": candidate.get("country_of_origin", "") or candidate.get("coo", ""),
+            "fabric_content": candidate.get("fabric_content", ""),
+            "location": dst_name,
+            "total_boxes": 1,
+            "units_on_hand": units,
+            "units_allocated": 0,
+            "updated_at": now_iso(),
+        })
+
+    # 4. Audit trail.
+    await log_movement(user, MovementType.LPN_RECONCILED, {
+        "box_id": box_id,
+        "generic_lpn": box_id,
+        "physical_lpn": physical_lpn,
+        "sku": sku, "color": color, "size": size,
+        "from": location, "to": dst_name,
+        "old_units": old_units, "new_units": units, "delta_units": units - old_units,
+    })
+    await notify_badge_change("all")
+
+    return {
+        "message": f"LPN {physical_lpn} casado ({units} u) y movido a {dst_name}",
+        "box_id": box_id,
+        "physical_lpn": physical_lpn,
+        "from": location, "to": dst_name,
+        "units": units, "old_units": old_units,
+    }
+
+
 @router.delete("/locations/{location_id}")
 async def delete_location(location_id: str, request: Request, force: bool = False):
     """Delete a location. Two guards:
@@ -1734,6 +1912,14 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
 async def get_box(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    if not box:
+        # Resolve by the box's REAL physical license plate too: once a migrated box
+        # is reconciled (POST /boxes/reconcile-lpn), its printed LPN lives in
+        # barcode/lpn_id while box_id stays the internal key, so a scan of that
+        # label must still find the box.
+        box = await db.wms_boxes.find_one(
+            {"$or": [{"barcode": box_id}, {"lpn_id": box_id}]}, {"_id": 0}
+        )
     if not box:
         # Fallback: if it's a receiving ID, return the first box associated with this receiving
         if box_id.upper().startswith("RCV_"):

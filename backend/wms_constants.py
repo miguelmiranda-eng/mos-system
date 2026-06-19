@@ -66,6 +66,7 @@ class MovementType:
     ASN_IMPORTED = "asn_imported"
     ASN_RECEIPT = "asn_receipt"
     TRANSIT_RELOCATION = "transit_relocation"  # boxes moved out of UBICACION TEMPORAL
+    LPN_RECONCILED = "lpn_reconciled"          # generic import LPN matched to the box's real physical license plate
 
 
 class AsnStatus:

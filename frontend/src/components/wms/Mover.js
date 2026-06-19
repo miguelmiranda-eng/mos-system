@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import {
   ScanLine, MapPin, Boxes, Package, Layers, ArrowRight, Loader2,
-  CheckCircle2, RotateCcw, Search, X, Move,
+  CheckCircle2, RotateCcw, Search, X, Move, Tag,
 } from "lucide-react";
 import { fetcher, poster, cleanScan, logLoadError } from "./lib";
 
@@ -82,7 +82,7 @@ export function MoverModule() {
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
   const [originInput, setOriginInput] = useState("");
-  const [mode, setMode] = useState(null); // 'all' | 'box' | 'units'
+  const [mode, setMode] = useState(null); // 'all' | 'box' | 'units' | 'reconcile'
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -90,8 +90,9 @@ export function MoverModule() {
 
   // Per-mode selection
   const [selectedBoxes, setSelectedBoxes] = useState([]);   // box mode: array of box_id
-  const [selectedLine, setSelectedLine] = useState(null);   // units mode: an inventory line
+  const [selectedLine, setSelectedLine] = useState(null);   // units/reconcile mode: an inventory line
   const [qty, setQty] = useState("");
+  const [physicalLpn, setPhysicalLpn] = useState("");       // reconcile mode: scanned real LPN
 
   // Known location names for the type-to-search chips (fetched once).
   const [locNames, setLocNames] = useState([]);
@@ -132,6 +133,7 @@ export function MoverModule() {
     setSelectedBoxes([]);
     setSelectedLine(null);
     setQty("");
+    setPhysicalLpn("");
     setDest("");
     loadContents(clean);
   };
@@ -139,7 +141,7 @@ export function MoverModule() {
   const resetAll = () => {
     setOrigin(""); setOriginInput(""); setMode(null);
     setContents({ boxes: [], lines: [] });
-    setSelectedBoxes([]); setSelectedLine(null); setQty(""); setDest("");
+    setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
   };
 
   const totalUnits = useMemo(
@@ -157,7 +159,7 @@ export function MoverModule() {
         toast.success(data.message || `${label} completado`);
         // Stay on the same origin and refresh so the operator can keep working
         // in the same bin; clear the per-move selection.
-        setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setDest("");
+        setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
         await loadContents(origin);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -183,6 +185,15 @@ export function MoverModule() {
     from: origin, to: cleanScan(dest),
     sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
     size: selectedLine.size || "", units: parseInt(qty) || 0,
+  }));
+
+  // Reconcile a migrated generic LPN with the box's real physical license plate,
+  // correcting its quantity and moving it to the destination in one shot.
+  const moveReconcile = () => doMove("Reconciliar LPN", poster("/boxes/reconcile-lpn", {
+    location: origin, destination: cleanScan(dest),
+    sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
+    size: selectedLine.size || "",
+    physical_lpn: cleanScan(physicalLpn), units: parseInt(qty) || 0,
   }));
 
   const toggleBox = (id) =>
@@ -276,11 +287,15 @@ export function MoverModule() {
                   title="Unidades (consolidar)"
                   subtitle="Mueve una cantidad de un SKU"
                   onClick={() => setMode("units")} />
+                <ModeButton icon={Tag} color="text-fuchsia-400" testid="mover-mode-reconcile"
+                  title="Reconciliar LPN / Etiqueta"
+                  subtitle="Casa el LPN físico de una caja migrada"
+                  onClick={() => setMode("reconcile")} />
               </div>
             ) : (
               /* STEP 3 — per-mode selection + destination */
               <div className="space-y-4">
-                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setDest(""); }}
+                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
                   className="text-xs font-bold text-primary flex items-center gap-1">
                   <X className="w-3.5 h-3.5" /> Cambiar tipo de movimiento
                 </button>
@@ -396,6 +411,83 @@ export function MoverModule() {
                           disabled={submitting || !(parseInt(qty) > 0) || parseInt(qty) > selectedLine.units_on_hand}
                           onGo={moveUnits}
                           label={`Mover ${parseInt(qty) || 0} u a`} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* MODE: RECONCILE LPN — match a migrated generic LPN to the box's real label */}
+                {mode === "reconcile" && (
+                  <div className="space-y-3">
+                    {!selectedLine ? (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
+                          <Search className="w-4 h-4" /> Elige el producto a reconciliar
+                        </div>
+                        {contents.lines.map((r, i) => (
+                          <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
+                            data-testid={`mover-reconcile-line-${i}`}
+                            className="w-full flex items-center justify-between p-3 rounded-xl border border-border bg-card hover:border-primary/40 text-left">
+                            <div className="min-w-0">
+                              <div className="font-mono font-bold text-sm truncate">{r.style || r.sku}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">
+                                {r.color} · {r.size}{r.description ? ` · ${r.description}` : ""}
+                              </div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="font-black text-emerald-400">{r.units_on_hand}</div>
+                              <div className="text-[10px] text-muted-foreground">disp.</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                        {/* Product validation header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-mono font-black">{selectedLine.style || selectedLine.sku}</div>
+                            <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
+                            {selectedLine.description && (
+                              <div className="text-xs text-muted-foreground mt-0.5">{selectedLine.description}</div>
+                            )}
+                            {(selectedLine.customer || selectedLine.manufacturer) && (
+                              <div className="text-[11px] text-muted-foreground">
+                                {selectedLine.customer}{selectedLine.manufacturer ? ` · ${selectedLine.manufacturer}` : ""}
+                              </div>
+                            )}
+                          </div>
+                          <button onClick={() => { setSelectedLine(null); setQty(""); setPhysicalLpn(""); }}
+                            className="text-xs font-bold text-primary flex-shrink-0">Cambiar</button>
+                        </div>
+
+                        {/* Physical LPN scan */}
+                        <div>
+                          <label className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
+                            <ScanLine className="w-4 h-4 text-primary" /> Escanea el LPN físico de la caja
+                          </label>
+                          <input autoFocus value={physicalLpn}
+                            onChange={(e) => setPhysicalLpn(e.target.value.toUpperCase())}
+                            placeholder="Ej. A2600510001"
+                            data-testid="mover-reconcile-lpn"
+                            className="mt-1 w-full h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-lg font-mono font-bold tracking-wide focus:outline-none focus:border-primary" />
+                        </div>
+
+                        {/* Quantity (default 72, editable) */}
+                        <div>
+                          <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                            Cantidad en la caja (default 72)
+                          </label>
+                          <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)}
+                            data-testid="mover-reconcile-qty"
+                            className="mt-1 w-full h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-xl font-black text-center focus:outline-none focus:border-primary" />
+                        </div>
+
+                        <DestAndGo
+                          dest={dest} setDest={setDest} locations={locNames}
+                          disabled={submitting || !physicalLpn.trim() || !(parseInt(qty) > 0)}
+                          onGo={moveReconcile}
+                          label={`Casar LPN y mover a`} />
                       </div>
                     )}
                   </div>
