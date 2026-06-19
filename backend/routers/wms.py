@@ -202,7 +202,25 @@ async def notify_badge_change(badge: str = "all"):
 
 # ==================== CATALOG OPTIONS (admin-managed dropdown values) ====================
 
-CATALOG_TYPES = {"descriptions", "countries", "fabrics"}
+# Receiving identity catalogs (customers/colors/styles) join the original
+# descriptive ones. These drive the locked dropdowns in Receiving: operators can
+# only pick existing values; only a lead/supervisor may add/rename/clean them.
+CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", "styles"}
+
+# Roles allowed to MUTATE catalogs (add / rename / delete / clean). Maps the
+# business notion of "líder o supervisor" onto the existing elevated roles —
+# change this single set if a dedicated 'supervisor' role is added later.
+CATALOG_MANAGER_ROLES = {"admin", "supersu", "ceo"}
+
+
+def _assert_catalog_manager(user):
+    """Raise 403 unless the user is a catalog manager (lead/supervisor)."""
+    if (user or {}).get("role") not in CATALOG_MANAGER_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo personal líder/supervisor puede modificar los catálogos.",
+        )
+
 
 @router.get("/catalogs")
 async def list_catalogs(request: Request):
@@ -216,8 +234,10 @@ async def list_catalogs(request: Request):
 
 @router.post("/catalogs")
 async def add_catalog_option(request: Request):
-    """Add a value to a catalog. Case-insensitive dedupe per type."""
+    """Add a value to a catalog. Case-insensitive dedupe per type.
+    Restricted to lead/supervisor (catalog manager)."""
     user = await require_auth(request)
+    _assert_catalog_manager(user)
     body = await request.json()
     ctype = (body.get("type") or "").strip()
     value = (body.get("value") or "").strip()
@@ -245,8 +265,10 @@ async def add_catalog_option(request: Request):
 
 @router.delete("/catalogs/{catalog_id}")
 async def delete_catalog_option(catalog_id: str, request: Request):
-    """Remove a value from a catalog. Does NOT alter existing inventory/receiving rows."""
-    await require_auth(request)
+    """Remove a value from a catalog. Does NOT alter existing inventory/receiving rows.
+    Restricted to lead/supervisor (catalog manager)."""
+    user = await require_auth(request)
+    _assert_catalog_manager(user)
     res = await db.wms_catalog_options.delete_one({"catalog_id": catalog_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Opción no encontrada")
@@ -258,6 +280,12 @@ _CATALOG_FIELD_MAP = {
     "countries":    ("country_of_origin", ["wms_inventory", "wms_receiving"]),
     "descriptions": ("description",       ["wms_inventory", "wms_receiving"]),
     "fabrics":      ("fabric_content",    ["wms_inventory", "wms_receiving"]),
+    # Identity fields also live on the physical boxes, so a rename/clean here must
+    # sweep wms_boxes too or the box mirror drifts from inventory (picking matches
+    # boxes by style/color).
+    "customers":    ("customer", ["wms_inventory", "wms_receiving", "wms_boxes"]),
+    "colors":       ("color",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
+    "styles":       ("style",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
 }
 
 
@@ -312,8 +340,10 @@ async def list_catalog_sources(ctype: str, request: Request, limit: int = 500):
 async def rename_catalog_value(ctype: str, request: Request):
     """Bulk-rename a value across all source collections for a catalog type.
     Example: rename {old: 'BANGLANDESH', new: 'BANGLADESH'} sweeps every
-    inventory + receiving row with the typo and fixes it in place."""
+    inventory + receiving row with the typo and fixes it in place.
+    Restricted to lead/supervisor (catalog manager)."""
     user = await require_auth(request)
+    _assert_catalog_manager(user)
     if ctype not in _CATALOG_FIELD_MAP:
         raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
     body = await request.json()
@@ -350,8 +380,10 @@ async def rename_catalog_value(ctype: str, request: Request):
 @router.delete("/catalogs/{ctype}/sources")
 async def delete_catalog_value(ctype: str, request: Request):
     """Bulk-clear a value (set to empty) across source collections.
-    Useful for purging junk like a stray '%' string."""
+    Useful for purging junk like a stray '%' string.
+    Restricted to lead/supervisor (catalog manager)."""
     user = await require_auth(request)
+    _assert_catalog_manager(user)
     if ctype not in _CATALOG_FIELD_MAP:
         raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
     body = await request.json()

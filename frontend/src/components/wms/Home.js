@@ -1,39 +1,52 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X } from "lucide-react";
+import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Lock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, API } from "./lib";
 
 const SECTIONS = [
+  // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
+  { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
+  { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
+  { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
   { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
   { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
   { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
 ];
 
+// Initial per-type state derived from SECTIONS, so adding a catalog above is enough.
+const byType = (val) => SECTIONS.reduce((acc, s) => ({ ...acc, [s.type]: val }), {});
+
 export const HomeModule = () => {
   const { t } = useLang();
-  const [catalogs, setCatalogs] = useState({ descriptions: [], countries: [], fabrics: [] });
+  const [catalogs, setCatalogs] = useState(byType([]));
   const [loading, setLoading] = useState(true);
-  const [drafts, setDrafts] = useState({ descriptions: '', countries: '', fabrics: '' });
+  const [drafts, setDrafts] = useState(byType(''));
   const [saving, setSaving] = useState(null);
   const [deleting, setDeleting] = useState(null);
+
+  // Only a lead/supervisor (admin/supersu/ceo) may add/rename/clean catalogs.
+  // Mirrors the backend guard; here it just hides the controls for everyone else.
+  const [isManager, setIsManager] = useState(false);
+  useEffect(() => {
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => setIsManager(['admin', 'supersu', 'ceo'].includes(u?.role)))
+      .catch(() => {});
+  }, []);
 
   // Sources panel state — distinct values from wms_inventory + wms_receiving.
   const [sources, setSources] = useState({}); // { [type]: { items: [{value,count,in_catalog}], total_distinct } }
   const [sourcesLoading, setSourcesLoading] = useState({}); // { [type]: bool }
   const [expanded, setExpanded] = useState({}); // { [type]: bool }
-  const [sourceSearch, setSourceSearch] = useState({ descriptions: '', countries: '', fabrics: '' });
+  const [sourceSearch, setSourceSearch] = useState(byType(''));
   const [actioning, setActioning] = useState(null); // identifier for in-flight action
   const [renameModal, setRenameModal] = useState(null); // { type, oldValue, newValue }
 
   const load = useCallback(async () => {
     try {
       const data = await fetcher('/catalogs');
-      setCatalogs({
-        descriptions: data.descriptions || [],
-        countries: data.countries || [],
-        fabrics: data.fabrics || [],
-      });
+      setCatalogs(SECTIONS.reduce((acc, s) => ({ ...acc, [s.type]: data[s.type] || [] }), {}));
     } catch (err) { logLoadError('catalogs')(err); }
     finally { setLoading(false); }
   }, []);
@@ -212,27 +225,33 @@ export const HomeModule = () => {
                 </span>
               </div>
 
-              {/* Add new */}
-              <div className="p-4 border-b border-border/10 flex gap-2">
-                <input
-                  type="text"
-                  value={drafts[section.type]}
-                  onChange={e => setDrafts(p => ({ ...p, [section.type]: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
-                  placeholder="Nuevo valor…"
-                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30"
-                  data-testid={`cat-input-${section.type}`}
-                />
-                <button
-                  onClick={() => handleAdd(section.type)}
-                  disabled={saving === section.type || !drafts[section.type]?.trim()}
-                  className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1 transition-all disabled:opacity-40 ${section.bg} ${section.color}`}
-                  data-testid={`cat-add-${section.type}`}
-                >
-                  {saving === section.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                  Agregar
-                </button>
-              </div>
+              {/* Add new — lead/supervisor only */}
+              {isManager ? (
+                <div className="p-4 border-b border-border/10 flex gap-2">
+                  <input
+                    type="text"
+                    value={drafts[section.type]}
+                    onChange={e => setDrafts(p => ({ ...p, [section.type]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
+                    placeholder="Nuevo valor…"
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30"
+                    data-testid={`cat-input-${section.type}`}
+                  />
+                  <button
+                    onClick={() => handleAdd(section.type)}
+                    disabled={saving === section.type || !drafts[section.type]?.trim()}
+                    className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1 transition-all disabled:opacity-40 ${section.bg} ${section.color}`}
+                    data-testid={`cat-add-${section.type}`}
+                  >
+                    {saving === section.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                    Agregar
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3 border-b border-border/10 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                  <Lock className="w-3 h-3" /> Solo líder/supervisor puede editar
+                </div>
+              )}
 
               {/* Curated list */}
               <div className="overflow-auto max-h-[200px] custom-scrollbar">
@@ -245,14 +264,16 @@ export const HomeModule = () => {
                     {items.map(item => (
                       <li key={item.catalog_id} className="flex items-center justify-between px-4 py-2 hover:bg-secondary/30 transition-colors group">
                         <span className="text-sm font-bold text-foreground truncate">{item.value}</span>
-                        <button
-                          onClick={() => handleDelete(item.catalog_id, item.value)}
-                          disabled={deleting === item.catalog_id}
-                          className="p-1.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
-                          data-testid={`cat-delete-${item.catalog_id}`}
-                        >
-                          {deleting === item.catalog_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                        </button>
+                        {isManager && (
+                          <button
+                            onClick={() => handleDelete(item.catalog_id, item.value)}
+                            disabled={deleting === item.catalog_id}
+                            className="p-1.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
+                            data-testid={`cat-delete-${item.catalog_id}`}
+                          >
+                            {deleting === item.catalog_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -313,11 +334,12 @@ export const HomeModule = () => {
                               <span className="text-[9px] font-black tabular-nums text-muted-foreground/70 bg-secondary/40 px-1.5 py-0.5 rounded" title={`Aparece en ${it.count} fila(s)`}>
                                 {it.count.toLocaleString()}
                               </span>
-                              {it.in_catalog ? (
+                              {it.in_catalog && (
                                 <span className={`text-[8px] font-black uppercase tracking-widest ${section.color} ${section.bg} px-1.5 py-0.5 rounded`}>
                                   En cat.
                                 </span>
-                              ) : (
+                              )}
+                              {isManager && !it.in_catalog && (
                                 <button
                                   onClick={() => promoteToCatalog(section.type, it.value)}
                                   disabled={!!actioning}
@@ -327,22 +349,26 @@ export const HomeModule = () => {
                                   {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpToLine className="w-3 h-3" />}
                                 </button>
                               )}
-                              <button
-                                onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
-                                disabled={!!actioning}
-                                className="p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Renombrar en todas las filas"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={() => bulkClearValue(section.type, it.value)}
-                                disabled={!!actioning}
-                                className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Vaciar valor (afecta inventario)"
-                              >
-                                {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                              </button>
+                              {isManager && (
+                                <>
+                                  <button
+                                    onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
+                                    disabled={!!actioning}
+                                    className="p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                    title="Renombrar en todas las filas"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => bulkClearValue(section.type, it.value)}
+                                    disabled={!!actioning}
+                                    className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                    title="Vaciar valor (afecta inventario)"
+                                  >
+                                    {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                                  </button>
+                                </>
+                              )}
                             </li>
                           );
                         })}
