@@ -90,6 +90,9 @@ export function MoverModule() {
 
   // Per-mode selection
   const [selectedBoxes, setSelectedBoxes] = useState([]);   // box mode: array of box_id
+  const [foreignBoxes, setForeignBoxes] = useState([]);     // box mode: boxes scanned from OTHER locations
+  const [pendingForeign, setPendingForeign] = useState(null); // a foreign box awaiting "move it anyway?" confirm
+  const [scanLookup, setScanLookup] = useState(false);      // looking up a scanned code
   const [selectedLine, setSelectedLine] = useState(null);   // units/reconcile mode: an inventory line
   const [qty, setQty] = useState("");
   const [physicalLpn, setPhysicalLpn] = useState("");       // reconcile mode: scanned real LPN
@@ -131,6 +134,8 @@ export function MoverModule() {
     setOrigin(clean);
     setMode(null);
     setSelectedBoxes([]);
+    setForeignBoxes([]);
+    setPendingForeign(null);
     setSelectedLine(null);
     setQty("");
     setPhysicalLpn("");
@@ -141,7 +146,7 @@ export function MoverModule() {
   const resetAll = () => {
     setOrigin(""); setOriginInput(""); setMode(null);
     setContents({ boxes: [], lines: [] });
-    setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
+    setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
   };
 
   const totalUnits = useMemo(
@@ -159,7 +164,7 @@ export function MoverModule() {
         toast.success(data.message || `${label} completado`);
         // Stay on the same origin and refresh so the operator can keep working
         // in the same bin; clear the per-move selection.
-        setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
+        setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
         await loadContents(origin);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -199,14 +204,40 @@ export function MoverModule() {
   const toggleBox = (id) =>
     setSelectedBoxes(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
-  // Scanning a box barcode in box mode toggles it in the selection.
+  // Scanning a box barcode in box mode. If the box belongs to the scanned origin
+  // we toggle it. If it lives elsewhere, we look it up and ask "move it anyway?"
+  // (relocate works from any source, rebalancing the box's real location).
   const boxScanRef = useRef(null);
-  const onBoxScan = (raw) => {
+  const clearBoxInput = () => { if (boxScanRef.current) boxScanRef.current.value = ""; };
+  const onBoxScan = async (raw) => {
     const code = cleanScan(raw);
-    const hit = contents.boxes.find(b => (b.box_id || "").toUpperCase() === code);
-    if (!hit) { toast.error(`Caja ${code} no está en ${origin}`); return; }
-    toggleBox(hit.box_id);
-    if (boxScanRef.current) boxScanRef.current.value = "";
+    if (!code) return;
+    const here = contents.boxes.find(b => (b.box_id || "").toUpperCase() === code || (b.barcode || "").toUpperCase() === code);
+    const already = foreignBoxes.find(b => (b.box_id || "").toUpperCase() === code || (b.barcode || "").toUpperCase() === code);
+    if (here) { toggleBox(here.box_id); clearBoxInput(); return; }
+    if (already) { toggleBox(already.box_id); clearBoxInput(); return; }
+    // Not in this location — find where it actually is.
+    setScanLookup(true);
+    try {
+      const box = await fetcher(`/boxes/${encodeURIComponent(code)}`);
+      clearBoxInput();
+      if (!box || !box.box_id) { toast.error(`Caja ${code} no existe`); return; }
+      if ((box.location || "").toUpperCase() === origin.toUpperCase()) {
+        addForeignBox(box); // belongs here but wasn't in the loaded list
+      } else {
+        setPendingForeign(box); // ask before pulling it from another slot
+      }
+    } catch {
+      clearBoxInput();
+      toast.error(`Caja ${code} no encontrada`);
+    } finally { setScanLookup(false); }
+  };
+
+  // Bring a box from another location into the selection + the visible list.
+  const addForeignBox = (box) => {
+    setForeignBoxes(p => p.some(b => b.box_id === box.box_id) ? p : [{ ...box, _foreign: true }, ...p]);
+    setSelectedBoxes(p => p.includes(box.box_id) ? p : [...p, box.box_id]);
+    setPendingForeign(null);
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -325,9 +356,44 @@ export function MoverModule() {
                         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onBoxScan(e.currentTarget.value); } }}
                         data-testid="mover-box-scan"
                         className="w-full h-12 px-4 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
+                      {scanLookup && (
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando caja…
+                        </div>
+                      )}
                     </div>
+
+                    {/* Foreign box: scanned from a DIFFERENT location — confirm before moving */}
+                    {pendingForeign && (
+                      <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 space-y-3" data-testid="mover-foreign-confirm">
+                        <div className="flex items-start gap-3">
+                          <ScanLine className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <div className="min-w-0 text-sm">
+                            La caja <span className="font-mono font-black">{pendingForeign.box_id}</span> no está en{" "}
+                            <span className="font-mono font-bold">{origin}</span>.
+                            <div className="mt-1">
+                              Pertenece a <span className="font-mono font-black text-amber-300">{pendingForeign.location || "ubicación desconocida"}</span>
+                              {" · "}{pendingForeign.style || pendingForeign.sku} · {pendingForeign.color} · {pendingForeign.size}
+                              {" · "}{pendingForeign.units ?? pendingForeign.qty ?? 0} u
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => addForeignBox(pendingForeign)}
+                            data-testid="mover-foreign-yes"
+                            className="flex-1 h-12 rounded-xl bg-amber-500 text-black font-black uppercase tracking-wide text-sm active:scale-[0.98] transition-transform">
+                            Sí, moverla
+                          </button>
+                          <button onClick={() => setPendingForeign(null)}
+                            className="px-5 h-12 rounded-xl bg-secondary/60 text-muted-foreground font-bold uppercase text-sm">
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-2 max-h-72 overflow-y-auto">
-                      {contents.boxes.map(b => {
+                      {[...foreignBoxes, ...contents.boxes].map(b => {
                         const on = selectedBoxes.includes(b.box_id);
                         return (
                           <button key={b.box_id} onClick={() => toggleBox(b.box_id)}
@@ -336,7 +402,14 @@ export function MoverModule() {
                               {on && <CheckCircle2 className="w-4 h-4" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="font-mono font-bold text-sm">{b.box_id}</div>
+                              <div className="font-mono font-bold text-sm flex items-center gap-2">
+                                {b.box_id}
+                                {b._foreign && (
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded">
+                                    de {b.location}
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-[11px] text-muted-foreground truncate">
                                 {b.style || b.sku} · {b.color} · {b.size}
                               </div>
