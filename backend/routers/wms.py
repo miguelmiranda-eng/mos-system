@@ -1243,13 +1243,14 @@ async def reconcile_lpn(request: Request):
         )
 
     # Find ONE pending generic box of this product still sitting at the origin.
-    # 'Generic' = synthetic import id (LPN_…) that hasn't been reconciled yet.
+    # 'Generic' = a synthetic import id (the migration mints either "LPN_<uuid>" or
+    # "LPN<uuid>" — no underscore — so match "^LPN") that hasn't been reconciled yet.
     candidate = await db.wms_boxes.find_one(
         {
             "$or": [{"sku": _ci_eq(sku)}, {"style": _ci_eq(sku)}],
             "color": _ci_eq(color), "size": _ci_eq(size),
             "location": _ci_eq(location),
-            "box_id": {"$regex": "^LPN_", "$options": "i"},
+            "box_id": {"$regex": "^LPN", "$options": "i"},
             "lpn_reconciled_at": {"$exists": False},
             "units": {"$gt": 0},
         },
