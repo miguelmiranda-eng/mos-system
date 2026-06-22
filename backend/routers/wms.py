@@ -3517,19 +3517,23 @@ async def list_pick_tickets(
             if not rt.get("customer"): rt["customer"] = oi.get("client") or oi.get("branding")
             
     # --- VIRTUAL TICKETS LOGIC ---
-    # Automatically include orders in SCHEDULING or BLANKS that don't have a ticket yet.
+    # Synthesize a pre-ticket for every active order that doesn't have a real ticket yet.
     # When paginated, only include them on the first page (skip=0) to keep cursor semantics.
     if (not status or status == "pending") and (not paginated or skip == 0):
         existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
-        
+
         # Also exclude admin-dismissed pre-tickets
         dismissed_docs = await db.wms_dismissed_pretickets.find({}, {"_id": 0, "order_number": 1}).to_list(2000)
         dismissed_order_numbers = {d["order_number"] for d in dismissed_docs if d.get("order_number")}
         excluded_order_numbers = list(existing_order_numbers | dismissed_order_numbers)
-        
+
         virtual_query = {
             "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
             "wms_status": {"$ne": "picked"},
+            # Orders that already finished picking must NOT resurface as pre-tickets.
+            # FINAL BILL = billed/closed; COMPLETOS/CANCELLED/PAPELERA are terminal too.
+            # (case-insensitive; orders with no board still pass.)
+            "board": {"$not": {"$regex": r"(?i)^\s*(FINAL BILL|COMPLETOS|CANCELLED|PAPELERA)"}},
             "order_number": {"$nin": excluded_order_numbers}
         }
         
