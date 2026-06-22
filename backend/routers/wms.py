@@ -3531,9 +3531,9 @@ async def list_pick_tickets(
             "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
             "wms_status": {"$ne": "picked"},
             # Orders that already finished picking must NOT resurface as pre-tickets.
-            # FINAL BILL = billed/closed; COMPLETOS/CANCELLED/PAPELERA are terminal too.
-            # (case-insensitive; orders with no board still pass.)
-            "board": {"$not": {"$regex": r"(?i)^\s*(FINAL BILL|COMPLETOS|CANCELLED|PAPELERA)"}},
+            # FINAL BILL = billed/closed; COMPLETOS/CANCELLED/PAPELERA/RESPALDO MONDAY
+            # are terminal/backup boards too. (case-insensitive; no-board orders pass.)
+            "board": {"$not": {"$regex": r"(?i)^\s*(FINAL BILL|COMPLETOS|CANCELLED|PAPELERA|RESPALDO MONDAY)"}},
             "order_number": {"$nin": excluded_order_numbers}
         }
         
