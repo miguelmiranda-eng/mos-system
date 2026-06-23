@@ -147,6 +147,9 @@ export const ReceivingModule = () => {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
+  // Curated, per-customer style list (locked: operators may only SELECT a style,
+  // never type one). Falls back to inventory-derived styles if a client has none.
+  const [customerStyles, setCustomerStyles] = useState([]);
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
@@ -332,6 +335,16 @@ export const ReceivingModule = () => {
   const handleColorChange = (val) => {
     setForm(p => ({ ...p, color: val }));
   };
+
+  // Load the customer's curated style list whenever the customer changes
+  // (covers manual pick, UPC autofill and edit mode).
+  useEffect(() => {
+    const c = (form.customer || '').trim();
+    if (!c) { setCustomerStyles([]); return; }
+    fetcher(`/catalogs/styles?customer=${encodeURIComponent(c)}`)
+      .then(d => setCustomerStyles(d?.styles || []))
+      .catch(() => setCustomerStyles([]));
+  }, [form.customer]);
 
   // Auto-generate SKU when style/color/size change
   useEffect(() => {
@@ -932,7 +945,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('style')} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style} allowCreate={canManageUpc} />
+              <SearchableSelect options={customerStyles.length ? customerStyles : (options.styles || [])} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">

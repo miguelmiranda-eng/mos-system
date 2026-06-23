@@ -25,6 +25,16 @@ export const HomeModule = () => {
   const [saving, setSaving] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
+  // Styles are managed PER CLIENT. This dropdown scopes the Estilos panel
+  // (list + add) to one customer; the list of customers is fetched once.
+  const [styleCustomer, setStyleCustomer] = useState('');
+  const [customers, setCustomers] = useState([]);
+  useEffect(() => {
+    fetcher('/inventory/options')
+      .then(d => setCustomers((d?.customers || []).filter(Boolean)))
+      .catch(() => {});
+  }, []);
+
   // Only a lead/supervisor (admin/supersu/ceo) may add/rename/clean catalogs.
   // Mirrors the backend guard; here it just hides the controls for everyone else.
   const [isManager, setIsManager] = useState(false);
@@ -73,9 +83,11 @@ export const HomeModule = () => {
   const handleAdd = async (type) => {
     const value = drafts[type]?.trim();
     if (!value) { toast.error('Escribe un valor'); return; }
+    if (type === 'styles' && !styleCustomer) { toast.error('Selecciona un cliente primero'); return; }
     setSaving(type);
     try {
-      const res = await poster('/catalogs', { type, value });
+      const body = type === 'styles' ? { type, value, customer: styleCustomer } : { type, value };
+      const res = await poster('/catalogs', body);
       if (res.ok) {
         toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
         setDrafts(prev => ({ ...prev, [type]: '' }));
@@ -204,7 +216,11 @@ export const HomeModule = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {SECTIONS.map(section => {
           const Icon = section.icon;
-          const items = catalogs[section.type] || [];
+          const isStyles = section.type === 'styles';
+          // Styles are per-customer: show only the selected client's curated styles.
+          const items = isStyles
+            ? (catalogs.styles || []).filter(i => (i.customer || '').toUpperCase() === styleCustomer.toUpperCase())
+            : (catalogs[section.type] || []);
           const isExpanded = !!expanded[section.type];
           const srcData = sources[section.type];
           const srcLoading = !!sourcesLoading[section.type];
@@ -225,6 +241,22 @@ export const HomeModule = () => {
                 </span>
               </div>
 
+              {/* Styles are per-customer: pick the client this list belongs to. */}
+              {isStyles && (
+                <div className="p-3 border-b border-border/10">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/70 block mb-1">Cliente</label>
+                  <select
+                    value={styleCustomer}
+                    onChange={e => setStyleCustomer(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-bold text-foreground focus:ring-2 focus:ring-primary/30"
+                    data-testid="style-customer-select"
+                  >
+                    <option value="">— Selecciona cliente —</option>
+                    {customers.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              )}
+
               {/* Add new — lead/supervisor only */}
               {isManager ? (
                 <div className="p-4 border-b border-border/10 flex gap-2">
@@ -233,13 +265,14 @@ export const HomeModule = () => {
                     value={drafts[section.type]}
                     onChange={e => setDrafts(p => ({ ...p, [section.type]: e.target.value }))}
                     onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
-                    placeholder="Nuevo valor…"
-                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30"
+                    placeholder={isStyles && !styleCustomer ? 'Selecciona un cliente…' : 'Nuevo valor…'}
+                    disabled={isStyles && !styleCustomer}
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                     data-testid={`cat-input-${section.type}`}
                   />
                   <button
                     onClick={() => handleAdd(section.type)}
-                    disabled={saving === section.type || !drafts[section.type]?.trim()}
+                    disabled={saving === section.type || !drafts[section.type]?.trim() || (isStyles && !styleCustomer)}
                     className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1 transition-all disabled:opacity-40 ${section.bg} ${section.color}`}
                     data-testid={`cat-add-${section.type}`}
                   >
@@ -257,7 +290,7 @@ export const HomeModule = () => {
               <div className="overflow-auto max-h-[200px] custom-scrollbar">
                 {items.length === 0 ? (
                   <div className="text-center py-6 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
-                    Sin valores curados
+                    {isStyles && !styleCustomer ? 'Selecciona un cliente' : 'Sin valores curados'}
                   </div>
                 ) : (
                   <ul className="divide-y divide-border/10">

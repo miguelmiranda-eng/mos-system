@@ -241,17 +241,22 @@ async def add_catalog_option(request: Request):
     body = await request.json()
     ctype = (body.get("type") or "").strip()
     value = (body.get("value") or "").strip()
+    # Styles are scoped per customer (each client has its own valid style list).
+    customer = (body.get("customer") or "").strip().upper()
     if ctype not in CATALOG_TYPES:
         raise HTTPException(400, f"type debe ser uno de {sorted(CATALOG_TYPES)}")
     if not value:
         raise HTTPException(400, "value es obligatorio")
-    # Case-insensitive dedupe
-    existing = await db.wms_catalog_options.find_one({
-        "type": ctype,
-        "value": {"$regex": f"^{re.escape(value)}$", "$options": "i"}
-    })
+    if ctype == "styles" and not customer:
+        raise HTTPException(400, "customer es obligatorio para estilos")
+    # Case-insensitive dedupe — scoped by customer for styles.
+    dedupe = {"type": ctype, "value": {"$regex": f"^{re.escape(value)}$", "$options": "i"}}
+    if ctype == "styles":
+        dedupe["customer"] = customer
+    existing = await db.wms_catalog_options.find_one(dedupe)
     if existing:
-        raise HTTPException(400, f"'{value}' ya existe en {ctype}")
+        where = f"{ctype} de {customer}" if customer else ctype
+        raise HTTPException(400, f"'{value}' ya existe en {where}")
     doc = {
         "catalog_id": gen_id("cat"),
         "type": ctype,
@@ -259,9 +264,26 @@ async def add_catalog_option(request: Request):
         "created_at": now_iso(),
         "created_by_name": user.get("name") or user.get("email", ""),
     }
+    if customer:
+        doc["customer"] = customer
     await db.wms_catalog_options.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+@router.get("/catalogs/styles")
+async def list_customer_styles(request: Request, customer: str = ""):
+    """Curated style list for a customer — the locked options shown in Receiving.
+    Returns just the style strings, sorted. Empty if the customer has no curated
+    styles yet (so Receiving can fall back / show nothing to type-create)."""
+    await require_auth(request)
+    cust = (customer or "").strip().upper()
+    if not cust:
+        return {"customer": "", "styles": []}
+    docs = await db.wms_catalog_options.find(
+        {"type": "styles", "customer": cust}, {"_id": 0, "value": 1}
+    ).sort("value", 1).to_list(2000)
+    return {"customer": cust, "styles": [d.get("value") for d in docs if d.get("value")]}
+
 
 @router.delete("/catalogs/{catalog_id}")
 async def delete_catalog_option(catalog_id: str, request: Request):
