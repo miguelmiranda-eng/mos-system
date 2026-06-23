@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import {
   ScanLine, MapPin, Boxes, Package, Layers, ArrowRight, Loader2,
-  CheckCircle2, RotateCcw, Search, X, Move, Tag,
+  CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale,
 } from "lucide-react";
 import { fetcher, poster, cleanScan, logLoadError } from "./lib";
 
@@ -79,6 +79,10 @@ function ModeButton({ icon: Icon, title, subtitle, color, onClick, testid }) {
 }
 
 export function MoverModule() {
+  // Top-level mode: the classic origin→destination move, or a box-first
+  // inventory adjustment (Case# 002) that has no destination at all.
+  const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust'
+
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
   const [originInput, setOriginInput] = useState("");
@@ -96,6 +100,63 @@ export function MoverModule() {
   const [selectedLine, setSelectedLine] = useState(null);   // units/reconcile mode: an inventory line
   const [qty, setQty] = useState("");
   const [physicalLpn, setPhysicalLpn] = useState("");       // reconcile mode: scanned real LPN
+
+  // ── Adjust-by-box mode (Case# 002) ──────────────────────────────────────────
+  const [adjScan, setAdjScan] = useState("");        // code typed/scanned
+  const [adjBox, setAdjBox] = useState(null);        // resolved box doc
+  const [adjLookup, setAdjLookup] = useState(false); // resolving a scan
+  const [adjCount, setAdjCount] = useState("");      // real counted units
+  const [adjReason, setAdjReason] = useState("");    // mandatory free-text reason
+  const [adjSubmitting, setAdjSubmitting] = useState(false);
+  const adjScanRef = useRef(null);
+
+  const resetAdjust = useCallback(() => {
+    setAdjScan(""); setAdjBox(null); setAdjLookup(false);
+    setAdjCount(""); setAdjReason(""); setAdjSubmitting(false);
+  }, []);
+
+  // Resolve the scanned code into a box and prefill its current count.
+  const lookupAdjBox = async (raw) => {
+    const code = cleanScan(raw);
+    if (!code) return;
+    setAdjLookup(true);
+    try {
+      const box = await fetcher(`/boxes/${encodeURIComponent(code)}`);
+      if (!box || !box.box_id) { toast.error(`Caja ${code} no existe`); return; }
+      setAdjBox(box);
+      setAdjCount(String(box.units ?? box.qty ?? 0));
+      setAdjReason("");
+    } catch {
+      toast.error(`Caja ${code} no encontrada`);
+    } finally { setAdjLookup(false); }
+  };
+
+  const submitAdjust = async () => {
+    const counted = parseInt(adjCount, 10);
+    if (!(counted >= 0)) { toast.error("Captura las unidades contadas"); return; }
+    if (!adjReason.trim()) { toast.error("El motivo es obligatorio"); return; }
+    setAdjSubmitting(true);
+    try {
+      const res = await poster(`/boxes/${encodeURIComponent(adjBox.box_id)}/adjust`, {
+        counted_units: counted, reason: adjReason.trim(),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const d = data.delta_units ?? 0;
+        toast.success(
+          `Caja ${data.box_id}: ${data.old_units} → ${data.new_units} u (${d > 0 ? "+" : ""}${d})`
+            + (data.box_deleted ? " · caja vaciada y eliminada" : "")
+        );
+        resetAdjust();
+        adjScanRef.current?.focus();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se pudo ajustar la caja");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    } finally { setAdjSubmitting(false); }
+  };
 
   // Known location names for the type-to-search chips (fetched once).
   const [locNames, setLocNames] = useState([]);
@@ -248,13 +309,124 @@ export function MoverModule() {
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-2xl bg-primary/10"><Move className="w-7 h-7 text-primary" /></div>
           <div>
-            <h1 className="text-xl font-black uppercase tracking-tight">Mover Material</h1>
-            <p className="text-xs text-muted-foreground">Escanea una ubicación y elige qué mover</p>
+            <h1 className="text-xl font-black uppercase tracking-tight">
+              {topMode === "adjust" ? "Ajustar Caja" : "Mover Material"}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {topMode === "adjust"
+                ? "Escanea una caja y captura su conteo real"
+                : "Escanea una ubicación y elige qué mover"}
+            </p>
           </div>
         </div>
 
-        {/* STEP 1 — origin */}
-        {!origin ? (
+        {/* Top-level toggle: move vs adjust-by-box (Case# 002) */}
+        <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-secondary/30 border border-border">
+          <button
+            onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
+            data-testid="mover-top-move"
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "move" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            <Move className="w-4 h-4" /> Mover
+          </button>
+          <button
+            onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
+            data-testid="mover-top-adjust"
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "adjust" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            <Scale className="w-4 h-4" /> Ajustar caja
+          </button>
+        </div>
+
+        {/* ── ADJUST BY BOX (Case# 002) ─────────────────────────────────────── */}
+        {topMode === "adjust" ? (
+          !adjBox ? (
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+              <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                <ScanLine className="w-5 h-5 text-primary" /> Escanea el número de caja
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); lookupAdjBox(adjScan); }} className="flex items-center gap-2">
+                <input
+                  ref={adjScanRef} autoFocus value={adjScan}
+                  onChange={(e) => setAdjScan(e.target.value.toUpperCase())}
+                  placeholder="Ej. BOX-000143 · LPN…"
+                  data-testid="mover-adjust-scan"
+                  className="flex-1 h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-lg font-mono font-bold tracking-wide focus:outline-none focus:border-primary" />
+                <button type="submit" disabled={adjLookup || !adjScan.trim()}
+                  className="h-14 px-5 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm disabled:opacity-40 active:scale-95 transition-transform">
+                  {adjLookup ? <Loader2 className="w-5 h-5 animate-spin" /> : "Buscar"}
+                </button>
+              </form>
+              <p className="text-[11px] text-muted-foreground">
+                El ajuste queda enlazado al número de caja y se registra en su historial de movimientos.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Box summary */}
+              <div className="bg-card border border-primary/30 rounded-2xl p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-black">Caja</div>
+                    <div className="text-lg font-mono font-black truncate">{adjBox.box_id}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                      {(adjBox.style || adjBox.sku)} · {adjBox.color} · {adjBox.size}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-1">
+                      <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                      {adjBox.location || "sin ubicación"}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-2xl font-black leading-none">{adjBox.units ?? adjBox.qty ?? 0}</div>
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">u actuales</div>
+                  </div>
+                </div>
+                <button onClick={resetAdjust} className="text-xs font-bold text-primary flex items-center gap-1">
+                  <RotateCcw className="w-3.5 h-3.5" /> Cambiar caja
+                </button>
+              </div>
+
+              {/* Counted units + reason */}
+              <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                    Unidades reales contadas
+                  </label>
+                  <input type="number" min="0" value={adjCount}
+                    onChange={(e) => setAdjCount(e.target.value)}
+                    data-testid="mover-adjust-count"
+                    className="mt-1 w-full h-16 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-3xl font-black text-center focus:outline-none focus:border-primary" />
+                  {adjCount !== "" && !Number.isNaN(parseInt(adjCount, 10)) && (() => {
+                    const d = parseInt(adjCount, 10) - (adjBox.units ?? adjBox.qty ?? 0);
+                    if (d === 0) return <p className="text-[11px] text-muted-foreground mt-1 text-center">Sin cambio</p>;
+                    return (
+                      <p className={`text-xs font-black mt-1 text-center ${d > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {d > 0 ? "+" : ""}{d} unidades{parseInt(adjCount, 10) === 0 ? " · la caja se eliminará" : ""}
+                      </p>
+                    );
+                  })()}
+                </div>
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                    Motivo del ajuste <span className="text-red-400">*</span>
+                  </label>
+                  <textarea value={adjReason} onChange={(e) => setAdjReason(e.target.value)}
+                    rows={2} placeholder="Ej. Conteo físico, caja dañada, error de captura…"
+                    data-testid="mover-adjust-reason"
+                    className="mt-1 w-full px-4 py-3 bg-secondary/30 border-2 border-border rounded-2xl text-sm focus:outline-none focus:border-primary resize-none" />
+                </div>
+                <button onClick={submitAdjust}
+                  disabled={adjSubmitting || adjCount === "" || !adjReason.trim()
+                    || parseInt(adjCount, 10) === (adjBox.units ?? adjBox.qty ?? 0)}
+                  data-testid="mover-adjust-confirm"
+                  className="w-full h-14 rounded-2xl bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black uppercase tracking-wide flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+                  {adjSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scale className="w-5 h-5" />}
+                  Confirmar ajuste
+                </button>
+              </div>
+            </div>
+          )
+        ) : /* STEP 1 — origin */
+        !origin ? (
           <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
             <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-black">1</span>

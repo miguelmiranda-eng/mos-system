@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, Fragment } from "react";
 import { toast } from "sonner";
-import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter } from "lucide-react";
+import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter, ChevronRight } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
@@ -172,6 +172,11 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [boxesFor, setBoxesFor] = useState(null); // { inventory_id, label, location }
   const [boxesList, setBoxesList] = useState([]);
   const [boxesLoading, setBoxesLoading] = useState(false);
+  // Case# 007 — inline expansion of the box (LPN) numbers under a row, so the
+  // box visibility doesn't require opening the modal. Cached per inventory_id.
+  const [expandedBoxes, setExpandedBoxes] = useState(null);   // inventory_id
+  const [boxesCache, setBoxesCache] = useState({});           // inv_id -> boxes[]
+  const [boxesRowLoading, setBoxesRowLoading] = useState(null); // inv_id
   // Manual inventory entry modal — cascading dropdowns only (no free text).
   const [showAddManual, setShowAddManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
@@ -190,6 +195,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     zone: '', location: '',
     customer: '', description: '', country_of_origin: '', fabric_content: '', category: '',
     total_boxes: 0, total_units: 0,
+    box_id: '',  // Case# 006: real box number for positive adjustments
     reason: '',
   };
   // Motivos para la bitácora de auditoría (entrada y salida).
@@ -442,13 +448,18 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const submitManualAdd = async () => {
     const { style, color, size, location } = manualForm;
     const units = Number(manualForm.total_units) || 0;
-    const boxes = Number(manualForm.total_boxes) || 0;
+    // Positive adjustments are now ONE real box per add (Case# 006); removals
+    // still take a box count.
+    const isAdd = manualOp !== 'remove';
+    const boxId = (manualForm.box_id || '').trim().toUpperCase();
+    const boxes = isAdd ? 1 : (Number(manualForm.total_boxes) || 0);
     if (!style) { toast.error('Style es requerido'); return; }
     if (!color) { toast.error('Color es requerido'); return; }
     if (!size) { toast.error('Talla es requerida'); return; }
     if (!location) { toast.error('Ubicación es requerida'); return; }
     if (units <= 0) { toast.error('Unidades debe ser mayor a 0'); return; }
-    if (boxes < 0) { toast.error('Cajas no puede ser negativo'); return; }
+    if (isAdd && !boxId) { toast.error('Número de caja (LPN) es requerido'); return; }
+    if (!isAdd && boxes < 0) { toast.error('Cajas no puede ser negativo'); return; }
     if (!manualForm.reason) { toast.error(`Selecciona el motivo de la ${manualOp === 'remove' ? 'salida' : 'entrada'}`); return; }
     setSavingManual(true);
     try {
@@ -459,6 +470,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
         operation: manualOp,
         reason: manualForm.reason,
         total_units: units, total_boxes: boxes,
+        ...(isAdd ? { box_id: boxId } : {}),
         customer: (manualForm.customer || styleInfo?.customer || '').toUpperCase(),
         description: (manualForm.description || styleInfo?.description || '').toUpperCase(),
         country_of_origin: (manualForm.country_of_origin || styleInfo?.country_of_origin || '').toUpperCase(),
@@ -475,11 +487,12 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       });
       if (res.ok) {
         const data = await res.json();
+        const boxNote = data.box_id ? ` · Caja ${data.box_id}` : '';
         const msg = data.mode === 'removed'
           ? `Material retirado (-${data.removed_units} pzs)`
           : data.mode === 'accumulated'
-            ? `Inventario acumulado (+${data.added_units} pzs)`
-            : `Inventario creado (${data.added_units} pzs)`;
+            ? `Inventario acumulado (+${data.added_units} pzs)${boxNote}`
+            : `Inventario creado (${data.added_units} pzs)${boxNote}`;
         toast.success(msg);
         setShowAddManual(false);
         // Show what we just added by setting the search to the style — the
@@ -578,6 +591,77 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
       setBoxesLoading(false);
     }
   };
+
+  // Toggle the inline LPN list beneath a row (Case# 007). Lazy + cached.
+  const toggleInlineBoxes = async (inv) => {
+    if (!inv.inventory_id) { toast.error('Esta fila no tiene inventory_id'); return; }
+    if (expandedBoxes === inv.inventory_id) { setExpandedBoxes(null); return; }
+    setExpandedBoxes(inv.inventory_id);
+    if (!boxesCache[inv.inventory_id]) {
+      setBoxesRowLoading(inv.inventory_id);
+      try {
+        const data = await fetcher(`/boxes?inventory_id=${encodeURIComponent(inv.inventory_id)}`);
+        setBoxesCache(c => ({ ...c, [inv.inventory_id]: Array.isArray(data) ? data : [] }));
+      } catch (err) {
+        logLoadError('boxes inline')(err);
+        toast.error('Error al cargar las cajas');
+      } finally {
+        setBoxesRowLoading(null);
+      }
+    }
+  };
+
+  // The "Cajas" cell: chevron toggles the inline LPN list; the number opens the
+  // modal (both kept — Case# 007).
+  const renderCajasCell = (inv) => (
+    inv.total_boxes > 0 && inv.inventory_id ? (
+      <div className="flex items-center justify-end gap-1">
+        <button onClick={() => toggleInlineBoxes(inv)} title="Ver/ocultar las cajas (LPNs) aquí"
+          className="p-0.5 rounded text-muted-foreground hover:text-primary transition-all">
+          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${expandedBoxes === inv.inventory_id ? 'rotate-90 text-primary' : ''}`} />
+        </button>
+        <button onClick={() => openBoxes(inv)} title="Ver LPNs en ventana"
+          className="px-2 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 transition-all font-mono font-bold cursor-pointer">
+          {inv.total_boxes.toLocaleString()}
+        </button>
+      </div>
+    ) : (
+      (inv.total_boxes || 0).toLocaleString()
+    )
+  );
+
+  // The inline sub-row listing each box (LPN) under an expanded inventory line.
+  const renderBoxesSubRow = (inv) => (
+    expandedBoxes === inv.inventory_id ? (
+      <tr className="bg-secondary/10 border-b border-border/10">
+        <td colSpan="12" className="px-6 py-2.5">
+          {boxesRowLoading === inv.inventory_id ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+              <Loader2 className="w-4 h-4 animate-spin" /> Cargando cajas…
+            </div>
+          ) : (boxesCache[inv.inventory_id]?.length ? (
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                {boxesCache[inv.inventory_id].length} caja(s) en {inv.inv_location || inv.location || '—'}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {boxesCache[inv.inventory_id].map((b, i) => (
+                  <span key={b.box_id || i} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-card border border-border/40 text-[11px]"
+                    title={`${b.state || b.status || ''}`}>
+                    <Package className="w-3 h-3 text-primary/70" />
+                    <span className="font-mono font-bold text-primary">{b.box_id || '—'}</span>
+                    <span className="font-mono text-emerald-400 font-black">{(b.units || b.qty || 0).toLocaleString()}u</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground py-1 italic">Sin cajas registradas para esta línea.</div>
+          ))}
+        </td>
+      </tr>
+    ) : null
+  );
 
   return (
     <div className="space-y-6">
@@ -748,7 +832,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                       </td>
                     </tr>
                     {items.map((inv, i) => (
-                      <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
+                      <Fragment key={inv.inventory_id || i}>
+                      <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
                         <td className="p-4 text-[11px] font-bold text-muted-foreground/80 opacity-40">{inv.customer}</td>
                         <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
                         <td className="p-4 text-[11px] font-bold">
@@ -763,19 +848,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                         </td>
                         <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
                         <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
-                        <td className="p-4 text-right font-mono font-bold">
-                          {inv.total_boxes > 0 && inv.inventory_id ? (
-                            <button
-                              onClick={() => openBoxes(inv)}
-                              className="px-2 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary border border-primary/20 transition-all font-mono font-bold cursor-pointer"
-                              title="Ver LPNs (cajas) de esta línea"
-                            >
-                              {inv.total_boxes.toLocaleString()}
-                            </button>
-                          ) : (
-                            (inv.total_boxes || 0).toLocaleString()
-                          )}
-                        </td>
+                        <td className="p-4 text-right font-mono font-bold">{renderCajasCell(inv)}</td>
                         <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
                         <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
@@ -787,12 +860,15 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                           </button>
                         </td>
                       </tr>
+                      {renderBoxesSubRow(inv)}
+                      </Fragment>
                     ))}
                   </Fragment>
                 ))
               ) : (
                 inventory.map((inv, i) => (
-                  <tr key={inv.inventory_id || i} className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
+                  <Fragment key={inv.inventory_id || i}>
+                  <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
                     <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
                     <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
                     <td className="p-4 text-[11px] font-bold">
@@ -807,7 +883,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                     </td>
                     <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
                     <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
-                    <td className="p-4 text-right font-mono font-bold">{(inv.total_boxes || 0).toLocaleString()}</td>
+                    <td className="p-4 text-right font-mono font-bold">{renderCajasCell(inv)}</td>
                     <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
                     <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
@@ -819,6 +895,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                       </button>
                     </td>
                   </tr>
+                  {renderBoxesSubRow(inv)}
+                  </Fragment>
                 ))
               )}
             </tbody>
@@ -1207,16 +1285,31 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   />
                 </div>
                 {!multiMode && (<>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cajas</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={manualForm.total_boxes}
-                    onChange={e => setManualForm(f => ({ ...f, total_boxes: e.target.value }))}
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums"
-                  />
-                </div>
+                {manualOp === 'add' ? (
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Número de caja (LPN) *</label>
+                    <input
+                      type="text"
+                      value={manualForm.box_id}
+                      onChange={e => setManualForm(f => ({ ...f, box_id: e.target.value.toUpperCase() }))}
+                      placeholder="Escanea o teclea el número"
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums uppercase"
+                      data-testid="manual-box-id"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">Una caja por ajuste. Queda enlazada y rastreable por este número.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cajas</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={manualForm.total_boxes}
+                      onChange={e => setManualForm(f => ({ ...f, total_boxes: e.target.value }))}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Unidades *</label>
                   <input

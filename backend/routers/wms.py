@@ -628,11 +628,12 @@ async def move_location_bulk(request: Request):
         raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
     await _assert_not_on_hold(user, src, dst)
 
-    # 1. Bulk move boxes (no merge logic needed; box_id is unique)
-    box_res = await db.wms_boxes.update_many(
-        {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}},
-        {"$set": {"location": dst}}
-    )
+    # 1. Bulk move boxes (no merge logic needed; box_id is unique).
+    # Capture the moved box ids first so the per-box history (Case# 003) can
+    # surface this relocation; update_many only returns a count.
+    src_box_filter = {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
+    moved_box_ids = await db.wms_boxes.distinct("box_id", src_box_filter)
+    box_res = await db.wms_boxes.update_many(src_box_filter, {"$set": {"location": dst}})
     boxes_moved = box_res.modified_count
 
     # 2. Inventory: merge per SKU at destination
@@ -673,6 +674,7 @@ async def move_location_bulk(request: Request):
         "boxes_moved": boxes_moved,
         "skus_moved": skus_moved,
         "units_moved": units_moved,
+        "box_ids": moved_box_ids[:50],  # cap log payload
     })
     await notify_badge_change("all")
 
@@ -1099,6 +1101,7 @@ async def move_units(request: Request):
     remaining = units
     whole_count = 0   # boxes that left the source entirely
     split_count = 0   # boxes split → a new partial box created at the destination
+    moved_box_ids = []  # every box touched (whole + shrunk source + split child) for box history
     next_seq = None
 
     for box in boxes:
@@ -1115,6 +1118,7 @@ async def move_units(request: Request):
                 {"$set": {"location": dst_name, "status": "stored"}},
             )
             whole_count += 1
+            moved_box_ids.append(box.get("box_id"))
         else:
             # Partial: shrink the source box, create a fresh box at the destination.
             await db.wms_boxes.update_one(
@@ -1133,6 +1137,7 @@ async def move_units(request: Request):
             child.pop("inventory_id", None)
             await db.wms_boxes.insert_one(child)
             split_count += 1
+            moved_box_ids.extend([box.get("box_id"), new_box_id])
         remaining -= take
 
     # Inventory lockstep: decrement the source row by the full requested units and
@@ -1192,6 +1197,7 @@ async def move_units(request: Request):
     await log_movement(user, MovementType.BULK_RELOCATION, {
         "from": src, "to": dst_name, "sku": sku, "color": color, "size": size,
         "units_moved": units, "boxes_relocated": whole_count, "boxes_split": split_count,
+        "box_ids": [b for b in moved_box_ids if b][:50],  # cap log payload
     })
     await notify_badge_change("all")
     return {
@@ -2125,6 +2131,220 @@ async def delete_box(box_id: str, request: Request):
     await notify_badge_change("all")
     return {"status": "deleted", "box_id": box_id}
 
+
+@router.post("/boxes/{box_id}/adjust")
+async def adjust_box_count(box_id: str, request: Request):
+    """Case# 002 — adjust inventory at the physical box level.
+
+    The operator scans a box (by box_id, printed barcode or lpn_id) and types
+    the REAL counted units for that single box. We set the box to that exact
+    count and rebalance the box's location inventory row by the delta — so an
+    adjustment is always tied to a concrete box number (auditable in the box's
+    movement history, Case# 003).
+
+    Guards:
+      • A reason is mandatory (free text) so every adjustment is justified.
+      • A downward adjustment is blocked when it would push the row's on-hand
+        below its allocated (committed) units, mirroring the manual-out guard.
+      • Honors location HOLDs.
+    Side effects:
+      • If the new count is 0 the box is deleted (no zero-unit ghosts).
+      • An empty inventory row (no units, no other boxes) is dropped.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+
+    # Resolve by internal key first, then by the physical label (barcode/lpn_id)
+    # so a scan of the printed plate of a reconciled box still finds it.
+    box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    if not box:
+        box = await db.wms_boxes.find_one(
+            {"$or": [{"barcode": box_id}, {"lpn_id": box_id}]}, {"_id": 0}
+        )
+    if not box:
+        raise HTTPException(404, f"Caja {box_id} no encontrada")
+    real_box_id = box["box_id"]
+
+    await _assert_not_on_hold(user, box.get("location"))
+
+    reason = str(body.get("reason", "") or "").strip()
+    if not reason:
+        raise HTTPException(400, "El motivo del ajuste es obligatorio")
+
+    try:
+        counted = int(float(body.get("counted_units")))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Las unidades contadas deben ser un número entero")
+    if counted < 0:
+        raise HTTPException(400, "Las unidades contadas no pueden ser negativas")
+
+    old_units = int(box.get("units") or box.get("qty") or 0)
+    delta = counted - old_units
+    if delta == 0:
+        raise HTTPException(400, f"La caja ya tiene {old_units} unidades; nada por ajustar")
+
+    sku = box.get("sku") or box.get("style") or ""
+    color = box.get("color", "")
+    size = box.get("size", "")
+    location = box.get("location", "")
+
+    # Rebalance the location's inventory row by the same delta.
+    inv = None
+    if location:
+        inv = (
+            (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
+            or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": location})
+        )
+    if inv:
+        on_hand = int(inv.get("units_on_hand", 0) or 0)
+        allocated = int(inv.get("units_allocated", 0) or 0)
+        new_on_hand = on_hand + delta
+        if new_on_hand < allocated:
+            raise HTTPException(
+                400,
+                f"No puedes dejar {new_on_hand} en existencia: {allocated} unidades están "
+                f"comprometidas (allocated) en esta ubicación. Libera la asignación primero.",
+            )
+        new_on_hand = max(0, new_on_hand)
+        # This box crossing to/from 0 units adds or removes one counted box.
+        box_delta = -1 if (old_units > 0 and counted == 0) else (1 if (old_units == 0 and counted > 0) else 0)
+        new_total_boxes = max(0, int(inv.get("total_boxes", 0) or 0) + box_delta)
+        await db.wms_inventory.update_one(
+            {"_id": inv["_id"]},
+            {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
+        )
+        # Drop a fully-empty row so an adjusted-to-zero slot doesn't ghost.
+        if new_on_hand == 0:
+            still = await db.wms_boxes.count_documents({
+                "sku": sku, "color": color, "size": size, "location": location,
+                "box_id": {"$ne": real_box_id}, "units": {"$gt": 0},
+            })
+            if not still:
+                await db.wms_inventory.delete_one({"_id": inv["_id"]})
+
+    # Apply to the box itself: delete when emptied, otherwise set the new count.
+    if counted == 0:
+        await db.wms_boxes.delete_one({"box_id": real_box_id})
+    else:
+        await db.wms_boxes.update_one(
+            {"box_id": real_box_id},
+            {"$set": {"units": counted, "qty": counted,
+                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        )
+
+    await log_movement(user, "inventory_adjust_box", {
+        "box_id": real_box_id,
+        "sku": sku, "color": color, "size": size, "location": location,
+        "old_units": old_units, "new_units": counted, "delta_units": delta,
+        "reason": reason,
+        "box_deleted": counted == 0,
+    })
+    await notify_badge_change("all")
+
+    return {
+        "status": "adjusted",
+        "box_id": real_box_id,
+        "old_units": old_units,
+        "new_units": counted,
+        "delta_units": delta,
+        "box_deleted": counted == 0,
+        "location": location,
+    }
+
+
+@router.get("/boxes/{box_id}/history")
+async def box_history(box_id: str, request: Request, limit: int = 300):
+    """Case# 003 — full transaction timeline for a single box / LPN.
+
+    Resolves the box by internal id, printed barcode or lpn_id, then returns:
+      • box_events — every movement that names this box (details.box_id, or this
+        box inside a bulk move's details.box_ids), plus the receiving event that
+        created it. Newest first.
+      • sku_context — movements at the SKU/location level that don't name a box
+        (allocation, picking, manual adjustments, cycle counts). Helps diagnose
+        discrepancies but is not specific to this box.
+
+    Read-only; any authenticated WMS user.
+    """
+    await require_auth(request)
+
+    box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+    if not box:
+        box = await db.wms_boxes.find_one(
+            {"$or": [{"barcode": box_id}, {"lpn_id": box_id}]}, {"_id": 0}
+        )
+
+    # Every identifier this box has answered to. A deleted box still leaves
+    # movements keyed by its original id, so fall back to the raw input.
+    keys = set()
+    if box:
+        for k in (box.get("box_id"), box.get("lpn_id"), box.get("barcode")):
+            if k:
+                keys.add(k)
+    keys.add(box_id)
+    keys = list(keys)
+
+    or_clauses = [
+        {"details.box_id": {"$in": keys}},     # single-box events
+        {"details.box_ids": {"$in": keys}},    # this box inside a bulk move
+    ]
+    # The creation (receiving) event is keyed by receiving_id, not box_id.
+    receiving_id = (box or {}).get("receiving_id")
+    if receiving_id:
+        or_clauses.append({"details.receiving_id": receiving_id})
+
+    box_events = await db.wms_movements.find(
+        {"$or": or_clauses}, {"_id": 0}
+    ).sort("created_at", -1).to_list(limit)
+    box_event_ids = {m.get("movement_id") for m in box_events}
+
+    # Receiving-linked events (receiving / receiving_update / deallocate) only log
+    # the receiving_id + a grand total. Join the receiving doc so the timeline
+    # shows the product, this box's received units, lot, ASN/UPC, etc.
+    rcv_ids = {m.get("details", {}).get("receiving_id") for m in box_events}
+    rcv_ids.discard(None)
+    if rcv_ids:
+        rcv_map = {}
+        async for r in db.wms_receiving.find({"receiving_id": {"$in": list(rcv_ids)}}, {"_id": 0}):
+            rcv_map[r.get("receiving_id")] = r
+        for m in box_events:
+            d = m.get("details") or {}
+            r = rcv_map.get(d.get("receiving_id"))
+            if not r:
+                continue
+            for k in ("customer", "manufacturer", "style", "color", "size", "sku",
+                      "description", "country_of_origin", "fabric_content",
+                      "lot_number", "asn_reference", "upc"):
+                if r.get(k) and not d.get(k):
+                    d[k] = r.get(k)
+            # This specific box's received units, pulled from the receiving's box list.
+            for b in (r.get("boxes") or []):
+                if b.get("box_id") in keys:
+                    d["box_units_received"] = b.get("units")
+                    break
+            if r.get("received_by_name") and not m.get("user_name"):
+                m["user_name"] = r["received_by_name"]
+            m["details"] = d
+
+    # SKU/location context — only when we still know the box's dimensions.
+    sku_context = []
+    if box:
+        sku = box.get("sku") or box.get("style") or ""
+        if sku:
+            ctx = await get_sku_movement_history(sku, box.get("color", ""), box.get("size", ""), limit)
+            sku_context = [m for m in ctx if m.get("movement_id") not in box_event_ids]
+
+    return {
+        "box_id": (box or {}).get("box_id", box_id),
+        "found": bool(box),
+        "box": box,
+        "box_events": box_events,
+        "box_event_count": len(box_events),
+        "sku_context": sku_context,
+        "sku_context_count": len(sku_context),
+    }
+
+
 # ==================== PUTAWAY ====================
 
 async def _adjust_inventory_boxes(inv_id, delta):
@@ -2389,7 +2609,10 @@ async def putaway_bulk(request: Request):
                 await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
                 await _move_box_inventory(box, old_loc, location)
                 results.append({"box_id": box_id, "location": location})
-    await log_movement(user, "putaway_bulk", {"count": len(results)})
+    await log_movement(user, "putaway_bulk", {
+        "count": len(results),
+        "box_ids": [r["box_id"] for r in results][:50],  # cap log payload
+    })
     await notify_badge_change("putaway")
     return {"message": f"{len(results)} cajas ubicadas", "results": results}
 
@@ -3829,7 +4052,19 @@ async def save_pick_progress(ticket_id: str, request: Request):
     if picked_locs:
         await _assert_not_on_hold(user, *picked_locs)
 
-    picking_status = "completed" if is_complete else "in_progress"
+    # Destination + completeness drive the final status. A partial "complete"
+    # must NOT close the ticket (Case# 005): it stays active/in_progress so an
+    # admin can reassign it when more material arrives. Only a FULL pick closes.
+    is_neck = ticket.get("destination") == "neck_cutting"
+    required_total = sum(int(v or 0) for v in (ticket.get("sizes") or {}).values())
+    picked_total = sum(
+        int((c.get("total") if isinstance(c, dict) else c) or 0)
+        for c in picked_sizes.values()
+    )
+    is_full = required_total > 0 and picked_total >= required_total
+    finalize = is_complete and is_full
+    partial_close = is_complete and not is_full
+    picking_status = ("in_neck_cutting" if is_neck else "completed") if finalize else "in_progress"
 
     # Idempotency: once a ticket is finalized no more progress is applied here
     # (further changes go through the edit endpoint). Partial tickets stay open so
@@ -3844,6 +4079,7 @@ async def save_pick_progress(ticket_id: str, request: Request):
     update = {
         "picked_sizes": picked_sizes,
         "picking_status": picking_status,
+        "partial_closed": partial_close,
         "last_picked_by": user.get("user_id"),
         "last_picked_by_name": user.get("name", user.get("email", "")),
         "last_picked_at": now_iso()
@@ -3854,7 +4090,6 @@ async def save_pick_progress(ticket_id: str, request: Request):
     # (tracked in `deducted_map`), so a partial save removes exactly the newly
     # picked units, re-saving the same numbers is a no-op (no double counting),
     # and a correction downward returns those units to the shelf.
-    is_neck = ticket.get("destination") == "neck_cutting"
     inv_op = "pick_to_neck" if is_neck else "deduct"
     style = ticket.get('style', '').strip()
     color = ticket.get('color', '').strip()
@@ -3900,22 +4135,32 @@ async def save_pick_progress(ticket_id: str, request: Request):
 
     update["deducted_map"] = new_map
 
-    if is_complete:
+    if finalize:
+        # Full pick → close the ticket (to production or neck cutting).
         update["completed_at"] = now_iso()
-        # Update ticket status based on destination
-        if is_neck:
-            update["status"] = "in_neck_cutting"
-            update["picking_status"] = "in_neck_cutting"
-        else:
-            update["status"] = "confirmed"
+        update["status"] = "in_neck_cutting" if is_neck else "confirmed"
+    elif partial_close:
+        # Stock ran out: the picked units were already deducted incrementally
+        # above. Record who closed it short and leave it ACTIVE so an admin can
+        # reassign it when more material arrives (Case# 005).
+        update["partial_closed_at"] = now_iso()
+        update["partial_closed_by_name"] = user.get("name", user.get("email", ""))
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
     await log_movement(user, "pick_progress", {
         "ticket_id": ticket_id,
         "picking_status": picking_status,
+        "partial_closed": partial_close,
         "picked_sizes": picked_sizes
     })
-    return {"message": f"Progreso guardado ({picking_status})", "ticket_id": ticket_id, "picking_status": picking_status}
+    return {
+        "message": "Cerrado parcial — material descontado, el ticket queda activo" if partial_close
+                   else f"Progreso guardado ({picking_status})",
+        "ticket_id": ticket_id,
+        "picking_status": picking_status,
+        "partial_closed": partial_close,
+        "is_full": is_full,
+    }
 
 @router.put("/pick-tickets/{ticket_id}/confirm")
 @router.post("/stocktakes/{stocktake_id}/finalize")
@@ -4553,6 +4798,34 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         ws.write(row, 12, inv.get("country_of_origin", ""))
         ws.write(row, 13, inv.get("fabric_content", ""))
         ws.write(row, 14, "YES" if inv.get("is_bpo") else "NO")
+
+    # ── Sheet 2: box-level detail (Case# 007) ────────────────────────────────
+    # Which physical box / LPN sits in each location — the aggregated sheet above
+    # buckets by SKU+location and hides the box numbers. Reports need both.
+    boxes = await db.wms_boxes.find(
+        {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]},
+        {"_id": 0},
+    ).sort([("location", 1), ("sku", 1)]).to_list(None)
+    if exclude_hold and held:
+        boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
+    ws2 = wb.add_worksheet("Cajas - LPNs")
+    box_headers = ["Box / LPN", "Customer", "Style", "Color", "Size", "Location",
+                   "Units", "Status", "Country of Origin", "Fabric Content", "Description"]
+    for i, h in enumerate(box_headers):
+        ws2.write(0, i, h, bold)
+    for row, b in enumerate(boxes, 1):
+        ws2.write(row, 0, b.get("box_id", b.get("lpn_id", "")))
+        ws2.write(row, 1, b.get("customer", ""))
+        ws2.write(row, 2, b.get("style", b.get("sku", "")))
+        ws2.write(row, 3, b.get("color", ""))
+        ws2.write(row, 4, b.get("size", ""))
+        ws2.write(row, 5, b.get("location", ""))
+        ws2.write(row, 6, int(b.get("units") or b.get("qty") or 0))
+        ws2.write(row, 7, b.get("status", b.get("state", "")))
+        ws2.write(row, 8, b.get("country_of_origin", b.get("coo", "")))
+        ws2.write(row, 9, b.get("fabric_content", ""))
+        ws2.write(row, 10, b.get("description", ""))
+
     wb.close()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -5688,6 +5961,19 @@ async def add_inventory_manual(request: Request):
             "added_boxes": -total_boxes, "added_units": -total_units,
         }
 
+    # Case# 006: link a positive adjustment to a REAL box number the operator
+    # scans/types, instead of the synthetic LPN generated by default. When
+    # supplied, exactly one real box is created (total_boxes forced to 1).
+    manual_box_id = str(body.get("box_id", "") or "").strip().upper()
+    if manual_box_id:
+        clash = await db.wms_boxes.find_one(
+            {"$or": [{"box_id": manual_box_id}, {"barcode": manual_box_id}, {"lpn_id": manual_box_id}]},
+            {"_id": 0, "box_id": 1},
+        )
+        if clash:
+            raise HTTPException(400, f"La caja {manual_box_id} ya existe; usa un número distinto")
+        total_boxes = 1
+
     if existing:
         inventory_id = existing["inventory_id"]
         await db.wms_inventory.update_one(
@@ -5722,8 +6008,21 @@ async def add_inventory_manual(request: Request):
         })
         mode = "created"
 
-    # Generate LPN boxes for the units we just added (matches import logic).
-    if total_boxes > 0:
+    # Generate the box(es) for the units we just added.
+    if manual_box_id:
+        # One real, scannable box stamped with the operator's number (Case# 006).
+        await db.wms_boxes.insert_one({
+            "box_id": manual_box_id, "barcode": manual_box_id, "lpn_id": manual_box_id,
+            "inventory_id": inventory_id,
+            "sku": style, "color": color, "size": size,
+            "units": total_units, "qty": total_units,
+            "location": location, "state": "putaway",
+            "customer": s("customer"), "coo": coo_key, "country_of_origin": coo_key,
+            "fabric_content": fabric_key, "description": s("description"),
+            "manufacturer": s("manufacturer"), "created_at": now,
+        })
+    elif total_boxes > 0:
+        # Fallback: synthetic LPNs (bulk multi-line add / no number supplied).
         units_per_box = total_units // total_boxes
         remainder = total_units % total_boxes
         box_docs = [{
@@ -5773,6 +6072,7 @@ async def add_inventory_manual(request: Request):
         "location": location,
         "added_boxes": total_boxes,
         "added_units": total_units,
+        "box_id": manual_box_id or None,
     })
 
     return {
@@ -5781,6 +6081,7 @@ async def add_inventory_manual(request: Request):
         "location_created": location_created,
         "added_boxes": total_boxes,
         "added_units": total_units,
+        "box_id": manual_box_id or None,
     }
 
 

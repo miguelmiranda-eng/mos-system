@@ -4,7 +4,7 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check, LayoutGrid,
-  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag,
+  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
 
@@ -29,6 +29,7 @@ export default function PdaPicker() {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [locatorOpen, setLocatorOpen] = useState(false); // box→location lookup (Case# 004)
 
   useEffect(() => {
     if (user === null) navigate("/", { replace: true });
@@ -64,8 +65,18 @@ export default function PdaPicker() {
     try {
       const res = await putter(`/pick-tickets/${ticketId}/pick-progress`, { picked_sizes: pickedSizes, is_complete: isComplete });
       if (res.ok) {
-        toast.success(isComplete ? "Surtido completado" : "Progreso guardado");
-        if (isComplete) setSelected(null);
+        const data = await res.json().catch(() => ({}));
+        // A partial "complete" no longer closes the ticket — it stays active for
+        // an admin to reassign on restock (Case# 005). Reflect that honestly.
+        if (isComplete && data.partial_closed) {
+          toast.success("Cerrado parcial — material descontado, el ticket queda activo");
+          setSelected(null);
+        } else if (isComplete) {
+          toast.success("Surtido completado");
+          setSelected(null);
+        } else {
+          toast.success("Progreso guardado");
+        }
         await loadTickets();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -80,8 +91,8 @@ export default function PdaPicker() {
       <Toaster position="top-center" theme="dark" richColors />
       {/* Header */}
       <header className="sticky top-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-b border-white/10 px-3 py-2.5 flex items-center gap-2">
-        {selected ? (
-          <button onClick={() => setSelected(null)} className="p-2 -ml-1 rounded-xl active:bg-white/10">
+        {(selected || locatorOpen) ? (
+          <button onClick={() => { if (selected) setSelected(null); else setLocatorOpen(false); }} className="p-2 -ml-1 rounded-xl active:bg-white/10">
             <ChevronLeft className="w-6 h-6" />
           </button>
         ) : (
@@ -90,23 +101,30 @@ export default function PdaPicker() {
           </div>
         )}
         <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Surtido PDA</div>
-          <div className="text-sm font-black truncate">{selected ? selected.order_number : (user?.name || user?.email || "Picker")}</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{locatorOpen ? "Buscar caja" : "Surtido PDA"}</div>
+          <div className="text-sm font-black truncate">{selected ? selected.order_number : locatorOpen ? "Localizar caja" : (user?.name || user?.email || "Picker")}</div>
         </div>
-        {!selected && (
+        {!selected && !locatorOpen && (
           <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 text-xs font-black">{pending.length} pend.</span>
         )}
         {selected && (
           <button onClick={() => openComments(selected.order_number)} className="p-2 rounded-xl text-sky-300 active:bg-white/10" title="Comentarios"><MessageSquare className="w-5 h-5" /></button>
         )}
-        {!selected && (
+        {!selected && !locatorOpen && (
+          <button onClick={() => setLocatorOpen(true)} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title="Localizar caja"><Search className="w-5 h-5" /></button>
+        )}
+        {!selected && !locatorOpen && (
           <button onClick={() => navigate('/wms')} className="p-2 rounded-xl text-amber-300 active:bg-white/10" title="Menú (Picking / Putaway)"><LayoutGrid className="w-5 h-5" /></button>
         )}
-        <button onClick={loadTickets} className="p-2 rounded-xl active:bg-white/10"><RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} /></button>
+        {!locatorOpen && (
+          <button onClick={loadTickets} className="p-2 rounded-xl active:bg-white/10"><RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} /></button>
+        )}
         <button onClick={logout} className="p-2 rounded-xl text-red-400 active:bg-red-500/10"><LogOut className="w-5 h-5" /></button>
       </header>
 
-      {loading && tickets.length === 0 ? (
+      {locatorOpen ? (
+        <BoxLocator />
+      ) : loading && tickets.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32 gap-3 text-slate-400">
           <Loader2 className="w-9 h-9 animate-spin text-blue-400" />
           <span className="text-xs font-bold uppercase tracking-widest">Cargando…</span>
@@ -118,6 +136,117 @@ export default function PdaPicker() {
       )}
 
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => setCommentsOrder(null)} currentUser={user} />
+    </div>
+  );
+}
+
+// Box → location lookup for the floor (Case# 004). Scan a box / LPN and see
+// where it is, for which customer and what it holds. Read-only; no movement.
+function BoxLocator() {
+  const [scan, setScan] = useState("");
+  const [box, setBox] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const ref = useRef(null);
+
+  const doSearch = async (raw) => {
+    const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
+    setScan("");
+    if (!code) return;
+    setLoading(true);
+    setSearched(true);
+    try {
+      const b = await fetcher(`/boxes/${encodeURIComponent(code)}`);
+      const ok = b && b.box_id;
+      setBox(ok ? b : null);
+      if (!ok && navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      else if (ok && navigator.vibrate) navigator.vibrate(60);
+    } catch {
+      setBox(null);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+    } finally {
+      setLoading(false);
+      setTimeout(() => ref.current?.focus(), 50);
+    }
+  };
+
+  return (
+    <div className="p-3 space-y-3">
+      {/* Scan box */}
+      <div className="relative">
+        <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-emerald-400" />
+        <input
+          ref={ref}
+          autoFocus
+          value={scan}
+          onChange={(e) => setScan(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(scan); } }}
+          inputMode="none"
+          placeholder="Escanea el número de caja / LPN…"
+          className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-emerald-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-emerald-400"
+        />
+      </div>
+
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+          <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+          <span className="text-xs font-bold uppercase tracking-widest">Buscando…</span>
+        </div>
+      )}
+
+      {!loading && box && (
+        <div className="bg-[#131a2b] border border-white/10 rounded-2xl p-4 space-y-4">
+          <div className="text-center">
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Ubicación</div>
+            <div className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
+              <MapPin className="w-6 h-6 text-emerald-300" />
+              <span className="text-3xl font-mono font-black text-emerald-300">{box.location || "—"}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-white/10">
+            <div className="min-w-0">
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Caja</div>
+              <div className="text-sm font-mono font-black truncate">{box.box_id}</div>
+            </div>
+            <div className="min-w-0 text-right">
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Unidades</div>
+              <div className="text-sm font-black">{box.units ?? box.qty ?? 0}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Cliente</div>
+              <div className="text-sm font-bold truncate">{box.customer || "—"}</div>
+            </div>
+            <div className="min-w-0 text-right">
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Estado</div>
+              <div className="text-sm font-bold truncate">{box.status || box.state || "—"}</div>
+            </div>
+            <div className="col-span-2 min-w-0">
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Contenido</div>
+              <div className="text-base font-black flex items-center gap-2 flex-wrap mt-0.5">
+                <span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 font-mono">{box.style || box.sku}</span>
+                {box.color && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-200 text-sm">{box.color}</span>}
+                {box.size && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-200 text-sm">{box.size}</span>}
+              </div>
+              {box.description && <div className="text-[11px] text-slate-400 mt-1 truncate">{box.description}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && searched && !box && (
+        <div className="flex flex-col items-center justify-center py-16 gap-2 text-amber-400">
+          <AlertTriangle className="w-10 h-10" />
+          <span className="text-sm font-black uppercase tracking-widest">Caja no encontrada</span>
+        </div>
+      )}
+
+      {!loading && !searched && (
+        <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-500">
+          <Search className="w-10 h-10 opacity-40" />
+          <span className="text-xs font-bold uppercase tracking-widest text-center">Escanea una caja para ver su ubicación</span>
+        </div>
+      )}
     </div>
   );
 }

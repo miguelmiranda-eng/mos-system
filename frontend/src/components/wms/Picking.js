@@ -390,6 +390,15 @@ export const PickingModule = ({ currentUser } = {}) => {
   const completedTickets = filteredTickets.filter(t => !t.is_virtual && (t.status === TicketStatus.CONFIRMED || t.picking_status === PickingStatus.COMPLETED));
   const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
 
+  // Case# 005: within active tickets, split those with picking progress
+  // ("En avance" — includes partial-closed waiting on restock) from untouched
+  // ones ("Sin iniciar"), so a partial pick never looks finished or lost.
+  const ticketPicked = (t) => Object.values(t.picked_sizes || {})
+    .reduce((s, v) => s + (parseInt(typeof v === 'object' && v ? v.total : v) || 0), 0);
+  const hasProgress = (t) => ticketPicked(t) > 0 || t.picking_status === PickingStatus.IN_PROGRESS || t.partial_closed;
+  const inProgressTickets = activeTickets.filter(hasProgress);
+  const notStartedTickets = activeTickets.filter(t => !hasProgress(t));
+
   // New ticket card renderer (Premium Kanban style)
   const renderTicket = (ticket, showEdit = true) => {
     const sizes = ticket.sizes || {};
@@ -434,6 +443,12 @@ export const PickingModule = ({ currentUser } = {}) => {
             {!hasSizes && !ticket.is_virtual && (
               <span className="text-[10px] font-black uppercase bg-amber-500/20 px-2 py-0.5 rounded text-amber-400 tracking-widest border border-amber-500/20 animate-pulse">
                 {t('draft')}
+              </span>
+            )}
+            {ticket.partial_closed && !ticket.is_virtual && (
+              <span className="text-[9px] font-black uppercase bg-orange-500/20 px-2 py-0.5 rounded text-orange-400 tracking-widest border border-orange-500/30"
+                title="Cerrado parcial — esperando más material. Reasigna el ticket cuando llegue stock.">
+                Parcial · espera material
               </span>
             )}
             <select
@@ -805,10 +820,31 @@ export const PickingModule = ({ currentUser } = {}) => {
       )}
 
       {activeTab === 'tickets' && (
-        <div className="space-y-4" data-testid="pick-tickets-list">
-          <div className="flex flex-col gap-2">
-            {activeTickets.map(ticket => renderTicket(ticket))}
-          </div>
+        <div className="space-y-6" data-testid="pick-tickets-list">
+          {inProgressTickets.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 px-1">
+                <span className="w-2 h-2 rounded-full bg-yellow-500" />
+                <span className="text-xs font-black uppercase tracking-widest text-yellow-500">En avance</span>
+                <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{inProgressTickets.length}</span>
+              </div>
+              <div className="flex flex-col gap-2" data-testid="pick-inprogress-list">
+                {inProgressTickets.map(ticket => renderTicket(ticket))}
+              </div>
+            </div>
+          )}
+          {notStartedTickets.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 px-1">
+                <span className="w-2 h-2 rounded-full bg-blue-500" />
+                <span className="text-xs font-black uppercase tracking-widest text-blue-400">Sin iniciar</span>
+                <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{notStartedTickets.length}</span>
+              </div>
+              <div className="flex flex-col gap-2" data-testid="pick-notstarted-list">
+                {notStartedTickets.map(ticket => renderTicket(ticket))}
+              </div>
+            </div>
+          )}
           {activeTickets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
               <ClipboardCheck className="w-16 h-16 mb-4 stroke-[1px]" />
