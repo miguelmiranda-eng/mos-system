@@ -14,6 +14,7 @@ import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
+import { BoxSearchBar } from "./wms/BoxSearch";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
 import { HomeModule } from "./wms/Home";
 import { ReceivingModule } from "./wms/Receiving";
@@ -422,8 +423,9 @@ export default function WMS() {
                     </p>
                   </div>
                 </div>
-                {/* Global Search Order - Admin Only */}
+                {/* Global box/LPN search — always visible across every module */}
                 <div className="flex items-center gap-4">
+                  <BoxSearchBar />
                   <div className="hidden lg:flex flex-col items-end">
                     <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground opacity-50 mb-1">{t('wms_mgmt')}</div>
                     <div className="text-lg font-mono font-black text-foreground/80 tabular-nums">
