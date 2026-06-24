@@ -1165,7 +1165,7 @@ const Dashboard = () => {
           {/* Encabezado de tablero — siempre visible, indica dónde estás y deja cambiar */}
           <button
             onClick={() => setIsMobileMenuOpen(true)}
-            className="sticky top-0 z-20 flex items-center justify-between gap-2 px-4 py-2.5 bg-background/95 backdrop-blur border-b border-border/60"
+            className="sticky top-0 z-20 flex items-center justify-between gap-2 px-4 py-2.5 bg-background border-b border-border/60"
           >
             <span className="flex items-center gap-2 min-w-0">
               <span className="w-1.5 h-5 rounded-full bg-royal flex-shrink-0" />
@@ -2619,7 +2619,7 @@ const Dashboard = () => {
       {/* Enterprise Side-Drawer Detail View */}
       {/* Barra de navegación inferior — solo móvil. Cada acción usa lo que ya existe. */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-1 pt-2.5 bg-card/95 backdrop-blur border-t border-border"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-1 pt-2.5 bg-card border-t border-border"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         {[
@@ -2655,7 +2655,10 @@ const Dashboard = () => {
           boxShadow: '-10px 0 60px rgba(0,0,0,0.6)',
           display: 'flex', flexDirection: 'column', height: '100vh',
           zIndex: 9999, fontFamily: 'inherit',
-          animation: 'slideInFromRight 0.3s ease-out'
+          // No slide-in transform animation on mobile: a full-screen transform
+          // layer rendered blank/garbage on Android Chrome. Force a stable GPU
+          // layer instead so the panel paints reliably.
+          transform: 'translateZ(0)', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden'
         }}>
           {/* Header */}
           <div className={cn(

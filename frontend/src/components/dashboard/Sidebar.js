@@ -101,22 +101,24 @@ const Sidebar = ({
 
   return (
     <>
-      {/* Backdrop for mobile/tablet */}
+      {/* Backdrop for mobile/tablet — solid (no backdrop-blur: it corrupts the
+          GPU layer on Android Chrome and paints garbage/noise over the drawer). */}
       {(isMobile || isTablet) && isOpen && (
-        <div 
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300"
+        <div
+          className="fixed inset-0 bg-black/50 z-[100] transition-opacity duration-300"
           onClick={onClose}
         />
       )}
 
       <aside
         className={cn(
-          "flex flex-col transition-all duration-300 flex-shrink-0 overflow-hidden bg-card",
+          "flex flex-col transition-all duration-300 flex-shrink-0 overflow-hidden bg-card transform-gpu",
           (isMobile || isTablet)
             ? cn("fixed inset-y-0 left-0 z-[101] w-72 shadow-[20px_0_50px_rgba(0,0,0,0.15)] transform", isOpen ? "translate-x-0" : "-translate-x-full")
             : cn("relative z-50", isCollapsed ? "w-14" : "w-64"),
           "border-r border-border"
         )}
+        style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
       >
         {/* Header */}
         <div className={cn(
@@ -147,7 +149,7 @@ const Sidebar = ({
       </div>
 
       {/* Nav */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar pb-4">
+      <div className="flex-1 overflow-y-auto custom-scrollbar pb-4 transform-gpu" style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
 
         {/* Picker Specific View */}
         {isPicker ? (
