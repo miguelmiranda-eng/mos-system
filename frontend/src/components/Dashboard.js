@@ -1161,8 +1161,23 @@ const Dashboard = () => {
 
     if (isMobile) {
       return (
-        <div className="flex flex-col pt-2 pb-24">
-          {visibleOrders.map(renderMobileOrderCard)}
+        <div className="flex flex-col pb-24">
+          {/* Encabezado de tablero — siempre visible, indica dónde estás y deja cambiar */}
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="sticky top-0 z-20 flex items-center justify-between gap-2 px-4 py-2.5 bg-background/95 backdrop-blur border-b border-border/60"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="w-1.5 h-5 rounded-full bg-royal flex-shrink-0" />
+              <span className="text-base font-black uppercase tracking-tight truncate">{currentBoard}</span>
+            </span>
+            <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex-shrink-0">
+              {visibleOrders.length} órd · cambiar <ChevronDown className="w-4 h-4" />
+            </span>
+          </button>
+          <div className="pt-2">
+            {visibleOrders.map(renderMobileOrderCard)}
+          </div>
         </div>
       );
     }
@@ -2769,20 +2784,20 @@ const Dashboard = () => {
 
             {/* Cliente */}
             <div>
-              <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
-              <p style={{ fontSize: '20px', fontWeight: 900, textTransform: 'uppercase', color: '#f1f5f9', margin: 0 }}>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
+              <p style={{ fontSize: '20px', fontWeight: 900, textTransform: 'uppercase', color: isDark ? '#f1f5f9' : '#0f172a', margin: 0 }}>
                 {renderDetailValue(detailsOrder.client)}
               </p>
             </div>
 
             {/* Separator */}
-            <div style={{ height: '1px', background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.06), transparent)' }} />
+            <div style={{ height: '1px', background: `linear-gradient(to right, transparent, ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.10)'}, transparent)` }} />
 
             {/* Job Instructions */}
             <div>
-              <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '10px' }}>Instrucciones del Job</p>
-              <div style={{ padding: '16px 18px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <p style={{ fontSize: '14px', fontWeight: 600, lineHeight: 1.6, color: '#cbd5e1', margin: 0 }}>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '10px' }}>Instrucciones del Job</p>
+              <div style={{ padding: '16px 18px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.04)', borderRadius: '10px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.08)'}` }}>
+                <p style={{ fontSize: '14px', fontWeight: 600, lineHeight: 1.6, color: isDark ? '#cbd5e1' : '#334155', margin: 0 }}>
                   {renderDetailValue(detailsOrder.job_title_a)}
                 </p>
               </div>
@@ -2792,15 +2807,15 @@ const Dashboard = () => {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                 <div style={{ width: '3px', height: '14px', backgroundColor: '#4169e1', borderRadius: '2px', boxShadow: '0 0 8px rgba(65,105,225,0.5)' }} />
-                <p style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>Estados de la Orden</p>
+                <p style={{ fontSize: '10px', fontWeight: 900, color: isDark ? '#64748b' : '#475569', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>Estados de la Orden</p>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-6">
                 {columns
                   .filter(col => ['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority', 'screens', 'betty_column'].includes(col.key))
                   .map(col => (
                     <div key={col.key}>
-                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '5px' }}>{col.label}</p>
-                      <p style={{ fontSize: '12px', fontWeight: 800, color: '#e2e8f0', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: isDark ? '#334155' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '5px' }}>{col.label}</p>
+                      <p style={{ fontSize: '12px', fontWeight: 800, color: isDark ? '#e2e8f0' : '#1e293b', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {renderDetailValue(detailsOrder[col.key])}
                       </p>
                     </div>
