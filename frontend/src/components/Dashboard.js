@@ -2424,7 +2424,50 @@ const Dashboard = () => {
               <Search className="w-6 h-6 text-primary" /> Resultados de busqueda <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-auto px-6 pb-6">
+          <div className="flex-1 overflow-auto px-4 sm:px-6 pb-6">
+            {isMobile ? (
+              <div className="flex flex-col gap-2.5">
+                {searchResults?.map(order => (
+                  <div
+                    key={order.order_id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { setDetailsOrder(order); setSearchResults(null); setSearchQuery(''); }}
+                    data-testid={`search-result-${order.order_id}`}
+                    className="rounded-2xl border border-border bg-card/60 active:scale-[0.99] transition-transform p-4 cursor-pointer"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-2xl font-mono font-black text-royal leading-none">{order.order_number}</div>
+                        {order.client && <div className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest mt-1.5 truncate">{order.client}</div>}
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm flex-shrink-0" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                    </div>
+                    {(order.quantity || order.blank_status) && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-muted-foreground">
+                        {order.quantity ? <span><b className="text-foreground">{Number(order.quantity).toLocaleString()}</b> pz</span> : null}
+                        {order.blank_status ? <span className="uppercase tracking-wide">{order.blank_status}</span> : null}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/40">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); setSearchResults(null); setSearchQuery(''); }}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/60 text-muted-foreground active:bg-primary/10 active:text-primary text-[11px] font-bold"
+                      >
+                        <MessageSquare className="w-4 h-4" /> Comentar
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(''); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary active:bg-primary active:text-white text-[11px] font-bold"
+                      >
+                        <ExternalLink className="w-4 h-4" /> Ir al tablero
+                      </button>
+                      <span className="ml-auto text-[11px] font-bold text-royal">Ver detalle ›</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div className="rounded-xl border border-border/50 overflow-x-auto bg-background/50 shadow-inner">
               <div role="table" className="w-full text-sm border-collapse">
                 <div className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
@@ -2492,6 +2535,7 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
