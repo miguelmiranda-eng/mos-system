@@ -149,8 +149,10 @@ const Sidebar = ({
         )}
       </div>
 
-      {/* Nav */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar pb-4 transform-gpu" style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+      {/* Nav — opaque background so the scroll area never composites into a
+          transparent GPU layer (that painted random noise over the top boards
+          on Android Chrome). No forced transform-gpu here for the same reason. */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar pb-4 bg-card">
 
         {/* Picker Specific View */}
         {isPicker ? (

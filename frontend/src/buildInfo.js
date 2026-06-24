@@ -2,4 +2,4 @@
 // code actually loaded (shown in the sidebar footer + crash screen). If the tag
 // you see on the phone doesn't match this, the device is running stale/cached or
 // un-redeployed code — not the latest fix.
-export const BUILD_TAG = "mob-6 · 24-jun";
+export const BUILD_TAG = "mob-7 · 24-jun";
