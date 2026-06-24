@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
