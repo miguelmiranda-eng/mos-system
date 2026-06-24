@@ -2051,6 +2051,12 @@ const Dashboard = () => {
           readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
             blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
               <>
+                {isMobile ? (
+                  // On phones, skip the desktop grid entirely and render the
+                  // card list at full width (the grid squeezed cards into the
+                  // 48px first column, leaving only the accent bar visible).
+                  renderTableBody()
+                ) : (
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
                   gridTemplateColumns: `48px 64px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
@@ -2318,6 +2324,7 @@ const Dashboard = () => {
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
                 </div>
+                )}
                 {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
               </>
             )}
@@ -2597,8 +2604,8 @@ const Dashboard = () => {
       {/* Enterprise Side-Drawer Detail View */}
       {/* Barra de navegación inferior — solo móvil. Cada acción usa lo que ya existe. */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-2 pt-2 bg-card/95 backdrop-blur border-t border-border"
-        style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-1 pt-2.5 bg-card/95 backdrop-blur border-t border-border"
+        style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         {[
           { key: 'boards', label: 'Tableros', Icon: Table2, onClick: () => setIsMobileMenuOpen(true) },
@@ -2608,17 +2615,17 @@ const Dashboard = () => {
           { key: 'alerts', label: 'Alertas', Icon: Bell, badge: unreadCount > 0, onClick: () => { setShowNotifications(true); if (unreadCount > 0) markNotificationsRead(); } },
         ].map(({ key, label, Icon, onClick, center, badge }) => (
           center ? (
-            <button key={key} onClick={onClick} className="flex flex-col items-center -mt-7 active:scale-95 transition-transform" aria-label={label}>
-              <span className="w-13 h-13 rounded-2xl bg-royal text-white flex items-center justify-center shadow-lg shadow-royal/30" style={{ width: 52, height: 52 }}>
-                <Plus className="w-7 h-7" />
+            <button key={key} onClick={onClick} className="flex flex-col items-center -mt-8 active:scale-95 transition-transform min-w-[64px]" aria-label={label}>
+              <span className="rounded-2xl bg-royal text-white flex items-center justify-center shadow-lg shadow-royal/30" style={{ width: 58, height: 58 }}>
+                <Plus className="w-8 h-8" />
               </span>
-              <span className="text-[9px] font-bold text-muted-foreground mt-1">{label}</span>
+              <span className="text-[11px] font-bold text-foreground/80 mt-1">{label}</span>
             </button>
           ) : (
-            <button key={key} onClick={onClick} className="relative flex flex-col items-center gap-1 px-3 py-1 text-muted-foreground active:text-royal transition-colors" aria-label={label}>
-              <Icon className="w-5 h-5" />
-              {badge && <span className="absolute top-0 right-2 w-2 h-2 bg-royal rounded-full" />}
-              <span className="text-[9px] font-bold uppercase tracking-wide">{label}</span>
+            <button key={key} onClick={onClick} className="relative flex flex-col items-center gap-1.5 px-2 py-1 min-w-[64px] text-muted-foreground active:text-royal transition-colors" aria-label={label}>
+              <Icon className="w-6 h-6" strokeWidth={2} />
+              {badge && <span className="absolute top-0.5 right-3 w-2.5 h-2.5 bg-royal rounded-full border-2 border-card" />}
+              <span className="text-[11px] font-semibold tracking-tight">{label}</span>
             </button>
           )
         ))}
