@@ -127,6 +127,7 @@ const Dashboard = () => {
 
   // Modal visibility
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const searchInputRef = useRef(null); // focused from the mobile bottom-nav "Buscar"
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
   const [historyOrder, setHistoryOrder] = useState(null);
@@ -1060,69 +1061,89 @@ const Dashboard = () => {
     const produced = prodData.total_produced || 0;
     const progress = total > 0 ? Math.min(100, (produced / total) * 100) : 0;
     const remainingPieces = Math.max(0, total - produced);
+    const done = total > 0 && remainingPieces === 0;
+    // Accent + progress color reflect the production state at a glance.
+    const accent = done ? 'bg-green-500' : progress > 0 ? 'bg-amber-500' : 'bg-royal';
+    const factCols = visibleColumns
+      .filter(c => !['order_number', 'art_sep_status', 'art_neck_status', 'selection', 'client'].includes(c.key))
+      .slice(0, 5);
 
     return (
       <div
         key={order.order_id}
-        className={`m-3 p-4 rounded-2xl border transition-all ${isDark ? 'bg-navy-light/30 border-white/5' : 'bg-white border-gray-100 shadow-sm'}`}
         onClick={() => setDetailsOrder(order)}
+        className={`relative mx-3 mb-2.5 rounded-2xl border overflow-hidden active:scale-[0.99] transition-transform ${isSelected ? 'border-royal/60 ring-1 ring-royal/40' : isDark ? 'border-white/5' : 'border-gray-100'} ${isDark ? 'bg-navy-light/40' : 'bg-white shadow-sm'}`}
       >
-        <div className="flex justify-between items-start mb-3">
-          <div className="flex flex-col">
-            <span className="text-xl font-black tracking-tighter">#{order.order_number}</span>
-            <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">{order.client}</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); }}
-              className="p-2 bg-muted/20 rounded-xl text-muted-foreground relative"
-            >
-              <MessageSquare className="w-4 h-4" />
-              {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full" />}
-            </button>
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }}
-              className="w-5 h-5 rounded border-border accent-primary"
-            />
-          </div>
-        </div>
+        {/* Status accent bar */}
+        <div className={`absolute left-0 top-0 bottom-0 w-1 ${accent}`} />
 
-        <div className="flex gap-2 mb-4">
-          <span className={`px-2 py-0.5 rounded text-[9px] font-black border tracking-wider ${order.art_sep_status ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-secondary/40 text-muted-foreground/30 border-border/5'}`}>SEP</span>
-          <span className={`px-2 py-0.5 rounded text-[9px] font-black border tracking-wider ${order.art_neck_status ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-secondary/40 text-muted-foreground/30 border-border/5'}`}>NECK</span>
-          <span className="ml-auto text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest">{order.board}</span>
-        </div>
-
-        <div className="space-y-3 mb-4">
-          {visibleColumns.slice(0, 5).filter(c => !['order_number', 'art_sep_status', 'art_neck_status', 'selection', 'client'].includes(c.key)).map(col => (
-            <div key={col.key} className="flex justify-between items-center gap-4">
-              <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
-              <div className="text-sm font-bold truncate">
-                <EditableCell
-                  orderId={order.order_id} field={col.key} value={order[col.key]}
-                  type={col.type} options={col.optionKey ? options[col.optionKey] : []}
-                  onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
-                  columns={visibleColumns}
-                />
-              </div>
+        <div className="p-4 pl-5">
+          {/* Header: order # + client, comment + select */}
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="min-w-0">
+              <div className="text-[22px] font-black tracking-tighter leading-none">#{order.order_number}</div>
+              <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-1 truncate">{order.client || '—'}</div>
             </div>
-          ))}
-        </div>
-
-        <div className="pt-3 border-t border-border/5">
-          <div className="flex justify-between items-center mb-1">
-            <span className={`text-[10px] font-black uppercase ${remainingPieces === 0 ? 'text-green-500' : 'text-muted-foreground/60'}`}>
-              {remainingPieces} {t('pieces_unit')} {t('remaining_short')}
-            </span>
-            <span className="text-[10px] font-black text-primary">{Math.round(progress)}%</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); }}
+                className="relative p-2.5 rounded-xl bg-muted/20 text-muted-foreground active:bg-muted/40 transition-colors"
+                aria-label="Comentarios"
+              >
+                <MessageSquare className="w-4 h-4" />
+                {order._comments_count > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-royal rounded-full" />}
+              </button>
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => { e.stopPropagation(); toggleOrderSelection(order.order_id); }}
+                className="w-5 h-5 rounded border-border accent-primary"
+              />
+            </div>
           </div>
-          <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-700 ${progress >= 100 ? 'bg-green-500' : 'bg-primary'}`}
-              style={{ width: `${progress}%` }}
-            />
+
+          {/* Chips: art + scheduled day + board */}
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border tracking-wider ${order.art_sep_status ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-secondary/40 text-muted-foreground/40 border-transparent'}`}>SEP</span>
+            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border tracking-wider ${order.art_neck_status ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-secondary/40 text-muted-foreground/40 border-transparent'}`}>NECK</span>
+            {order.scheduled_day && (
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20 uppercase tracking-wider">{order.scheduled_day}</span>
+            )}
+            <span className="ml-auto text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest truncate max-w-[40%] text-right">{order.board}</span>
+          </div>
+
+          {/* Editable quick facts — grouped, tappable to edit (won't open detail) */}
+          <div className={`rounded-xl overflow-hidden divide-y ${isDark ? 'bg-black/15 divide-white/5' : 'bg-gray-50/70 divide-gray-100'}`}>
+            {factCols.map(col => (
+              <div key={col.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
+                <div className="text-sm font-bold truncate text-right max-w-[60%]" onClick={(e) => e.stopPropagation()}>
+                  <EditableCell
+                    orderId={order.order_id} field={col.key} value={order[col.key]}
+                    type={col.type} options={col.optionKey ? options[col.optionKey] : []}
+                    onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
+                    columns={visibleColumns}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Production progress */}
+          <div className="mt-3">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className={`text-[10px] font-black uppercase tracking-wide ${done ? 'text-green-500' : 'text-muted-foreground/60'}`}>
+                {done ? t('completed') || 'Completado' : `${remainingPieces.toLocaleString()} ${t('pieces_unit')} ${t('remaining_short')}`}
+              </span>
+              <span className={`text-[11px] font-black ${done ? 'text-green-500' : 'text-primary'}`}>{Math.round(progress)}%</span>
+            </div>
+            <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${done ? 'bg-green-500' : 'bg-primary'}`}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -1140,7 +1161,7 @@ const Dashboard = () => {
 
     if (isMobile) {
       return (
-        <div className="flex flex-col pb-20">
+        <div className="flex flex-col pt-2 pb-24">
           {visibleOrders.map(renderMobileOrderCard)}
         </div>
       );
@@ -1363,6 +1384,7 @@ const Dashboard = () => {
           <div className={`flex items-center gap-3 w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group ${isMobile ? 'max-w-[200px]' : 'max-w-md'}`}>
             <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors flex-shrink-0" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -2573,6 +2595,35 @@ const Dashboard = () => {
       {/* Import Excel Modal */}
       <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
       {/* Enterprise Side-Drawer Detail View */}
+      {/* Barra de navegación inferior — solo móvil. Cada acción usa lo que ya existe. */}
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-2 pt-2 bg-card/95 backdrop-blur border-t border-border"
+        style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}
+      >
+        {[
+          { key: 'boards', label: 'Tableros', Icon: Table2, onClick: () => setIsMobileMenuOpen(true) },
+          { key: 'search', label: 'Buscar', Icon: Search, onClick: () => { searchInputRef.current?.scrollIntoView({ block: 'start' }); searchInputRef.current?.focus(); } },
+          { key: 'new', label: 'Nueva', Icon: Plus, center: true, onClick: () => setShowNewOrder(true) },
+          { key: 'wms', label: 'WMS', Icon: Warehouse, onClick: () => { window.location.href = '/wms'; } },
+          { key: 'alerts', label: 'Alertas', Icon: Bell, badge: unreadCount > 0, onClick: () => { setShowNotifications(true); if (unreadCount > 0) markNotificationsRead(); } },
+        ].map(({ key, label, Icon, onClick, center, badge }) => (
+          center ? (
+            <button key={key} onClick={onClick} className="flex flex-col items-center -mt-7 active:scale-95 transition-transform" aria-label={label}>
+              <span className="w-13 h-13 rounded-2xl bg-royal text-white flex items-center justify-center shadow-lg shadow-royal/30" style={{ width: 52, height: 52 }}>
+                <Plus className="w-7 h-7" />
+              </span>
+              <span className="text-[9px] font-bold text-muted-foreground mt-1">{label}</span>
+            </button>
+          ) : (
+            <button key={key} onClick={onClick} className="relative flex flex-col items-center gap-1 px-3 py-1 text-muted-foreground active:text-royal transition-colors" aria-label={label}>
+              <Icon className="w-5 h-5" />
+              {badge && <span className="absolute top-0 right-2 w-2 h-2 bg-royal rounded-full" />}
+              <span className="text-[9px] font-bold uppercase tracking-wide">{label}</span>
+            </button>
+          )
+        ))}
+      </nav>
+
       {detailsOrder && (
         <div className={cn(
           "enterprise-drawer",
@@ -2684,6 +2735,31 @@ const Dashboard = () => {
           {/* Body - Scrollable */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '32px 28px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
 
+            {/* Progreso (visible en móvil — en desktop ya aparece en el encabezado) */}
+            {(() => {
+              const ps = productionSummary[detailsOrder.order_id];
+              const totalProduced = ps ? ps.total_produced : 0;
+              const qty = detailsOrder.quantity || 0;
+              if (qty <= 0) return null;
+              const pct = Math.min(100, (totalProduced / qty) * 100);
+              const done = totalProduced >= qty;
+              return (
+                <div className="sm:hidden">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: done ? '#22c55e' : '#4169e1' }}>
+                      {pct.toFixed(0)}% {t('completed') || 'Completado'}
+                    </span>
+                    <span className="text-[10px] font-bold" style={{ color: '#94a3b8' }}>
+                      {totalProduced.toLocaleString()} / {qty.toLocaleString()} pz
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(127,127,127,0.18)' }}>
+                    <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#22c55e' : '#4169e1' }} />
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Cliente */}
             <div>
               <p style={{ fontSize: '9px', fontWeight: 900, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
@@ -2711,7 +2787,7 @@ const Dashboard = () => {
                 <div style={{ width: '3px', height: '14px', backgroundColor: '#4169e1', borderRadius: '2px', boxShadow: '0 0 8px rgba(65,105,225,0.5)' }} />
                 <p style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>Estados de la Orden</p>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px 20px' }}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-6">
                 {columns
                   .filter(col => ['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority', 'screens', 'betty_column'].includes(col.key))
                   .map(col => (
