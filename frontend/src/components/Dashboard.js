@@ -247,10 +247,14 @@ const Dashboard = () => {
   } = useOrders(currentBoard, boardFilters);
 
   const [displayLimit, setDisplayLimit] = useState(100);
+  // Mobile renders fewer cards at once (phones choke past ~50); "Cargar más"
+  // raises this. Reset on board change.
+  const [mobileLimit, setMobileLimit] = useState(50);
 
   // Progressive rendering: Load 100 initially, then 200 more every 3 seconds
   useEffect(() => {
     setDisplayLimit(100);
+    setMobileLimit(50);
   }, [currentBoard]);
 
   useEffect(() => {
@@ -1113,18 +1117,15 @@ const Dashboard = () => {
             <span className="ml-auto text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest truncate max-w-[40%] text-right">{order.board}</span>
           </div>
 
-          {/* Editable quick facts — grouped, tappable to edit (won't open detail) */}
+          {/* Quick facts — read-only for speed (tap the card to edit in detail).
+              Inline EditableCell here meant ~5 heavy components per card × many
+              cards, which made the mobile list laggy. */}
           <div className={`rounded-xl overflow-hidden divide-y ${isDark ? 'bg-black/15 divide-white/5' : 'bg-gray-50/70 divide-gray-100'}`}>
             {factCols.map(col => (
               <div key={col.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
                 <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest whitespace-nowrap">{col.label}</span>
-                <div className="text-sm font-bold truncate text-right max-w-[60%]" onClick={(e) => e.stopPropagation()}>
-                  <EditableCell
-                    orderId={order.order_id} field={col.key} value={order[col.key]}
-                    type={col.type} options={col.optionKey ? options[col.optionKey] : []}
-                    onUpdate={handleCellUpdate} readOnly={!canEditBoard} isDark={isDark}
-                    columns={visibleColumns}
-                  />
+                <div className="text-sm font-bold truncate text-right max-w-[60%]">
+                  {renderDetailValue(order[col.key])}
                 </div>
               </div>
             ))}
@@ -1176,8 +1177,16 @@ const Dashboard = () => {
             </span>
           </button>
           <div className="pt-2">
-            {visibleOrders.map(renderMobileOrderCard)}
+            {visibleOrders.slice(0, mobileLimit).map(renderMobileOrderCard)}
           </div>
+          {visibleOrders.length > mobileLimit && (
+            <button
+              onClick={() => setMobileLimit(n => n + 50)}
+              className="mx-3 mt-2 mb-1 py-3 rounded-2xl border border-border bg-card/60 text-sm font-bold text-primary active:scale-[0.99] transition-transform"
+            >
+              Cargar más ({visibleOrders.length - mobileLimit} restantes)
+            </button>
+          )}
         </div>
       );
     }
