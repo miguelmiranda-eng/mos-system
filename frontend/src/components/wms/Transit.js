@@ -84,24 +84,33 @@ export const TransitModule = () => {
 
   useEffect(() => { loadInfo(); }, [loadInfo]);
 
-  // Create `cartQty` new carts, numbered after the highest existing CARRO.
+  // Create `cartQty` new carts, filling the LOWEST available numbers (gap-fill)
+  // rather than always going above the highest. Keying off the max made a single
+  // stray high cart (e.g. a hand-typed "CARRO 1170") poison every future number,
+  // skipping the whole 251-1169 range forever. Gap-filling is robust to that.
   // Sequential so the progress bar advances per cart; dups are skipped.
   const handleCreateCarts = async () => {
     const qty = Math.max(1, Math.min(50, parseInt(cartQty) || 0));
-    const maxNum = cartInfo.reduce((mx, c) => {
-      const m = /CARRO\s+(\d+)/i.exec(c.name || "");
-      return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
-    }, 0);
+    const used = new Set(
+      cartInfo
+        .map(c => { const m = /CARRO\s+(\d+)/i.exec(c.name || ""); return m ? parseInt(m[1], 10) : null; })
+        .filter(n => n != null)
+    );
+    // The N smallest positive integers not already taken by a cart.
+    const targets = [];
+    for (let n = 1; targets.length < qty; n++) {
+      if (!used.has(n)) targets.push(n);
+    }
     setCreating(true);
     setCreateDone(0);
     let created = 0, skipped = 0;
-    for (let i = 1; i <= qty; i++) {
-      const name = `CARRO ${maxNum + i}`;
+    for (let i = 0; i < targets.length; i++) {
+      const name = `CARRO ${targets[i]}`;
       try {
         const res = await poster('/locations', { name, zone: 'CARROS', type: 'transit' });
         if (res?.ok) created++; else skipped++;
       } catch { skipped++; }
-      setCreateDone(i);
+      setCreateDone(i + 1);
     }
     setCreating(false);
     toast.success(`Carros creados: ${created}${skipped ? ` · ${skipped} omitidos (ya existían)` : ''}`);
@@ -357,7 +366,7 @@ export const TransitModule = () => {
               {!creating && <button onClick={() => setShowCreateCarts(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-5 h-5" /></button>}
             </div>
             <p className="text-xs text-muted-foreground mb-3">
-              Se crearán carros numerados a partir del último existente (máximo 50 a la vez).
+              Se crearán carros con los números disponibles más bajos (rellenando huecos, máx. 50 a la vez).
               Los que ya existan se omiten. Funcionan como ubicaciones de tránsito: reciben material,
               descuentan inventario al surtir y aparecen en las tareas de surtido.
             </p>
