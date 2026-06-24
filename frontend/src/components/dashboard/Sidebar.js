@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
+import { BUILD_TAG } from '../../buildInfo';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 
 const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
@@ -329,6 +330,7 @@ const Sidebar = ({
       {(isOpen || !isCollapsed) && (
         <div className={cn("px-4 py-3 border-t text-[11px]", isDark ? "border-white/6 text-white/20" : "border-neutral-200 text-neutral-400")}>
           MOS <span className={isDark ? "text-royal/60" : "text-royal/70"}>System</span> · Prosper Mfg.
+          <span className="ml-1 font-bold text-royal/70">· {BUILD_TAG}</span>
         </div>
       )}
     </aside>
