@@ -5,6 +5,7 @@ import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
+import { mapPool } from "../../lib/uploadPool";
 
 export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const { t } = useLang();
@@ -94,7 +95,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
     setLoading(true);
     try {
       let finalContent = newComment.trim();
-      for (const img of imagePreviews) {
+      // Upload attachments in parallel (capped) instead of one-by-one — the
+      // sequential loop was the cause of the slowness with 5+ photos.
+      const tags = await mapPool(imagePreviews, async (img) => {
         try {
           const body = img.isImage ? { image_data: img.data, filename: img.name } : { file_data: img.data, filename: img.name };
           const imgRes = await fetch(`${API}/orders/${order.order_id}/images`, {
@@ -104,17 +107,16 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
           if (imgRes.ok) {
             const imgData = await imgRes.json();
             const key = imgData.storage_key || imgData.url;
-            if (img.isImage) {
-              finalContent = finalContent ? `${finalContent}\n[img]${key}[/img]` : `[img]${key}[/img]`;
-            } else {
-              finalContent = finalContent ? `${finalContent}\n[file]${img.name}|${key}[/file]` : `[file]${img.name}|${key}[/file]`;
-            }
-          } else {
-            toast.error(`Error subiendo ${img.name}`);
+            return img.isImage ? `[img]${key}[/img]` : `[file]${img.name}|${key}[/file]`;
           }
-        } catch (uploadErr) {
+          toast.error(`Error subiendo ${img.name}`);
+        } catch {
           toast.error(`Error de conexion subiendo ${img.name}`);
         }
+        return null;
+      });
+      for (const tag of tags) {
+        if (tag) finalContent = finalContent ? `${finalContent}\n${tag}` : tag;
       }
       if (finalContent) {
         const res = await fetch(`${API}/orders/${order.order_id}/comments`, {
