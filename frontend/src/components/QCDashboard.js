@@ -17,6 +17,9 @@ import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { Toaster } from 'sonner';
 import { CommentsModal } from './dashboard/CommentsModal';
+import QCInspectionsTab from './QCInspectionsTab';
+import QCInspectionModal from './QCInspectionModal';
+import { mapPool } from '../lib/uploadPool';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -521,7 +524,8 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
       let finalFindings = form.findings.trim();
       if (imagePreviews.length > 0) {
         if (!resolvedOrderId) { toast.error("Se necesita una orden válida para subir imágenes"); setSaving(false); return; }
-        for (const img of imagePreviews) {
+        // Upload photos in parallel (capped) instead of one-by-one.
+        const keys = await mapPool(imagePreviews, async (img) => {
           try {
             const imgRes = await fetch(`${API}/orders/${resolvedOrderId}/images`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
@@ -529,12 +533,14 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
             });
             if (imgRes.ok) {
               const imgData = await imgRes.json();
-              const key = imgData.storage_key || imgData.url;
-              finalFindings = finalFindings ? `${finalFindings}\n[img]${key}[/img]` : `[img]${key}[/img]`;
-            } else {
-              toast.error(`Error subiendo ${img.name}`);
+              return imgData.storage_key || imgData.url;
             }
+            toast.error(`Error subiendo ${img.name}`);
           } catch { toast.error(`Error de conexion subiendo ${img.name}`); }
+          return null;
+        });
+        for (const key of keys) {
+          if (key) finalFindings = finalFindings ? `${finalFindings}\n[img]${key}[/img]` : `[img]${key}[/img]`;
         }
       }
       const url = editRecord ? `${API}/qc/${editRecord.qc_id}` : `${API}/qc`;
@@ -897,6 +903,7 @@ function Pagination({ page, pages, total, limit, onPage, isDark }) {
 
 const QC_TABS = [
   { id: 'general',     label: 'General',     icon: ClipboardList, countKey: null },
+  { id: 'inspections', label: 'Inspecciones', icon: ShieldCheck,   countKey: null,          activeText: 'text-cyan-400',   activeBorder: 'border-cyan-500' },
   { id: 'pass',        label: 'Aprobado',    icon: CheckCircle2,  countKey: 'passed',      activeText: 'text-green-400',  activeBorder: 'border-green-500' },
   { id: 'conditional', label: 'Condicional', icon: AlertCircle,   countKey: 'conditional', activeText: 'text-yellow-400', activeBorder: 'border-yellow-500' },
   { id: 'fail',        label: 'Rechazado',   icon: XCircle,       countKey: 'failed',      activeText: 'text-red-400',    activeBorder: 'border-red-500' },
@@ -919,6 +926,8 @@ export default function QCDashboard() {
   const [stats, setStats] = useState({ total: 0, passed: 0, conditional: 0, failed: 0, critical_findings: 0, pass_rate: 0 });
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
+  const [inspectId, setInspectId] = useState(null); // open point-inspection modal for this inspection_id
+  const [inspectionsEnabled, setInspectionsEnabled] = useState(false); // global on/off for point-based inspections
   const [modalOpen, setModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -968,6 +977,14 @@ export default function QCDashboard() {
     fetch(`${API}/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(u => setCurrentUser(u))
+      .catch(() => {});
+  }, []);
+
+  // Whether the point-based inspection subsystem is enabled (gates the tab + buttons)
+  useEffect(() => {
+    fetch(`${API}/qc/feature-flags`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setInspectionsEnabled(!!d.inspection_points_enabled); })
       .catch(() => {});
   }, []);
 
@@ -1128,6 +1145,23 @@ export default function QCDashboard() {
     setEditRecord(null);
     setPrefillOrder(order);
     setModalOpen(true);
+  };
+
+  // Start a point-based inspection for an order and open its modal (new QC flow).
+  const startInspection = async (order) => {
+    try {
+      const res = await fetch(`${API}/qc/inspections`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ order_number: order.order_number }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInspectId(data.inspection_id);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo iniciar la inspección');
+      }
+    } catch { toast.error('Error de conexión'); }
   };
 
   const handleMarkRead = async (notifId) => {
@@ -1344,6 +1378,14 @@ export default function QCDashboard() {
                                   <Plus className="w-3 h-3" /> Crear QC
                                 </button>
                               )}
+                              {canWrite && inspectionsEnabled && (
+                                <button onClick={() => startInspection(order)}
+                                  className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
+                                    isDark ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20 hover:bg-cyan-500 hover:text-white" : "bg-cyan-50 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white")}
+                                  title="Inspección por puntos (checklist)">
+                                  <ShieldCheck className="w-3 h-3" /> Inspección
+                                </button>
+                              )}
                               {canWrite && (
                                 <button onClick={() => openStatusEditor(order)}
                                   className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
@@ -1382,7 +1424,7 @@ export default function QCDashboard() {
 
           {/* Tab bar */}
           <div className={cn("flex border-b overflow-x-auto", isDark ? "border-white/8" : "border-slate-100")}>
-            {QC_TABS.map(tab => {
+            {QC_TABS.filter(tab => tab.id !== 'inspections' || inspectionsEnabled).map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               const count = tab.countKey ? (stats[tab.countKey] ?? 0) : null;
@@ -1409,8 +1451,8 @@ export default function QCDashboard() {
             })}
           </div>
 
-          {/* Filters (not on metrics tab) */}
-          {activeTab !== 'metrics' && (
+          {/* Filters (not on metrics / inspections tab) */}
+          {activeTab !== 'metrics' && activeTab !== 'inspections' && (
             <div className={cn("px-4 py-3 border-b flex flex-wrap gap-3 items-center", isDark ? "border-white/5" : "border-slate-50")}>
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1439,6 +1481,8 @@ export default function QCDashboard() {
             <div className="px-6 py-4">
               <QCMetricsTab isDark={isDark} />
             </div>
+          ) : (activeTab === 'inspections' && inspectionsEnabled) ? (
+            <QCInspectionsTab canWrite={canWrite} isDark={isDark} />
           ) : loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="w-8 h-8 animate-spin text-royal" />
@@ -1485,6 +1529,14 @@ export default function QCDashboard() {
                                 <button onClick={() => openNewQC(order)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-royal/10 text-royal border border-royal/20 rounded-lg text-xs font-bold hover:bg-royal hover:text-white transition-all">
                                   <Plus className="w-3 h-3" /> Crear QC
+                                </button>
+                              )}
+                              {canWrite && inspectionsEnabled && (
+                                <button onClick={() => startInspection(order)}
+                                  className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
+                                    isDark ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20 hover:bg-cyan-500 hover:text-white" : "bg-cyan-50 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white")}
+                                  title="Inspección por puntos (checklist)">
+                                  <ShieldCheck className="w-3 h-3" /> Inspección
                                 </button>
                               )}
                               {canWrite && (
@@ -1621,6 +1673,10 @@ export default function QCDashboard() {
         prefillOrder={prefillOrder}
         isDark={isDark}
       />
+
+      {inspectId && (
+        <QCInspectionModal inspectionId={inspectId} onClose={() => setInspectId(null)} onChanged={() => {}} />
+      )}
 
       <QCDetailModal
         open={detailModalOpen}

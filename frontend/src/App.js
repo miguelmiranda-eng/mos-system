@@ -682,6 +682,7 @@ import ActivityLogCenter from "./components/ActivityLogCenter";
 import LogsCenter from "./components/LogsCenter";
 import UserManagementCenter from "./components/UserManagementCenter";
 import CatalogCenter from "./components/CatalogCenter";
+import QCSettingsPage from "./components/QCSettingsPage";
 import OperatorsCenter from "./components/OperatorsCenter";
 import CEODashboard from "./components/CEODashboard";
 import QCDashboard from "./components/QCDashboard";
@@ -833,6 +834,11 @@ function AppRouter() {
       <Route path="/catalog-center" element={
         <AdminRoute>
           <CatalogCenter />
+        </AdminRoute>
+      } />
+      <Route path="/qc-settings" element={
+        <AdminRoute>
+          <QCSettingsPage />
         </AdminRoute>
       } />
       <Route path="/reportes-programados" element={

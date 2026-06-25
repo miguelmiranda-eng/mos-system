@@ -43,6 +43,13 @@ const SECTIONS_DEFS = [
       { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para producción.', icon: 'UserSquare' },
       { name: 'Mos-atlas', path: '/ceo-dashboard', desc: 'Seguimiento de órdenes y facturación.', icon: 'TrendingUp', roles: ['admin'] },
     ]
+  },
+  {
+    id: 'quality',
+    title: 'Calidad (QC)',
+    items: [
+      { name: 'Puntos de Inspección QC', path: '/qc-settings', desc: 'Checklist de auditoría: foto, sí/no, pass/fail, lista.', icon: 'ShieldCheck' },
+    ]
   }
 ];
 

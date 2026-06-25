@@ -1,7 +1,7 @@
 """QC (Quality Control) inspection records."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from deps import db, require_auth, require_role, log_activity
+from deps import db, require_auth, require_role, require_supersu, log_activity
 from datetime import datetime, timezone
 import uuid, io, csv, re
 
@@ -340,6 +340,310 @@ async def create_qc_record(request: Request):
         "result": doc["result"],
     })
     return doc
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Inspection points (configurable checklist) + point-based inspections
+# A new QC flow ALONGSIDE the single-record flow above. Admins define a global
+# checklist of points (each with one "action type"); inspectors run an
+# inspection per order and can't complete it until every point is satisfied.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Per-point action types. Each point uses exactly one.
+ACTION_TYPES = {
+    "PHOTO",     # Foto Requerida — at least one photo
+    "YESNO",     # Sí / No
+    "PASSFAIL",  # Pass / Fail
+    "CORRECT",   # Correcto / Incorrecto (binary, like Pass/Fail)
+    "TEXT",      # Texto Libre — non-empty text
+    "LIST",      # Selección de Lista — pick one configured option
+}
+
+# Only administrators configure the checklist (managed inside Catálogos).
+POINT_ADMIN_ROLES = {"admin", "supersu", "ceo"}
+
+
+async def require_point_admin(request: Request):
+    user = await require_auth(request)
+    if user.get("role") not in POINT_ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden configurar los puntos de inspección")
+    return user
+
+
+def _point_satisfied(item: dict) -> bool:
+    """Whether an inspection item meets its requirement (the completion lock).
+
+    Rules:
+      • "N/A" answers satisfy any point (operator marked it not applicable).
+      • PHOTO points need at least one photo.
+      • Value-bearing points need a value.
+      • Any point the admin flagged photo_required (or PHOTO type) needs a photo.
+    """
+    value = str(item.get("value") or "").strip()
+    if value.upper() in ("N/A", "NA"):
+        return True
+    at = item.get("action_type")
+    photo_req = at == "PHOTO" or bool(item.get("photo_required"))
+    has_photo = len(item.get("photos") or []) >= 1
+    if at == "PHOTO":
+        return has_photo
+    if at in ("YESNO", "PASSFAIL", "CORRECT", "TEXT", "LIST") and not value:
+        return False
+    if photo_req and not has_photo:
+        return False
+    return True
+
+
+def _merge_items(existing_items, incoming):
+    """Merge operator responses (by point_id) into the stored items."""
+    by_id = {it.get("point_id"): it for it in (incoming or [])}
+    merged = []
+    for it in existing_items:
+        upd = by_id.get(it.get("point_id"))
+        if upd:
+            it = {
+                **it,
+                "value": upd.get("value", it.get("value", "")),
+                "comments": upd.get("comments", it.get("comments", "")),
+                "photos": upd.get("photos", it.get("photos", [])),
+            }
+        merged.append(it)
+    return merged
+
+
+# ─── Feature flag: point-based inspection subsystem (on/off) ─────────────────
+# Global switch that turns the whole "inspección por puntos" subsystem on or off.
+# Stored as a single settings doc. Only supersu may flip it (PUT below); any
+# authenticated user may read it so the UI can decide what to show. Defaults OFF
+# so the subsystem stays hidden until a super admin explicitly enables it.
+async def _inspections_enabled() -> bool:
+    doc = await db.qc_config.find_one({"config_id": "feature_flags"}, {"_id": 0})
+    return bool(doc and doc.get("inspection_points_enabled", False))
+
+
+@router.get("/feature-flags")
+async def get_qc_feature_flags(request: Request):
+    await require_auth(request)
+    return {"inspection_points_enabled": await _inspections_enabled()}
+
+
+@router.put("/feature-flags")
+async def update_qc_feature_flags(request: Request):
+    user = await require_supersu(request)
+    body = await request.json()
+    enabled = bool(body.get("inspection_points_enabled", False))
+    await db.qc_config.update_one(
+        {"config_id": "feature_flags"},
+        {"$set": {"config_id": "feature_flags", "inspection_points_enabled": enabled, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    await log_activity(user, "toggle_qc_inspections", {"inspection_points_enabled": enabled})
+    return {"inspection_points_enabled": enabled}
+
+
+# ─── Inspection points (admin / Catálogos) ──────────────────────────────────
+
+@router.get("/inspection-points")
+async def list_inspection_points(request: Request):
+    await require_auth(request)
+    q = {}
+    if request.query_params.get("active") == "true":
+        q["active"] = True
+    return await db.qc_inspection_points.find(q, {"_id": 0}).sort("sort_order", 1).to_list(500)
+
+
+@router.post("/inspection-points")
+async def create_inspection_point(request: Request):
+    user = await require_point_admin(request)
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "El nombre del punto es obligatorio")
+    action_type = (body.get("action_type") or "").strip().upper()
+    if action_type not in ACTION_TYPES:
+        raise HTTPException(400, f"Tipo de acción inválido. Usa uno de: {sorted(ACTION_TYPES)}")
+    options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
+    if action_type == "LIST" and not options:
+        raise HTTPException(400, "Selección de Lista requiere al menos una opción")
+    last = await db.qc_inspection_points.find_one({}, sort=[("sort_order", -1)])
+    next_order = (int(last.get("sort_order", 0)) + 1) if last else 1
+    doc = {
+        "point_id": gen_id("qpt"),
+        "name": name,
+        "action_type": action_type,
+        "prompt": (body.get("prompt") or "").strip(),
+        "options": options,
+        "photo_required": bool(body.get("photo_required", False)),
+        "sort_order": int(body.get("sort_order", next_order)),
+        "active": bool(body.get("active", True)),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.qc_inspection_points.insert_one(doc)
+    doc.pop("_id", None)
+    await log_activity(user, "create_qc_point", {"point_id": doc["point_id"], "name": name})
+    return doc
+
+
+@router.put("/inspection-points/{point_id}")
+async def update_inspection_point(point_id: str, request: Request):
+    user = await require_point_admin(request)
+    body = await request.json()
+    existing = await db.qc_inspection_points.find_one({"point_id": point_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Punto de inspección no encontrado")
+    update = {}
+    if "name" in body:
+        nm = (body["name"] or "").strip()
+        if not nm:
+            raise HTTPException(400, "El nombre no puede quedar vacío")
+        update["name"] = nm
+    if "action_type" in body:
+        at = (body["action_type"] or "").strip().upper()
+        if at not in ACTION_TYPES:
+            raise HTTPException(400, f"Tipo de acción inválido. Usa uno de: {sorted(ACTION_TYPES)}")
+        update["action_type"] = at
+    if "prompt" in body:
+        update["prompt"] = (body["prompt"] or "").strip()
+    if "options" in body:
+        update["options"] = [str(o).strip() for o in (body["options"] or []) if str(o).strip()]
+    if "active" in body:
+        update["active"] = bool(body["active"])
+    if "photo_required" in body:
+        update["photo_required"] = bool(body["photo_required"])
+    if "sort_order" in body:
+        update["sort_order"] = int(body["sort_order"])
+    final_type = update.get("action_type", existing.get("action_type"))
+    final_options = update.get("options", existing.get("options", []))
+    if final_type == "LIST" and not final_options:
+        raise HTTPException(400, "Selección de Lista requiere al menos una opción")
+    update["updated_at"] = now_iso()
+    await db.qc_inspection_points.update_one({"point_id": point_id}, {"$set": update})
+    await log_activity(user, "update_qc_point", {"point_id": point_id})
+    return await db.qc_inspection_points.find_one({"point_id": point_id}, {"_id": 0})
+
+
+@router.delete("/inspection-points/{point_id}")
+async def delete_inspection_point(point_id: str, request: Request):
+    user = await require_point_admin(request)
+    res = await db.qc_inspection_points.delete_one({"point_id": point_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Punto de inspección no encontrado")
+    await log_activity(user, "delete_qc_point", {"point_id": point_id})
+    return {"ok": True}
+
+
+# ─── Point-based inspections (inspector) ─────────────────────────────────────
+
+@router.post("/inspections")
+async def create_inspection(request: Request):
+    user = await require_qc_write(request)
+    if not await _inspections_enabled():
+        raise HTTPException(403, "La inspección por puntos está desactivada por el administrador.")
+    body = await request.json()
+    order_number = (body.get("order_number") or "").strip()
+    if not order_number:
+        raise HTTPException(400, "order_number requerido")
+    order = await db.orders.find_one(
+        {"order_number": order_number},
+        {"_id": 0, "order_id": 1, "client": 1, "quantity": 1, "job_title_a": 1},
+    )
+    points = await db.qc_inspection_points.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(500)
+    if not points:
+        raise HTTPException(400, "No hay puntos de inspección configurados. Configúralos en Catálogos.")
+    items = [{
+        "point_id": pt["point_id"],
+        "name": pt["name"],
+        "action_type": pt["action_type"],
+        "prompt": pt.get("prompt", ""),
+        "options": pt.get("options", []),
+        "photo_required": bool(pt.get("photo_required", False)),
+        "value": "",
+        "comments": "",
+        "photos": [],
+    } for pt in points]
+    doc = {
+        "inspection_id": gen_id("qins"),
+        "order_number": order_number,
+        "order_id": order.get("order_id", "") if order else "",
+        "client": (body.get("client") or "").strip() or (order.get("client", "") if order else ""),
+        "quantity": order.get("quantity", "") if order else "",
+        "job_title_a": order.get("job_title_a", "") if order else "",
+        "inspector": user.get("name", user.get("email", "")),
+        "inspector_id": user.get("user_id", ""),
+        "status": "in_progress",
+        "items": items,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "completed_at": None,
+    }
+    await db.qc_inspections.insert_one(doc)
+    doc.pop("_id", None)
+    await log_activity(user, "create_qc_inspection", {"inspection_id": doc["inspection_id"], "order_number": order_number})
+    return doc
+
+
+@router.get("/inspections")
+async def list_inspections(request: Request):
+    await require_auth(request)
+    p = request.query_params
+    q = {}
+    if p.get("order_number"):
+        q["order_number"] = p["order_number"].strip()
+    if p.get("status"):
+        q["status"] = p["status"]
+    return await db.qc_inspections.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@router.get("/inspections/{inspection_id}")
+async def get_inspection(inspection_id: str, request: Request):
+    await require_auth(request)
+    ins = await db.qc_inspections.find_one({"inspection_id": inspection_id}, {"_id": 0})
+    if not ins:
+        raise HTTPException(404, "Inspección no encontrada")
+    return ins
+
+
+@router.put("/inspections/{inspection_id}")
+async def update_inspection(inspection_id: str, request: Request):
+    await require_qc_write(request)
+    body = await request.json()
+    ins = await db.qc_inspections.find_one({"inspection_id": inspection_id}, {"_id": 0})
+    if not ins:
+        raise HTTPException(404, "Inspección no encontrada")
+    if ins.get("status") == "completed":
+        raise HTTPException(400, "La inspección ya está completada y no se puede modificar")
+    merged = _merge_items(ins["items"], body.get("items"))
+    await db.qc_inspections.update_one(
+        {"inspection_id": inspection_id},
+        {"$set": {"items": merged, "updated_at": now_iso()}},
+    )
+    return await db.qc_inspections.find_one({"inspection_id": inspection_id}, {"_id": 0})
+
+
+@router.post("/inspections/{inspection_id}/complete")
+async def complete_inspection(inspection_id: str, request: Request):
+    user = await require_qc_write(request)
+    body = await request.json()
+    ins = await db.qc_inspections.find_one({"inspection_id": inspection_id}, {"_id": 0})
+    if not ins:
+        raise HTTPException(404, "Inspección no encontrada")
+    # Save any final responses sent with the complete call, then validate the lock.
+    items = _merge_items(ins["items"], body.get("items")) if body.get("items") else ins["items"]
+    missing = [it.get("name") for it in items if not _point_satisfied(it)]
+    if missing:
+        raise HTTPException(
+            400,
+            "QC Inspection cannot be completed. One or more inspection points are missing required information.",
+        )
+    await db.qc_inspections.update_one(
+        {"inspection_id": inspection_id},
+        {"$set": {"items": items, "status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
+    )
+    await log_activity(user, "complete_qc_inspection", {
+        "inspection_id": inspection_id, "order_number": ins.get("order_number"),
+    })
+    return await db.qc_inspections.find_one({"inspection_id": inspection_id}, {"_id": 0})
 
 
 @router.put("/{qc_id}")
