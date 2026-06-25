@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
-  ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, Check, LayoutGrid,
+  ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, LayoutGrid,
   MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
@@ -58,6 +58,26 @@ export default function PdaPicker() {
       if (r.ok) setCommentsOrder(await r.json());
       else toast.error("No se encontró la orden");
     } catch { toast.error("Error de conexión"); }
+  };
+
+  // Per-size immediate deduction: the instant the operator OKs a size, the
+  // material leaves inventory — no waiting for full/partial completion. Does NOT
+  // reload the ticket list (keeps the operator's in-progress local state); the
+  // size row flips to "descontado" locally on success.
+  const handlePickSize = async (ticketId, size, details) => {
+    try {
+      const res = await putter(`/pick-tickets/${ticketId}/pick-size`, { size, details });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.success(data.message || `Talla ${size} descontada`);
+        if (navigator.vibrate) navigator.vibrate(60);
+        return true;
+      }
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.detail || "No se pudo descontar la talla");
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return false;
+    } catch { toast.error("Error de conexión"); return false; }
   };
 
   const handleSave = async (ticketId, pickedSizes, isComplete) => {
@@ -130,7 +150,7 @@ export default function PdaPicker() {
           <span className="text-xs font-bold uppercase tracking-widest">Cargando…</span>
         </div>
       ) : selected ? (
-        <PickScreen ticket={selected} onSave={handleSave} saving={saving} />
+        <PickScreen ticket={selected} onSave={handleSave} onPickSize={handlePickSize} saving={saving} />
       ) : (
         <TicketList tickets={pending} onSelect={setSelected} onComments={openComments} />
       )}
@@ -296,8 +316,12 @@ function TicketList({ tickets, onSelect, onComments }) {
   );
 }
 
-function PickScreen({ ticket, onSave, saving }) {
+function PickScreen({ ticket, onSave, onPickSize, saving }) {
   const [pickedSizes, setPickedSizes] = useState({});
+  // Sizes already OK'd → deducted from inventory. Locked from further edits
+  // unless the operator explicitly re-opens to correct.
+  const [committed, setCommitted] = useState(() => new Set());
+  const [committing, setCommitting] = useState(null); // size being OK'd right now
   const [openSize, setOpenSize] = useState(null);
   const [scan, setScan] = useState("");
   const [scanHit, setScanHit] = useState(null); // {sz, location}
@@ -317,6 +341,13 @@ function PickScreen({ ticket, onSave, saving }) {
 
   useEffect(() => {
     setPickedSizes(ticket.picked_sizes || {});
+    // A size present in the server's picked_sizes with units was already
+    // deducted (per-size OK or a prior save) → start it locked.
+    setCommitted(new Set(
+      Object.entries(ticket.picked_sizes || {})
+        .filter(([, v]) => (parseInt(v?.total ?? v) || 0) > 0)
+        .map(([k]) => k)
+    ));
     setOpenSize(null);
     setScanHit(null);
   }, [ticket]);
@@ -378,6 +409,27 @@ function PickScreen({ ticket, onSave, saving }) {
     });
   };
 
+  // OK a single size → deduct it from inventory NOW. Locks the row on success.
+  const okSize = async (sz) => {
+    const data = pickedSizes[sz] || { total: 0, details: {} };
+    const details = data.details || {};
+    const total = Object.values(details).reduce((a, b) => a + (parseInt(b) || 0), 0);
+    if (total <= 0) { toast.error(`Captura cantidades para la talla ${sz}`); return; }
+    setCommitting(sz);
+    const ok = await onPickSize(ticket.ticket_id, sz, details);
+    setCommitting(null);
+    if (ok) {
+      setCommitted(prev => new Set(prev).add(sz));
+      setOpenSize(null);
+    }
+  };
+
+  // Reopen an already-deducted size to correct it (re-OK applies the delta).
+  const editSize = (sz) => {
+    setCommitted(prev => { const n = new Set(prev); n.delete(sz); return n; });
+    setOpenSize(sz);
+  };
+
   // Scanner (DataWedge keyboard mode): types the code + Enter into this box.
   const handleScan = (raw) => {
     // Strip any scanner preamble/prefix (e.g. "%-") before matching — the label
@@ -409,8 +461,16 @@ function PickScreen({ ticket, onSave, saving }) {
   };
 
   const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
-  const totalPicked = activeSizes.reduce((s, sz) => s + (parseInt(pickedSizes[sz]?.total) || 0), 0);
-  const isComplete = totalPicked >= totalRequired && totalRequired > 0;
+  // Deducted = sizes already OK'd. Progress + completion act on THIS, not on
+  // typed-but-not-OK'd numbers (those haven't left inventory).
+  const totalCommitted = activeSizes.reduce(
+    (s, sz) => s + (committed.has(sz) ? (parseInt(pickedSizes[sz]?.total) || 0) : 0), 0);
+  const committedPicked = () => {
+    const out = {};
+    activeSizes.forEach(sz => { if (committed.has(sz) && pickedSizes[sz]) out[sz] = pickedSizes[sz]; });
+    return out;
+  };
+  const isComplete = totalCommitted >= totalRequired && totalRequired > 0;
 
   return (
     <div className="pb-28">
@@ -423,11 +483,11 @@ function PickScreen({ ticket, onSave, saving }) {
             <span className="ml-auto text-xs font-black text-slate-400">{ticket.customer}</span>
           </div>
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs font-black uppercase tracking-widest text-slate-400">Total</span>
-            <span className={`text-sm font-black ${isComplete ? "text-emerald-400" : "text-amber-400"}`}>{totalPicked} / {totalRequired} pz</span>
+            <span className="text-xs font-black uppercase tracking-widest text-slate-400">Descontado</span>
+            <span className={`text-sm font-black ${isComplete ? "text-emerald-400" : "text-amber-400"}`}>{totalCommitted} / {totalRequired} pz</span>
           </div>
           <div className="mt-1.5 h-2.5 bg-white/10 rounded-full overflow-hidden">
-            <div className={`h-full ${isComplete ? "bg-emerald-500" : totalPicked > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${totalRequired > 0 ? Math.round((totalPicked / totalRequired) * 100) : 0}%` }} />
+            <div className={`h-full ${isComplete ? "bg-emerald-500" : totalCommitted > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${totalRequired > 0 ? Math.round((totalCommitted / totalRequired) * 100) : 0}%` }} />
           </div>
 
           {/* MOS blank status — editable from the picking screen */}
@@ -476,18 +536,20 @@ function PickScreen({ ticket, onSave, saving }) {
           const required = parseInt(sizes[sz]) || 0;
           const data = pickedSizes[sz] || { total: 0, details: {} };
           const picked = data.total;
-          const done = picked >= required;
+          const isCommitted = committed.has(sz);
           const isOpen = openSize === sz;
           const locs = locsFor(sz);
           return (
-            <div key={sz} className={`rounded-2xl border overflow-hidden ${done ? "border-emerald-500/40 bg-emerald-500/5" : "border-white/10 bg-[#131a2b]"}`}>
-              <button onClick={() => setOpenSize(isOpen ? null : sz)} className="w-full flex items-center gap-3 p-3.5 active:bg-white/5">
-                {done ? <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" /> : <Package className="w-6 h-6 text-slate-400 shrink-0" />}
+            <div key={sz} className={`rounded-2xl border overflow-hidden ${isCommitted ? "border-emerald-500/60 bg-emerald-500/10" : "border-white/10 bg-[#131a2b]"}`}>
+              <button onClick={() => isCommitted ? editSize(sz) : setOpenSize(isOpen ? null : sz)} className="w-full flex items-center gap-3 p-3.5 active:bg-white/5">
+                {isCommitted ? <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" /> : <Package className="w-6 h-6 text-slate-400 shrink-0" />}
                 <div className="flex-1 text-left">
-                  <div className="text-xl font-black">{sz}</div>
-                  <div className="text-[11px] text-slate-400">Requerido: {required}</div>
+                  <div className="text-xl font-black flex items-center gap-2">{sz}
+                    {isCommitted && <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase tracking-widest">Descontado</span>}
+                  </div>
+                  <div className="text-[11px] text-slate-400">Requerido: {required}{isCommitted ? " · toca para corregir" : ""}</div>
                 </div>
-                <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${done ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5"}`}>{picked}</div>
+                <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${isCommitted ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5"}`}>{picked}</div>
               </button>
 
               {isOpen && (
@@ -538,6 +600,15 @@ function PickScreen({ ticket, onSave, saving }) {
                       </div>
                     );
                   })}
+                  {locs.length > 0 && (
+                    <button
+                      onClick={() => okSize(sz)}
+                      disabled={committing === sz || (data.total || 0) <= 0}
+                      className="w-full h-12 rounded-xl bg-emerald-600 active:bg-emerald-700 text-white text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
+                      {committing === sz ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                      OK · Descontar {data.total || 0} pz
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -545,15 +616,12 @@ function PickScreen({ ticket, onSave, saving }) {
         })}
       </div>
 
-      {/* Sticky action bar */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-t border-white/10 p-3 flex gap-2">
-        <button onClick={() => onSave(ticket.ticket_id, pickedSizes, false)} disabled={saving}
-          className="flex-1 h-14 rounded-2xl bg-white/10 active:bg-white/20 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50">
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} Guardar
-        </button>
-        <button onClick={() => onSave(ticket.ticket_id, pickedSizes, true)} disabled={saving || totalPicked === 0}
-          className={`flex-1 h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
-          <CheckCircle2 className="w-5 h-5" /> {isComplete ? "Completar" : "Completar parcial"}
+      {/* Sticky action bar — material already leaves inventory per-size as it's
+          OK'd above; this button only finalizes the ticket (full or partial). */}
+      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-t border-white/10 p-3">
+        <button onClick={() => onSave(ticket.ticket_id, committedPicked(), true)} disabled={saving || totalCommitted === 0}
+          className={`w-full h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
+          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} {isComplete ? "Completar surtido" : "Cerrar parcial"}
         </button>
       </div>
     </div>

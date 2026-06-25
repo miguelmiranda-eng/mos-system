@@ -591,6 +591,37 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
                 "skus_count": doc["skus_count"],
                 "items": items,
             }
+
+        # Transit slots (CARRO <n> + UBICACION TEMPORAL) hold physical boxes that
+        # may have NO wms_inventory row yet: stock received straight into a cart,
+        # or a ledger row that drifted away while the boxes stayed put. Without
+        # this fallback a cart shows "Vacío" here while Putaway counts its boxes
+        # (e.g. CARRO 73: 0 inventory rows but 24 cajas). The picker/inventory
+        # report already reads boxes for these slots — mirror it. Inventory wins
+        # when a row exists for the slot, so we never double-count.
+        box_pipeline = [
+            {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}}},
+            {"$group": {
+                "_id": {"location": "$location", "style": {"$ifNull": ["$style", "$sku"]}},
+                "style_units": {"$sum": "$units"},
+            }},
+            {"$group": {
+                "_id": "$_id.location",
+                "total_units": {"$sum": "$style_units"},
+                "skus_count": {"$sum": 1},
+                "items": {"$push": {"style": {"$ifNull": ["$_id.style", "N/A"]}, "units": "$style_units"}},
+            }},
+        ]
+        async for doc in db.wms_boxes.aggregate(box_pipeline):
+            if doc["_id"] in loc_summary:
+                continue  # ledger already covers this slot — trust it, don't double-count
+            items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
+            loc_summary[doc["_id"]] = {
+                "total_units": doc["total_units"],
+                "skus_count": doc["skus_count"],
+                "items": items,
+            }
+
         _LOC_SUMMARY_CACHE["data"] = loc_summary
         _LOC_SUMMARY_CACHE["ts"] = now
 
@@ -2442,8 +2473,14 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         if order_id is not None:
             upd["last_order_id"] = order_id
         await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+        # Key the inventory deduct the SAME way _move_box_inventory / receiving
+        # CREATE the row: short style first (e.g. "5000"), composite sku only as
+        # fallback. Boxes carry the composite sku ("5000-BLACK-XL") but shelf
+        # inventory rows are keyed by the short style — deducting by the box's
+        # composite sku missed the row entirely, so the box emptied while the
+        # ledger stayed full (the NA04-A17 ghost-inventory case).
         inv_id = await _update_inventory_enhanced(
-            box.get("sku") or style, box.get("color", color), box.get("size", size),
+            box.get("style") or box.get("sku") or style, box.get("color", color), box.get("size", size),
             take, inv_operation, location=box.get("location", location),
             customer=box.get("customer", customer),
         )
@@ -4162,6 +4199,109 @@ async def save_pick_progress(ticket_id: str, request: Request):
         "is_full": is_full,
     }
 
+@router.put("/pick-tickets/{ticket_id}/pick-size")
+async def pick_size(ticket_id: str, request: Request):
+    """Deduct ONE size the instant the operator OKs it — no need to wait for the
+    full pick or a partial close. Scoped strictly to the given size: it diffs
+    that size's cells against deducted_map and pulls only the NEW units, so
+    re-OKing the same numbers is a no-op (no double counting) and lowering the
+    amount returns the difference to the shelf. Other (not-yet-OK'd) sizes are
+    never touched. Uses the same _deduct_pick_boxes / _assert_pick_stock guards
+    as the incremental save, so boxes and inventory always move in lockstep.
+
+    Body: { size: str, details: { location: qty, ... } }  (location "" = FIFO)
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    size = (body.get("size") or "").strip()
+    details = {str(k): int(v or 0) for k, v in (body.get("details") or {}).items()}
+    if not size:
+        raise HTTPException(400, "size requerido")
+
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+
+    # Same authorization as save_pick_progress.
+    assignee = (ticket.get("assigned_to") or "").strip()
+    caller_ids = {user.get("user_id", ""), user.get("email", "")}
+    elevated = user.get("role") in {"admin", "supersu", "ceo"}
+    if assignee and assignee not in caller_ids and not elevated:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
+        raise HTTPException(409, "El pick ya fue finalizado; no se aceptan más descuentos")
+
+    # HOLD guard on the shelves being pulled.
+    hold_locs = [l for l in details.keys() if l]
+    if hold_locs:
+        await _assert_not_on_hold(user, *hold_locs)
+
+    is_neck = ticket.get("destination") == "neck_cutting"
+    inv_op = "pick_to_neck" if is_neck else "deduct"
+    style = ticket.get("style", "").strip()
+    color = ticket.get("color", "").strip()
+    customer = ticket.get("customer", "")
+    _ord_no = ticket.get("order_number")
+    _ord_id = ticket.get("order_id")
+
+    # New cumulative picked_sizes with THIS size replaced by the OK'd numbers.
+    picked_sizes = dict(ticket.get("picked_sizes") or {})
+    total = sum(details.values())
+    required = int((ticket.get("sizes") or {}).get(size, 0) or 0)
+    if required and total > required:
+        raise HTTPException(400, f"Talla {size}: {total} excede lo requerido ({required})")
+    picked_sizes[size] = {"total": total, "details": dict(details)}
+
+    new_map = _normalize_picked(picked_sizes)
+    old_map = ticket.get("deducted_map") or {}
+    # Restrict the diff to THIS size's cells only.
+    cells = {(size, loc) for loc in new_map.get(size, {})} | \
+            {(size, loc) for loc in old_map.get(size, {})}
+    pos, neg = [], []
+    for (sz, loc) in cells:
+        d = new_map.get(sz, {}).get(loc, 0) - old_map.get(sz, {}).get(loc, 0)
+        if d > 0:
+            pos.append((sz, loc, d))
+        elif d < 0:
+            neg.append((sz, loc, -d))
+
+    # WMS-002: block oversell on the NEW units before mutating anything.
+    if pos:
+        delta_ps = {}
+        for sz, loc, d in pos:
+            cell = delta_ps.setdefault(sz, {"total": 0, "details": {}})
+            cell["details"][loc] = cell["details"].get(loc, 0) + d
+            cell["total"] += d
+        await _assert_pick_stock(style, color, delta_ps, user)
+
+    # WMS-003: abort on failure so we never record a deduction that didn't apply.
+    try:
+        for sz, loc, d in pos:
+            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id)
+        for sz, loc, d in neg:
+            await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error descontando talla en pick-size")
+        raise HTTPException(500, "No se pudo descontar la talla; no se guardó")
+
+    # Merge only this size's deducted cells into the map.
+    merged_map = {k: dict(v) for k, v in old_map.items()}
+    merged_map[size] = new_map.get(size, {})
+
+    await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {
+        "picked_sizes": picked_sizes,
+        "deducted_map": merged_map,
+        "picking_status": "in_progress",
+        "last_picked_by": user.get("user_id"),
+        "last_picked_by_name": user.get("name", user.get("email", "")),
+        "last_picked_at": now_iso(),
+    }})
+    await log_movement(user, "pick_size", {"ticket_id": ticket_id, "size": size, "details": details})
+    return {"message": f"Talla {size} descontada ({total} pz)", "ticket_id": ticket_id,
+            "size": size, "deducted": total}
+
 @router.put("/pick-tickets/{ticket_id}/confirm")
 @router.post("/stocktakes/{stocktake_id}/finalize")
 async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = None):
@@ -4229,75 +4369,38 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                 if new_qty == 0:
                     await _adjust_inventory_boxes(_inv_id, -1)
     else:
-        # Newer flow: Use picked_sizes to auto-deduct from available boxes
+        # Newer flow: deduct from picked_sizes. Delegate to _deduct_pick_boxes —
+        # the SAME deducer the incremental PDA flow uses — so the physical boxes
+        # AND the inventory row always drop in lockstep. The previous hand-rolled
+        # version queried boxes by {"sku": style} (e.g. "5000"), but boxes store
+        # the COMPOSITE sku ("5000-CHARCOAL-M") with the short style in `style`;
+        # that match found almost nothing and silently fell back to an
+        # inventory-only deduct, leaving the physical boxes full → ghost boxes
+        # (the boxes↔inventory drift behind the cart discrepancies).
         picked_sizes = ticket.get("picked_sizes") or ticket.get("sizes") or {}
         style = ticket.get("style", "")
         color = ticket.get("color", "")
         order_number = ticket.get("order_number")
+        order_id = ticket.get("order_id")
+        customer = ticket.get("customer", "")
         # WMS-002: block oversell before deducting anything in this flow too.
         await _assert_pick_stock(style, color, picked_sizes, user)
         for sz, data in picked_sizes.items():
-            # Handle both old {sz: qty} and new {sz: {total: X, details: {...}}} formats
-            qty_to_pick = 0
+            # Formats: {sz: qty} or {sz: {total: X, details: {loc: q}}}.
             if isinstance(data, dict):
-                qty_to_pick = int(data.get("total", 0))
-                # If we have details, we deduct from specific locations
                 if "details" in data:
-                    for loc, loc_qty in data["details"].items():
-                        if loc_qty <= 0: continue
-                        # Find boxes in this specific location
-                        q = {"sku": style, "color": color, "size": sz, "location": loc, "units": {"$gt": 0}}
-                        boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(100)
-                        rem = loc_qty
-                        for box in boxes:
-                            if rem <= 0: break
-                            b_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
-                            take = min(b_qty, rem)
-                            new_b_qty = b_qty - take
-                            upd = {
-                                "units": new_b_qty, "qty": new_b_qty,
-                                "order_number": order_number,
-                                "last_order_id": ticket.get("order_id")
-                            }
-                            await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
-                            _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=loc, customer=box.get("customer", ""))
-                            if new_b_qty == 0:
-                                await _adjust_inventory_boxes(_inv_id, -1)
-                            rem -= take
-                        # FALLBACK: If no boxes found (e.g. Excel-imported inventory), deduct directly from wms_inventory
-                        if rem > 0:
-                            logger.info(f"Confirm pick fallback: deducting {rem} units of {style}/{color}/{sz} from {loc} (no boxes found)")
-                            await _update_inventory_enhanced(style, color, sz, rem, inv_operation, location=loc, customer=ticket.get("customer", ""))
-                    continue 
+                    for loc, loc_qty in (data.get("details") or {}).items():
+                        if int(loc_qty or 0) > 0:
+                            await _deduct_pick_boxes(style, color, sz, loc, int(loc_qty),
+                                                     inv_operation, customer, order_number, order_id)
+                    continue
+                qty_to_pick = int(data.get("total", 0))
             else:
-                qty_to_pick = int(data)
-
-            if qty_to_pick <= 0: continue
-            
-            # General fallback if no location details provided
-            query = {
-                "$or": [{"style": style}, {"sku": style}],
-                "color": color, "size": sz, "status": "stored", "state": "raw"
-            }
-            boxes = await db.wms_boxes.find(query).sort("created_at", 1).to_list(100)
-            remaining = qty_to_pick
-            for box in boxes:
-                if remaining <= 0: break
-                b_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
-                if b_qty <= 0: continue
-                
-                take = min(b_qty, remaining)
-                new_b_qty = b_qty - take
-                upd = {
-                    "units": new_b_qty, "qty": new_b_qty,
-                    "order_number": order_number,
-                    "last_order_id": ticket.get("order_id")
-                }
-                await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
-                _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), take, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
-                if new_b_qty == 0:
-                    await _adjust_inventory_boxes(_inv_id, -1)
-                remaining -= take
+                qty_to_pick = int(data or 0)
+            # No shelf chosen → FIFO across this SKU's boxes (location="").
+            if qty_to_pick > 0:
+                await _deduct_pick_boxes(style, color, sz, "", qty_to_pick,
+                                         inv_operation, customer, order_number, order_id)
 
     new_status = "in_neck_cutting" if is_neck_cutting else "confirmed"
     
@@ -4564,12 +4667,20 @@ async def deliver_to_production(request: Request):
             qty = int(data)
             
         if qty > 0:
-            # REAL DEDUCT from inventory (Final removal from CUTTING_NECK)
-            neck_key = {"sku": style, "color": color or "", "size": sz or "", "location": "CUTTING_NECK"}
-            neck_inv = await db.wms_inventory.find_one(neck_key)
+            # REAL DEDUCT from inventory (Final removal from CUTTING_NECK).
+            # Match the neck row by EITHER the composite sku or the short style:
+            # neck rows have been created under BOTH conventions (the row's sku is
+            # whatever the source box carried, often composite like "1717-IVORY-M"),
+            # and the old {"sku": style} lookup missed the composite ones — so the
+            # deduct fell through to the shelf fallback and left the neck row's
+            # reserved units stranded (units_allocated > units_on_hand).
+            neck_inv = await db.wms_inventory.find_one({
+                "$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
+                "color": _ci_eq(color or ""), "size": _ci_eq(sz or ""), "location": "CUTTING_NECK",
+            })
             if neck_inv:
                 await _update_inventory_enhanced(
-                    style, color, sz, qty, "deduct", location="CUTTING_NECK"
+                    neck_inv.get("sku") or style, color, sz, qty, "deduct", location="CUTTING_NECK"
                 )
             else:
                 # FALLBACK: CUTTING_NECK record missing (pick_to_neck never ran)
