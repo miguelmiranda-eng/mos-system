@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Manual de Uso — MOS CRM</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #1e293b; font-size: 12px; line-height: 1.55; margin: 0; }
+  h1, h2, h3 { color: #0f172a; margin: 0 0 6px; }
+  .cover { height: 250mm; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; page-break-after: always; }
+  .cover .badge { width: 78px; height: 78px; border-radius: 22px; background: #2563eb; color:#fff; display:flex; align-items:center; justify-content:center; font-size: 38px; font-weight: 900; margin-bottom: 18px; }
+  .cover h1 { font-size: 34px; letter-spacing: -.5px; }
+  .cover .sub { color:#2563eb; font-weight:800; text-transform:uppercase; letter-spacing:3px; font-size:13px; margin-top:6px; }
+  .cover .meta { color:#64748b; margin-top:26px; font-size:12px; }
+  .toc { page-break-after: always; }
+  .toc h2 { font-size: 20px; border-bottom: 2px solid #2563eb; padding-bottom: 6px; }
+  .toc ol { columns: 1; padding-left: 20px; }
+  .toc li { margin: 5px 0; font-weight: 600; }
+  .toc li span { color:#64748b; font-weight:400; }
+  .module { page-break-before: always; }
+  .module h2 { font-size: 19px; color:#0f172a; border-left: 5px solid #2563eb; padding-left: 10px; }
+  .module .role { display:inline-block; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; color:#2563eb; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:2px 8px; margin-bottom:8px; }
+  .shot { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; margin: 8px 0 12px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+  h3 { font-size: 13px; margin-top: 12px; color:#1d4ed8; text-transform:uppercase; letter-spacing:.5px; }
+  ul, ol.steps { margin: 4px 0 4px; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .tip { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:8px 12px; margin:10px 0; font-size:11.5px; }
+  .warn { background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:8px 12px; margin:10px 0; font-size:11.5px; }
+  .lead { color:#475569; }
+  footer { position: fixed; bottom: 6mm; left: 0; right: 0; text-align:center; color:#94a3b8; font-size: 9px; }
+  b { color:#0f172a; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="badge">M</div>
+  <h1>Manual de Uso — MOS&nbsp;CRM</h1>
+  <div class="sub">Producción &amp; Operación · Prosper Manufacturing</div>
+  <div class="meta">Guía ilustrada por módulo · Capturas reales del sistema<br>Junio 2026</div>
+</div>
+
+<div class="toc">
+  <h2>Contenido</h2>
+  <ol>
+    <li>Acceso y Login <span>— entrar al sistema</span></li>
+    <li>MOS Home <span>— lanzador central de módulos</span></li>
+    <li>Dashboard de Producción <span>— tableros y gestión de órdenes</span></li>
+    <li>Surtido / Vista Operador <span>— tickets de surtido en piso</span></li>
+    <li>Control de Calidad (QC) <span>— inspecciones y hallazgos</span></li>
+    <li>Módulo de Arte <span>— productividad y trabajo de arte</span></li>
+    <li>Registro de Envíos <span>— salidas y evidencia</span></li>
+    <li>Packing List <span>— listas de empaque y conteo</span></li>
+    <li>Registros <span>— capturas de producción y neck</span></li>
+    <li>Smart Agenda <span>— calendario y eventos</span></li>
+    <li>AI Insights <span>— análisis inteligente</span></li>
+    <li>CEO Dashboard (MOS-ATLAS) <span>— KPIs ejecutivos</span></li>
+    <li>Usuarios <span>— cuentas, roles y permisos</span></li>
+    <li>Operadores <span>— directorio de operadores</span></li>
+    <li>Automatizaciones <span>— reglas automáticas</span></li>
+    <li>Activity Log <span>— historia completa de una orden</span></li>
+    <li>Reportes Programados <span>— reporte diario automático</span></li>
+    <li>Backup Center <span>— respaldos y archivo</span></li>
+  </ol>
+  <div class="tip"><b>Cómo se navega:</b> tras iniciar sesión llegas al <b>Dashboard</b> (o a <b>MOS Home</b>, el lanzador de módulos). La barra lateral izquierda lista los tableros y herramientas. Arriba a la derecha tienes <b>buscar órdenes</b>, <b>tema claro/oscuro</b>, <b>idioma (ES/EN)</b>, <b>notificaciones</b> y tu <b>usuario</b>.</div>
+  <div class="tip"><b>Nota:</b> este manual cubre únicamente el <b>CRM de producción</b>. El módulo <b>WMS</b> (almacén) se documenta en su propio manual.</div>
+</div>
+
+<!-- 1 -->
+<div class="module">
+  <span class="role">Todos</span>
+  <h2>1 · Acceso y Login</h2>
+  <p class="lead">Punto de entrada al sistema. Tras iniciar sesión, MOS te lleva automáticamente al módulo principal según tu rol.</p>
+  <img class="shot" src="img/01-login.png">
+  <h3>Cómo entrar</h3>
+  <ul>
+    <li><b>Iniciar con Google</b> (cuenta corporativa, OAuth).</li>
+    <li><b>Ingresar con Email</b>: correo + contraseña.</li>
+    <li><b>¿Olvidaste tu contraseña?</b> envía un enlace de recuperación a tu correo.</li>
+  </ul>
+</div>
+
+<!-- 2 -->
+<div class="module">
+  <span class="role">Todos</span>
+  <h2>2 · MOS Home (Hub)</h2>
+  <p class="lead">Lanzador central con tarjetas de cada módulo, agrupadas por categoría.</p>
+  <img class="shot" src="img/02-home.png">
+  <h3>¿Para qué sirve?</h3>
+  <ul>
+    <li>Acceder rápido a cualquier módulo desde un solo lugar; las tarjetas se filtran según tu rol.</li>
+    <li>Buscador <b>"Filtrar herramientas…"</b> y botón <b>Volver al CRM</b> para regresar al Dashboard.</li>
+  </ul>
+  <h3>Secciones</h3>
+  <ul>
+    <li><b>Configuraciones &amp; Logs</b>: Activity Log, Automatizaciones, Usuarios, Centro de Respaldos, Gestor de Formulario, Columnas Globales.</li>
+    <li><b>Catálogos del Sistema</b>: Operadores, Mos-atlas (CEO Dashboard).</li>
+  </ul>
+</div>
+
+<!-- 3 -->
+<div class="module">
+  <span class="role">Admin · CEO · Producción</span>
+  <h2>3 · Dashboard de Producción (CRM)</h2>
+  <p class="lead">El corazón del sistema: gestión de órdenes por tableros, con barra lateral de navegación y múltiples vistas.</p>
+  <img class="shot" src="img/03-dashboard.png">
+  <h3>Barra lateral</h3>
+  <ul>
+    <li><b>Tableros (General):</b> Master, Scheduling, Ready To Scheduled, Blanks, Screens, Neck, Ejemplos, Completos, Edi, Final Bill, Inventario, Respaldo Monday, Cancelled, Empaque y <b>máquinas</b> (colapsable, un tablero por máquina).</li>
+    <li><b>Herramientas:</b> Arte, Envíos, Packing, Registros…</li>
+    <li><b>Admin:</b> Usuarios, Log Actividad, Reportes Programados.</li>
+  </ul>
+  <h3>Encabezado del tablero</h3>
+  <ul>
+    <li><b>Vistas Guardadas</b> (p. ej. Vista Estándar) y contadores <b>Órdenes</b> / <b>Total Qty</b>.</li>
+    <li><b>+ Nueva Orden</b> y menú <b>Captura</b>.</li>
+    <li>Conmutador de vistas: <b>Tabla</b>, <b>Calendario</b>, <b>Blanks</b> y más; agrupación, filtros, columnas y exportar.</li>
+  </ul>
+  <h3>Lo que puedes hacer</h3>
+  <ul>
+    <li>Crear/editar órdenes, mover tarjetas entre tableros, personalizar columnas.</li>
+    <li>Comentarios y menciones, historial de la orden, exportar a Excel, papelera/deshacer.</li>
+  </ul>
+  <div class="tip">Arrastra una tarjeta de una columna a otra para cambiar su estado de producción; el conteo del encabezado se actualiza solo.</div>
+</div>
+
+<!-- 4 -->
+<div class="module">
+  <span class="role">Operador · Surtido</span>
+  <h2>4 · Surtido / Vista Operador</h2>
+  <p class="lead">Interfaz simplificada de surtido de pedidos para el piso.</p>
+  <img class="shot" src="img/04-operator.png">
+  <h3>¿Para qué sirve?</h3>
+  <ul>
+    <li>Muestra los <b>tickets pendientes</b> a la izquierda; al seleccionar uno, se trabaja a la derecha.</li>
+    <li>El contador <b>"pendientes"</b> está en el encabezado; cuando no hay nada, aparece <b>"Todo al día"</b>.</li>
+  </ul>
+</div>
+
+<!-- 5 -->
+<div class="module">
+  <span class="role">QC · Admin</span>
+  <h2>5 · Control de Calidad (QC)</h2>
+  <p class="lead">Registro de inspecciones y hallazgos de calidad, con tarjetas de resumen y pestañas por resultado.</p>
+  <img class="shot" src="img/05-qc.png">
+  <h3>Resumen</h3>
+  <ul>
+    <li>Tarjetas: <b>Total Inspecciones</b>, <b>Aprobadas</b> (con % de tasa), <b>Condicional</b>, <b>Rechazadas</b>.</li>
+    <li>Pestañas: General · Aprobado · Condicional · Rechazado · <b>Métricas</b>.</li>
+  </ul>
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Buscar cualquier orden por # / cliente / PO.</li>
+    <li>Registrar inspecciones con resultado <b>Pasa / Condicional / Falla</b>, evidencia fotográfica y acciones correctivas.</li>
+    <li>Aviso <b>"Todas las órdenes han sido auditadas"</b> cuando no hay pendientes.</li>
+  </ul>
+</div>
+
+<!-- 6 -->
+<div class="module">
+  <span class="role">Arte · Producción</span>
+  <h2>6 · Módulo de Arte</h2>
+  <p class="lead">Gestión y medición de productividad del área de arte, organizada por pestañas.</p>
+  <img class="shot" src="img/06-art.png">
+  <h3>Pestañas</h3>
+  <ul>
+    <li>Operaciones · Pre-Órdenes · Listo para cuadros · <b>KPIs y Productividad</b> · Muertas.</li>
+    <li>Filtro <b>Pendientes / Completadas-Trabajadas</b> y gestor de <b>Columnas</b>.</li>
+  </ul>
+  <h3>Utilidades</h3>
+  <ul>
+    <li><b>Registrar trabajo de orden</b> escribiendo el número de orden.</li>
+    <li>Lista <b>Pendientes de Arte</b> priorizada por entrega.</li>
+    <li>Acciones por fila: <b>SEPS</b> y <b>NECK</b>, edición de Job Title y links.</li>
+  </ul>
+</div>
+
+<!-- 7 -->
+<div class="module">
+  <span class="role">Logística · Almacén</span>
+  <h2>7 · Registro de Envíos</h2>
+  <p class="lead">Registro rápido de salidas/embarques con evidencia.</p>
+  <img class="shot" src="img/07-shipping.png">
+  <h3>Capturar una salida</h3>
+  <ol class="steps">
+    <li><b>Números de órdenes</b> (separados por espacio, p. ej. <i>505050 505051</i>).</li>
+    <li><b>Notas adicionales</b> (datos del transportista, etc.).</li>
+    <li><b>Adjuntar evidencia</b>: Documentos o <b>Tomar foto</b>.</li>
+    <li><b>Guardar Envío</b>.</li>
+  </ol>
+  <h3>Panel derecho</h3>
+  <ul>
+    <li><b>Salidas del día</b> con el contador de registros y el selector de fecha.</li>
+  </ul>
+</div>
+
+<!-- 8 -->
+<div class="module">
+  <span class="role">Almacén</span>
+  <h2>8 · Packing List</h2>
+  <p class="lead">Generación de listas de empaque con conteo por talla y detalle de cajas.</p>
+  <img class="shot" src="img/08-packing.png">
+  <h3>Encabezado</h3>
+  <ul>
+    <li>Pestañas: Packing Department · Warehouse · Import &amp; Export.</li>
+    <li>Vendor PO · Client PO · Store Name · Client · Date Packed · Packer Name.</li>
+  </ul>
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Tabla de empaque por talla con filas dinámicas (<b>+ Add Row</b>).</li>
+    <li><b>Summary</b> (Total shipped, Samples, Ordered, Difference, Damaged…) y <b>Box Details</b> (cajas nuevas / recicladas).</li>
+    <li>Acciones: <b>Imprimir</b> · <b>Generar paquete</b> · <b>Guardar Excel</b>.</li>
+  </ul>
+</div>
+
+<!-- 9 -->
+<div class="module">
+  <span class="role">Producción</span>
+  <h2>9 · Registros (Logs de producción)</h2>
+  <p class="lead">Historial de capturas de producción y de corte de neck, con filtros y exportación.</p>
+  <img class="shot" src="img/09-registros.png">
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Pestañas <b>Producción</b> / <b>Neck</b>.</li>
+    <li>Filtros: Desde · Hasta · Orden · Operador · Turno · Máquina.</li>
+    <li>Tabla: Fecha, Orden, Cliente, Operador, Cant., Máquina, Turno, Diseño, Setup — con totales por página, paginación y botón <b>Exportar</b>.</li>
+  </ul>
+</div>
+
+<!-- 10 -->
+<div class="module">
+  <span class="role">Todos</span>
+  <h2>10 · Smart Agenda</h2>
+  <p class="lead">Calendario de eventos y turnos, con integración a Google Calendar.</p>
+  <img class="shot" src="img/10-agenda.png">
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Vistas <b>Mes / Semana / Día</b> y navegación <b>Hoy ◀ ▶</b>.</li>
+    <li><b>Próximos eventos</b> en el panel izquierdo.</li>
+    <li><b>Categorías</b> por color: Reunión, Producción, Personal, Urgente, Recordatorio, Deadline, Google.</li>
+    <li><b>Conectar Google</b> y botón <b>+ Nuevo</b> evento.</li>
+  </ul>
+</div>
+
+<!-- 11 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>11 · AI Insights</h2>
+  <p class="lead">Motor de análisis inteligente de rendimiento, cuellos de botella y métricas de usuarios.</p>
+  <img class="shot" src="img/11-insights.png">
+  <h3>Utilidades</h3>
+  <ul>
+    <li><b>Iniciar análisis</b>: recopila la actividad reciente, los cuellos de botella en tableros y la participación de usuarios para generar un reporte.</li>
+    <li><b>Configuración API</b> (esquina superior derecha).</li>
+  </ul>
+</div>
+
+<!-- 12 -->
+<div class="module">
+  <span class="role">Admin · CEO · Supersu</span>
+  <h2>12 · CEO Dashboard (MOS-ATLAS)</h2>
+  <p class="lead">Tablero ejecutivo ("Executive Insights") con KPIs y gráficas de alto nivel.</p>
+  <img class="shot" src="img/12-ceo-dashboard.png">
+  <h3>Indicadores</h3>
+  <ul>
+    <li>KPIs: <b>Piezas Producidas</b>, <b>Eficiencia Global (%)</b>, <b>Producción neto</b>, <b>Recientes</b>.</li>
+    <li>Gráficas: <b>Tendencia de producción</b> (área) y <b>Carga de máquinas</b> (barras por máquina).</li>
+  </ul>
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Filtros por periodo (Hoy / Semana / Mes / personalizado) y por turno.</li>
+    <li>Exportar / PDF.</li>
+  </ul>
+</div>
+
+<!-- 13 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>13 · Usuarios</h2>
+  <p class="lead">Control de accesos, roles y permisos del equipo.</p>
+  <img class="shot" src="img/13-users.png">
+  <h3>Nuevo usuario</h3>
+  <ol class="steps">
+    <li><b>Invitar usuario</b> o <b>Crear con email</b>.</li>
+    <li>Captura el <b>correo</b> y el <b>rol inicial</b>.</li>
+    <li><b>Enviar invitación</b>.</li>
+  </ol>
+  <h3>Lista de usuarios</h3>
+  <ul>
+    <li>Nombre, correo, <b>rol</b> (Superadmin / Admin / General), permisos por tablero y acciones.</li>
+    <li>Buscador por nombre / email.</li>
+  </ul>
+</div>
+
+<!-- 14 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>14 · Operadores</h2>
+  <p class="lead">Directorio de operadores (recursos humanos para máquinas).</p>
+  <img class="shot" src="img/15-operators.png">
+  <h3>Utilidades</h3>
+  <ul>
+    <li><b>Registrar nuevo</b> operador (Nombre → <b>Registrar en el sistema</b>).</li>
+    <li>Estado <b>Activo / Inactivo</b> por operador, editar y eliminar.</li>
+    <li>Nota de <b>Información importante</b> (disponibilidad, rotación/baja, eliminación definitiva).</li>
+  </ul>
+</div>
+
+<!-- 15 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>15 · Automatizaciones</h2>
+  <p class="lead">Motor de reglas inteligentes (disparador → acción), mostradas como tarjetas activables.</p>
+  <img class="shot" src="img/16-automation.png">
+  <h3>¿Cómo funcionan?</h3>
+  <ul>
+    <li>Cada regla tiene una condición <b>CUANDO</b> (cambio de estado / campo) y una <b>acción</b> (Mover a tablero, fijar valor, enviar email…), con interruptor de activación.</li>
+    <li>Ejemplos reales: "Mover a cuadros", "Move to neck", "Mover a completos envíos", "Final Bill", "Mover a inventario", "Prueba de correo", "EDI".</li>
+    <li><b>+ Nueva Regla</b> para crear una automatización.</li>
+  </ul>
+</div>
+
+<!-- 16 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>16 · Activity Log</h2>
+  <p class="lead">Historia completa de una orden: creación, movimientos, cambios de columna, comentarios y más.</p>
+  <img class="shot" src="img/17-activity-log.png">
+  <h3>Uso</h3>
+  <ul>
+    <li>Escribe el número de orden (p. ej. <i>1558</i> o <i>#1558</i>) y presiona <b>Enter / Buscar</b> para abrir su historia completa.</li>
+  </ul>
+</div>
+
+<!-- 17 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>17 · Reportes Programados</h2>
+  <p class="lead">Configura el envío automático del reporte diario de producción por correo.</p>
+  <img class="shot" src="img/18-reportes.png">
+  <h3>Configuración</h3>
+  <ul>
+    <li><b>Envío automático diario</b> (interruptor) + "Último envío".</li>
+    <li><b>Programación</b>: Hora y Minuto (hora local de Tijuana).</li>
+    <li><b>Destinatarios</b>: agrega uno o más correos.</li>
+    <li><b>Contenido del reporte</b>: rango Hoy / Ayer / Semana / Mes, asunto y adjunto <b>PDF</b>.</li>
+    <li><b>Envío manual</b> inmediato y <b>Guardar cambios</b>.</li>
+  </ul>
+</div>
+
+<!-- 18 -->
+<div class="module">
+  <span class="role">Admin</span>
+  <h2>18 · Backup Center</h2>
+  <p class="lead">Respaldo y archivo de órdenes ("Security &amp; Archive Management").</p>
+  <img class="shot" src="img/19-backups.png">
+  <h3>Utilidades</h3>
+  <ul>
+    <li>Pestañas: <b>Archivo del sistema</b> · <b>Explorar USB</b>.</li>
+    <li><b>PDF Resumen</b> · <b>Descargar respaldo JSON</b> · <b>Eliminar de MOS</b>.</li>
+    <li>Filtrar por número u orden, filtro <b>Todos activos</b>, <b>Seleccionar todo</b>.</li>
+    <li>Tabla: Orden/PO · Cliente · Contenido · Tablero origen.</li>
+  </ul>
+  <div class="warn">"Eliminar de MOS" es una acción destructiva: úsala solo tras descargar el respaldo correspondiente.</div>
+</div>
+
+<footer>MOS CRM · Prosper Manufacturing — Manual de uso interno</footer>
+</body>
+</html>
