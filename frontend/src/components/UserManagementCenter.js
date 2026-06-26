@@ -338,6 +338,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
                         <SelectItem value="user">Usuario Estándar</SelectItem>
                         <SelectItem value="ceo">CEO / Directivo</SelectItem>
+                        <SelectItem value="customer">Cliente (ve su inventario)</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
@@ -412,6 +413,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
                         <SelectItem value="user">Usuario Estándar</SelectItem>
                         <SelectItem value="ceo">CEO / Directivo</SelectItem>
+                        <SelectItem value="customer">Cliente (ve su inventario)</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
