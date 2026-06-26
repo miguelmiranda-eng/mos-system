@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API, cleanScan } from "./lib";
@@ -104,6 +104,8 @@ export const ReceivingModule = () => {
   // matches by receiving number OR customer (also style/sku) on the backend.
   const [search, setSearch] = useState('');
   const [searching, setSearching] = useState(false);
+  // Cliente seleccionado para exportar sus recibos a Excel.
+  const [exportCustomer, setExportCustomer] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     customer: '', manufacturer: '', style: '', color: '', size: '',
@@ -827,6 +829,21 @@ export const ReceivingModule = () => {
           data-testid="new-receiving-btn"
         >
           <Plus className="w-4 h-4" /> {t('wms_new_record')}
+        </button>
+      </div>
+      {/* Exportar Excel de recibos por cliente */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Exportar recibos:</span>
+        <div className="w-64">
+          <SearchableSelect options={options.customers || []} value={exportCustomer} onChange={setExportCustomer} placeholder="Cliente (vacío = todos)…" testId="rcv-export-customer" />
+        </div>
+        <button
+          onClick={() => window.open(`${API}/export/receiving${exportCustomer ? `?customer=${encodeURIComponent(exportCustomer)}` : ''}`, '_blank')}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all"
+          data-testid="rcv-export-btn"
+          title={exportCustomer ? `Exportar recibos de ${exportCustomer}` : 'Exportar todos los recibos'}
+        >
+          <Download className="w-4 h-4" /> Exportar Excel
         </button>
       </div>
       {search.trim() && (

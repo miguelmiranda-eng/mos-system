@@ -2055,9 +2055,16 @@ async def delete_receiving(receiving_id: str, request: Request):
                 user
             )
             
-    await log_movement(user, "deallocate", {
-        "receiving_id": receiving_id, 
-        "details": f"Eliminado registro de receiving y revertidas {len(boxes)} cajas"
+    await log_movement(user, "receiving_deleted", {
+        "receiving_id": receiving_id,
+        "customer": doc.get("customer", ""),
+        "style": doc.get("style", ""),
+        "color": doc.get("color", ""),
+        "size": doc.get("size", ""),
+        "total_units": int(doc.get("total_units", 0) or 0),
+        "inv_location": doc.get("inv_location", ""),
+        "boxes_reverted": len(boxes),
+        "details": f"Eliminado registro de receiving y revertidas {len(boxes)} cajas",
     })
     await notify_badge_change("putaway")
     return {"message": "Receiving eliminado y revertido exitosamente"}
@@ -5141,6 +5148,184 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": "attachment; filename=inventory.xlsx"})
+
+
+@router.get("/export/receiving")
+async def export_receiving(request: Request, customer: str = ""):
+    """Export receivings to Excel (optionally by customer), most recent first,
+    WITH ALERTS:
+      - POSIBLE DOBLE RECIBO: receipts sharing (cliente, style, color, talla,
+        unidades, ubicacion), scored by confidence (ALTA/MEDIA/REVISAR).
+        Flagged on the main sheet and listed on a 'Posibles dobles' sheet.
+      - ELIMINADOS: receipts that were deleted (from the movement log) on an
+        'Eliminados' sheet."""
+    from collections import defaultdict
+    await require_auth(request)
+    customer = (customer or "").strip()
+    query = {}
+    if customer:
+        query["customer"] = {"$regex": f"^{re.escape(customer)}$", "$options": "i"}
+    docs = await db.wms_receiving.find(query, {"_id": 0}).sort("created_at", -1).to_list(None)
+
+    # Duplicate detection. Grouping by (cliente, style, color, talla, unidades,
+    # ubicacion) only finds CANDIDATES — a legit re-receipt of the same qty to the
+    # same cart on another day matches too. So we score each group's confidence by
+    # how a real double-capture actually looks (rapid, same operator, same day):
+    #   ALTA    : two captures <= 15 min apart  -> casi seguro doble captura
+    #   MEDIA   : mismo dia (pero no tan juntas) -> probable, revisar
+    #   REVISAR : en dias distintos u operadores distintos -> posible legitimo
+    def dkey(r):
+        return (
+            (r.get("customer") or "").strip().upper(),
+            (r.get("style") or "").strip().upper(),
+            (r.get("color") or "").strip().upper(),
+            (r.get("size") or "").strip().upper(),
+            int(r.get("total_units") or 0),
+            (r.get("inv_location") or "").strip().upper(),
+        )
+
+    def _ts(r):
+        try:
+            return datetime.fromisoformat((r.get("created_at") or "").replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    groups = defaultdict(list)
+    for r in docs:
+        groups[dkey(r)].append(r)
+
+    dup_conf = {}        # receiving_id -> "ALTA" | "MEDIA" | "REVISAR"
+    dup_groups_list = []  # (conf, key, members, min_gap_min, n_ops)
+    for k, g in groups.items():
+        if len(g) < 2:
+            continue
+        members = sorted(g, key=lambda r: r.get("created_at") or "")
+        days = {(r.get("created_at") or "")[:10] for r in members if r.get("created_at")}
+        ops = {(r.get("received_by_name") or "").strip() for r in members if (r.get("received_by_name") or "").strip()}
+        gaps = []
+        for i in range(1, len(members)):
+            a, b = _ts(members[i - 1]), _ts(members[i])
+            if a and b:
+                gaps.append(abs((b - a).total_seconds()))
+        min_gap = min(gaps) if gaps else None
+        if min_gap is not None and min_gap <= 900:
+            conf = "ALTA"
+        elif len(days) <= 1 and len(ops) <= 1:
+            conf = "MEDIA"
+        else:
+            conf = "REVISAR"
+        for r in members:
+            dup_conf[r.get("receiving_id")] = conf
+        dup_groups_list.append((conf, k, members, (round(min_gap / 60, 1) if min_gap is not None else None), len(ops)))
+    _ord = {"ALTA": 0, "MEDIA": 1, "REVISAR": 2}
+    dup_groups_list.sort(key=lambda x: (_ord.get(x[0], 9), -len(x[2])))
+
+    # Deleted receipts from the movement log (new dedicated type + legacy text).
+    del_q = {"$or": [
+        {"type": "receiving_deleted"},
+        {"type": "deallocate", "details.details": {"$regex": "Eliminado registro de receiving", "$options": "i"}},
+    ]}
+    if customer:
+        del_q = {"$and": [del_q, {"details.customer": {"$regex": f"^{re.escape(customer)}$", "$options": "i"}}]}
+    deleted = await db.wms_movements.find(del_q, {"_id": 0}).sort("created_at", -1).to_list(None)
+
+    import xlsxwriter
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf)
+    bold = wb.add_format({"bold": True})
+    warn = wb.add_format({"bold": True, "font_color": "#B00020"})
+
+    # ── Sheet 1: Recibos (with ALERTA column) ─────────────────────────────────
+    ws = wb.add_worksheet("Recibos")
+    headers = ["ALERTA", "Receiving ID", "Fecha", "Cliente", "Fabricante", "Style", "SKU",
+               "Color", "Talla", "Descripcion", "Pais", "Fabric", "Lote",
+               "Ubicacion", "Unidades", "Cajas", "ASN", "UPC", "BPO", "Recibido por"]
+    for i, h in enumerate(headers):
+        ws.write(0, i, h, bold)
+    for row, r in enumerate(docs, 1):
+        conf = dup_conf.get(r.get("receiving_id"))
+        ws.write(row, 0, f"POSIBLE DOBLE RECIBO ({conf})" if conf else "", warn if conf else None)
+        ws.write(row, 1, r.get("receiving_id", ""))
+        ws.write(row, 2, r.get("created_at", ""))
+        ws.write(row, 3, r.get("customer", ""))
+        ws.write(row, 4, r.get("manufacturer", ""))
+        ws.write(row, 5, r.get("style", ""))
+        ws.write(row, 6, r.get("sku", ""))
+        ws.write(row, 7, r.get("color", ""))
+        ws.write(row, 8, r.get("size", ""))
+        ws.write(row, 9, r.get("description", ""))
+        ws.write(row, 10, r.get("country_of_origin", ""))
+        ws.write(row, 11, r.get("fabric_content", ""))
+        ws.write(row, 12, r.get("lot_number", ""))
+        ws.write(row, 13, r.get("inv_location", ""))
+        ws.write(row, 14, int(r.get("total_units") or 0))
+        ws.write(row, 15, len(r.get("boxes") or []))
+        ws.write(row, 16, r.get("asn_reference", ""))
+        ws.write(row, 17, r.get("upc", ""))
+        ws.write(row, 18, "YES" if r.get("is_bpo") else "NO")
+        ws.write(row, 19, r.get("received_by_name", ""))
+
+    # ── Sheet 2: Duplicados (con nivel de confianza) ──────────────────────────
+    wsd = wb.add_worksheet("Posibles dobles")
+    wsd.write(0, 0, "POSIBLES DOBLES RECIBOS (a revisar). Confianza: ALTA = capturas <=15 min "
+                    "(casi seguro doble recibo) · MEDIA = mismo dia y operador (probable) · "
+                    "REVISAR = dias u operadores distintos (posible recibo legitimo)", bold)
+    dh = ["Grupo", "Confianza", "Veces", "Min entre capturas", "Operadores",
+          "Cliente", "Style", "Color", "Talla", "Unidades", "Ubicacion",
+          "Receiving ID", "Fecha", "ASN", "Lote", "Recibido por"]
+    hrow = 1
+    for i, h in enumerate(dh):
+        wsd.write(hrow, i, h, bold)
+    drow = hrow + 1
+    for gi, (conf, k, members, min_gap_min, n_ops) in enumerate(dup_groups_list, 1):
+        for r in members:
+            wsd.write(drow, 0, gi)
+            wsd.write(drow, 1, conf, warn if conf == "ALTA" else None)
+            wsd.write(drow, 2, len(members))
+            wsd.write(drow, 3, min_gap_min if min_gap_min is not None else "")
+            wsd.write(drow, 4, n_ops)
+            wsd.write(drow, 5, r.get("customer", ""))
+            wsd.write(drow, 6, r.get("style", ""))
+            wsd.write(drow, 7, r.get("color", ""))
+            wsd.write(drow, 8, r.get("size", ""))
+            wsd.write(drow, 9, int(r.get("total_units") or 0))
+            wsd.write(drow, 10, r.get("inv_location", ""))
+            wsd.write(drow, 11, r.get("receiving_id", ""))
+            wsd.write(drow, 12, r.get("created_at", ""))
+            wsd.write(drow, 13, r.get("asn_reference", ""))
+            wsd.write(drow, 14, r.get("lot_number", ""))
+            wsd.write(drow, 15, r.get("received_by_name", ""))
+            drow += 1
+    if drow == hrow + 1:
+        wsd.write(hrow + 1, 0, "Sin duplicados detectados")
+
+    # ── Sheet 3: Eliminados ───────────────────────────────────────────────────
+    wse = wb.add_worksheet("Eliminados")
+    eh = ["Fecha", "Receiving ID", "Cliente", "Style", "Color", "Talla",
+          "Unidades", "Ubicacion", "Cajas revertidas", "Usuario", "Detalle"]
+    for i, h in enumerate(eh):
+        wse.write(0, i, h, bold)
+    for row, m in enumerate(deleted, 1):
+        d = m.get("details", {}) or {}
+        wse.write(row, 0, m.get("created_at", ""))
+        wse.write(row, 1, d.get("receiving_id", ""))
+        wse.write(row, 2, d.get("customer", ""))
+        wse.write(row, 3, d.get("style", ""))
+        wse.write(row, 4, d.get("color", ""))
+        wse.write(row, 5, d.get("size", ""))
+        wse.write(row, 6, int(d.get("total_units", 0) or 0))
+        wse.write(row, 7, d.get("inv_location", ""))
+        wse.write(row, 8, int(d.get("boxes_reverted", 0) or 0))
+        wse.write(row, 9, m.get("user_name", m.get("user_id", "")))
+        wse.write(row, 10, d.get("details", ""))
+    if not deleted:
+        wse.write(1, 0, "Sin recibos eliminados registrados")
+
+    wb.close()
+    buf.seek(0)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", customer) or "todos"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename=recibos_{safe}.xlsx"})
 
 
 # ==================== ASN (Advanced Shipping Notice) ====================
