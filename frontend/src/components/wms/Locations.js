@@ -1142,14 +1142,16 @@ export const LocationsModule = ({ currentUser }) => {
                                           <ArrowRightLeft className="w-3.5 h-3.5" />
                                         </button>
                                       )}
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
-                                        className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500"
-                                        title="Borrar este renglón de la ubicación"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
+                                      {isSupersu && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
+                                          className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500"
+                                          title="Borrar este renglón de la ubicación (solo Super Usuario)"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                     </div>
                                   </td>
                                 )}
@@ -1389,12 +1391,12 @@ export const LocationsModule = ({ currentUser }) => {
                     <Printer className="w-3.5 h-3.5" /> Imprimir etiquetas
                   </button>
                 )}
-                {canDeleteInv && detailItems.length > 0 && (
+                {isSupersu && detailItems.length > 0 && (
                   <button
                     onClick={clearLocation}
                     disabled={clearingLoc}
                     className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50 flex items-center gap-2"
-                    title="Eliminar todo el inventario de esta ubicación"
+                    title="Eliminar todo el inventario de esta ubicación (solo Super Usuario)"
                   >
                     {clearingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                     Vaciar ubicación

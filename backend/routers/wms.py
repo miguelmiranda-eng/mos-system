@@ -6398,11 +6398,11 @@ async def add_inventory_manual(request: Request):
 
 @router.delete("/inventory/{inventory_id}")
 async def delete_inventory_row(inventory_id: str, request: Request):
-    """Admin-only: remove a single inventory line (and its linked LPN boxes)
-    from a location. Used by the Locations detail modal to clear contents.
-    Matches strictly by inventory_id, so it never touches other locations or
-    duplicate rows of the same SKU."""
-    user = await require_admin(request)
+    """Supersu-only: remove a single inventory line (and its linked LPN boxes)
+    from a location. Used by the Locations detail modal (delete line / clear
+    location). Matches strictly by inventory_id, so it never touches other
+    locations or duplicate rows of the same SKU."""
+    user = await require_supersu(request)
     inv = await db.wms_inventory.find_one({"inventory_id": inventory_id})
     if not inv:
         raise HTTPException(404, "Inventario no encontrado")
