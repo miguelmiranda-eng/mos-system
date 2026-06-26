@@ -5042,6 +5042,23 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
         raise HTTPException(404, "Ninguna de las cajas existe")
     return HTMLResponse(_build_box_labels_html(items))
 
+@router.get("/labels/location")
+async def generate_location_labels(request: Request, location: str = ""):
+    """Print one box label per LPN currently sitting (units>0) in a location.
+    Used by the Locations detail modal ('Imprimir etiquetas')."""
+    await require_auth(request)
+    loc = (location or "").strip()
+    if not loc:
+        raise HTTPException(400, "location requerido")
+    boxes = await db.wms_boxes.find(
+        {"location": {"$regex": f"^{re.escape(loc)}$", "$options": "i"}, "units": {"$gt": 0}},
+        {"_id": 0},
+    ).sort("created_at", 1).to_list(3000)
+    if not boxes:
+        raise HTTPException(404, f"No hay cajas con unidades en {loc}")
+    items = [await _enrich_box_for_label(b) for b in boxes]
+    return HTMLResponse(_build_box_labels_html(items))
+
 # ==================== EXPORT ====================
 
 @router.get("/export/inventory")

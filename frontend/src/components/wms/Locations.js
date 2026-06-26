@@ -1328,6 +1328,14 @@ export const LocationsModule = ({ currentUser }) => {
                                         <div className="inline-flex items-center gap-1.5">
                                           <button
                                             type="button"
+                                            onClick={() => window.open(`${API}/labels/box/${encodeURIComponent(b.box_id)}`, '_blank')}
+                                            className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/10 rounded-md border border-primary/30"
+                                            title={`Imprimir etiqueta de ${b.box_id || 'esta caja'}`}
+                                          >
+                                            <Printer className="w-2.5 h-2.5" /> Etiqueta
+                                          </button>
+                                          <button
+                                            type="button"
                                             onClick={() => startRelocate(b.box_id)}
                                             className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-amber-500 hover:bg-amber-500/10 rounded-md border border-amber-500/30"
                                             title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
@@ -1372,6 +1380,15 @@ export const LocationsModule = ({ currentUser }) => {
                 {detailItems.length} línea{detailItems.length === 1 ? '' : 's'} en esta ubicación
               </span>
               <div className="flex items-center gap-2">
+                {detailItems.length > 0 && (
+                  <button
+                    onClick={() => window.open(`${API}/labels/location?location=${encodeURIComponent(detailLoc.name)}`, '_blank')}
+                    className="px-4 py-2 bg-primary/15 hover:bg-primary/25 text-primary rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2"
+                    title="Imprimir las etiquetas de todas las cajas de esta ubicación"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Imprimir etiquetas
+                  </button>
+                )}
                 {canDeleteInv && detailItems.length > 0 && (
                   <button
                     onClick={clearLocation}
