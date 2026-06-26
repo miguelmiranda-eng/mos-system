@@ -470,47 +470,21 @@ const LandingPage = () => {
   return (
     <div className="min-h-screen relative flex flex-col overflow-hidden bg-background">
       <Toaster position="bottom-right" theme="dark" />
-      
-      {/* Background Image with Overlay */}
+
+      {/* Background Image */}
       <div className="absolute inset-0 z-0">
         <img src="/tech_bg.png" alt="Tech Background" className="w-full h-full object-cover opacity-80 mix-blend-screen" />
-        <div className="absolute inset-0 bg-gradient-to-tr from-background via-background/95 to-transparent"></div>
       </div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-12 flex flex-col flex-1">
         {/* Header */}
         <header className="flex justify-between items-center mb-10 md:mb-16">
           <div className="flex items-center gap-4 md:gap-6">
-            <div className="w-16 h-16 md:w-20 md:h-20 flex items-center justify-center transform hover:scale-105 transition-transform group cursor-default drop-shadow-[0_5px_15px_rgba(0,0,0,0.6)]">
-              <svg viewBox="0 0 100 100" className="w-full h-full transform group-hover:rotate-45 transition-transform duration-1000 ease-in-out">
-                {/* Tech Petals (Crimson/Silver) */}
-                <g fill="var(--primary)" className="drop-shadow-[0_0_5px_rgba(255,193,7,0.7)]">
-                  {[...Array(12)].map((_, i) => (
-                    <polygon 
-                      key={i} 
-                      points="50,4 56,22 50,40 44,22" 
-                      transform={`rotate(${i * 30} 50 50)`} 
-                    />
-                  ))}
-                </g>
-                
-                {/* Microchip / Spiral Abstract Center */}
-                <circle cx="50" cy="50" r="20" fill="#000" />
-                <circle cx="50" cy="50" r="16" fill="none" stroke="#fff" strokeWidth="2.5" strokeDasharray="6 4" className="drop-shadow-[0_0_2px_#fff]" />
-                <circle cx="50" cy="50" r="10" fill="none" stroke="#fff" strokeWidth="2" strokeDasharray="3 3" />
-                <circle cx="50" cy="50" r="4" fill="#fff" className="drop-shadow-[0_0_5px_#fff] animate-pulse" />
-                
-                {/* Circuit Nodes */}
-                <g fill="#fff" className="drop-shadow-[0_0_2px_#fff]">
-                  {[...Array(6)].map((_, i) => (
-                    <circle key={i} cx="50" cy="34" r="1.5" transform={`rotate(${i * 60 + 15} 50 50)`} />
-                  ))}
-                </g>
-              </svg>
-            </div>
-            <h1 className="font-barlow font-bold text-3xl md:text-4xl text-foreground tracking-widest uppercase drop-shadow-lg">
-              MOS <span className="text-primary font-medium">SYSTEM</span>
-            </h1>
+            <img
+              src="/prosper_logo.jpg"
+              alt="Prosper Manufacturing"
+              className="h-16 md:h-24 w-auto object-cover rounded-2xl shadow-xl drop-shadow-[0_5px_15px_rgba(0,0,0,0.6)] hover:scale-105 transition-transform"
+            />
           </div>
         </header>
 
