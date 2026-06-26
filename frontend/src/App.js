@@ -199,6 +199,11 @@ const AuthCallback = () => {
               await new Promise(r => setTimeout(r, 100));
               if (QC_ROLES.includes(userData.role)) {
                 navigate('/qc', { replace: true });
+              } else if (userData.role === 'customer') {
+                // Cliente: directo a su dashboard de inventario (en /wms). Sin
+                // esto caia en /dashboard y las guardas de ruta lo rebotaban,
+                // mostrando varios dashboards antes del suyo.
+                navigate('/wms', { replace: true });
               } else if (['admin', 'supersu'].includes(userData.role)) {
                 navigate('/ceo-dashboard', { replace: true });
               } else if (userData.role === 'general') {
@@ -396,6 +401,8 @@ const LandingPage = () => {
     if (user && user.user_id) {
       if (user.role === 'picker') {
         navigate('/wms', { replace: true });
+      } else if (user.role === 'customer') {
+        navigate('/wms', { replace: true });
       } else if (user.role === 'operator') {
         navigate('/operator', { replace: true });
       } else if (QC_ROLES.includes(user.role)) {
@@ -422,6 +429,8 @@ const LandingPage = () => {
         setUser(userData);
         if (QC_ROLES.includes(userData.role)) {
           navigate('/qc', { replace: true });
+        } else if (userData.role === 'customer') {
+          navigate('/wms', { replace: true });
         } else if (userData.role === 'ceo') {
           navigate('/dashboard', { replace: true });
         } else if (userData.role === 'picker') {

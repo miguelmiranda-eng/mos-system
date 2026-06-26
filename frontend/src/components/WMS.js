@@ -202,6 +202,16 @@ export default function WMS() {
     }
   };
 
+  // Wait for the user/role before painting anything so we never flash the WMS
+  // 'home' launcher to a customer before switching them to their dashboard.
+  if (!currentUser) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
   // Picker launcher: two big buttons (Picking / Putaway). Picking one enters
   // that module; the sidebar then only exposes those same two.
   if (currentUser?.role === 'picker' && pickerHome) {
@@ -255,6 +265,49 @@ export default function WMS() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // Customer portal: clean, sidebar-less layout (English). Only a sun icon at
+  // the top + sign out — no module nav, no theme toggle.
+  if (currentUser.role === 'customer') {
+    const firstName = (currentUser?.name || '').trim().split(' ')[0];
+    return (
+      <WmsContext.Provider value={wmsCtx}>
+        <div className="wms-perf min-h-screen bg-background text-foreground flex flex-col">
+          <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+          <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 sm:px-8 py-4 border-b border-border/40 bg-background/95 backdrop-blur">
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Working theme toggle (sun in dark mode, moon in light mode). */}
+              <button
+                onClick={toggleTheme}
+                title={isDark ? 'Light mode' : 'Dark mode'}
+                data-testid="customer-theme-toggle"
+                className="p-2.5 rounded-2xl bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-all flex-shrink-0"
+              >
+                {isDark ? <Sun className="w-6 h-6 text-primary" /> : <Moon className="w-6 h-6 text-indigo-400" />}
+              </button>
+              <div className="leading-tight min-w-0">
+                <h1 className="text-lg sm:text-2xl font-black italic uppercase tracking-tight whitespace-nowrap pr-1">My Inventory</h1>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-60 truncate">
+                  {associatedCustomer || (firstName ? `Hi, ${firstName}` : 'Customer Portal')}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20 flex-shrink-0"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Sign out</span>
+            </button>
+          </header>
+          <main className="flex-1 overflow-auto custom-scrollbar p-3 sm:p-6">
+            <InventoryDashboard customer={associatedCustomer} apiBase={API} />
+          </main>
+        </div>
+      </WmsContext.Provider>
     );
   }
 
@@ -402,7 +455,7 @@ export default function WMS() {
         {/* Module Header Overlay */}
         <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
           {(() => {
-            const m = MODULES.find(mod => mod.id === activeModule);
+            const m = MODULES.find(mod => mod.id === (currentUser.role === 'customer' ? 'dashboard' : activeModule));
             const Icon = m?.icon || Package;
             return (
               <div className="flex items-start justify-between gap-2">
@@ -446,8 +499,8 @@ export default function WMS() {
               <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-3">Cargando módulo…</span>
             </div>
           ) : (
-            <div key={activeModule} className="animate-in fade-in duration-200">
-              {renderActiveModule(activeModule, { associatedCustomer, setActiveModule, currentUser })}
+            <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
+              {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
             </div>
           )}
         </div>
