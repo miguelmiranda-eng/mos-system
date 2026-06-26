@@ -144,6 +144,9 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [], fabrics: [] });
+  // Cascading per-column options: valid values for each field given the OTHER
+  // active filters (customer -> styles/colors/sizes of that customer, etc.).
+  const [facets, setFacets] = useState({ customers: [], styles: [], colors: [], sizes: [], locations: [], countries: [], fabrics: [] });
   const [search, setSearch] = useState('');
   const [customerFilter, setCustomerFilter] = useState(initialCustomer);
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -244,6 +247,23 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const MAX_GRID_ROWS = 1500;
 
   const loadFilters = useCallback(() => { fetcher('/inventory/filters').then(setFilters).catch(logLoadError('data')); }, []);
+
+  // Cascade: refetch the valid options for every column whenever the active
+  // filters change. The top Customer dropdown also feeds the cascade.
+  const loadFacets = useCallback(() => {
+    const eff = { ...debouncedColFilters };
+    if (!eff.customer && customerFilter) eff.customer = customerFilter;
+    const p = new URLSearchParams();
+    Object.entries(eff).forEach(([k, v]) => { const val = (v || '').trim(); if (val) p.set(k, val); });
+    fetcher(`/inventory/facets?${p.toString()}`).then(setFacets).catch(logLoadError('facets'));
+  }, [debouncedColFilters, customerFilter]);
+  useEffect(() => { loadFacets(); }, [loadFacets]);
+
+  // Sizes in apparel order (XS,S,M,L,XL,2X…) instead of alphabetical.
+  const facetSizes = useMemo(() => [...(facets.sizes || [])].sort((a, b) => {
+    const ia = STD_SIZES.indexOf(a), ib = STD_SIZES.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a).localeCompare(String(b));
+  }), [facets.sizes]);
 
   // Debounced search value so we don't trigger a fetch on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState(search);
@@ -791,28 +811,28 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
             <thead className="bg-secondary/80 backdrop-blur-md sticky top-0 z-10 border-b border-border/40">
               <tr>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={filters.customers} />
+                  <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={facets.customers.length ? facets.customers : filters.customers} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label={t('wms_style_sku')} value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={filters.styles} />
+                  <ColFilterHeader label={t('wms_style_sku')} value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={facets.styles.length ? facets.styles : filters.styles} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label="Color" value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" />
+                  <ColFilterHeader label="Color" value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" options={facets.colors} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label="Talla" value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder="Talla…" />
+                  <ColFilterHeader label="Talla" value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder="Talla…" options={facetSizes} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                   <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder="Descripción…" />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder="Ubicación…" mono />
+                  <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder="Ubicación…" mono options={facets.locations} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={filters.countries} />
+                  <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={facets.countries.length ? facets.countries : filters.countries} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder="ej. 100% cotton" options={filters.fabrics} />
+                  <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder="ej. 100% cotton" options={facets.fabrics.length ? facets.fabrics : filters.fabrics} />
                 </th>
                 <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
                 <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>

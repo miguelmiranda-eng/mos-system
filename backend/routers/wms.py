@@ -2992,6 +2992,63 @@ async def inventory_filters_v2(request: Request):
         "fabrics": fabrics,
     }
 
+@router.get("/inventory/facets")
+async def inventory_facets(request: Request, customer: str = "", sku: str = "",
+                           color: str = "", size: str = "", location: str = "",
+                           country_of_origin: str = "", fabric_content: str = ""):
+    """Cascading filter options for the Inventory grid. Given the currently
+    selected column filters, return the still-valid distinct values for EACH
+    field, computed over rows matching all the OTHER selected filters. Picking a
+    customer narrows styles/colors/sizes/... to that customer; then picking a
+    style narrows colors/sizes further, etc. Each field excludes its OWN filter
+    so you can still switch among its valid values."""
+    await require_auth(request)
+    sel = {
+        "customer": (customer or "").strip(), "sku": (sku or "").strip(),
+        "color": (color or "").strip(), "size": (size or "").strip(),
+        "location": (location or "").strip(),
+        "country_of_origin": (country_of_origin or "").strip(),
+        "fabric_content": (fabric_content or "").strip(),
+    }
+
+    def rx(v):
+        return {"$regex": re.escape(v), "$options": "i"}
+
+    def build(exclude):
+        q = {}
+        if exclude != "customer" and sel["customer"]:
+            q["customer"] = rx(sel["customer"])
+        if exclude != "sku" and sel["sku"]:
+            q["$or"] = [{"sku": rx(sel["sku"])}, {"style": rx(sel["sku"])}]
+        if exclude != "color" and sel["color"]:
+            q["color"] = rx(sel["color"])
+        if exclude != "size" and sel["size"]:
+            q["size"] = rx(sel["size"])
+        if exclude != "location" and sel["location"]:
+            q["location"] = rx(sel["location"])
+        if exclude != "country_of_origin" and sel["country_of_origin"]:
+            q["country_of_origin"] = rx(sel["country_of_origin"])
+        if exclude != "fabric_content" and sel["fabric_content"]:
+            q["fabric_content"] = rx(sel["fabric_content"])
+        return q
+
+    async def facet(field, exclude):
+        vals = await db.wms_inventory.distinct(field, build(exclude))
+        out = [v for v in vals if v and isinstance(v, str)]
+        if field == "country_of_origin":
+            out = [v for v in out if "%" not in v]  # drop leaked fabric rows
+        return sorted(out)[:2000]
+
+    return {
+        "customers": await facet("customer", "customer"),
+        "styles": await facet("style", "sku"),
+        "colors": await facet("color", "color"),
+        "sizes": await facet("size", "size"),
+        "locations": await facet("location", "location"),
+        "countries": await facet("country_of_origin", "country_of_origin"),
+        "fabrics": await facet("fabric_content", "fabric_content"),
+    }
+
 _STYLE_INFO_CACHE = {}  # {style_upper: (timestamp, payload)}
 _STYLE_INFO_TTL = 60.0
 
