@@ -150,7 +150,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   // Per-column filters mostrados como popover (ícono ListFilter) en el header.
   // Todas las columnas de datos. El backend soporta cada key como regex i.
   const [colFilters, setColFilters] = useState({
-    customer: '', sku: '', color: '', description: '', location: '',
+    customer: '', sku: '', color: '', size: '', description: '', location: '',
     country_of_origin: '', fabric_content: '',
   });
   const [debouncedColFilters, setDebouncedColFilters] = useState(colFilters);
@@ -634,7 +634,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
   const renderBoxesSubRow = (inv) => (
     expandedBoxes === inv.inventory_id ? (
       <tr className="bg-secondary/10 border-b border-border/10">
-        <td colSpan="12" className="px-6 py-2.5">
+        <td colSpan="13" className="px-6 py-2.5">
           {boxesRowLoading === inv.inventory_id ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
               <Loader2 className="w-4 h-4 animate-spin" /> Cargando cajas…
@@ -797,7 +797,10 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   <ColFilterHeader label={t('wms_style_sku')} value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={filters.styles} />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                  <ColFilterHeader label={t('wms_col_sz')} value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" />
+                  <ColFilterHeader label="Color" value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" />
+                </th>
+                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <ColFilterHeader label="Talla" value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder="Talla…" />
                 </th>
                 <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                   <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder="Descripción…" />
@@ -823,7 +826,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                 groupedInventory.map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-secondary/30">
-                      <td colSpan="12" className="p-3">
+                      <td colSpan="13" className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
                           <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
@@ -836,11 +839,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                       <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
                         <td className="p-4 text-[11px] font-bold text-muted-foreground/80 opacity-40">{inv.customer}</td>
                         <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
-                        <td className="p-4 text-[11px] font-bold">
-                          <span className="text-foreground">{inv.color}</span>
-                          <span className="mx-1 opacity-20">|</span>
-                          <span className="text-primary">{inv.size}</span>
-                        </td>
+                        <td className="p-4 text-[11px] font-bold text-foreground">{inv.color || '-'}</td>
+                        <td className="p-4 text-[11px] font-bold text-primary">{inv.size || '-'}</td>
                         <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
                         <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
@@ -871,11 +871,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                   <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
                     <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
                     <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || inv.sku}</td>
-                    <td className="p-4 text-[11px] font-bold">
-                      <span className="text-foreground">{inv.color}</span>
-                      <span className="mx-1 opacity-20">|</span>
-                      <span className="text-primary">{inv.size}</span>
-                    </td>
+                    <td className="p-4 text-[11px] font-bold text-foreground">{inv.color || '-'}</td>
+                    <td className="p-4 text-[11px] font-bold text-primary">{inv.size || '-'}</td>
                     <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
                     <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
