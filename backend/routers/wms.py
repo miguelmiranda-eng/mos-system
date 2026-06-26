@@ -10,7 +10,7 @@ from wms_constants import (
 )
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
-import uuid, io, json, logging, re, asyncio
+import uuid, io, json, logging, re, asyncio, difflib, time
 
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
@@ -20,6 +20,71 @@ logger = logging.getLogger(__name__)
 # at the same time without serving data that's perceptibly stale.
 _LOC_SUMMARY_CACHE = {"data": None, "ts": 0.0}
 _LOC_SUMMARY_TTL = 30.0
+
+# ── Customer-name normalization (protects against re-fragmenting a customer) ──
+# Known variant (cleaned) -> canonical. Seeded from the 2026-06 cleanup; the
+# write-time normalizer (_canonical_customer) applies this + a conservative fuzzy
+# snap so typos/spacing/casing never create a new "GOODIE TWO SLEVEES" again.
+_CUSTOMER_ALIASES = {
+    "GOODIE TWO SLEVEES": "GOODIE TWO SLEEVES",
+    "GOODIE TWO SLEEVE": "GOODIE TWO SLEEVES",
+    "GOOGIE TWO SLEEVES": "GOODIE TWO SLEEVES",
+    "GODDIE TWO SLEEVES": "GOODIE TWO SLEEVES",
+    "GOODIE TWO SLEE": "GOODIE TWO SLEEVES",
+    "GOOODIE TWO SLEEVE": "GOODIE TWO SLEEVES",
+    "GTA TRACTOR": "GTS TRACTOR",
+    "GTS TTRACTOR": "GTS TRACTOR",
+    "TRACTOR GTS": "GTS TRACTOR",
+    "TRACTOS GTS": "GTS TRACTOR",
+    "SCREEN WORK": "SCREENWORKS",
+    "SCREENWORK": "SCREENWORKS",
+    "SCREEN WORKS": "SCREENWORKS",
+    "SPELTRUM": "SPEKTRUM",
+}
+_KNOWN_CUSTOMERS_CACHE = {"data": None, "ts": 0.0}
+_KNOWN_CUSTOMERS_TTL = 60.0
+
+
+def _clean_customer(name):
+    """Uppercase, trim, collapse internal whitespace. Pure cleanup (no merge)."""
+    return re.sub(r"\s+", " ", (name or "").strip()).upper()
+
+
+async def _known_customers():
+    """Set of canonical customer names (cleaned) from boxes + curated catalog.
+    Cached 60s so the write-time normalizer stays cheap."""
+    now = time.monotonic()
+    cache = _KNOWN_CUSTOMERS_CACHE
+    if cache["data"] is not None and (now - cache["ts"]) < _KNOWN_CUSTOMERS_TTL:
+        return cache["data"]
+    names = set()
+    for v in await db.wms_boxes.distinct("customer"):
+        cv = _clean_customer(v)
+        if cv:
+            names.add(cv)
+    for v in await db.wms_catalog_options.distinct("value", {"type": "customers"}):
+        cv = _clean_customer(v)
+        if cv:
+            names.add(cv)
+    cache["data"] = names
+    cache["ts"] = now
+    return names
+
+
+async def _canonical_customer(name):
+    """Canonical customer name on write: clean -> known alias -> exact match ->
+    conservative fuzzy snap to an existing customer (cutoff 0.9). Returns the
+    cleaned name unchanged when it's a genuinely new customer."""
+    c = _clean_customer(name)
+    if not c:
+        return c
+    if c in _CUSTOMER_ALIASES:
+        return _CUSTOMER_ALIASES[c]
+    known = await _known_customers()
+    if c in known:
+        return c
+    match = difflib.get_close_matches(c, list(known), n=1, cutoff=0.9)
+    return match[0] if match else c
 
 
 def now_iso():
@@ -247,6 +312,11 @@ async def add_catalog_option(request: Request):
         raise HTTPException(400, f"type debe ser uno de {sorted(CATALOG_TYPES)}")
     if not value:
         raise HTTPException(400, "value es obligatorio")
+    # Normalize customer names so the curated dropdown never gains a variant
+    # (e.g. adding "GOODIE TWO SLEVEES" snaps to "GOODIE TWO SLEEVES" and the
+    # dedupe below then rejects it as already existing).
+    if ctype == "customers":
+        value = await _canonical_customer(value)
     if ctype == "styles" and not customer:
         raise HTTPException(400, "customer es obligatorio para estilos")
     # Case-insensitive dedupe — scoped by customer for styles.
@@ -1589,7 +1659,7 @@ async def print_locations(request: Request, ids: str = "all", zone: str = ""):
 async def create_receiving(request: Request):
     user = await require_auth(request)
     body = await request.json()
-    customer = body.get("customer", "").strip()
+    customer = await _canonical_customer(body.get("customer", ""))
     manufacturer = body.get("manufacturer", "").strip()
     # Normalize the identity dimensions to UPPERCASE on write so inventory/boxes
     # stay consistent (no more 'Sand' vs 'SAND' splitting matches/reports).
@@ -6933,7 +7003,7 @@ async def create_upc(request: Request):
 
     doc = {
         "upc": code,
-        "customer": str(body.get("customer", "")).strip().upper(),
+        "customer": await _canonical_customer(body.get("customer", "")),
         "manufacturer": str(body.get("manufacturer", "")).strip().upper(),
         "style": str(body.get("style", "")).strip().upper(),
         "color": str(body.get("color", "")).strip().upper(),
@@ -6970,8 +7040,11 @@ async def update_upc(upc: str, request: Request):
     update = {}
     for k in allowed:
         if k in body:
-            update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
-                          else str(body[k]).strip())
+            if k == "customer":
+                update[k] = await _canonical_customer(body[k])
+            else:
+                update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
+                              else str(body[k]).strip())
     if not update:
         raise HTTPException(400, "Nada que actualizar")
     update["updated_at"] = now_iso()
