@@ -1840,9 +1840,26 @@ async def create_receiving(request: Request):
     return receiving_doc
 
 @router.get("/receiving")
-async def list_receiving(request: Request):
+async def list_receiving(request: Request, search: str = "", customer: str = "", limit: int = 200):
+    """Search-driven receiving list. The UI no longer dumps the latest 500 — it
+    queries by:
+      - search:   matches receiving_id / style / sku / customer (free text)
+      - customer: restricts to one customer (exact-ish, case-insensitive)
+    With NO filter we return [] so the screen stays empty until the operator
+    searches (by receipt number or by customer)."""
     await require_auth(request)
-    docs = await db.wms_receiving.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    search = (search or "").strip()
+    customer = (customer or "").strip()
+    if not search and not customer:
+        return []
+    query = {}
+    if search:
+        rx = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [{"receiving_id": rx}, {"style": rx}, {"sku": rx}, {"customer": rx}]
+    if customer:
+        query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
+    limit = max(1, min(int(limit or 200), 1000))
+    docs = await db.wms_receiving.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 @router.get("/receiving/{receiving_id}")
@@ -6587,6 +6604,7 @@ async def save_count_progress(count_id: str, request: Request):
 
     lines = count.get("lines", [])
     counted_count = 0
+    adjustments = 0
     for line in lines:
         lid = line["line_id"]
         if lid in counted_items:
@@ -6596,6 +6614,28 @@ async def save_count_progress(count_id: str, request: Request):
             line["counted"] = True
             line["counted_by"] = user.get("user_id")
             line["counted_at"] = now_iso()
+            # IMMEDIATE ADJUSTMENT (requirement): apply the variance to inventory
+            # the moment the auditor saves this line — no longer wait for the admin
+            # to approve the finished count. It's an absolute SET (units_on_hand =
+            # counted_qty), so it's idempotent: re-saving the same number is a
+            # no-op and a recount cleanly overwrites the previous adjustment.
+            if line["discrepancy"]:
+                res = await db.wms_inventory.update_one(
+                    {"style": line["style"], "color": line["color"], "size": line["size"], "location": line["inv_location"]},
+                    {"$set": {"units_on_hand": qty, "updated_at": now_iso()}},
+                )
+                if res.matched_count:
+                    line["adjusted"] = True
+                    line["adjusted_at"] = now_iso()
+                    line["adjusted_by"] = user.get("user_id")
+                    adjustments += 1
+                    await log_movement(user, "cycle_count_adjustment", {
+                        "count_id": count_id, "line_id": lid,
+                        "sku": line.get("sku") or line.get("style"),
+                        "location": line.get("inv_location"),
+                        "from": line.get("system_qty", 0), "to": qty,
+                        "discrepancy": line["discrepancy"],
+                    })
         if line.get("counted"):
             counted_count += 1
 
@@ -6607,8 +6647,13 @@ async def save_count_progress(count_id: str, request: Request):
         "last_updated_by": user.get("user_id"),
         "last_updated_at": now_iso()
     }})
-    await log_movement(user, "cycle_count_progress", {"count_id": count_id, "counted": counted_count, "total": len(lines)})
-    return {"message": f"Progreso guardado ({counted_count}/{len(lines)})", "status": status}
+    await log_movement(user, "cycle_count_progress", {"count_id": count_id, "counted": counted_count, "total": len(lines), "adjustments": adjustments})
+    if adjustments:
+        await notify_badge_change("cycle_count")
+    msg = f"Progreso guardado ({counted_count}/{len(lines)})"
+    if adjustments:
+        msg += f" · {adjustments} ajuste(s) aplicado(s) al inventario"
+    return {"message": msg, "status": status, "adjustments": adjustments}
 
 @router.put("/cycle-counts/{count_id}/approve")
 async def approve_cycle_count(count_id: str, request: Request):
@@ -6621,25 +6666,36 @@ async def approve_cycle_count(count_id: str, request: Request):
         raise HTTPException(400, "El conteo debe estar completado antes de aprobar")
 
     adjustments = 0
+    already = 0
     for line in count.get("lines", []):
         if line.get("discrepancy") and line["discrepancy"] != 0:
-            # Adjust inventory
-            await db.wms_inventory.update_one(
+            # Variances are now applied the instant the auditor saves the line
+            # (see save_count_progress). Skip lines already adjusted so approval
+            # is just a sign-off and never clobbers stock that legitimately
+            # changed between the count and the approval.
+            if line.get("adjusted"):
+                already += 1
+                continue
+            res = await db.wms_inventory.update_one(
                 {"style": line["style"], "color": line["color"], "size": line["size"], "location": line["inv_location"]},
-                {"$set": {"units_on_hand": line["counted_qty"]}}
+                {"$set": {"units_on_hand": line["counted_qty"], "updated_at": now_iso()}}
             )
-            adjustments += 1
+            if res.matched_count:
+                line["adjusted"] = True
+                line["adjusted_at"] = now_iso()
+                adjustments += 1
 
     await db.wms_cycle_counts.update_one({"count_id": count_id}, {"$set": {
         "status": "approved",
+        "lines": count.get("lines", []),
         "approved_by": user.get("user_id"),
         "approved_by_name": user.get("name", ""),
         "approved_at": now_iso(),
-        "adjustments": adjustments
+        "adjustments": adjustments + already
     }})
-    await log_movement(user, "cycle_count_approved", {"count_id": count_id, "adjustments": adjustments})
+    await log_movement(user, "cycle_count_approved", {"count_id": count_id, "adjustments": adjustments, "already_applied": already})
     await notify_badge_change("cycle_count")
-    return {"message": f"Conteo aprobado. {adjustments} ajustes aplicados al inventario.", "adjustments": adjustments}
+    return {"message": f"Conteo aprobado. {already} ajuste(s) aplicados durante el conteo, {adjustments} nuevo(s) al aprobar.", "adjustments": adjustments + already}
 
 @router.delete("/cycle-counts/{count_id}")
 async def delete_cycle_count(count_id: str, request: Request):

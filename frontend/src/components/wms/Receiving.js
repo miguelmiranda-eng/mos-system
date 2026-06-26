@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API, cleanScan } from "./lib";
@@ -100,6 +100,10 @@ const findInOptions = (needle, haystack = [], opts = {}) => {
 export const ReceivingModule = () => {
   const { t } = useLang();
   const [records, setRecords] = useState([]);
+  // The recent-entries dump is gone: this screen is now search-driven. `search`
+  // matches by receiving number OR customer (also style/sku) on the backend.
+  const [search, setSearch] = useState('');
+  const [searching, setSearching] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     customer: '', manufacturer: '', style: '', color: '', size: '',
@@ -280,8 +284,22 @@ export const ReceivingModule = () => {
     setSelectedAsnLine(null);
   };
 
-  const load = useCallback(() => { fetcher('/receiving').then(setRecords).catch(logLoadError('data')); }, []);
-  useEffect(() => { load(); }, [load]);
+  // Search-driven load: empty term clears the list (no auto-dump). Re-runs the
+  // CURRENT search so create/edit/delete refresh what the operator is viewing.
+  const load = useCallback(() => {
+    const q = search.trim();
+    if (!q) { setRecords([]); return; }
+    setSearching(true);
+    fetcher(`/receiving?search=${encodeURIComponent(q)}`)
+      .then(d => setRecords(Array.isArray(d) ? d : []))
+      .catch(logLoadError('data'))
+      .finally(() => setSearching(false));
+  }, [search]);
+  // Debounce so we don't fire a request on every keystroke.
+  useEffect(() => {
+    const h = setTimeout(load, 300);
+    return () => clearTimeout(h);
+  }, [load]);
 
   // Load customers + field options on mount
   useEffect(() => {
@@ -818,18 +836,41 @@ export const ReceivingModule = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40">
-          {t('wms_recent_entries')}: {records.length}
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-2xl group">
+          {searching
+            ? <Loader2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-primary animate-spin" />
+            : <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar recibo por N° de recibo o por cliente…"
+            className="w-full pl-12 pr-10 py-3 bg-card/40 border border-border/40 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/10 transition-all"
+            data-testid="rcv-search"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+              title="Limpiar búsqueda"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <button
           onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setUpc(''); setUpcDoc(null); setShowForm(!showForm); }}
-          className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2"
+          className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2 flex-shrink-0"
           data-testid="new-receiving-btn"
         >
           <Plus className="w-4 h-4" /> {t('wms_new_record')}
         </button>
       </div>
+      {search.trim() && (
+        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground px-1">
+          {records.length} resultado(s) para "{search.trim()}"
+        </div>
+      )}
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="receiving-form">
           {/* UPC — captura primero. Master del catálogo de producto */}
@@ -1334,11 +1375,18 @@ export const ReceivingModule = () => {
             </div>
           </div>
         ))}
-        {records.length === 0 && (
+        {records.length === 0 && !search.trim() && (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-60 bg-secondary/10 rounded-3xl border border-dashed border-border/40">
+            <Search className="w-16 h-16 mb-4 stroke-[1px]" />
+            <p className="font-bold uppercase tracking-widest text-sm italic">Busca un recibo</p>
+            <p className="text-xs mt-1">Escribe el N° de recibo o el nombre del cliente arriba</p>
+          </div>
+        )}
+        {records.length === 0 && search.trim() && !searching && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50 bg-secondary/10 rounded-3xl border border-dashed border-border/40">
             <Package className="w-16 h-16 mb-4 stroke-[1px]" />
-            <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_rcv')}</p>
-            <p className="text-xs mt-1">{t('wms_new_rcv_hint')}</p>
+            <p className="font-bold uppercase tracking-widest text-sm italic">Sin resultados</p>
+            <p className="text-xs mt-1">No hay recibos que coincidan con "{search.trim()}"</p>
           </div>
         )}
       </div>

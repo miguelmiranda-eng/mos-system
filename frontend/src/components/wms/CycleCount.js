@@ -76,7 +76,10 @@ export const CycleCountModule = () => {
     try {
       const res = await putter(`/cycle-counts/${selectedCount.count_id}/count`, { counted_items: countedItems });
       if (res.ok) {
-        toast.success(t('wms_cc_saved'));
+        const data = await res.json().catch(() => ({}));
+        toast.success(data.adjustments
+          ? `${t('wms_cc_saved')} · ${data.adjustments} ajuste(s) aplicados al inventario`
+          : t('wms_cc_saved'));
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
         load();
@@ -227,6 +230,9 @@ export const CycleCountModule = () => {
                               <span className={`text-sm font-bold ${line.discrepancy === 0 ? 'text-green-400' : line.discrepancy > 0 ? 'text-blue-400' : 'text-red-400'}`}>
                                 {line.discrepancy > 0 ? '+' : ''}{line.discrepancy}
                               </span>
+                            )}
+                            {line.adjusted && (
+                              <div className="text-[8px] font-black uppercase tracking-widest text-emerald-500" title="Diferencia ya aplicada al inventario">ajustado</div>
                             )}
                           </div>
                         )}
