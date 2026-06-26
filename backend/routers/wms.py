@@ -3389,11 +3389,42 @@ async def get_inventory_chart_data(request: Request, customer: str = ""):
     ]
     activity_history = await db.wms_movements.aggregate(activity_pipeline).to_list(15)
 
+    # 5. Material mas usado (consumo): suma de unidades SURTIDAS por estilo en
+    #    pick tickets ya procesados. Refleja que producto se mueve mas, de mayor
+    #    a menor. Se calcula en Python porque picked_sizes es anidado.
+    from collections import defaultdict as _dd
+    pt_query = {"status": {"$in": ["confirmed", "in_neck_cutting", "completed"]}}
+    if customer:
+        pt_query["customer"] = {"$regex": customer, "$options": "i"}
+    tickets = await db.wms_pick_tickets.find(
+        pt_query, {"_id": 0, "style": 1, "picked_sizes": 1, "sizes": 1}
+    ).to_list(20000)
+
+    def _sum_sizes(d):
+        tot = 0
+        for v in (d or {}).values():
+            tot += int(v.get("total", 0) or 0) if isinstance(v, dict) else int(v or 0)
+        return tot
+
+    usage = _dd(int)
+    for t in tickets:
+        st = (t.get("style") or "").strip()
+        if not st:
+            continue
+        used = _sum_sizes(t.get("picked_sizes")) or _sum_sizes(t.get("sizes"))
+        if used:
+            usage[st] += used
+    most_used = sorted(
+        [{"name": k, "value": v} for k, v in usage.items()],
+        key=lambda x: -x["value"],
+    )[:10]
+
     return {
         "top_skus": top_skus,
         "by_state": by_state,
         "by_manufacturer": by_manufacturer,
-        "activity_history": activity_history
+        "activity_history": activity_history,
+        "most_used": most_used,
     }
 
 # ==================== ORDERS (from CRM) ====================
