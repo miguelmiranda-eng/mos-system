@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle } from "lucide-react";
-import { fetcher, cleanScan } from "./lib";
+import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer } from "lucide-react";
+import { fetcher, cleanScan, API } from "./lib";
 
 // Friendly labels for the movement types a box's timeline can surface.
 const MV_TYPE_LABELS = {
@@ -141,6 +141,15 @@ export function BoxSearchBar({ compact = false }) {
                       <div className="text-[11px] text-amber-500 font-bold mt-2 flex items-center gap-1">
                         <AlertTriangle className="w-3.5 h-3.5" /> La caja ya no existe (eliminada/embarcada). Mostrando su historial.
                       </div>
+                    )}
+                    {data.found && (
+                      <button
+                        onClick={() => window.open(`${API}/labels/box/${encodeURIComponent(data.box_id)}`, '_blank')}
+                        className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-primary text-black rounded-xl text-xs font-black uppercase tracking-widest hover:scale-[1.01] active:scale-95 transition-all shadow-lg shadow-primary/20"
+                        data-testid="box-reprint-label"
+                      >
+                        <Printer className="w-4 h-4" /> Reimprimir etiqueta
+                      </button>
                     )}
                   </div>
 

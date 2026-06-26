@@ -796,43 +796,6 @@ export const ReceivingModule = () => {
     pw.document.write(html);
     pw.document.close();
   };
-  const handleEdit = async (r) => {
-    setEditingId(r.receiving_id);
-    setForm({
-      customer: r.customer || '', manufacturer: r.manufacturer || '', style: r.style || '', color: r.color || '', size: r.size || '',
-      description: r.description || '', country_of_origin: r.country_of_origin || '', fabric_content: r.fabric_content || '',
-      boxes: '', pieces: r.total_units || '', units: '', lot_number: r.lot_number || '', sku: r.sku || '', inv_location: r.inv_location || '',
-      is_bpo: r.is_bpo || false,
-    });
-    // Infer box mode from existing boxes (custom if first box's units != standard)
-    try {
-      const detail = await fetcher(`/receiving/${r.receiving_id}`);
-      const firstBox = detail?.boxes?.[0];
-      if (firstBox && firstBox.units && firstBox.units !== STANDARD_UNITS_PER_BOX) {
-        setBoxMode('custom');
-        setUnitsPerBox(firstBox.units);
-      } else {
-        setBoxMode('standard');
-        setUnitsPerBox(STANDARD_UNITS_PER_BOX);
-      }
-    } catch (err) { logLoadError('receiving detail')(err); }
-    setShowForm(true);
-    // Scroll to form smoothly
-    setTimeout(() => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 100);
-  };
-
-  const handleDelete = async (receivingId) => {
-    if (!window.confirm(t('wms_confirm_delete_rcv') || '¿Está seguro de eliminar este registro? Se revertirá el inventario.')) return;
-    try {
-      await deleter(`/receiving/${receivingId}`);
-      toast.success(t('wms_rcv_deleted_success') || 'Registro de receiving eliminado exitosamente');
-      load();
-    } catch (e) {
-      toast.error('Error al eliminar el registro');
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -844,7 +807,7 @@ export const ReceivingModule = () => {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar recibo por N° de recibo o por cliente…"
+            placeholder="Buscar por N° de recibo, cliente o carro (ubicación)…"
             className="w-full pl-12 pr-10 py-3 bg-card/40 border border-border/40 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/10 transition-all"
             data-testid="rcv-search"
           />
@@ -1341,27 +1304,12 @@ export const ReceivingModule = () => {
 
                 <div className="flex items-center gap-2 h-10 border-l border-border/40 pl-4">
                   <button
-                    onClick={() => handleEdit(r)}
-                    className="p-2.5 text-muted-foreground hover:text-amber-500 rounded-xl hover:bg-amber-500/10 transition-all shadow-none hover:shadow-lg shadow-amber-500/20"
-                    title="Editar Detalles"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                  </button>
-                  <button
                     onClick={() => handlePrintLabel(r)}
                     className="p-2.5 text-muted-foreground hover:text-primary rounded-xl hover:bg-primary/10 transition-all shadow-none hover:shadow-lg shadow-primary/20"
                     title="Imprimir etiqueta"
                     data-testid={`rcv-print-${r.receiving_id}`}
                   >
                     <Printer className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(r.receiving_id)}
-                    className="p-2.5 text-muted-foreground hover:text-destructive rounded-xl hover:bg-destructive/10 transition-all"
-                    title="Eliminar registro"
-                    data-testid={`rcv-delete-${r.receiving_id}`}
-                  >
-                    <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
               </div>

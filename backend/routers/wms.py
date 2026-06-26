@@ -1,7 +1,7 @@
 """WMS (Warehouse Management System) routes."""
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from deps import db, get_current_user, require_auth, require_admin, require_supersu, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
@@ -1843,10 +1843,12 @@ async def create_receiving(request: Request):
 async def list_receiving(request: Request, search: str = "", customer: str = "", limit: int = 200):
     """Search-driven receiving list. The UI no longer dumps the latest 500 — it
     queries by:
-      - search:   matches receiving_id / style / sku / customer (free text)
+      - search:   matches receiving_id / style / sku / customer / inv_location
+                  (free text) — so you can also pull every receipt of a cart
+                  (e.g. "CARRO 233")
       - customer: restricts to one customer (exact-ish, case-insensitive)
-    With NO filter we return [] so the screen stays empty until the operator
-    searches (by receipt number or by customer)."""
+    Results come back most-recent-first. With NO filter we return [] so the
+    screen stays empty until the operator searches."""
     await require_auth(request)
     search = (search or "").strip()
     customer = (customer or "").strip()
@@ -1855,7 +1857,8 @@ async def list_receiving(request: Request, search: str = "", customer: str = "",
     query = {}
     if search:
         rx = {"$regex": re.escape(search), "$options": "i"}
-        query["$or"] = [{"receiving_id": rx}, {"style": rx}, {"sku": rx}, {"customer": rx}]
+        query["$or"] = [{"receiving_id": rx}, {"style": rx}, {"sku": rx},
+                        {"customer": rx}, {"inv_location": rx}]
     if customer:
         query["customer"] = {"$regex": re.escape(customer), "$options": "i"}
     limit = max(1, min(int(limit or 200), 1000))
@@ -4801,41 +4804,101 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
 
 # ==================== LABELS (PDF) ====================
 
+async def _enrich_box_for_label(box):
+    """Merge a box doc with its receiving record so the label has the full
+    context (description / COO / fabric / lot / PO / UPC) even when those live
+    on the receiving doc and not on the box."""
+    r = dict(box)
+    rid = box.get("receiving_id")
+    if rid:
+        rcv = await db.wms_receiving.find_one({"receiving_id": rid}, {"_id": 0})
+        if rcv:
+            for f in ("description", "country_of_origin", "fabric_content",
+                      "lot_number", "po", "upc", "received_by_name",
+                      "manufacturer", "customer"):
+                if not r.get(f):
+                    r[f] = rcv.get(f, "")
+    r["location"] = box.get("location") or box.get("inv_location") or ""
+    return r
+
+
+def _build_box_labels_html(items):
+    """Printable HTML (4x6) — one label per box, barcodes rendered in the browser
+    via JsBarcode. No server-side barcode/reportlab dependency. Mirrors the
+    Receiving label so a reprint looks identical to the original."""
+    import html as _html
+    esc = lambda v: _html.escape(str(v if v is not None else ""))
+    pages, calls = [], []
+    n = len(items)
+    for idx, r in enumerate(items):
+        bid = esc(r.get("box_id", ""))
+        upc = esc(r.get("upc", ""))
+        pages.append(f'''
+      <div class="label-page">
+        <div style="text-align:center;margin-bottom:6px"><svg id="bc-{idx}"></svg></div>
+        <table class="table">
+          <tr class="row">
+            <td class="cell" style="width:60%"><span class="label">Cliente</span><span class="value">{esc(r.get("customer"))}</span></td>
+            <td class="cell" style="width:40%"><span class="label">PO</span><span class="value">{esc(r.get("po"))}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:60%"><span class="label">Lote</span><span class="value">{esc(r.get("lot_number"))}</span></td>
+            <td class="cell" style="width:40%"><span class="label">Ubicacion</span><span class="value">{esc(r.get("location"))}</span></td>
+          </tr>
+          <tr class="row"><td class="cell" colspan="2"><span class="label">Fabricante</span><span class="value">{esc(r.get("manufacturer"))}</span></td></tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">Style</span><span class="value" style="font-size:16px">{esc(r.get("style"))}</span></td>
+            <td class="cell" style="width:50%"><span class="label">SKU</span><span class="value" style="font-family:monospace">{esc(r.get("sku") or r.get("style"))}</span></td>
+          </tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">Color</span><span class="value">{esc(r.get("color"))}</span></td>
+            <td class="cell" style="width:50%"><span class="label">Talla</span><span class="value" style="font-size:16px">{esc(r.get("size"))}</span></td>
+          </tr>
+          <tr class="row"><td class="cell" colspan="2"><span class="label">Descripcion</span><span class="value">{esc(r.get("description"))}</span></td></tr>
+          <tr class="row">
+            <td class="cell" style="width:50%"><span class="label">Pais</span><span class="value">{esc(r.get("country_of_origin"))}</span></td>
+            <td class="cell" style="width:50%"><span class="label">Tela</span><span class="value">{esc(r.get("fabric_content"))}</span></td>
+          </tr>
+          <tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px">{esc(r.get("units", 0))}</span></td></tr>
+          {f'<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">{upc}</span></td></tr>' if upc else ''}
+        </table>
+        {f'<div style="text-align:center;margin-top:8px"><svg id="upc-{idx}"></svg></div>' if upc else ''}
+        <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
+          <span>{bid}</span><span>{idx + 1} of {n}</span><span>{esc(r.get("received_by_name"))}</span>
+        </div>
+      </div>''')
+        calls.append(f'JsBarcode("#bc-{idx}", "{bid}", {{width:1.5,height:40,displayValue:true,fontSize:10,margin:0}});')
+        if upc:
+            calls.append(f'JsBarcode("#upc-{idx}", "{upc}", {{width:1.4,height:34,displayValue:true,fontSize:10,margin:0}});')
+    return f'''<html><head><title>Etiqueta(s) de caja</title>
+      <style>
+        @page {{ size: 4in 6in; margin: 5mm; }}
+        body {{ font-family: Arial, sans-serif; margin:0; padding:0; width:3.6in; background:white; }}
+        .label-page {{ page-break-after: always; padding:10px; height:5.5in; box-sizing:border-box; }}
+        .label-page:last-child {{ page-break-after:auto; }}
+        .row {{ display:flex; border-bottom:1px solid #000; }}
+        .cell {{ padding:4px 6px; border-right:1px solid #000; }}
+        .cell:last-child {{ border-right:none; }}
+        .label {{ font-size:8px; text-transform:uppercase; color:#666; display:block; }}
+        .value {{ font-size:12px; font-weight:bold; }}
+        .table {{ border:1px solid #000; border-collapse:collapse; width:100%; margin-top:6px; }}
+      </style></head><body>
+      {''.join(pages)}
+      <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+      <script>
+        try {{ {''.join(calls)} setTimeout(function(){{window.print()}}, 600); }} catch(e) {{}}
+      </script>
+    </body></html>'''
+
+
 @router.get("/labels/box/{box_id}")
 async def generate_box_label(box_id: str, request: Request):
     await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
         raise HTTPException(404, "Caja no encontrada")
-    from reportlab.lib.pagesizes import landscape
-    from reportlab.lib.units import inch, mm
-    from reportlab.pdfgen import canvas as pdf_canvas
-    import barcode
-    from barcode.writer import ImageWriter
-    buf = io.BytesIO()
-    page_w, page_h = 4*inch, 3*inch
-    c = pdf_canvas.Canvas(buf, pagesize=(page_w, page_h))
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(10, page_h - 25, box["box_id"])
-    c.setFont("Helvetica", 9)
-    c.drawString(10, page_h - 42, f"SKU: {box.get('sku', '')}")
-    c.drawString(10, page_h - 55, f"Color: {box.get('color', '')}  Size: {box.get('size', '')}")
-    c.drawString(10, page_h - 68, f"Units: {box.get('units', 0)}  PO: {box.get('po', '')}")
-    # Generate barcode image
-    try:
-        code128 = barcode.get('code128', box["box_id"], writer=ImageWriter())
-        bc_buf = io.BytesIO()
-        code128.write(bc_buf, options={"write_text": False, "module_height": 10, "module_width": 0.3})
-        bc_buf.seek(0)
-        from reportlab.lib.utils import ImageReader
-        c.drawImage(ImageReader(bc_buf), 10, 5, width=page_w - 20, height=50)
-    except Exception as e:
-        logger.error(f"Barcode generation error: {e}")
-        c.drawString(10, 30, box["box_id"])
-    c.save()
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f"inline; filename=label_{box_id}.pdf"})
+    enriched = await _enrich_box_for_label(box)
+    return HTMLResponse(_build_box_labels_html([enriched]))
 
 @router.get("/labels/boxes")
 async def generate_multi_box_labels(request: Request, box_ids: str = ""):
@@ -4843,38 +4906,14 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
     ids = [b.strip() for b in box_ids.split(",") if b.strip()]
     if not ids:
         raise HTTPException(400, "box_ids requeridos (separados por coma)")
-    from reportlab.lib.units import inch
-    from reportlab.pdfgen import canvas as pdf_canvas
-    import barcode
-    from barcode.writer import ImageWriter
-    from reportlab.lib.utils import ImageReader
-    buf = io.BytesIO()
-    page_w, page_h = 4*inch, 3*inch
-    c = pdf_canvas.Canvas(buf, pagesize=(page_w, page_h))
-    for i, bid in enumerate(ids):
+    items = []
+    for bid in ids:
         box = await db.wms_boxes.find_one({"box_id": bid}, {"_id": 0})
-        if not box:
-            continue
-        if i > 0:
-            c.showPage()
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(10, page_h - 25, box["box_id"])
-        c.setFont("Helvetica", 9)
-        c.drawString(10, page_h - 42, f"SKU: {box.get('sku', '')}")
-        c.drawString(10, page_h - 55, f"Color: {box.get('color', '')}  Size: {box.get('size', '')}")
-        c.drawString(10, page_h - 68, f"Units: {box.get('units', 0)}  PO: {box.get('po', '')}")
-        try:
-            code128 = barcode.get('code128', box["box_id"], writer=ImageWriter())
-            bc_buf = io.BytesIO()
-            code128.write(bc_buf, options={"write_text": False, "module_height": 10, "module_width": 0.3})
-            bc_buf.seek(0)
-            c.drawImage(ImageReader(bc_buf), 10, 5, width=page_w - 20, height=50)
-        except Exception:
-            c.drawString(10, 30, box["box_id"])
-    c.save()
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": "inline; filename=box_labels.pdf"})
+        if box:
+            items.append(await _enrich_box_for_label(box))
+    if not items:
+        raise HTTPException(404, "Ninguna de las cajas existe")
+    return HTMLResponse(_build_box_labels_html(items))
 
 # ==================== EXPORT ====================
 
