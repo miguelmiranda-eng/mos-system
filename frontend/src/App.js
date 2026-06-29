@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext, lazy, Suspense } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Link } from "react-router-dom";
 import { useLang, LanguageProvider } from "./contexts/LanguageContext";
@@ -654,28 +654,31 @@ const LandingPage = () => {
   );
 };
 
-// Import Dashboard component
-import Dashboard from "./components/Dashboard";
-import WMS from "./components/WMS";
-import OperatorView from "./components/OperatorView";
-import PdaPicker from "./components/pda/PdaPicker";
+// HomeDashboard stays eager: it's the first screen after login, so lazy-loading
+// it would only add a spinner flash. Every other route module is code-split with
+// React.lazy so a given role downloads only the chunks it actually visits instead
+// of the whole ~928KB main bundle.
 import HomeDashboard from "./components/HomeDashboard";
-import AutomationCenter from "./components/AutomationCenter";
-import ActivityLogCenter from "./components/ActivityLogCenter";
-import LogsCenter from "./components/LogsCenter";
-import UserManagementCenter from "./components/UserManagementCenter";
-import CatalogCenter from "./components/CatalogCenter";
-import QCSettingsPage from "./components/QCSettingsPage";
-import OperatorsCenter from "./components/OperatorsCenter";
-import CEODashboard from "./components/CEODashboard";
-import QCDashboard from "./components/QCDashboard";
-import InsightsDashboard from "./components/InsightsDashboard";
-import BackupCenter from "./components/BackupCenter";
-import ArtModule from "./components/ArtModule";
-import SmartAgenda from "./components/SmartAgenda";
-import ShippingModule from "./components/ShippingModule";
-import PackingListTool from "./components/PackingList";
-import ScheduledReports from "./components/ScheduledReports";
+const Dashboard = lazy(() => import("./components/Dashboard"));
+const WMS = lazy(() => import("./components/WMS"));
+const OperatorView = lazy(() => import("./components/OperatorView"));
+const PdaPicker = lazy(() => import("./components/pda/PdaPicker"));
+const AutomationCenter = lazy(() => import("./components/AutomationCenter"));
+const ActivityLogCenter = lazy(() => import("./components/ActivityLogCenter"));
+const LogsCenter = lazy(() => import("./components/LogsCenter"));
+const UserManagementCenter = lazy(() => import("./components/UserManagementCenter"));
+const CatalogCenter = lazy(() => import("./components/CatalogCenter"));
+const QCSettingsPage = lazy(() => import("./components/QCSettingsPage"));
+const OperatorsCenter = lazy(() => import("./components/OperatorsCenter"));
+const CEODashboard = lazy(() => import("./components/CEODashboard"));
+const QCDashboard = lazy(() => import("./components/QCDashboard"));
+const InsightsDashboard = lazy(() => import("./components/InsightsDashboard"));
+const BackupCenter = lazy(() => import("./components/BackupCenter"));
+const ArtModule = lazy(() => import("./components/ArtModule"));
+const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
+const ShippingModule = lazy(() => import("./components/ShippingModule"));
+const PackingListTool = lazy(() => import("./components/PackingList"));
+const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -761,6 +764,11 @@ function AppRouter() {
   }
 
   return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    }>
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/home" element={
@@ -870,6 +878,7 @@ function AppRouter() {
         </ProtectedRoute>
       } />
     </Routes>
+    </Suspense>
   );
 }
 

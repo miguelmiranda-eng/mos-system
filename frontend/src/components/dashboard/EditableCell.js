@@ -1,11 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { Edit2, ExternalLink } from "lucide-react";
 import { getStatusColor, evaluateFormula, normalizePublicUrl } from "../../lib/constants";
 import { ColoredBadge } from "./ColoredBadge";
 import SearchableSelect from "../SearchableSelect";
 
-export const EditableCell = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false, className = "" }) => {
+// Memoized: the orders grid renders thousands of cells, so without React.memo a
+// row/selection/search-highlight change re-rendered every cell. Props from the
+// parent are stable (handleCellUpdate/options are useOrders refs, columns is
+// memoized), so the default shallow compare skips cells whose data didn't change.
+const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false, className = "" }) => {
   const { t } = useLang();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value || "");
@@ -198,3 +202,5 @@ export const EditableCell = ({ value, field, orderId, options, groupConfig, onUp
     </div>
   );
 };
+
+export const EditableCell = memo(EditableCellBase);

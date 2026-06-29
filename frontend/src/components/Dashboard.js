@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useAuth } from "../App";
 import { useNavigate } from "react-router-dom";
 import { useLang } from "../contexts/LanguageContext";
@@ -469,13 +469,13 @@ const Dashboard = () => {
 
   // Visible columns = global config (existence + order + system-hidden from
   // Columnas Globales) minus this user's personal hidden choice.
-  const visibleColumns = (() => {
+  const visibleColumns = useMemo(() => {
     const hidden = [...globalHidden, ...(hiddenColumns[currentBoard] || [])];
     const order = boardColumnOrders[currentBoard];
     let cols = columns.filter(c => !hidden.includes(c.key));
     if (order) { cols = order.map(key => cols.find(c => c.key === key)).filter(Boolean); const ordered = new Set(order); cols = [...cols, ...columns.filter(c => !ordered.has(c.key) && !hidden.includes(c.key))]; }
     return cols;
-  })();
+  }, [globalHidden, hiddenColumns, currentBoard, boardColumnOrders, columns]);
 
   // Saved views
   const fetchSavedViews = useCallback(async () => {

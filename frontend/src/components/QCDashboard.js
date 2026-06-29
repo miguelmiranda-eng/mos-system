@@ -1017,6 +1017,7 @@ export default function QCDashboard() {
       if (res.ok) {
         toast.success(`Estatus actualizado a "${newStatus}"`);
         setStatusEditOrder(null);
+        fetchStats();
         fetchAll();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -1040,9 +1041,10 @@ export default function QCDashboard() {
 
   useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
 
-  // Poll notifications every 30 seconds
+  // Poll notifications every 2 minutes (was 30s — far more requests than the data
+  // changes warrant for a screen left open all day).
   useEffect(() => {
-    const id = setInterval(fetchNotifications, 30_000);
+    const id = setInterval(fetchNotifications, 120_000);
     return () => clearInterval(id);
   }, [fetchNotifications]);
 
@@ -1053,13 +1055,20 @@ export default function QCDashboard() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Stats are fetched on mount and after mutations only — NOT on every tab/page
+  // change (navigating used to re-hit /qc/stats needlessly each time).
+  const fetchStats = useCallback(async () => {
+    try {
+      const statRes = await fetch(`${API}/qc/stats`, { credentials: 'include' });
+      if (statRes.ok) setStats(await statRes.json());
+    } catch { /* silent */ }
+  }, []);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+
   const fetchAll = useCallback(async (pageOverride) => {
     setLoading(true);
     const currentPage = pageOverride ?? page;
     try {
-      const statRes = await fetch(`${API}/qc/stats`, { credentials: 'include' });
-      if (statRes.ok) setStats(await statRes.json());
-
       if (activeTab === 'general') {
         const params = new URLSearchParams();
         if (search) params.set('search', search);
@@ -1110,6 +1119,7 @@ export default function QCDashboard() {
       return [saved, ...prev];
     });
     if (saved.result && RESULT_TAB_MAP[saved.result]) setActiveTab(RESULT_TAB_MAP[saved.result]);
+    fetchStats();
     fetchAll();
     fetchNotifications();
   };
@@ -1119,7 +1129,7 @@ export default function QCDashboard() {
     setDeleting(qcId);
     try {
       const res = await fetch(`${API}/qc/${qcId}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) { setRecords(prev => prev.filter(r => r.qc_id !== qcId)); toast.success('Registro eliminado'); fetchAll(); }
+      if (res.ok) { setRecords(prev => prev.filter(r => r.qc_id !== qcId)); toast.success('Registro eliminado'); fetchStats(); fetchAll(); }
       else toast.error('Error al eliminar');
     } catch { toast.error('Error de conexión'); }
     finally { setDeleting(null); }
@@ -1132,6 +1142,7 @@ export default function QCDashboard() {
       const res = await fetch(`${API}/qc/orders/${order.order_id}/release`, { method: 'POST', credentials: 'include' });
       if (res.ok) {
         toast.success(`Orden ${order.order_number} liberada`);
+        fetchStats();
         fetchAll();
       } else {
         const err = await res.json().catch(() => ({}));
