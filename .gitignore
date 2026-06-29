@@ -151,3 +151,14 @@ backend/uploads/
 backend/seed_data/*.xlsx
 backend/*.xlsx
 backend/caja_negra.json
+# Scripts temporales y de diagnóstico
+tmp_*.py
+backend/tmp_*.py
+backend/check_type.py
+backend/investigate_*.py
+
+# Backups de datos con fecha
+*_backup_*.json
+backend/*_backup_*.json
+backend/reconcile_*.json
+backend/narro_*.json
