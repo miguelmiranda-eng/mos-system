@@ -394,9 +394,18 @@ async def get_gantt_data(request: Request, start_date: str = None, end_date: str
         query["created_at"] = {"$gte": start_date}
     if end_date:
         query.setdefault("created_at", {})["$lte"] = end_date
-    logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", 1).to_list(10000)
-    all_orders = await db.orders.find({"board": {"$ne": "PAPELERA DE RECICLAJE"}}, {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "quantity": 1, "board": 1, "priority": 1}).to_list(10000)
+    # Three independent reads fired concurrently (one round-trip instead of three
+    # serial awaits). total_by_order is computed by Mongo with a $group instead of
+    # re-reading the entire production_logs collection into Python and summing it.
+    logs, all_orders, total_by_order_rows = await asyncio.gather(
+        db.production_logs.find(query, {"_id": 0}).sort("created_at", 1).to_list(10000),
+        db.orders.find({"board": {"$ne": "PAPELERA DE RECICLAJE"}}, {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "quantity": 1, "board": 1, "priority": 1}).to_list(10000),
+        db.production_logs.aggregate([
+            {"$group": {"_id": "$order_id", "total": {"$sum": "$quantity_produced"}}}
+        ]).to_list(50000),
+    )
     orders_map = {o["order_id"]: o for o in all_orders}
+    total_by_order = {r["_id"]: r.get("total", 0) for r in total_by_order_rows}
     prod_summary = {}
     for log in logs:
         key = (log["machine"], log["order_id"])
@@ -416,9 +425,6 @@ async def get_gantt_data(request: Request, start_date: str = None, end_date: str
             "status": "completed" if data["total_produced"] >= order_info.get("quantity", 0) else "in_progress",
             "priority": order_info.get("priority", ""), "board": order_info.get("board", "")
         })
-    total_by_order = {}
-    for log in await db.production_logs.find({}, {"_id": 0, "order_id": 1, "quantity_produced": 1}).to_list(10000):
-        total_by_order[log["order_id"]] = total_by_order.get(log["order_id"], 0) + log.get("quantity_produced", 0)
     pending_orders = []
     for o in all_orders:
         produced = total_by_order.get(o["order_id"], 0)

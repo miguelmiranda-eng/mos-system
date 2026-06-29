@@ -817,25 +817,27 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
         raise HTTPException(status_code=404, detail="Order not found")
     order_id = order["order_id"]
     comment_id = f"comment_{uuid.uuid4().hex[:12]}"
-    # Detect @mentions by matching against real user names/emails
-    all_users = await db.users.find({}, {"_id": 0, "email": 1, "user_id": 1, "name": 1}).to_list(200)
-    current_user_id = user.get("user_id", user.get("email"))
+    # Detect @mentions by matching against real user names/emails. The directory
+    # read only happens when the comment actually contains an "@" — every mention
+    # check below requires one, so a comment without "@" can't match anyone and we
+    # skip loading the users collection entirely (the common case).
     content_lower = comment.content.lower()
     mentioned_users = []
     mentions = []
-    for u in all_users:
-        uid = u.get("user_id", u.get("email"))
-        uname = (u.get("name") or "").strip()
-        uemail = (u.get("email") or "").strip()
-        if uname and f"@{uname.lower()}" in content_lower:
-            mentioned_users.append(u)
-            mentions.append(uname)
-        elif uemail and f"@{uemail.lower()}" in content_lower:
-            mentioned_users.append(u)
-            mentions.append(uemail)
-        elif uemail and f"@{uemail.split('@')[0].lower()}" in content_lower:
-            mentioned_users.append(u)
-            mentions.append(uemail.split('@')[0])
+    if "@" in content_lower:
+        all_users = await db.users.find({}, {"_id": 0, "email": 1, "user_id": 1, "name": 1}).to_list(200)
+        for u in all_users:
+            uname = (u.get("name") or "").strip()
+            uemail = (u.get("email") or "").strip()
+            if uname and f"@{uname.lower()}" in content_lower:
+                mentioned_users.append(u)
+                mentions.append(uname)
+            elif uemail and f"@{uemail.lower()}" in content_lower:
+                mentioned_users.append(u)
+                mentions.append(uemail)
+            elif uemail and f"@{uemail.split('@')[0].lower()}" in content_lower:
+                mentioned_users.append(u)
+                mentions.append(uemail.split('@')[0])
     comment_doc = {
         "comment_id": comment_id, "order_id": order_id, "content": comment.content,
         "parent_id": comment.parent_id, "user_id": user["user_id"],

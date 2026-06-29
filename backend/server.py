@@ -149,11 +149,12 @@ async def startup_event():
     # NOTE: startup_restore() below — which used to run optimize_db — is dead code
     # (never decorated as a startup event), so indexes are ensured explicitly here.
     try:
-        from optimize_db import ensure_wms_indexes
+        from optimize_db import ensure_wms_indexes, ensure_core_indexes
+        await ensure_core_indexes(db)
         await ensure_wms_indexes(db)
-        logging.info("WMS indexes ensured on startup.")
+        logging.info("Core + WMS indexes ensured on startup.")
     except Exception as e:
-        logging.error(f"WMS index creation failed: {e}")
+        logging.error(f"Index creation failed: {e}")
     # Daily production report scheduler (no-op if disabled / apscheduler missing).
     start_report_scheduler()
 

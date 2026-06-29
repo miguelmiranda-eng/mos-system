@@ -78,11 +78,23 @@ async def list_qc_records(request: Request):
 @router.get("/stats")
 async def get_qc_stats(request: Request):
     await require_auth(request)
-    total = await db.qc_records.count_documents({})
-    passed = await db.qc_records.count_documents({"result": "PASS"})
-    conditional = await db.qc_records.count_documents({"result": "CONDITIONAL"})
-    failed = await db.qc_records.count_documents({"result": "FAIL"})
-    critical = await db.qc_records.count_documents({"severity": "CRITICAL"})
+    # Single pass over qc_records via $facet instead of 5 serial count_documents
+    # (each of which was a full collection scan). Output contract is unchanged.
+    agg = await db.qc_records.aggregate([
+        {"$facet": {
+            "total": [{"$count": "n"}],
+            "by_result": [{"$group": {"_id": "$result", "n": {"$sum": 1}}}],
+            "critical": [{"$match": {"severity": "CRITICAL"}}, {"$count": "n"}],
+        }}
+    ]).to_list(1)
+    facet = agg[0] if agg else {}
+    _n = lambda arr: arr[0]["n"] if arr else 0
+    by_result = {d.get("_id"): d.get("n", 0) for d in facet.get("by_result", [])}
+    total = _n(facet.get("total", []))
+    passed = by_result.get("PASS", 0)
+    conditional = by_result.get("CONDITIONAL", 0)
+    failed = by_result.get("FAIL", 0)
+    critical = _n(facet.get("critical", []))
     pass_rate = round(passed / total * 100, 1) if total > 0 else 0
     return {
         "total": total,

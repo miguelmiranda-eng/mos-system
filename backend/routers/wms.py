@@ -3294,22 +3294,22 @@ async def inventory_summary(request: Request, customer: str = ""):
             "total_boxes_sum": {"$sum": "$total_boxes"}
         }}
     ]
-    result = await db.wms_inventory.aggregate(pipeline).to_list(1)
-    agg = result[0] if result else {}
-    
-    # Locations count depends on the same customer filter if specified
-    if customer:
-        total_locations = len(await db.wms_inventory.distinct("location", match_query))
-    else:
-        total_locations = await db.wms_locations.count_documents({"active": True})
-        
     low_stock_query = {"units_on_hand": {"$lte": 10, "$gt": 0}}
     if customer:
         low_stock_query["customer"] = {"$regex": customer, "$options": "i"}
-        
-    low_stock = await db.wms_inventory.find(
-        low_stock_query, {"_id": 0}
-    ).sort("units_on_hand", 1).to_list(20)
+    # Locations count depends on the same customer filter if specified.
+    locations_coro = (
+        db.wms_inventory.distinct("location", match_query) if customer
+        else db.wms_locations.count_documents({"active": True})
+    )
+    # Three independent reads fired concurrently instead of serial awaits.
+    result, locations_raw, low_stock = await asyncio.gather(
+        db.wms_inventory.aggregate(pipeline).to_list(1),
+        locations_coro,
+        db.wms_inventory.find(low_stock_query, {"_id": 0}).sort("units_on_hand", 1).to_list(20),
+    )
+    agg = result[0] if result else {}
+    total_locations = len(locations_raw) if customer else locations_raw
     
     summary = {
         "total_on_hand": agg.get("total_on_hand", 0),
