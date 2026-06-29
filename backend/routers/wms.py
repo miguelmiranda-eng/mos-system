@@ -918,7 +918,11 @@ async def transit_relocate(request: Request):
     for b in boxes:
         key = (
             b.get("location") or TRANSIT_LOCATION_NAME,
-            b.get("sku") or b.get("style") or "",
+            # Key by the SHORT style first (like receiving / _move_box_inventory).
+            # Using the box's composite sku ("5000-AZALEA-XL") here failed to match
+            # the cart's inventory row (keyed by "5000"), so the source row was
+            # never decremented and the cart kept phantom (double-counted) units.
+            b.get("style") or b.get("sku") or "",
             b.get("color", ""),
             b.get("size", ""),
         )
@@ -1055,7 +1059,9 @@ async def boxes_relocate(request: Request):
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
     for b in boxes:
         src = (b.get("location") or "")
-        key = (src, b.get("sku") or b.get("style") or "", b.get("color", ""), b.get("size", ""))
+        # Short style first (matches how inventory rows are keyed); the composite
+        # sku missed the source row and left phantom double-counted inventory.
+        key = (src, b.get("style") or b.get("sku") or "", b.get("color", ""), b.get("size", ""))
         bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
         bucket[key]["boxes"] += 1
         if bucket[key]["sample"] is None:
