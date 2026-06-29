@@ -34,6 +34,7 @@ import { saveAs } from 'file-saver';
 import { LoadingOverlay } from "./dashboard/LoadingOverlay";
 import { ColoredBadge } from "./dashboard/ColoredBadge";
 import { EditableCell } from "./dashboard/EditableCell";
+import SearchBox from "./dashboard/SearchBox";
 import { CommentsModal } from "./dashboard/CommentsModal";
 import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
@@ -99,14 +100,11 @@ const Dashboard = () => {
   const toggleOrderSelection = (id) => setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   const [openFilter, setOpenFilter] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  // The raw typed value now lives inside <SearchBox> (local state → instant echo
+  // on iPad). The parent only keeps the debounced value used for filtering, plus
+  // a token it bumps to clear the box after a global search.
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-
-  // Debounce search query
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  const [searchClearToken, setSearchClearToken] = useState(0);
 
   // Theme from shared context (synced with CEODashboard and WMS)
   const { theme, toggleTheme } = useTheme();
@@ -245,6 +243,19 @@ const Dashboard = () => {
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
     groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
+
+  // Search wiring for <SearchBox>. Stable callbacks so the debounce effect inside
+  // SearchBox doesn't re-subscribe on every Dashboard render.
+  const clearSearch = useCallback(() => {
+    setDebouncedSearchQuery('');
+    setSearchClearToken(t => t + 1);
+  }, []);
+  const handleSearchDebounced = useCallback((v) => setDebouncedSearchQuery(v), []);
+  const handleSearchEnter = useCallback(async (v) => {
+    const results = await handleGlobalSearch(v, setCurrentBoard);
+    if (results === '__GUIDE__') { setShowGuide(true); clearSearch(); }
+    else if (results) setSearchResults(results);
+  }, [handleGlobalSearch, clearSearch]);
 
   const [displayLimit, setDisplayLimit] = useState(100);
   // Mobile renders fewer cards at once (phones choke past ~50); "Cargar más"
@@ -1405,24 +1416,14 @@ const Dashboard = () => {
           </button>
         )}
         <div className="flex items-center gap-4 flex-1">
-          <div className={`flex items-center gap-3 w-full px-4 py-1.5 rounded-full border border-border/60 bg-muted/20 hover:bg-muted/40 focus-within:bg-card focus-within:border-royal/60 focus-within:shadow-sm transition-all group ${isMobile ? 'max-w-[200px]' : 'max-w-md'}`}>
-            <Search className="w-4 h-4 text-muted-foreground group-focus-within:text-royal transition-colors flex-shrink-0" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={async (e) => {
-                if (e.key === 'Enter') {
-                  const results = await handleGlobalSearch(searchQuery, setCurrentBoard);
-                  if (results === '__GUIDE__') { setShowGuide(true); setSearchQuery(''); }
-                  else if (results) setSearchResults(results);
-                }
-              }}
-              placeholder={isMobile ? 'Buscar...' : t('search_placeholder')}
-              className="w-full bg-transparent border-none text-sm outline-none focus:outline-none focus:ring-0 placeholder:text-muted-foreground/50 transition-all font-medium py-1"
-            />
-          </div>
+          <SearchBox
+            ref={searchInputRef}
+            onDebouncedChange={handleSearchDebounced}
+            onEnter={handleSearchEnter}
+            clearToken={searchClearToken}
+            placeholder={isMobile ? 'Buscar...' : t('search_placeholder')}
+            isMobile={isMobile}
+          />
         </div>
 
         {unreadMentions > 0 && (() => {
@@ -2426,7 +2427,7 @@ const Dashboard = () => {
       </Dialog>
 
       {/* Search Results Modal */}
-      <Dialog open={!!searchResults} onOpenChange={(open) => { if (!open) { setSearchResults(null); setSearchQuery(''); } }}>
+      <Dialog open={!!searchResults} onOpenChange={(open) => { if (!open) { setSearchResults(null); clearSearch(); } }}>
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[92vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
@@ -2441,7 +2442,7 @@ const Dashboard = () => {
                     key={order.order_id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => { setDetailsOrder(order); setSearchResults(null); setSearchQuery(''); }}
+                    onClick={() => { setDetailsOrder(order); setSearchResults(null); clearSearch(); }}
                     data-testid={`search-result-${order.order_id}`}
                     className="rounded-2xl border border-border bg-card/60 active:scale-[0.99] transition-transform p-4 cursor-pointer"
                   >
@@ -2460,13 +2461,13 @@ const Dashboard = () => {
                     )}
                     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/40">
                       <button
-                        onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); setSearchResults(null); setSearchQuery(''); }}
+                        onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); setSearchResults(null); clearSearch(); }}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/60 text-muted-foreground active:bg-primary/10 active:text-primary text-[11px] font-bold"
                       >
                         <MessageSquare className="w-4 h-4" /> Comentar
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(''); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                        onClick={(e) => { e.stopPropagation(); setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary active:bg-primary active:text-white text-[11px] font-bold"
                       >
                         <ExternalLink className="w-4 h-4" /> Ir al tablero
@@ -2493,7 +2494,7 @@ const Dashboard = () => {
                   {searchResults?.map(order => (
                     <div role="row" className="flex border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group" key={order.order_id}
                       data-testid={`search-result-${order.order_id}`}>
-                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); setSearchQuery(''); }}>
+                      <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); clearSearch(); }}>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-black text-royal text-lg hover:underline transition-all">
                             {order.order_number}
@@ -2524,14 +2525,14 @@ const Dashboard = () => {
                       <div role="cell" className="py-3 px-4 min-w-[80px] text-center sticky right-0 bg-card z-10 group-hover:bg-primary/10 border-l border-border/30 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] transition-colors [transform:translateZ(0)]">
                         <div className="flex items-center gap-1.5 justify-center">
                           <button
-                            onClick={() => { setCommentsOrder(order); setSearchResults(null); setSearchQuery(''); }}
+                            onClick={() => { setCommentsOrder(order); setSearchResults(null); clearSearch(); }}
                             className="p-2 rounded-xl bg-secondary/60 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all shadow-sm"
                             title="Ver comentarios"
                           >
                             <MessageSquare className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => { setCurrentBoard(order.board); setSearchResults(null); setSearchQuery(''); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                            onClick={() => { setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
                             className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
                             title="Ir al tablero"
                           >
