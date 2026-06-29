@@ -115,6 +115,14 @@ async def update_user_role(user_id: str, request: Request):
         update_data["associated_customer"] = associated_customer
     if assigned_board is not None:
         update_data["assigned_board"] = (assigned_board or "").strip().upper()
+    # Tiered admin level (1-5). Only a super admin may set it, and it only means
+    # anything for the "admin" role (cumulative: level N ⊇ lower levels).
+    if "admin_level" in body and caller_is_supersu:
+        try:
+            lvl = int(body.get("admin_level") or 1)
+        except (TypeError, ValueError):
+            lvl = 1
+        update_data["admin_level"] = max(1, min(5, lvl))
 
     result = await db.users.update_one(
         {"$or": [{"user_id": user_id}, {"email": user_id}]},

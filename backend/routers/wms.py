@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_supersu, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -544,7 +544,7 @@ async def list_location_holds(request: Request):
 async def add_location_holds(request: Request):
     """Place one or more locations on HOLD (supersu only). Body:
     { locations: ["RP09-A03", ...] } or { location: "RP09-A03" }, optional reason."""
-    user = await require_supersu(request)
+    user = await require_admin_level(request, 2)
     body = await request.json()
     raw = body.get("locations") or ([body.get("location")] if body.get("location") else [])
     names = sorted({(n or "").strip().upper() for n in raw if (n or "").strip()})
@@ -578,7 +578,7 @@ async def add_location_holds(request: Request):
 @router.delete("/location-holds/{name}")
 async def release_location_hold(name: str, request: Request):
     """Release a location from HOLD (supersu only)."""
-    user = await require_supersu(request)
+    user = await require_admin_level(request, 2)
     clean = (name or "").strip()
     res = await db.wms_locations.update_one(
         {"name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
@@ -2220,7 +2220,7 @@ async def delete_box(box_id: str, request: Request):
     """Delete a box (LPN). Super-user only. Deducts the box's units from the
     location's inventory row (mirrors the rebalance in update_box) and removes
     the inventory row entirely if it empties out and no other box feeds it."""
-    user = await require_supersu(request)
+    user = await require_admin_level(request, 2)
 
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
@@ -6618,7 +6618,7 @@ async def delete_inventory_row(inventory_id: str, request: Request):
     from a location. Used by the Locations detail modal (delete line / clear
     location). Matches strictly by inventory_id, so it never touches other
     locations or duplicate rows of the same SKU."""
-    user = await require_supersu(request)
+    user = await require_admin_level(request, 2)
     inv = await db.wms_inventory.find_one({"inventory_id": inventory_id})
     if not inv:
         raise HTTPException(404, "Inventario no encontrado")

@@ -13,9 +13,13 @@ const SYSTEM_TRANSIT_NAMES = new Set([
 
 export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
-  const isSupersu = currentUser?.role === 'supersu';
-  // Deleting inventory content from a location is admin-only (backend require_admin).
-  const canDeleteInv = ['admin', 'supersu'].includes(currentUser?.role);
+  // Managing a location's contents — empty it, delete a line/box, HOLD/SAT —
+  // requires admin level 2+ (supersu counts as the max level). Mirrors the
+  // backend require_admin_level(2) on those endpoints.
+  const adminLevel = currentUser?.role === 'supersu'
+    ? 5
+    : (currentUser?.role === 'admin' ? (parseInt(currentUser?.admin_level, 10) || 1) : 0);
+  const canManageLocations = adminLevel >= 2;
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -854,7 +858,7 @@ export const LocationsModule = ({ currentUser }) => {
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
-                        {isSupersu && (
+                        {canManageLocations && (
                           <button
                             onClick={() => toggleHold(l)}
                             className={`p-1.5 rounded-md transition-all ${l.on_hold ? 'text-red-500 hover:bg-red-500/10' : 'text-muted-foreground hover:text-red-500 hover:bg-red-500/10'}`}
@@ -1090,7 +1094,7 @@ export const LocationsModule = ({ currentUser }) => {
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">On hand</th>
                           <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground">Disponible</th>
-                          {canDeleteInv && <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground w-10">Acción</th>}
+                          {canManageLocations && <th className="p-2.5 text-right text-[9px] font-black uppercase tracking-widest text-muted-foreground w-10">Acción</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1129,7 +1133,7 @@ export const LocationsModule = ({ currentUser }) => {
                                 </td>
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-emerald-500">{onHand.toLocaleString()}</td>
                                 <td className="p-2.5 text-right font-mono font-black text-[12px] tabular-nums text-blue-400">{available.toLocaleString()}</td>
-                                {canDeleteInv && (
+                                {canManageLocations && (
                                   <td className="p-2.5 text-right whitespace-nowrap">
                                     <div className="flex items-center justify-end gap-1.5">
                                       {canExpand && (
@@ -1142,7 +1146,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           <ArrowRightLeft className="w-3.5 h-3.5" />
                                         </button>
                                       )}
-                                      {isSupersu && (
+                                      {canManageLocations && (
                                         <button
                                           type="button"
                                           onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
@@ -1159,7 +1163,7 @@ export const LocationsModule = ({ currentUser }) => {
 
                               {relocatingLineId === it.inventory_id && (
                                 <tr className="bg-amber-500/10 border-b border-amber-500/20">
-                                  <td colSpan={canDeleteInv ? 11 : 10} className="py-2.5 px-4">
+                                  <td colSpan={canManageLocations ? 11 : 10} className="py-2.5 px-4">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 whitespace-nowrap">
                                         Mover {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''} →
@@ -1216,7 +1220,7 @@ export const LocationsModule = ({ currentUser }) => {
                               {/* LPN drawer expands below the row when clicked */}
                               {hasBoxes && (
                                 <tr>
-                                  <td colSpan={canDeleteInv ? 11 : 10} className="p-0 border-b border-border/20">
+                                  <td colSpan={canManageLocations ? 11 : 10} className="p-0 border-b border-border/20">
                                     <div className="bg-secondary/15 px-4 py-3">
                                       <div className="flex items-center gap-2 mb-2">
                                         <div className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
@@ -1344,7 +1348,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           >
                                             <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
                                           </button>
-                                          {isSupersu && (
+                                          {canManageLocations && (
                                             <button
                                               type="button"
                                               onClick={() => deleteBox(b)}
@@ -1391,7 +1395,7 @@ export const LocationsModule = ({ currentUser }) => {
                     <Printer className="w-3.5 h-3.5" /> Imprimir etiquetas
                   </button>
                 )}
-                {isSupersu && detailItems.length > 0 && (
+                {canManageLocations && detailItems.length > 0 && (
                   <button
                     onClick={clearLocation}
                     disabled={clearingLoc}

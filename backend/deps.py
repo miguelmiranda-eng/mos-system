@@ -460,6 +460,33 @@ async def require_ceo(request: Request) -> Dict:
         raise HTTPException(status_code=403, detail="CEO or Admin access required")
     return user
 
+# ── Tiered admin levels (1-5) ────────────────────────────────────────────────
+# A single "admin" role plus a numeric admin_level on the user doc. Levels are
+# cumulative: level N can do everything levels 1..N can. supersu sits above all
+# admins (treated as the max level). Everyone else has no admin level.
+MAX_ADMIN_LEVEL = 5
+
+def get_admin_level(user: Dict) -> int:
+    """Effective admin level for a user. supersu = MAX; admin = its admin_level
+    (default 1, clamped 1..MAX); any other role = 0."""
+    role = (user or {}).get("role")
+    if role == "supersu":
+        return MAX_ADMIN_LEVEL
+    if role == "admin":
+        try:
+            lvl = int(user.get("admin_level") or 1)
+        except (TypeError, ValueError):
+            lvl = 1
+        return max(1, min(MAX_ADMIN_LEVEL, lvl))
+    return 0
+
+async def require_admin_level(request: Request, min_level: int) -> Dict:
+    """Require an admin of at least `min_level` (supersu always passes)."""
+    user = await require_auth(request)
+    if get_admin_level(user) < min_level:
+        raise HTTPException(status_code=403, detail=f"Requiere admin nivel {min_level} o superior")
+    return user
+
 async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
     user = await require_auth(request)
     if user.get("role") not in allowed_roles and user.get("role") not in SUPER_ROLES:

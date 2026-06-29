@@ -223,6 +223,26 @@ const UserManagementCenter = () => {
     }
   };
 
+  // Persist an admin's tiered level (1-5). Supersu only; we re-send the role so
+  // the PUT shape stays the same. Backend ignores admin_level for non-supersu.
+  const handleAdminLevelChange = async (userId, currentRole, newLevel) => {
+    try {
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: currentRole, admin_level: Number(newLevel) }),
+      });
+      if (res.ok) {
+        toast.success(`Nivel de admin actualizado a ${newLevel}`);
+        setTimeout(fetchUsers, 300);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo actualizar el nivel');
+      }
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
+
   const handleRoleChange = async (userId, newRole, customer = '') => {
     if (!window.confirm(`¿Cambiar el rol a ${newRole}?`)) {
         fetchUsers();
@@ -564,6 +584,29 @@ const UserManagementCenter = () => {
                     {u.role === 'operator' && !isSupersu && u.assigned_board && (
                       <span className="h-9 flex items-center px-3 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500">
                         {u.assigned_board}
+                      </span>
+                    )}
+
+                    {/* Admin tier (1-5). Cumulative: a higher level can do
+                        everything lower levels can. Only supersu may change it. */}
+                    {u.role === 'admin' && isSupersu && (
+                      <Select
+                        value={String(u.admin_level || 1)}
+                        onValueChange={(v) => handleAdminLevelChange(u.user_id, u.role, v)}
+                      >
+                        <SelectTrigger className="w-28 h-9 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/15">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover border-border z-[300]">
+                          {[1, 2, 3, 4, 5].map(n => (
+                            <SelectItem key={n} value={String(n)}>Nivel {n}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {u.role === 'admin' && !isSupersu && (
+                      <span className="h-9 flex items-center px-3 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary">
+                        Nivel {u.admin_level || 1}
                       </span>
                     )}
 
