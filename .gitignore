@@ -162,3 +162,8 @@ backend/investigate_*.py
 backend/*_backup_*.json
 backend/reconcile_*.json
 backend/narro_*.json
+
+# Artefactos "cloud_" (bundles compilados y volcados de datos locales)
+cloud_*.js
+cloud_*.css
+cloud_*.json
