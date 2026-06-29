@@ -6612,6 +6612,175 @@ async def add_inventory_manual(request: Request):
     }
 
 
+# ─── Bulk inventory adjustment (Mover · admin level 3) ───────────────────────
+async def _line_boxes(inv):
+    """Live LPN boxes backing an inventory line (by inventory_id, else identity)."""
+    by_identity = {
+        "location": {"$regex": f"^{re.escape(inv.get('location', ''))}$", "$options": "i"},
+        "sku": inv.get("sku") or inv.get("style") or "",
+        "color": inv.get("color", ""), "size": inv.get("size", ""),
+    }
+    q = {"$or": [{"inventory_id": inv["inventory_id"]}, by_identity]} if inv.get("inventory_id") else by_identity
+    return await db.wms_boxes.find(q).sort("units", 1).to_list(2000)
+
+
+async def _reconcile_line_boxes(inv, delta):
+    """Keep the line's boxes' unit-sum tracking the on-hand delta. +delta adds one
+    adjustment box; -delta draws down existing boxes (smallest first), deleting
+    any that empty out. Returns the net change in the line's box count."""
+    if delta > 0:
+        seq = await _reserve_box_seqs(1)
+        box_id = f"BOX-{seq:06d}"
+        await db.wms_boxes.insert_one({
+            "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
+            "inventory_id": inv.get("inventory_id"), "customer": inv.get("customer", ""),
+            "style": inv.get("style") or inv.get("sku", ""), "sku": inv.get("sku") or inv.get("style", ""),
+            "color": inv.get("color", ""), "size": inv.get("size", ""),
+            "units": delta, "qty": delta, "seq_num": seq, "location": inv.get("location", ""),
+            "status": "putaway_done", "state": "raw",
+            "coo": inv.get("country_of_origin", ""), "country_of_origin": inv.get("country_of_origin", ""),
+            "fabric_content": inv.get("fabric_content", ""), "is_adjustment": True, "created_at": now_iso(),
+        })
+        return 1
+    need = -delta
+    removed = 0
+    for b in await _line_boxes(inv):
+        if need <= 0:
+            break
+        bu = int(b.get("units") or b.get("qty") or 0)
+        if bu <= 0:
+            continue
+        take = min(bu, need)
+        left = bu - take
+        if left <= 0:
+            await db.wms_boxes.delete_one({"box_id": b["box_id"]})
+            removed += 1
+        else:
+            await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"units": left, "qty": left, "updated_at": now_iso()}})
+        need -= take
+    return -removed
+
+
+@router.post("/inventory/bulk-adjust")
+async def bulk_adjust_inventory(request: Request):
+    """Mass inventory adjustment from the 'Formato ajuste de inventario' Excel.
+    Admin level 3+. Each row's 'on_hand' is a DELTA (positive adds, negative
+    subtracts). dry_run=true returns the plan only (preview); dry_run=false
+    applies it. Boxes (LPNs) are reconciled so the per-box sum tracks the new
+    line on-hand. A reason is mandatory to apply (audited per row)."""
+    user = await require_admin_level(request, 3)
+    body = await request.json()
+    rows = body.get("rows") or []
+    dry_run = bool(body.get("dry_run", True))
+    reason = str(body.get("reason", "") or "").strip()
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(400, "No hay filas para ajustar")
+    if not dry_run and not reason:
+        raise HTTPException(400, "El motivo del ajuste es obligatorio")
+
+    plan = []
+    for idx, r in enumerate(rows):
+        style = str(r.get("style", "") or "").strip().upper()
+        color = str(r.get("color", "") or "").strip().upper()
+        size = str(r.get("size", "") or "").strip().upper()
+        location = str(r.get("location", "") or "").strip().upper()
+        label = f"{style}{('-' + color) if color else ''}{('-' + size) if size else ''} @ {location or '—'}"
+        try:
+            delta = int(float(r.get("on_hand")))
+        except (TypeError, ValueError):
+            plan.append({"row": idx + 1, "label": label, "status": "error", "message": "Cantidad inválida"})
+            continue
+        if not style or not location:
+            plan.append({"row": idx + 1, "label": label, "status": "error", "message": "Style y Location son obligatorios"})
+            continue
+        if delta == 0:
+            plan.append({"row": idx + 1, "label": label, "status": "skip", "current": None, "delta": 0, "message": "Sin cambio (0)"})
+            continue
+        loc_rx = {"$regex": f"^{re.escape(location)}$", "$options": "i"}
+        inv = await db.wms_inventory.find_one({"style": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0}) \
+            or await db.wms_inventory.find_one({"sku": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0})
+        if inv:
+            current = int(inv.get("units_on_hand", 0) or 0)
+            allocated = int(inv.get("units_allocated", 0) or 0)
+            new_val = current + delta
+            if new_val < 0:
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta, "message": f"Quedaría negativo ({new_val})"})
+            elif new_val < allocated:
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta, "message": f"Quedaría {new_val} < comprometido {allocated}"})
+            else:
+                plan.append({"row": idx + 1, "label": label, "status": "adjust", "inventory_id": inv.get("inventory_id"), "current": current, "delta": delta, "new": new_val})
+        else:
+            if delta < 0:
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": 0, "delta": delta, "message": "No existe la línea; no se puede restar"})
+            else:
+                plan.append({"row": idx + 1, "label": label, "status": "new", "current": 0, "delta": delta, "new": delta,
+                             "customer": str(r.get("customer", "") or "").strip(),
+                             "country_of_origin": str(r.get("country_of_origin", "") or "").strip(),
+                             "fabric_content": str(r.get("fabric_content", "") or "").strip(),
+                             "style": style, "color": color, "size": size, "location": location})
+
+    summary = {
+        "total": len(plan),
+        "adjust": sum(1 for p in plan if p["status"] == "adjust"),
+        "new": sum(1 for p in plan if p["status"] == "new"),
+        "error": sum(1 for p in plan if p["status"] == "error"),
+        "skip": sum(1 for p in plan if p["status"] == "skip"),
+    }
+    if dry_run:
+        return {"dry_run": True, "summary": summary, "rows": plan}
+
+    applied = 0
+    for p in plan:
+        try:
+            if p["status"] == "adjust":
+                inv = await db.wms_inventory.find_one({"inventory_id": p["inventory_id"]}, {"_id": 0})
+                if not inv:
+                    p["status"] = "error"; p["message"] = "La línea ya no existe"; continue
+                box_change = await _reconcile_line_boxes(inv, p["delta"])
+                await db.wms_inventory.update_one(
+                    {"inventory_id": p["inventory_id"]},
+                    {"$inc": {"units_on_hand": p["delta"], "total_boxes": box_change}, "$set": {"updated_at": now_iso()}},
+                )
+                await log_movement(user, "inventory_adjustment", {
+                    "inventory_id": p["inventory_id"], "sku": inv.get("sku"), "location": inv.get("location"),
+                    "delta": p["delta"], "new_on_hand": p["new"], "reason": reason, "bulk": True,
+                })
+                applied += 1
+            elif p["status"] == "new":
+                customer = await _canonical_customer(p.get("customer", ""))
+                style, color, size = p["style"], p["color"], p["size"]
+                sku = style + (("-" + color) if color else "") + (("-" + size) if size else "")
+                inventory_id = gen_id("inv")
+                qty = int(p["delta"])
+                await db.wms_inventory.insert_one({
+                    "inventory_id": inventory_id, "customer": customer, "style": style, "sku": sku,
+                    "color": color, "size": size, "location": p["location"],
+                    "units_on_hand": qty, "units_allocated": 0, "total_boxes": 1,
+                    "country_of_origin": p.get("country_of_origin", ""), "fabric_content": p.get("fabric_content", ""),
+                    "created_at": now_iso(), "updated_at": now_iso(),
+                })
+                seq = await _reserve_box_seqs(1)
+                box_id = f"BOX-{seq:06d}"
+                await db.wms_boxes.insert_one({
+                    "box_id": box_id, "barcode": box_id, "lpn_id": box_id, "inventory_id": inventory_id,
+                    "customer": customer, "style": style, "sku": sku, "color": color, "size": size,
+                    "units": qty, "qty": qty, "seq_num": seq, "location": p["location"],
+                    "status": "putaway_done", "state": "raw",
+                    "coo": p.get("country_of_origin", ""), "country_of_origin": p.get("country_of_origin", ""),
+                    "fabric_content": p.get("fabric_content", ""), "is_adjustment": True, "created_at": now_iso(),
+                })
+                await log_movement(user, "inventory_adjustment_create", {
+                    "inventory_id": inventory_id, "sku": sku, "location": p["location"],
+                    "delta": qty, "reason": reason, "bulk": True,
+                })
+                applied += 1
+        except Exception as e:
+            p["status"] = "error"; p["message"] = f"Error al aplicar: {e}"
+
+    await log_movement(user, "bulk_inventory_adjustment", {"applied": applied, "reason": reason, **summary})
+    return {"dry_run": False, "summary": {**summary, "applied": applied}, "rows": plan}
+
+
 @router.delete("/inventory/{inventory_id}")
 async def delete_inventory_row(inventory_id: str, request: Request):
     """Supersu-only: remove a single inventory line (and its linked LPN boxes)

@@ -5,6 +5,7 @@ import {
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale,
 } from "lucide-react";
 import { fetcher, poster, cleanScan, logLoadError } from "./lib";
+import BulkInventoryAdjust from "./BulkInventoryAdjust";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
 // Handheld scanners type the code + Enter into the focused box. We also show up
@@ -78,10 +79,15 @@ function ModeButton({ icon: Icon, title, subtitle, color, onClick, testid }) {
   );
 }
 
-export function MoverModule() {
-  // Top-level mode: the classic origin→destination move, or a box-first
-  // inventory adjustment (Case# 002) that has no destination at all.
-  const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust'
+export function MoverModule({ currentUser }) {
+  // Top-level mode: the classic origin→destination move, a box-first inventory
+  // adjustment (Case# 002), or the bulk Excel inventory adjustment (admin L3+).
+  const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust' | 'bulk'
+  // Bulk inventory adjustment is gated to admin level 3+ (supersu = max level).
+  const adminLevel = currentUser?.role === 'supersu'
+    ? 5
+    : (currentUser?.role === 'admin' ? (parseInt(currentUser?.admin_level, 10) || 1) : 0);
+  const canBulk = adminLevel >= 3;
 
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
@@ -310,18 +316,20 @@ export function MoverModule() {
           <div className="p-2.5 rounded-2xl bg-primary/10"><Move className="w-7 h-7 text-primary" /></div>
           <div>
             <h1 className="text-xl font-black uppercase tracking-tight">
-              {topMode === "adjust" ? "Ajustar Caja" : "Mover Material"}
+              {topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : "Mover Material"}
             </h1>
             <p className="text-xs text-muted-foreground">
-              {topMode === "adjust"
-                ? "Escanea una caja y captura su conteo real"
-                : "Escanea una ubicación y elige qué mover"}
+              {topMode === "bulk"
+                ? "Sube el Excel para ajustar inventario en bloque"
+                : topMode === "adjust"
+                  ? "Escanea una caja y captura su conteo real"
+                  : "Escanea una ubicación y elige qué mover"}
             </p>
           </div>
         </div>
 
-        {/* Top-level toggle: move vs adjust-by-box (Case# 002) */}
-        <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-secondary/30 border border-border">
+        {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
+        <div className={`grid ${canBulk ? "grid-cols-3" : "grid-cols-2"} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
           <button
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
             data-testid="mover-top-move"
@@ -334,10 +342,20 @@ export function MoverModule() {
             className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "adjust" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
             <Scale className="w-4 h-4" /> Ajustar caja
           </button>
+          {canBulk && (
+            <button
+              onClick={() => { if (topMode !== "bulk") { resetAll(); resetAdjust(); setTopMode("bulk"); } }}
+              data-testid="mover-top-bulk"
+              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "bulk" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+              <Boxes className="w-4 h-4" /> Ajuste masivo
+            </button>
+          )}
         </div>
 
-        {/* ── ADJUST BY BOX (Case# 002) ─────────────────────────────────────── */}
-        {topMode === "adjust" ? (
+        {/* ── BULK INVENTORY ADJUST (Excel · admin L3+) ─────────────────────── */}
+        {topMode === "bulk" ? (
+          <BulkInventoryAdjust />
+        ) : topMode === "adjust" ? (
           !adjBox ? (
             <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
               <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">

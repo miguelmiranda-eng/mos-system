@@ -41,7 +41,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'dashboard':    return <InventoryDashboard customer={ctx.associatedCustomer} apiBase={API} />;
     case 'receiving':    return <ReceivingModule />;
     case 'transit':      return <TransitModule />;
-    case 'mover':        return <MoverModule />;
+    case 'mover':        return <MoverModule currentUser={ctx.currentUser} />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
