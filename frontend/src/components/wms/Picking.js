@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2 } from "lucide-react";
+import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
@@ -388,6 +388,30 @@ export const PickingModule = ({ currentUser } = {}) => {
   const preTickets = filteredTickets.filter(t => t.is_virtual);
   const activeTickets = filteredTickets.filter(t => !t.is_virtual && t.status !== TicketStatus.CONFIRMED && t.picking_status !== PickingStatus.COMPLETED);
   const completedTickets = filteredTickets.filter(t => !t.is_virtual && (t.status === TicketStatus.CONFIRMED || t.picking_status === PickingStatus.COMPLETED));
+
+  // Workload grouped by operator (for the "Carga" tab): who has which active
+  // tickets, so an admin can reassign or unassign by load.
+  const UNASSIGNED_KEY = '__unassigned__';
+  const workloadByOperator = (() => {
+    const groups = {};
+    for (const tk of activeTickets) {
+      const id = (tk.assigned_to || '').trim() || UNASSIGNED_KEY;
+      const name = id === UNASSIGNED_KEY ? 'Sin asignar' : (tk.assigned_to_name || tk.assigned_to || 'Operador');
+      if (!groups[id]) groups[id] = { id, name, tickets: [], units: 0 };
+      groups[id].tickets.push(tk);
+      groups[id].units += Number(tk.total_pick_qty || 0);
+    }
+    // Surface operators with no load too, so you can see who's free.
+    for (const op of operators) {
+      if (op.user_id && !groups[op.user_id]) groups[op.user_id] = { id: op.user_id, name: op.name || op.email || op.user_id, tickets: [], units: 0 };
+    }
+    return Object.values(groups).sort((a, b) => {
+      if (a.id === UNASSIGNED_KEY) return -1;
+      if (b.id === UNASSIGNED_KEY) return 1;
+      return b.tickets.length - a.tickets.length;
+    });
+  })();
+  const unassignedCount = activeTickets.filter(t => !(t.assigned_to || '').trim()).length;
   const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
 
   // Case# 005: within active tickets, split those with picking progress
@@ -600,6 +624,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
             { id: 'tickets', label: 'TICKETS (ACTIVOS)', icon: ClipboardCheck, count: activeTickets.length },
             { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedTickets.length },
+            { id: 'workload', label: 'CARGA', icon: Users, count: unassignedCount },
             { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
           ].map(tab => {
             const Icon = tab.icon;
@@ -878,6 +903,73 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
               <CheckCircle className="w-16 h-16 mb-4 stroke-[1px]" />
               <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_completed_tickets')}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {activeTab === 'workload' && (
+        <div className="space-y-4" data-testid="pick-workload">
+          <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+            <Users className="w-4 h-4" />
+            Carga de trabajo por operador — reasigna o retira tickets según la carga de cada uno.
+          </div>
+          {workloadByOperator.map(group => (
+            <div key={group.id} className="rounded-2xl border border-border/30 bg-card/20 overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-secondary/20 border-b border-border/30">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2 h-2 rounded-full ${group.id === UNASSIGNED_KEY ? 'bg-red-500' : group.tickets.length === 0 ? 'bg-muted-foreground/40' : 'bg-emerald-500'}`} />
+                  <span className="font-black uppercase tracking-wider text-sm truncate">{group.name}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] font-black">
+                  <span className="px-2 py-0.5 rounded-full bg-secondary/60">{group.tickets.length} tickets</span>
+                  <span className="px-2 py-0.5 rounded-full bg-secondary/60">{group.units.toLocaleString()} pzs</span>
+                </div>
+              </div>
+              {group.tickets.length === 0 ? (
+                <div className="px-4 py-3 text-[11px] text-muted-foreground italic">Sin tickets asignados — disponible.</div>
+              ) : (
+                <div className="divide-y divide-border/10">
+                  {group.tickets.map(tk => (
+                    <div key={tk.ticket_id} className="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-bold truncate">
+                          <span className="font-mono">{tk.order_number}</span>
+                          <span className="text-muted-foreground truncate font-normal">{tk.style} {tk.color}</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{(tk.total_pick_qty || 0).toLocaleString()} pzs · {tk.picking_status}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value=""
+                          onChange={(e) => { if (e.target.value) handleQuickAssign(tk.ticket_id, e.target.value); }}
+                          className="text-[10px] font-bold bg-secondary/40 border border-border/30 rounded-lg px-2 py-1 cursor-pointer hover:border-border/60 transition-all"
+                          title="Reasignar a otro operador"
+                        >
+                          <option value="">Reasignar…</option>
+                          {operators.filter(o => o.user_id !== group.id).map(o => (
+                            <option key={o.user_id} value={o.user_id}>{o.name || o.email}</option>
+                          ))}
+                        </select>
+                        {group.id !== UNASSIGNED_KEY && (
+                          <button
+                            onClick={() => handleQuickAssign(tk.ticket_id, "")}
+                            className="flex items-center gap-1 text-[10px] font-black uppercase text-red-400 hover:text-white hover:bg-red-500 border border-red-500/30 rounded-lg px-2 py-1 transition-all whitespace-nowrap"
+                            title="Retirar del operador (queda sin asignar)"
+                          >
+                            <UserMinus className="w-3 h-3" /> Retirar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {workloadByOperator.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+              <Users className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">Sin operadores ni tickets activos</p>
             </div>
           )}
         </div>

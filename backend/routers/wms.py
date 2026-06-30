@@ -4263,8 +4263,23 @@ async def assign_pick_ticket(ticket_id: str, request: Request):
     body = await request.json()
     operator_id = body.get("operator_id", "").strip()
     operator_name = body.get("operator_name", "").strip()
+
+    # Empty operator_id = UNASSIGN (retirar del operador): clear the assignment
+    # and return the ticket to the unassigned pool. Any picking progress
+    # (picked_sizes / deducted_map) stays on the ticket, so reassigning later
+    # resumes where it was left.
     if not operator_id:
-        raise HTTPException(400, "operator_id requerido")
+        result = await db.wms_pick_tickets.update_one(
+            {"ticket_id": ticket_id},
+            {"$set": {"assigned_to": None, "assigned_to_name": "",
+                      "picking_status": "unassigned", "assigned_at": None}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Pick ticket no encontrado")
+        await log_movement(user, "pick_ticket_unassigned", {"ticket_id": ticket_id})
+        await notify_badge_change("picking")
+        return {"message": f"Ticket {ticket_id} retirado del operador", "ticket_id": ticket_id}
+
     result = await db.wms_pick_tickets.update_one(
         {"ticket_id": ticket_id},
         {"$set": {
