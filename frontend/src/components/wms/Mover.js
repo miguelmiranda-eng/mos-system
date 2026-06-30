@@ -2,9 +2,9 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import {
   ScanLine, MapPin, Boxes, Package, Layers, ArrowRight, Loader2,
-  CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale,
+  CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
-import { fetcher, poster, cleanScan, logLoadError } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, API } from "./lib";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
@@ -93,6 +93,10 @@ export function MoverModule({ currentUser }) {
   const [origin, setOrigin] = useState("");
   const [originInput, setOriginInput] = useState("");
   const [mode, setMode] = useState(null); // 'all' | 'box' | 'units' | 'reconcile'
+  // Generar caja (material de producción sin LPN)
+  const [genForm, setGenForm] = useState({ style: '', color: '', size: '', units: '', customer: '', location: '' });
+  const [genSubmitting, setGenSubmitting] = useState(false);
+  const [genLastBox, setGenLastBox] = useState('');
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -221,6 +225,30 @@ export function MoverModule({ currentUser }) {
     [contents.lines]
   );
 
+  // ── Generar caja para material de producción sin LPN ───────────────────────
+  const printBox = (boxId) => window.open(`${API}/labels/box/${encodeURIComponent(boxId)}`, '_blank');
+  const handleGenerateBox = async () => {
+    if (!genForm.style.trim() || !genForm.location.trim() || !(Number(genForm.units) > 0)) {
+      toast.error('Estilo, unidades (>0) y ubicación son requeridos'); return;
+    }
+    setGenSubmitting(true);
+    try {
+      const res = await poster('/boxes/generate', { ...genForm, units: Number(genForm.units) });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Caja ${data.box_id} generada — imprimiendo etiqueta`);
+        setGenLastBox(data.box_id);
+        printBox(data.box_id);
+        // Keep location/customer for batch tagging; clear the per-box fields.
+        setGenForm(f => ({ ...f, style: '', color: '', size: '', units: '' }));
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo generar la caja');
+      }
+    } catch { toast.error('Error de conexión'); }
+    finally { setGenSubmitting(false); }
+  };
+
   // ── Submit handlers per mode ────────────────────────────────────────────────
   const doMove = async (label, promise) => {
     setSubmitting(true);
@@ -316,20 +344,22 @@ export function MoverModule({ currentUser }) {
           <div className="p-2.5 rounded-2xl bg-primary/10"><Move className="w-7 h-7 text-primary" /></div>
           <div>
             <h1 className="text-xl font-black uppercase tracking-tight">
-              {topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : "Mover Material"}
+              {topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
             </h1>
             <p className="text-xs text-muted-foreground">
               {topMode === "bulk"
                 ? "Sube el Excel para ajustar inventario en bloque"
                 : topMode === "adjust"
                   ? "Escanea una caja y captura su conteo real"
-                  : "Escanea una ubicación y elige qué mover"}
+                  : topMode === "generate"
+                    ? "Crea un número de caja para material de producción e imprímelo"
+                    : "Escanea una ubicación y elige qué mover"}
             </p>
           </div>
         </div>
 
         {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
-        <div className={`grid ${canBulk ? "grid-cols-3" : "grid-cols-2"} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
+        <div className={`grid ${canBulk ? "grid-cols-4" : "grid-cols-3"} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
           <button
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
             data-testid="mover-top-move"
@@ -341,6 +371,12 @@ export function MoverModule({ currentUser }) {
             data-testid="mover-top-adjust"
             className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "adjust" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
             <Scale className="w-4 h-4" /> Ajustar caja
+          </button>
+          <button
+            onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
+            data-testid="mover-top-generate"
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "generate" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            <Tag className="w-4 h-4" /> Generar caja
           </button>
           {canBulk && (
             <button
@@ -355,6 +391,49 @@ export function MoverModule({ currentUser }) {
         {/* ── BULK INVENTORY ADJUST (Excel · admin L3+) ─────────────────────── */}
         {topMode === "bulk" ? (
           <BulkInventoryAdjust />
+        ) : topMode === "generate" ? (
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+            <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+              <Tag className="w-5 h-5 text-primary" /> Generar caja para material de producción
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Material que llega de producción sin etiqueta: crea su número de caja (LPN), imprímelo y pégalo en la caja física. Después podrás moverla o ajustarla normalmente.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <input value={genForm.style} onChange={e => setGenForm(f => ({ ...f, style: e.target.value.toUpperCase() }))}
+                placeholder="Estilo *" data-testid="gen-style"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
+              <input value={genForm.color} onChange={e => setGenForm(f => ({ ...f, color: e.target.value.toUpperCase() }))}
+                placeholder="Color"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
+              <input value={genForm.size} onChange={e => setGenForm(f => ({ ...f, size: e.target.value.toUpperCase() }))}
+                placeholder="Talla"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
+              <input type="number" min="1" value={genForm.units} onChange={e => setGenForm(f => ({ ...f, units: e.target.value }))}
+                placeholder="Unidades *" data-testid="gen-units"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-black text-lg focus:outline-none focus:border-primary" />
+              <input value={genForm.customer} onChange={e => setGenForm(f => ({ ...f, customer: e.target.value }))}
+                placeholder="Cliente"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
+              <input list="gen-locs" value={genForm.location} onChange={e => setGenForm(f => ({ ...f, location: e.target.value.toUpperCase() }))}
+                placeholder="Ubicación *" data-testid="gen-location"
+                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
+              <datalist id="gen-locs">{locNames.map(n => <option key={n} value={n} />)}</datalist>
+            </div>
+            <button onClick={handleGenerateBox} disabled={genSubmitting} data-testid="gen-submit"
+              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm flex items-center justify-center gap-2 disabled:opacity-40 active:scale-95 transition-transform">
+              {genSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
+              Generar e imprimir etiqueta
+            </button>
+            {genLastBox && (
+              <div className="flex items-center justify-between gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-2.5">
+                <span className="text-xs font-bold">Última caja: <span className="font-mono text-emerald-400">{genLastBox}</span></span>
+                <button onClick={() => printBox(genLastBox)} className="flex items-center gap-1 text-xs font-black uppercase text-primary hover:underline">
+                  <Printer className="w-3.5 h-3.5" /> Reimprimir
+                </button>
+              </div>
+            )}
+          </div>
         ) : topMode === "adjust" ? (
           !adjBox ? (
             <div className="bg-card border border-border rounded-2xl p-5 space-y-3">

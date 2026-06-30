@@ -2846,6 +2846,63 @@ async def putaway_bulk(request: Request):
         msg += f", {len(failed)} con error"
     return {"message": msg, "results": results, "failed": failed}
 
+
+@router.post("/boxes/generate")
+async def generate_box(request: Request):
+    """Mint a NEW box (LPN) for material the warehouse receives from production
+    without a label, so it can be moved/adjusted and physically tagged. Creates a
+    BOX-###### id + its inventory row and returns the id to print a label."""
+    user = await require_auth(request)
+    body = await request.json()
+    style = (body.get("style") or "").strip().upper()
+    color = (body.get("color") or "").strip().upper()
+    size = (body.get("size") or "").strip().upper()
+    units = int(body.get("units") or 0)
+    location = (body.get("location") or "").strip()
+    customer = await _canonical_customer(body.get("customer", ""))
+    if not style or units <= 0 or not location:
+        raise HTTPException(400, "Estilo, unidades (>0) y ubicación son requeridos")
+    loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(location)}$", "$options": "i"}})
+    if not loc:
+        raise HTTPException(404, f"Ubicación '{location}' no encontrada. Créala primero.")
+    location = loc.get("name", location)
+    await _assert_not_on_hold(user, location)
+
+    seq = await _reserve_box_seqs(1)
+    box_id = f"BOX-{seq:06d}"
+    sku = (body.get("sku") or style).strip().upper()
+    coo = (body.get("country_of_origin") or "").strip()
+    fabric = (body.get("fabric_content") or "").strip()
+    is_bpo = bool(body.get("is_bpo", False))
+
+    inv_id = await _update_inventory_enhanced(
+        style, color, size, units, "add", customer, location, is_bpo,
+        manufacturer=(body.get("manufacturer") or "").strip(),
+        description=(body.get("description") or "").strip(),
+        country_of_origin=coo, fabric_content=fabric, box_count=1,
+    )
+    box_doc = {
+        "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
+        "inventory_id": inv_id, "customer": customer,
+        "style": style, "sku": sku, "color": color, "size": size,
+        "units": units, "qty": units, "seq_num": seq, "location": location,
+        "status": "stored", "state": "finished", "is_bpo": is_bpo,
+        "country_of_origin": coo, "coo": coo, "fabric_content": fabric,
+        "description": (body.get("description") or "").strip(),
+        "source": "production_generated",
+        "last_transferred_at": now_iso(),
+        "last_transferred_by": user.get("name", user.get("email", "")),
+        "created_at": now_iso(),
+    }
+    await db.wms_boxes.insert_one(box_doc)
+    await log_movement(user, "box_generated", {
+        "box_id": box_id, "style": style, "color": color, "size": size,
+        "units": units, "location": location, "source": "production",
+    })
+    await notify_badge_change("all")
+    return {"box_id": box_id, "location": location, "units": units,
+            "message": f"Caja {box_id} generada"}
+
 # ==================== INVENTORY ====================
 
 async def _update_inventory_enhanced(
