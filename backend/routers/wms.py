@@ -4355,6 +4355,18 @@ async def save_pick_progress(ticket_id: str, request: Request):
     if picked_locs:
         await _assert_not_on_hold(user, *picked_locs)
 
+    # Guard against a partial/stale payload silently wiping already-picked sizes.
+    # That didn't just lose progress — it REVERSED the deduction of those units
+    # (the ticket-1793 case: a re-save carrying only {L,XL} returned the
+    # previously-picked S+M to stock). A save now updates ONLY the sizes it
+    # actually mentions; sizes the client omits keep their existing picked value.
+    # To intentionally un-pick a size, send it explicitly with total 0.
+    _prev_picked = ticket.get("picked_sizes") or {}
+    _omitted = [s for s in _prev_picked if s not in picked_sizes]
+    if _omitted:
+        logger.warning("save_pick_progress %s: payload omitió tallas ya surtidas %s; se preservan (no se revierte el descuento)", ticket_id, _omitted)
+        picked_sizes = {**_prev_picked, **picked_sizes}
+
     # Destination + completeness drive the final status. A partial "complete"
     # must NOT close the ticket (Case# 005): it stays active/in_progress so an
     # admin can reassign it when more material arrives. Only a FULL pick closes.
