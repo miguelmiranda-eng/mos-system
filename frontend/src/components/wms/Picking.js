@@ -50,6 +50,7 @@ export const PickingModule = ({ currentUser } = {}) => {
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
+  const [selectedWorkload, setSelectedWorkload] = useState([]); // ticket_ids selected in the Carga tab
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
@@ -310,6 +311,31 @@ export const PickingModule = ({ currentUser } = {}) => {
       if (res.ok) { toast.success(t('assigned_correctly')); loadTickets(); loadStats(); }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
     } catch { toast.error(t('conn_error')); }
+  };
+
+  // Carga tab: multi-select reassignment/removal.
+  const toggleWorkloadSelect = (id) =>
+    setSelectedWorkload(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleWorkloadGroup = (ids, allSelected) =>
+    setSelectedWorkload(prev => allSelected ? prev.filter(x => !ids.includes(x)) : [...new Set([...prev, ...ids])]);
+  const handleBulkAssign = async (user_val) => {
+    const ids = [...selectedWorkload];
+    if (ids.length === 0) return;
+    if (!user_val && !window.confirm(`¿Retirar ${ids.length} ticket(s) de su operador?`)) return;
+    const op = operators.find(o => o.user_id === user_val || o.email === user_val) || {};
+    const payload = {
+      operator_id: user_val || "", operator_name: op.name || op.email || "",
+      assigned_to: user_val || "", assigned_to_name: op.name || op.email || "",
+    };
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try { const res = await putter(`/pick-tickets/${id}/assign`, payload); res.ok ? ok++ : fail++; }
+      catch { fail++; }
+    }
+    setSelectedWorkload([]);
+    loadTickets(); loadStats();
+    if (ok) toast.success(`${ok} ticket(s) ${user_val ? 'reasignado(s)' : 'retirado(s)'}`);
+    if (fail) toast.error(`${fail} ticket(s) fallaron`);
   };
 
   const handlePrint = (ticket) => {
@@ -913,10 +939,41 @@ export const PickingModule = ({ currentUser } = {}) => {
             <Users className="w-4 h-4" />
             Carga de trabajo por operador — reasigna o retira tickets según la carga de cada uno.
           </div>
+          {selectedWorkload.length > 0 && (
+            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-primary/15 border border-primary/40 rounded-xl shadow-lg">
+              <span className="text-xs font-black uppercase tracking-wider">{selectedWorkload.length} seleccionado(s)</span>
+              <select
+                value=""
+                onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); }}
+                className="text-xs font-bold bg-background border border-border/40 rounded-lg px-2 py-1.5 cursor-pointer"
+                title="Reasignar todos los seleccionados"
+              >
+                <option value="">Reasignar a…</option>
+                {operators.map(o => <option key={o.user_id} value={o.user_id}>{o.name || o.email}</option>)}
+              </select>
+              <button
+                onClick={() => handleBulkAssign("")}
+                className="flex items-center gap-1 text-xs font-black uppercase text-red-400 hover:text-white hover:bg-red-500 border border-red-500/40 rounded-lg px-3 py-1.5 transition-all"
+              >
+                <UserMinus className="w-3.5 h-3.5" /> Retirar
+              </button>
+              <button onClick={() => setSelectedWorkload([])} className="text-xs font-bold text-muted-foreground hover:text-foreground ml-auto">Limpiar</button>
+            </div>
+          )}
           {workloadByOperator.map(group => (
             <div key={group.id} className="rounded-2xl border border-border/30 bg-card/20 overflow-hidden">
               <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-secondary/20 border-b border-border/30">
                 <div className="flex items-center gap-2 min-w-0">
+                  {group.tickets.length > 0 && (() => {
+                    const groupIds = group.tickets.map(t => t.ticket_id);
+                    const allSel = groupIds.every(id => selectedWorkload.includes(id));
+                    return (
+                      <input type="checkbox" checked={allSel}
+                        onChange={() => toggleWorkloadGroup(groupIds, allSel)}
+                        className="w-4 h-4 rounded border-border accent-primary cursor-pointer shrink-0"
+                        title="Seleccionar todos de este operador" />
+                    );
+                  })()}
                   <span className={`w-2 h-2 rounded-full ${group.id === UNASSIGNED_KEY ? 'bg-red-500' : group.tickets.length === 0 ? 'bg-muted-foreground/40' : 'bg-emerald-500'}`} />
                   <span className="font-black uppercase tracking-wider text-sm truncate">{group.name}</span>
                 </div>
@@ -930,7 +987,11 @@ export const PickingModule = ({ currentUser } = {}) => {
               ) : (
                 <div className="divide-y divide-border/10">
                   {group.tickets.map(tk => (
-                    <div key={tk.ticket_id} className="flex items-center gap-2 px-4 py-2 hover:bg-secondary/40 transition-colors group/wrow">
+                    <div key={tk.ticket_id} className={`flex items-center gap-2 px-4 py-2 hover:bg-secondary/40 transition-colors group/wrow ${selectedWorkload.includes(tk.ticket_id) ? 'bg-primary/10' : ''}`}>
+                      <input type="checkbox" checked={selectedWorkload.includes(tk.ticket_id)}
+                        onChange={() => toggleWorkloadSelect(tk.ticket_id)}
+                        className="w-4 h-4 rounded border-border accent-primary cursor-pointer shrink-0"
+                        title="Seleccionar ticket" />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-bold truncate">
                           <span className="font-mono">{tk.order_number}</span>
