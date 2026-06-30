@@ -4046,6 +4046,7 @@ async def list_pick_tickets(
     request: Request,
     status: str = "",
     paginated: bool = False, skip: int = 0, limit: int = 1000,
+    exclude_completed: bool = False,
 ):
     """List pick tickets.
       - Default (legacy): bare array, up to 1000 newest.
@@ -4055,6 +4056,11 @@ async def list_pick_tickets(
     """
     await require_auth(request)
     query = {"status": status} if status else {}
+    if exclude_completed and not status:
+        # Default load skips finished picks (the Completed tab fetches them on
+        # demand) to save bandwidth/RAM on warehouse devices. Virtual pre-tickets
+        # are still synthesized below since status stays empty.
+        query = {"status": {"$ne": "confirmed"}, "picking_status": {"$ne": "completed"}}
 
     skip = max(0, skip)
     limit = max(1, min(limit, 1000))

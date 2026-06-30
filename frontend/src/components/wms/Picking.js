@@ -71,6 +71,11 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [selectedWorkload, setSelectedWorkload] = useState([]); // ticket_ids selected in the Carga tab
   const [pretkYear, setPretkYear] = useState(() => new Date().getFullYear());
   const [pretkMonth, setPretkMonth] = useState(() => new Date().getMonth()); // 0-11, or 'none'
+  // Completed tickets are NOT loaded by default (they can be many) — only when
+  // the user clicks "Cargar completadas", to save bandwidth/RAM.
+  const [completedTickets, setCompletedTickets] = useState([]);
+  const [completedLoaded, setCompletedLoaded] = useState(false);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
@@ -95,7 +100,7 @@ export const PickingModule = ({ currentUser } = {}) => {
     setLoadingMoreTickets(true);
 
     const fetchChunk = async (skip) => {
-      const params = new URLSearchParams({ paginated: 'true', limit: String(TICKETS_PAGE_SIZE), skip: String(skip) });
+      const params = new URLSearchParams({ paginated: 'true', limit: String(TICKETS_PAGE_SIZE), skip: String(skip), exclude_completed: 'true' });
       try {
         const data = await fetcher(`/pick-tickets?${params.toString()}`);
         if (myGen !== loadGenRef.current) return;
@@ -115,6 +120,13 @@ export const PickingModule = ({ currentUser } = {}) => {
     };
 
     fetchChunk(0);
+  }, []);
+  const loadCompletedTickets = useCallback(() => {
+    setLoadingCompleted(true);
+    fetcher('/pick-tickets?status=confirmed&paginated=true&limit=300&skip=0')
+      .then(data => { setCompletedTickets(data.items || []); setCompletedLoaded(true); })
+      .catch(logLoadError('completed-tickets'))
+      .finally(() => setLoadingCompleted(false));
   }, []);
   const loadOrders = useCallback(() => { fetcher('/orders').then(setOrders).catch(logLoadError('data')); }, []);
   const loadOperators = useCallback(() => { fetcher('/operators').then(setOperators).catch(logLoadError('data')); }, []);
@@ -433,7 +445,6 @@ export const PickingModule = ({ currentUser } = {}) => {
 
   const preTickets = filteredTickets.filter(t => t.is_virtual);
   const activeTickets = filteredTickets.filter(t => !t.is_virtual && t.status !== TicketStatus.CONFIRMED && t.picking_status !== PickingStatus.COMPLETED);
-  const completedTickets = filteredTickets.filter(t => !t.is_virtual && (t.status === TicketStatus.CONFIRMED || t.picking_status === PickingStatus.COMPLETED));
 
   // Workload grouped by operator (for the "Carga" tab): who has which active
   // tickets, so an admin can reassign or unassign by load.
@@ -677,7 +688,7 @@ export const PickingModule = ({ currentUser } = {}) => {
           {[
             { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
             { id: 'tickets', label: 'TICKETS (ACTIVOS)', icon: ClipboardCheck, count: activeTickets.length },
-            { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedTickets.length },
+            { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedLoaded ? completedTickets.length : undefined },
             { id: 'workload', label: 'CARGA', icon: Users, count: unassignedCount },
             { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
           ].map(tab => {
@@ -1009,29 +1020,50 @@ export const PickingModule = ({ currentUser } = {}) => {
       )}
       {activeTab === 'completed' && (
         <div className="space-y-6">
-          <div className="flex items-center gap-3 bg-card p-4 rounded-2xl border border-border/20 shadow-lg">
-            <div className="p-2 bg-indigo-500/10 rounded-xl">
-              <Plus className="w-5 h-5 text-indigo-400" />
+          {!completedLoaded ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-center">
+              <CheckCircle className="w-14 h-14 mb-4 text-muted-foreground/40 stroke-[1px]" />
+              <p className="text-sm font-bold text-muted-foreground mb-1">Las completadas no se cargan automáticamente</p>
+              <p className="text-[11px] text-muted-foreground/70 mb-5 max-w-sm">Para ahorrar recursos en los equipos del almacén. Cárgalas solo cuando las necesites.</p>
+              <button
+                onClick={loadCompletedTickets}
+                disabled={loadingCompleted}
+                className="flex items-center gap-2 px-5 py-2.5 bg-primary text-black text-xs font-black uppercase tracking-wider rounded-xl hover:scale-105 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+              >
+                {loadingCompleted ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                {loadingCompleted ? 'Cargando…' : 'Cargar completadas'}
+              </button>
             </div>
-            <div className="flex-1 min-w-0">
-              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1 block">{t('wms_filter_op')}</label>
-              <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0" data-testid="pick-filter-operator">
-                <option value="">{t('wms_all_ops')}</option>
-                {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
-              </select>
-            </div>
-            <div className="px-4 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground uppercase tracking-widest">
-              {filteredCompleted.length} {t('completed')}
-            </div>
-          </div>
-          <div className="flex flex-col gap-2" data-testid="pick-completed-list">
-            {filteredCompleted.map(ticket => renderTicket(ticket, false))}
-          </div>
-          {filteredCompleted.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-              <CheckCircle className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_completed_tickets')}</p>
-            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 bg-card p-4 rounded-2xl border border-border/20 shadow-lg">
+                <div className="p-2 bg-indigo-500/10 rounded-xl">
+                  <Plus className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1 block">{t('wms_filter_op')}</label>
+                  <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0" data-testid="pick-filter-operator">
+                    <option value="">{t('wms_all_ops')}</option>
+                    {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
+                  </select>
+                </div>
+                <button onClick={loadCompletedTickets} disabled={loadingCompleted} className="px-3 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground hover:text-foreground uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50" title="Refrescar completadas">
+                  {loadingCompleted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />} Refrescar
+                </button>
+                <div className="px-4 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground uppercase tracking-widest">
+                  {filteredCompleted.length} {t('completed')}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2" data-testid="pick-completed-list">
+                {filteredCompleted.map(ticket => renderTicket(ticket, false))}
+              </div>
+              {filteredCompleted.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+                  <CheckCircle className="w-16 h-16 mb-4 stroke-[1px]" />
+                  <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_completed_tickets')}</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
