@@ -761,7 +761,7 @@ async def move_location_bulk(request: Request):
     # surface this relocation; update_many only returns a count.
     src_box_filter = {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
     moved_box_ids = await db.wms_boxes.distinct("box_id", src_box_filter)
-    box_res = await db.wms_boxes.update_many(src_box_filter, {"$set": {"location": dst}})
+    box_res = await db.wms_boxes.update_many(src_box_filter, {"$set": {"location": dst, "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
     boxes_moved = box_res.modified_count
 
     # 2. Inventory: merge per SKU at destination
@@ -935,7 +935,7 @@ async def transit_relocate(request: Request):
     moved_ids = [b["box_id"] for b in boxes]
     await db.wms_boxes.update_many(
         {"box_id": {"$in": moved_ids}},
-        {"$set": {"location": dst_name, "state": "located", "status": "located"}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
     )
 
     # 2. Aggregate units per (source_location, sku, color, size) — each box's
@@ -1082,7 +1082,7 @@ async def boxes_relocate(request: Request):
     moved_ids = [b["box_id"] for b in boxes]
     await db.wms_boxes.update_many(
         {"box_id": {"$in": moved_ids}},
-        {"$set": {"location": dst_name, "state": "located", "status": "located"}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
     )
 
     # 2. Rebalance inventory: bucket by (source_location, sku, color, size) so
@@ -1254,7 +1254,7 @@ async def move_units(request: Request):
             # Whole box relocates to the destination.
             await db.wms_boxes.update_one(
                 {"_id": box["_id"]},
-                {"$set": {"location": dst_name, "status": "stored"}},
+                {"$set": {"location": dst_name, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
             )
             whole_count += 1
             moved_box_ids.append(box.get("box_id"))
@@ -1472,6 +1472,8 @@ async def reconcile_lpn(request: Request):
             "generic_lpn": box_id,            # remember the synthetic id we replaced
             "lpn_reconciled_at": now_iso(),
             "lpn_reconciled_by": user.get("user_id"),
+            "last_transferred_at": now_iso(),
+            "last_transferred_by": user.get("name", user.get("email", "")),
             "updated_at": now_iso(),
         }},
     )
@@ -2769,7 +2771,7 @@ async def putaway_box(request: Request):
             await _assert_not_on_hold(user, *{b.get("location") for b in boxes})
             for b in boxes:
                 old_loc = b.get("location")
-                await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored"}})
+                await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
                 await log_movement(user, "putaway", {"box_id": b["box_id"], "from": old_loc, "to": location, "sku": b.get("sku"), "units": b.get("units")})
                 await _move_box_inventory(b, old_loc, location)
             await notify_badge_change("putaway")
@@ -2778,7 +2780,7 @@ async def putaway_box(request: Request):
 
     old_location = box.get("location")
     await _assert_not_on_hold(user, old_location)
-    await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
+    await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
     await _move_box_inventory(box, old_location, location)
     await notify_badge_change("putaway")
@@ -2829,7 +2831,7 @@ async def putaway_bulk(request: Request):
             continue
         # Persist the catalog's canonical name so casing stays consistent.
         canonical = dst_loc.get("name", location)
-        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": canonical, "status": "stored"}})
+        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": canonical, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
         await _move_box_inventory(box, old_loc, canonical)
         results.append({"box_id": box_id, "location": canonical})
 
@@ -7626,11 +7628,11 @@ async def complete_task(task_id: str, request: Request):
         dest_location = body.get("destination_location", "").strip()
         if not dest_location:
             raise HTTPException(400, "destination_location is required for putaway")
-        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "stored"}})
-        
+        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
+
     elif task["task_type"] == "cross_dock":
         dest_location = body.get("destination_location", "Produccion")
-        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "cross_docked"}})
+        await db.wms_boxes.update_one({"box_id": lpn_id}, {"$set": {"location": dest_location, "status": "cross_docked", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
         
     await db.wms_tasks.update_one({"task_id": task_id}, {
         "$set": {"status": "completed", "completed_at": now_iso(), "completed_by": user.get("name", "")}

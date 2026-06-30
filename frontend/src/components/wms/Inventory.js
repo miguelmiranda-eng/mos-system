@@ -1006,6 +1006,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                         <th className="p-2 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
                         <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
                         <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
+                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Transferido</th>
+                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Por</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1015,6 +1017,8 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
                           <td className="p-2 text-right font-mono font-black text-emerald-400">{(b.units || b.qty || 0).toLocaleString()}</td>
                           <td className="p-2 font-mono text-[11px] text-emerald-400">{b.location || '—'}</td>
                           <td className="p-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{b.state || b.status || '—'}</td>
+                          <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{b.last_transferred_at ? new Date(b.last_transferred_at).toLocaleString() : '—'}</td>
+                          <td className="p-2 text-[10px] font-bold text-muted-foreground">{b.last_transferred_by || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
