@@ -87,20 +87,43 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
             query["board"] = {"$in": active_boards}
         elif board:
             query["board"] = board
-        if search:
-            # Global search across the common business fields so the board's
-            # search box (and the Enter → server search) finds by color, customer,
-            # style, manufacturer, etc. — not just the order reference.
-            _search_fields = [
-                "order_number", "store_po", "customer_po", "client",
-                "branding", "notes", "customer", "color", "style",
-                "manufacturer", "job_title_a", "job_title_b",
-            ]
-            query["$or"] = [{f: {"$regex": re.escape(search), "$options": "i"}} for f in _search_fields]
         # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
         # These are fetched individually when opening the order details.
         projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
-        orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
+        if search:
+            # Global, dynamic-column-safe search: match the query against ANY field
+            # value in Python — covers custom columns with odd names like
+            # 'bpo_(blank_po#)' and 'store_po#' that a fixed $or list keeps missing.
+            # The orders collection is small (~1.6k) so this is cheap. Skips
+            # id/date/asset keys so digits don't match a timestamp or image hash.
+            sq = search.strip().lower()
+            _skip_key = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
+            def _flat(v):
+                if v is None:
+                    return ""
+                if isinstance(v, dict):
+                    return " ".join(_flat(x) for x in v.values())
+                if isinstance(v, list):
+                    return " ".join(_flat(x) for x in v)
+                return str(v).lower()
+            raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(5000)
+            ranked = []  # (0=exact field match, 1=substring) so exact hits rank first
+            for o in raw:
+                hit = exact = False
+                for k, v in o.items():
+                    if _skip_key.search(k):
+                        continue
+                    if sq in _flat(v):
+                        hit = True
+                        if isinstance(v, (str, int, float)) and str(v).strip().lower() == sq:
+                            exact = True
+                            break
+                if hit:
+                    ranked.append((0 if exact else 1, o))
+            ranked.sort(key=lambda r: r[0])  # stable → keeps created_at desc within each tier
+            orders_raw = [o for _, o in ranked[:limit]]
+        else:
+            orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
         
         # Safety loop to avoid serialization/merging crashes
         cleaned_orders = []

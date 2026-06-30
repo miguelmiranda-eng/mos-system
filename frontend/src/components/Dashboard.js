@@ -66,7 +66,7 @@ import { useOrders, apiFetch } from "../hooks/useOrders";
 // art {url,desc} objects) so the search box matches ANYTHING the user types,
 // not just a fixed field list. Internal id/timestamp keys are skipped so typing
 // digits like "2026" doesn't accidentally match every order's created_at.
-const _SEARCH_SKIP_KEY = /(_id$|^id$|_at$|^created|^updated|timestamp)/i;
+const _SEARCH_SKIP_KEY = /(_id$|^id$|_at$|^created|^updated|timestamp|^images$|^attachments$|^files$)/i;
 function _flattenOrderValue(v) {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(_flattenOrderValue).join(" ");
