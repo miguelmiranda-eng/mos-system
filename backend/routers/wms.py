@@ -5316,12 +5316,41 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         if held:
             inventory = [r for r in inventory if (r.get("location") or "").strip().upper() not in held]
     import xlsxwriter
+    # Pull boxes up-front so the aggregated "Inventory" sheet can show each row's
+    # MOST RECENT box transfer (date + user). Reused for the per-box sheet below.
+    boxes = await db.wms_boxes.find(
+        {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]},
+        {"_id": 0},
+    ).sort([("location", 1), ("sku", 1)]).to_list(None)
+    if exclude_hold and held:
+        boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
+    # Last transfer INTO each location (date + user) from the movement log. The
+    # destination ('to') is always recorded — unlike the box_id list which bulk
+    # moves cap at 50 — so this answers "cuándo se transfirió material a esta
+    # ubicación y quién" with FULL coverage. (The per-box sheet below uses each
+    # box's own stamp for box-level precision.)
+    loc_transfer = {}
+    async for mv in db.wms_movements.find(
+        {"type": {"$in": ["putaway", "putaway_bulk", "bulk_relocation",
+                          "transit_relocation", "lpn_reconciled", "task_completed"]}},
+        {"_id": 0, "created_at": 1, "user_name": 1, "user_id": 1, "details": 1},
+    ).sort("created_at", -1):
+        d = mv.get("details") or {}
+        dest = (d.get("to") or d.get("destination") or d.get("location") or "").strip().upper()
+        if dest and dest not in loc_transfer:  # first seen = newest (sorted desc)
+            loc_transfer[dest] = (mv.get("created_at") or "", mv.get("user_name") or mv.get("user_id") or "")
+
+    def _row_transfer(inv):
+        tr = loc_transfer.get((inv.get("location") or "").strip().upper())
+        return (tr[0][:19].replace("T", " "), tr[1]) if tr else ("", "")
+
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)
     ws = wb.add_worksheet("Inventory")
     headers = ["Customer", "Style", "Color", "Size", "Description", "Category",
                "Manufacturer", "Location", "Total Boxes", "On Hand", "Allocated", "Available",
-               "Country of Origin", "Fabric Content", "Is BPO"]
+               "Country of Origin", "Fabric Content", "Is BPO",
+               "Última transferencia", "Transferido por"]
     bold = wb.add_format({"bold": True})
     for i, h in enumerate(headers):
         ws.write(0, i, h, bold)
@@ -5341,16 +5370,13 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         ws.write(row, 12, inv.get("country_of_origin", ""))
         ws.write(row, 13, inv.get("fabric_content", ""))
         ws.write(row, 14, "YES" if inv.get("is_bpo") else "NO")
+        _tr_at, _tr_by = _row_transfer(inv)
+        ws.write(row, 15, _tr_at)
+        ws.write(row, 16, _tr_by)
 
     # ── Sheet 2: box-level detail (Case# 007) ────────────────────────────────
     # Which physical box / LPN sits in each location — the aggregated sheet above
-    # buckets by SKU+location and hides the box numbers. Reports need both.
-    boxes = await db.wms_boxes.find(
-        {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]},
-        {"_id": 0},
-    ).sort([("location", 1), ("sku", 1)]).to_list(None)
-    if exclude_hold and held:
-        boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
+    # buckets by SKU+location and hides the box numbers. (boxes fetched up-front.)
     ws2 = wb.add_worksheet("Cajas - LPNs")
     box_headers = ["Box / LPN", "Customer", "Style", "Color", "Size", "Location",
                    "Units", "Status", "Country of Origin", "Fabric Content", "Description",
