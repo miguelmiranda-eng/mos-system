@@ -88,14 +88,15 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
         elif board:
             query["board"] = board
         if search:
-            query["$or"] = [
-                {"order_number": {"$regex": search, "$options": "i"}},
-                {"store_po": {"$regex": search, "$options": "i"}},
-                {"customer_po": {"$regex": search, "$options": "i"}},
-                {"client": {"$regex": search, "$options": "i"}},
-                {"branding": {"$regex": search, "$options": "i"}},
-                {"notes": {"$regex": search, "$options": "i"}}
+            # Global search across the common business fields so the board's
+            # search box (and the Enter → server search) finds by color, customer,
+            # style, manufacturer, etc. — not just the order reference.
+            _search_fields = [
+                "order_number", "store_po", "customer_po", "client",
+                "branding", "notes", "customer", "color", "style",
+                "manufacturer", "job_title_a", "job_title_b",
             ]
+            query["$or"] = [{f: {"$regex": re.escape(search), "$options": "i"}} for f in _search_fields]
         # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
         # These are fetched individually when opening the order details.
         projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
