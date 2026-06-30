@@ -1046,6 +1046,11 @@ async def boxes_relocate(request: Request):
             "moved": 0, "units_moved": 0, "skus_moved": 0, "to": dst_name,
         }
 
+    # HOLD guard: stock in (or headed into) a SAT-held bin can't be relocated
+    # until released. The other move endpoints check this; this one didn't.
+    src_locs = {(b.get("location") or "") for b in boxes}
+    await _assert_not_on_hold(user, dst_name, *src_locs)
+
     # 1. Bulk update box locations.
     moved_ids = [b["box_id"] for b in boxes]
     await db.wms_boxes.update_many(
@@ -1504,7 +1509,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
          rows pointing to it — otherwise the operator orphans stock that
          can't be surfaced anywhere in the UI. Pass `?force=true` to
          override this second guard (advanced; doesn't bypass #1)."""
-    await require_auth(request)
+    user = await require_auth(request)
     loc = await db.wms_locations.find_one({"location_id": location_id})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")
@@ -1535,9 +1540,22 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
                 ),
             )
 
+    # With force, Guard 2 was skipped — so sweep any remaining content into
+    # UBICACION TEMPORAL instead of orphaning it (stock pointing at a deleted
+    # bin is invisible everywhere). Case-insensitive to catch mixed casing.
+    if force:
+        temp = "UBICACION TEMPORAL"
+        mb = await db.wms_boxes.update_many({"location": _ci_eq(name)}, {"$set": {"location": temp, "status": "located", "state": "located"}})
+        mi = await db.wms_inventory.update_many({"location": _ci_eq(name)}, {"$set": {"location": temp, "updated_at": now_iso()}})
+        if mb.modified_count or mi.modified_count:
+            if not await db.wms_locations.find_one({"name": _ci_eq(temp)}):
+                await db.wms_locations.insert_one({"location_id": gen_id("loc"), "name": temp, "zone": "TEMPORAL", "type": "rack", "active": True, "created_at": now_iso()})
+            await log_movement(user, "location_force_swept", {"name": name, "moved_to": temp, "boxes": mb.modified_count, "inv_rows": mi.modified_count})
+
     result = await db.wms_locations.delete_one({"location_id": location_id})
     if result.deleted_count == 0:
         raise HTTPException(404, "Ubicacion no encontrada")
+    await log_movement(user, "location_deleted", {"name": name, "forced": force})
     return {"message": f"Ubicacion '{name}' eliminada"}
 
 @router.put("/locations/{location_id}")
@@ -1578,8 +1596,11 @@ async def update_location(location_id: str, request: Request):
     if update_doc:
         await db.wms_locations.update_one({"location_id": location_id}, {"$set": update_doc})
         if "name" in update_doc:
-            await db.wms_inventory.update_many({"location": old_name}, {"$set": {"location": new_name}})
-            await db.wms_boxes.update_many({"location": old_name}, {"$set": {"location": new_name}})
+            # Case-insensitive match so rows stored with different casing
+            # (Sand vs SAND) follow the rename instead of being orphaned at the
+            # old name once the bin is gone.
+            await db.wms_inventory.update_many({"location": _ci_eq(old_name)}, {"$set": {"location": new_name}})
+            await db.wms_boxes.update_many({"location": _ci_eq(old_name)}, {"$set": {"location": new_name}})
             await log_movement(user, "location_renamed", {"old_name": old_name, "new_name": new_name})
             
     updated_loc = await db.wms_locations.find_one({"location_id": location_id}, {"_id": 0})
@@ -4829,9 +4850,23 @@ async def production_move(request: Request):
             continue
         await _assert_not_on_hold(user, box.get("location"))
         old_state = box.get("state", "raw")
+        units = int((box.get("units") if box.get("units") is not None else box.get("qty", 0)) or 0)
+        sku = box.get("style") or box.get("sku")
+        loc = box.get("location", "")
+        cust = box.get("customer", "")
+        # Inventory effect by state (decisión: WIP sale del inventario de almacén,
+        # finished sigue contando como producto terminado embarcable):
+        #   entrar a wip  -> deduct units_on_hand (deja de ser surtible)
+        #   salir de wip  -> re-add las unidades (vuelve como raw/finished)
+        # box_count=0 en el re-add: la caja ya existe, no se crea otra.
+        if units > 0:
+            if old_state != "wip" and target_state == "wip":
+                await _update_inventory_enhanced(sku, box.get("color", ""), box.get("size", ""), units, "deduct", location=loc, customer=cust)
+            elif old_state == "wip" and target_state != "wip":
+                await _update_inventory_enhanced(sku, box.get("color", ""), box.get("size", ""), units, "add", customer=cust, location=loc, box_count=0)
         await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"state": target_state, "status": "in_production" if target_state == "wip" else ("finished" if target_state == "finished" else box.get("status")), **({"production_order": order_ref} if order_ref else {})}})
         moved.append({"box_id": box_id, "from": old_state, "to": target_state,
-                      "sku": box.get("style") or box.get("sku"), "units": box.get("units", 0)})
+                      "sku": sku, "units": units})
     move_doc = {
         "move_id": gen_id("pmov"), "box_ids": box_ids,
         "target_state": target_state, "moved": moved,
@@ -6874,6 +6909,20 @@ async def delete_inventory_row(inventory_id: str, request: Request):
     inv = await db.wms_inventory.find_one({"inventory_id": inventory_id})
     if not inv:
         raise HTTPException(404, "Inventario no encontrado")
+    # Optional motivo for the audit trail. Read from body if present, else query
+    # param; not hard-required so the Locations modal keeps working, but captured
+    # whenever supplied.
+    reason = ""
+    try:
+        _b = await request.json()
+        if isinstance(_b, dict):
+            reason = str(_b.get("reason", "") or "").strip()
+    except Exception:
+        pass
+    if not reason:
+        reason = (request.query_params.get("reason") or "").strip()
+    # Capture which LPNs are removed so the deletion is reconstructable.
+    box_ids = await db.wms_boxes.distinct("box_id", {"inventory_id": inventory_id})
     await db.wms_inventory.delete_one({"inventory_id": inventory_id})
     box_res = await db.wms_boxes.delete_many({"inventory_id": inventory_id})
     await log_movement(user, "inventory_deleted", {
@@ -6883,6 +6932,8 @@ async def delete_inventory_row(inventory_id: str, request: Request):
         "location": inv.get("location"),
         "units_removed": inv.get("units_on_hand", 0),
         "boxes_removed": box_res.deleted_count,
+        "box_ids": box_ids[:100],
+        "reason": reason or None,
     })
     return {"message": "Inventario eliminado", "inventory_id": inventory_id, "boxes_removed": box_res.deleted_count}
 
