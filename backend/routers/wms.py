@@ -5353,7 +5353,8 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
     ws2 = wb.add_worksheet("Cajas - LPNs")
     box_headers = ["Box / LPN", "Customer", "Style", "Color", "Size", "Location",
-                   "Units", "Status", "Country of Origin", "Fabric Content", "Description"]
+                   "Units", "Status", "Country of Origin", "Fabric Content", "Description",
+                   "Última transferencia", "Transferido por"]
     for i, h in enumerate(box_headers):
         ws2.write(0, i, h, bold)
     for row, b in enumerate(boxes, 1):
@@ -5368,6 +5369,8 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         ws2.write(row, 8, b.get("country_of_origin", b.get("coo", "")))
         ws2.write(row, 9, b.get("fabric_content", ""))
         ws2.write(row, 10, b.get("description", ""))
+        ws2.write(row, 11, (b.get("last_transferred_at") or "")[:19].replace("T", " "))
+        ws2.write(row, 12, b.get("last_transferred_by", ""))
 
     wb.close()
     buf.seek(0)
