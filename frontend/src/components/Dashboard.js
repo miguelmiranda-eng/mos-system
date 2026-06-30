@@ -61,6 +61,27 @@ import { cn } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API, normalizePublicUrl } from "../lib/constants";
 import { useOrders, apiFetch } from "../hooks/useOrders";
 
+// ── Global order search ────────────────────────────────────────────────────
+// Flatten every value of an order (including dynamic/custom columns and nested
+// art {url,desc} objects) so the search box matches ANYTHING the user types,
+// not just a fixed field list. Internal id/timestamp keys are skipped so typing
+// digits like "2026" doesn't accidentally match every order's created_at.
+const _SEARCH_SKIP_KEY = /(_id$|^id$|_at$|^created|^updated|timestamp)/i;
+function _flattenOrderValue(v) {
+  if (v == null) return "";
+  if (Array.isArray(v)) return v.map(_flattenOrderValue).join(" ");
+  if (typeof v === "object") return Object.values(v).map(_flattenOrderValue).join(" ");
+  return String(v).toLowerCase();
+}
+function orderMatchesQuery(order, sq) {
+  if (!sq) return true;
+  for (const k of Object.keys(order)) {
+    if (_SEARCH_SKIP_KEY.test(k)) continue;
+    if (_flattenOrderValue(order[k]).includes(sq)) return true;
+  }
+  return false;
+}
+
 const Dashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -834,15 +855,9 @@ const Dashboard = () => {
   // keeps search snappy on iPad Safari.
   const matchesSearch = useCallback((order) => {
     if (!debouncedSearchQuery) return true;
-    const sq = debouncedSearchQuery.toLowerCase();
-    const getVal = (v) => {
-      if (!v) return "";
-      if (typeof v === 'object') return `${v.url || ""} ${v.desc || ""}`.toLowerCase();
-      return String(v).trim().toLowerCase();
-    };
-    return [order.order_number, order.client, order.store_po, order.customer_po,
-            order.job_title_a, order.job_title_b, order.branding, order.notes]
-      .some(f => getVal(f).includes(sq));
+    // Global search across every field of the order (incl. customer, style,
+    // color, manufacturer, status and any dynamic column), not just a fixed set.
+    return orderMatchesQuery(order, debouncedSearchQuery.toLowerCase());
   }, [debouncedSearchQuery]);
 
   const renderOrderRow = useCallback((order) => {
@@ -853,16 +868,7 @@ const Dashboard = () => {
       return String(v).trim().toLowerCase();
     };
 
-    const isSearchMatch = debouncedSearchQuery && (
-      getVal(order.order_number).includes(sq) ||
-      getVal(order.client).includes(sq) ||
-      getVal(order.store_po).includes(sq) ||
-      getVal(order.customer_po).includes(sq) ||
-      getVal(order.job_title_a).includes(sq) ||
-      getVal(order.job_title_b).includes(sq) ||
-      getVal(order.branding).includes(sq) ||
-      getVal(order.notes).includes(sq)
-    );
+    const isSearchMatch = debouncedSearchQuery && orderMatchesQuery(order, sq);
 
     const isSelected = selectedOrders.includes(order.order_id);
     const rowBgClass = isSearchMatch
