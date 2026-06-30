@@ -5340,9 +5340,25 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
         if dest and dest not in loc_transfer:  # first seen = newest (sorted desc)
             loc_transfer[dest] = (mv.get("created_at") or "", mv.get("user_name") or mv.get("user_id") or "")
 
+    # Fallback for material loaded via import (no transfer movement): show when
+    # the newest box at that location was created, marked "(carga inicial)" so
+    # it's clearly a load, not a user transfer.
+    loc_loaded = {}
+    for b in boxes:
+        ca = b.get("created_at")
+        loc = (b.get("location") or "").strip().upper()
+        if ca and loc and (loc not in loc_loaded or ca > loc_loaded[loc]):
+            loc_loaded[loc] = ca
+
     def _row_transfer(inv):
-        tr = loc_transfer.get((inv.get("location") or "").strip().upper())
-        return (tr[0][:19].replace("T", " "), tr[1]) if tr else ("", "")
+        loc = (inv.get("location") or "").strip().upper()
+        tr = loc_transfer.get(loc)
+        if tr:
+            return (tr[0][:19].replace("T", " "), tr[1])
+        ca = loc_loaded.get(loc)
+        if ca:
+            return (ca[:19].replace("T", " "), "(carga inicial)")
+        return ("", "")
 
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)
