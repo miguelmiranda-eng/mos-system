@@ -811,10 +811,15 @@ export const LocationsModule = ({ currentUser }) => {
                 {grouped[zone].map(l => {
                   const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
                   const isEmpty = summary.total_units === 0;
+                  // content-visibility:auto lets the browser skip layout/paint for
+                  // off-screen rows (cheap "virtualization" without a library);
+                  // contain-intrinsic-size reserves each row's height so the
+                  // scrollbar stays correct. Graceful no-op on old browsers.
                   return (
                     <div
                       key={l.location_id}
                       onClick={() => !isEmpty && openDetail(l)}
+                      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 38px' }}
                       className={`grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 items-center border-b border-border/10 hover:bg-secondary/30 transition-colors border-l-2 ${isEmpty ? 'border-l-transparent opacity-60' : `cursor-pointer ${activeTab === 'system' ? 'border-l-indigo-500/40' : 'border-l-primary/40'}`}`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
