@@ -7,16 +7,9 @@ import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
-// Deadline urgency for a pre-ticket (by cancel_date / due_date) so the assigner
-// can prioritize by date instead of filtering an Excel. Returns the bucket,
-// a sort order, a short label and a Tailwind chip class.
-const PRETICKET_BUCKETS = [
-  { key: 'overdue', label: 'Vencidas', dot: 'bg-red-500' },
-  { key: 'today', label: 'Hoy', dot: 'bg-orange-500' },
-  { key: 'week', label: 'Esta semana', dot: 'bg-yellow-500' },
-  { key: 'later', label: 'Próximas', dot: 'bg-emerald-500' },
-  { key: 'none', label: 'Sin fecha', dot: 'bg-muted-foreground/40' },
-];
+const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+// Deadline urgency color for a pre-ticket's cancel_date chip.
 function deadlineInfo(dateStr) {
   const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-secondary/60 text-muted-foreground border-border/30' };
   if (!dateStr) return none;
@@ -76,6 +69,8 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
   const [selectedWorkload, setSelectedWorkload] = useState([]); // ticket_ids selected in the Carga tab
+  const [pretkYear, setPretkYear] = useState(() => new Date().getFullYear());
+  const [pretkMonth, setPretkMonth] = useState(() => new Date().getMonth()); // 0-11, or 'none'
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
@@ -890,30 +885,82 @@ export const PickingModule = ({ currentUser } = {}) => {
       {/* Tab Content */}
       {activeTab === 'pretickets' && (
         <div className="space-y-4" data-testid="pick-pretickets-list">
-          {(() => {
-            // Calendar-style view: sort by deadline (overdue/closest first) and
-            // group into urgency buckets so the assigner prioritizes by date.
-            const sorted = [...preTickets].sort((a, b) => {
-              const da = deadlineInfo(a.cancel_date), db_ = deadlineInfo(b.cancel_date);
-              if (da.order !== db_.order) return da.order - db_.order;
-              return new Date(a.cancel_date || '9999-12-31') - new Date(b.cancel_date || '9999-12-31');
+          {preTickets.length > 0 && (() => {
+            // Calendar view: the 12 months of the year on top; pick a month and
+            // it shows ONLY that month's pre-tickets, split by week. No giant
+            // list — you drill month → week.
+            const parsed = preTickets.map(tk => {
+              const d = tk.cancel_date ? new Date(tk.cancel_date) : null;
+              const ok = d && !isNaN(d.getTime());
+              return { tk, year: ok ? d.getFullYear() : null, month: ok ? d.getMonth() : null, day: ok ? d.getDate() : null };
             });
-            return PRETICKET_BUCKETS.map(b => {
-              const items = sorted.filter(tk => deadlineInfo(tk.cancel_date).bucket === b.key);
-              if (items.length === 0) return null;
-              return (
-                <div key={b.key} className="space-y-2">
-                  <div className="flex items-center gap-2 px-1">
-                    <span className={`w-2 h-2 rounded-full ${b.dot}`} />
-                    <span className="text-xs font-black uppercase tracking-widest">{b.label}</span>
-                    <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{items.length}</span>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    {items.map(ticket => renderTicket(ticket))}
-                  </div>
+            const noDate = parsed.filter(p => p.year === null);
+            const years = [...new Set(parsed.filter(p => p.year !== null).map(p => p.year))].sort();
+            const monthCounts = PRETK_MONTHS.map((_, m) => parsed.filter(p => p.year === pretkYear && p.month === m).length);
+            const inSel = pretkMonth === 'none' ? noDate : parsed.filter(p => p.year === pretkYear && p.month === pretkMonth);
+            const weeks = {};
+            for (const p of inSel) {
+              const wk = p.day ? Math.floor((p.day - 1) / 7) + 1 : 0;
+              (weeks[wk] = weeks[wk] || []).push(p);
+            }
+            const weekKeys = Object.keys(weeks).map(Number).sort((a, b) => a - b);
+            return (
+              <>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {years.length > 1 && (
+                    <select value={pretkYear} onChange={e => setPretkYear(Number(e.target.value))}
+                      className="text-xs font-black bg-secondary/40 border border-border/30 rounded-lg px-2 py-1.5 mr-1 cursor-pointer">
+                      {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  )}
+                  {PRETK_MONTHS.map((mn, m) => {
+                    const c = monthCounts[m];
+                    const active = pretkMonth === m;
+                    return (
+                      <button key={m} onClick={() => setPretkMonth(m)}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all
+                          ${active ? 'bg-primary text-black shadow' : c ? 'bg-secondary/40 hover:bg-secondary/70' : 'bg-secondary/20 text-muted-foreground/50'}`}>
+                        {mn}
+                        {c > 0 && <span className={`px-1 rounded text-[9px] ${active ? 'bg-black/10' : 'bg-primary/20 text-primary'}`}>{c}</span>}
+                      </button>
+                    );
+                  })}
+                  {noDate.length > 0 && (
+                    <button onClick={() => setPretkMonth('none')}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${pretkMonth === 'none' ? 'bg-primary text-black shadow' : 'bg-secondary/40 hover:bg-secondary/70'}`}>
+                      Sin fecha <span className="px-1 rounded text-[9px] bg-primary/20 text-primary">{noDate.length}</span>
+                    </button>
+                  )}
                 </div>
-              );
-            });
+
+                {weekKeys.map(wk => {
+                  const items = weeks[wk].sort((a, b) => (a.day || 0) - (b.day || 0)).map(p => p.tk);
+                  return (
+                    <div key={wk} className="space-y-2">
+                      <div className="flex items-center gap-2 px-1">
+                        <Calendar className="w-3.5 h-3.5 text-primary" />
+                        <span className="text-xs font-black uppercase tracking-widest">
+                          {wk === 0 ? 'Sin día' : `Semana ${wk}`}
+                        </span>
+                        {wk > 0 && <span className="text-[10px] text-muted-foreground">días {(wk - 1) * 7 + 1}–{wk * 7}</span>}
+                        <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{items.length}</span>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {items.map(ticket => renderTicket(ticket))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {inSel.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-60">
+                    <Calendar className="w-12 h-12 mb-3 stroke-[1px]" />
+                    <p className="font-bold uppercase tracking-widest text-sm italic">
+                      Sin órdenes en {pretkMonth === 'none' ? 'esta categoría' : `${PRETK_MONTHS[pretkMonth]} ${pretkYear}`}
+                    </p>
+                  </div>
+                )}
+              </>
+            );
           })()}
           {preTickets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
