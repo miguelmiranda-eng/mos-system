@@ -2611,7 +2611,11 @@ async def _available_units(style, color, size, location=""):
     # "disponible 0" even though the stock is right there.
     base = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}], "color": _ci_eq(color), "size": _ci_eq(sz)}
 
-    box_q = {**base, "units": {"$gt": 0}}
+    # Exclude boxes that have already left available stock (shipped, in
+    # production, finished, in neck cutting, confirmed) so picking can't be
+    # offered units that are physically committed elsewhere. Legacy boxes with
+    # no status field stay counted ($nin keeps nulls).
+    box_q = {**base, "units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}}
     if location:
         box_q["location"] = _ci_eq(location)
     box_units = 0
@@ -2738,23 +2742,59 @@ async def putaway_bulk(request: Request):
     body = await request.json()
     assignments = body.get("assignments", [])
     results = []
+    failed = []
+    loc_cache: dict[str, dict] = {}
+
+    async def _resolve_loc(name):
+        # Cache catalog lookups; match case-insensitively like the other move
+        # endpoints. Returns the canonical location doc or None.
+        key = name.upper()
+        if key not in loc_cache:
+            loc_cache[key] = await db.wms_locations.find_one(
+                {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+            )
+        return loc_cache[key]
+
     for a in assignments:
         box_id = a.get("box_id", "").strip()
         location = a.get("location", "").strip()
-        if box_id and location:
-            box = await db.wms_boxes.find_one({"box_id": box_id})
-            if box:
-                old_loc = box.get("location")
-                await _assert_not_on_hold(user, location, old_loc)
-                await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored"}})
-                await _move_box_inventory(box, old_loc, location)
-                results.append({"box_id": box_id, "location": location})
+        if not box_id or not location:
+            failed.append({"box_id": box_id, "location": location, "reason": "box_id y location requeridos"})
+            continue
+        # A7: never move stock into a bin that isn't in the catalog — that is how
+        # entire rack zones ended up as phantom locations (LIF03/07-11), invisible
+        # in the Locations UI. putaway_box already guards this; bulk did not.
+        dst_loc = await _resolve_loc(location)
+        if not dst_loc:
+            failed.append({"box_id": box_id, "location": location, "reason": f"Ubicación destino '{location}' no encontrada. Créala primero."})
+            continue
+        box = await db.wms_boxes.find_one({"box_id": box_id})
+        if not box:
+            failed.append({"box_id": box_id, "location": location, "reason": "Caja no encontrada"})
+            continue
+        old_loc = box.get("location")
+        try:
+            await _assert_not_on_hold(user, location, old_loc)
+        except HTTPException as e:
+            # A held bin must not abort the whole batch — record and move on.
+            failed.append({"box_id": box_id, "location": location, "reason": e.detail})
+            continue
+        # Persist the catalog's canonical name so casing stays consistent.
+        canonical = dst_loc.get("name", location)
+        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": canonical, "status": "stored"}})
+        await _move_box_inventory(box, old_loc, canonical)
+        results.append({"box_id": box_id, "location": canonical})
+
     await log_movement(user, "putaway_bulk", {
         "count": len(results),
+        "failed": len(failed),
         "box_ids": [r["box_id"] for r in results][:50],  # cap log payload
     })
     await notify_badge_change("putaway")
-    return {"message": f"{len(results)} cajas ubicadas", "results": results}
+    msg = f"{len(results)} cajas ubicadas"
+    if failed:
+        msg += f", {len(failed)} con error"
+    return {"message": msg, "results": results, "failed": failed}
 
 # ==================== INVENTORY ====================
 
@@ -3469,6 +3509,20 @@ async def get_wms_order(order_id: str, request: Request):
 @router.post("/stocktakes")
 async def create_allocation(request: Request):
     user = await require_auth(request)
+    # NEUTRALIZED (WMS audit C1). The allocation/reservation subsystem is
+    # disconnected from picking: pick tickets are generated straight from the
+    # order and the picker deducts units_on_hand directly, never reading
+    # wms_allocations. Worse, the check below validated against inv["available"],
+    # a field that is never persisted (only computed on the fly), so every
+    # allocation with qty>=1 already failed with "Disponible: 0". Leaving the
+    # write path active only risked inflating units_allocated with reservations
+    # that no pick ever releases. Disabled here; GET /allocations and
+    # DELETE /allocations/{id} stay live so existing rows can be viewed/cleared.
+    raise HTTPException(
+        410,
+        "El módulo de Allocation está deshabilitado: el surtido descuenta "
+        "inventario directamente y no requiere reserva previa.",
+    )
     body = await request.json()
     order_id = body.get("order_id", "").strip()
     items = body.get("items", [])
@@ -4761,6 +4815,9 @@ async def production_move(request: Request):
     body = await request.json()
     box_ids = body.get("box_ids", [])
     target_state = body.get("target_state", "wip")
+    # Optional production/order reference so the move is traceable to WHERE the
+    # material went (the log previously kept only a count).
+    order_ref = (str(body.get("order_number") or body.get("order_id") or "")).strip()
     if not box_ids:
         raise HTTPException(400, "box_ids requeridos")
     if target_state not in ["raw", "wip", "finished"]:
@@ -4772,18 +4829,25 @@ async def production_move(request: Request):
             continue
         await _assert_not_on_hold(user, box.get("location"))
         old_state = box.get("state", "raw")
-        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"state": target_state, "status": "in_production" if target_state == "wip" else ("finished" if target_state == "finished" else box.get("status"))}})
-        moved.append({"box_id": box_id, "from": old_state, "to": target_state})
+        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"state": target_state, "status": "in_production" if target_state == "wip" else ("finished" if target_state == "finished" else box.get("status")), **({"production_order": order_ref} if order_ref else {})}})
+        moved.append({"box_id": box_id, "from": old_state, "to": target_state,
+                      "sku": box.get("style") or box.get("sku"), "units": box.get("units", 0)})
     move_doc = {
         "move_id": gen_id("pmov"), "box_ids": box_ids,
         "target_state": target_state, "moved": moved,
+        "order_number": order_ref or None,
         "moved_by": user.get("user_id"),
         "moved_by_name": user.get("name", ""),
         "created_at": now_iso(),
     }
     await db.wms_production_moves.insert_one(move_doc)
     move_doc.pop("_id", None)
-    await log_movement(user, "production_move", {"target_state": target_state, "count": len(moved)})
+    await log_movement(user, "production_move", {
+        "target_state": target_state, "count": len(moved),
+        "order_number": order_ref or None,
+        "box_ids": [m["box_id"] for m in moved][:50],
+        "skus": sorted({m["sku"] for m in moved if m.get("sku")})[:50],
+    })
     return move_doc
 
     return boxes
@@ -4937,9 +5001,20 @@ async def create_shipment(request: Request):
     shipped_boxes = []
     for box_id in box_ids:
         box = await db.wms_boxes.find_one({"box_id": box_id})
-        if box:
-            await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"status": "shipped", "shipment_id": shipment_id}})
-            shipped_boxes.append({"box_id": box_id, "sku": box.get("sku"), "color": box.get("color"), "size": box.get("size"), "units": box.get("units", 0)})
+        if not box:
+            continue
+        units = int((box.get("units") if box.get("units") is not None else box.get("qty", 0)) or 0)
+        # If the box still carries stock (e.g. shipped without going through a
+        # pick), draw it out of the inventory ledger so shipped units stop
+        # counting as on-hand. Already-picked boxes are at 0, so this is a no-op.
+        if units > 0:
+            inv_id = await _update_inventory_enhanced(
+                box.get("style") or box.get("sku"), box.get("color", ""), box.get("size", ""),
+                units, "deduct", location=box.get("location", ""), customer=box.get("customer", ""),
+            )
+            await _adjust_inventory_boxes(inv_id, -1)
+        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"status": "shipped", "shipment_id": shipment_id, "units": 0, "qty": 0}})
+        shipped_boxes.append({"box_id": box_id, "sku": box.get("sku"), "color": box.get("color"), "size": box.get("size"), "units": units})
     total_units = sum(b.get("units", 0) for b in shipped_boxes)
     shipment_doc = {
         "shipment_id": shipment_id, "order_id": order_id,
@@ -5038,9 +5113,11 @@ def _build_box_labels_html(items):
           <span>{bid}</span><span>{idx + 1} of {n}</span><span>{esc(r.get("received_by_name"))}</span>
         </div>
       </div>''')
-        calls.append(f'JsBarcode("#bc-{idx}", "{bid}", {{width:1.5,height:40,displayValue:true,fontSize:10,margin:0}});')
+        # JS-context escape: json.dumps neutralizes quotes/backslashes/</script>
+        # in scanned or imported box_id/upc values. esc() only covers HTML.
+        calls.append(f'JsBarcode("#bc-{idx}", {json.dumps(str(r.get("box_id") or ""))}, {{width:1.5,height:40,displayValue:true,fontSize:10,margin:0}});')
         if upc:
-            calls.append(f'JsBarcode("#upc-{idx}", "{upc}", {{width:1.4,height:34,displayValue:true,fontSize:10,margin:0}});')
+            calls.append(f'JsBarcode("#upc-{idx}", {json.dumps(str(r.get("upc") or ""))}, {{width:1.4,height:34,displayValue:true,fontSize:10,margin:0}});')
     return f'''<html><head><title>Etiqueta(s) de caja</title>
       <style>
         @page {{ size: 4in 6in; margin: 5mm; }}
@@ -6373,7 +6450,7 @@ async def prioritize_ticket(ticket_id: str, request: Request):
     user = await require_admin(request)
     res = await db.wms_pick_tickets.update_one(
         {"ticket_id": ticket_id},
-        {"": {"priority": "HOT", "updated_at": now_iso()}}
+        {"$set": {"priority": "HOT", "updated_at": now_iso()}}
     )
     if res.modified_count == 0:
         raise HTTPException(404, "Ticket no encontrado")
@@ -7194,11 +7271,30 @@ async def save_count_progress(count_id: str, request: Request):
             # counted_qty), so it's idempotent: re-saving the same number is a
             # no-op and a recount cleanly overwrites the previous adjustment.
             if line["discrepancy"]:
-                res = await db.wms_inventory.update_one(
-                    {"style": line["style"], "color": line["color"], "size": line["size"], "location": line["inv_location"]},
-                    {"$set": {"units_on_hand": qty, "updated_at": now_iso()}},
-                )
-                if res.matched_count:
+                # Match the inventory row the SAME way the rest of the module
+                # does ($or sku/style, case-insensitive). The old exact {"style":..}
+                # filter silently missed rows keyed by composite sku (matched_count
+                # 0 → discrepancy quietly lost).
+                st = (line.get("style") or line.get("sku") or "").strip()
+                inv_row = await db.wms_inventory.find_one({
+                    "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
+                    "color": _ci_eq(line.get("color", "")),
+                    "size": _ci_eq(line.get("size", "")),
+                    "location": _ci_eq(line.get("inv_location", "")),
+                })
+                if inv_row:
+                    cur = int(inv_row.get("units_on_hand", 0) or 0)
+                    await db.wms_inventory.update_one(
+                        {"_id": inv_row["_id"]},
+                        {"$set": {"units_on_hand": qty, "updated_at": now_iso()}},
+                    )
+                    # Reconcile the backing boxes to the new on-hand so the box
+                    # mirror agrees — otherwise _available_units' max(box,inv)
+                    # silently undoes a count-down. Idempotent: re-saving the same
+                    # number yields delta 0.
+                    delta = qty - cur
+                    if delta != 0:
+                        await _reconcile_line_boxes(inv_row, delta)
                     line["adjusted"] = True
                     line["adjusted_at"] = now_iso()
                     line["adjusted_by"] = user.get("user_id")
@@ -7207,8 +7303,17 @@ async def save_count_progress(count_id: str, request: Request):
                         "count_id": count_id, "line_id": lid,
                         "sku": line.get("sku") or line.get("style"),
                         "location": line.get("inv_location"),
-                        "from": line.get("system_qty", 0), "to": qty,
+                        "from": cur, "to": qty,
                         "discrepancy": line["discrepancy"],
+                    })
+                else:
+                    # A key mismatch must not swallow a real discrepancy silently.
+                    line["adjust_failed"] = True
+                    await log_movement(user, "cycle_count_adjust_failed", {
+                        "count_id": count_id, "line_id": lid,
+                        "sku": line.get("sku") or line.get("style"),
+                        "location": line.get("inv_location"),
+                        "reason": "no se encontró fila de inventario para aplicar el conteo",
                     })
         if line.get("counted"):
             counted_count += 1
@@ -7250,11 +7355,23 @@ async def approve_cycle_count(count_id: str, request: Request):
             if line.get("adjusted"):
                 already += 1
                 continue
-            res = await db.wms_inventory.update_one(
-                {"style": line["style"], "color": line["color"], "size": line["size"], "location": line["inv_location"]},
-                {"$set": {"units_on_hand": line["counted_qty"], "updated_at": now_iso()}}
-            )
-            if res.matched_count:
+            st = (line.get("style") or line.get("sku") or "").strip()
+            inv_row = await db.wms_inventory.find_one({
+                "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
+                "color": _ci_eq(line.get("color", "")),
+                "size": _ci_eq(line.get("size", "")),
+                "location": _ci_eq(line.get("inv_location", "")),
+            })
+            if inv_row:
+                cur = int(inv_row.get("units_on_hand", 0) or 0)
+                tgt = int(line["counted_qty"])
+                await db.wms_inventory.update_one(
+                    {"_id": inv_row["_id"]},
+                    {"$set": {"units_on_hand": tgt, "updated_at": now_iso()}}
+                )
+                delta = tgt - cur
+                if delta != 0:
+                    await _reconcile_line_boxes(inv_row, delta)
                 line["adjusted"] = True
                 line["adjusted_at"] = now_iso()
                 adjustments += 1
