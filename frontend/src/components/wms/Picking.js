@@ -930,7 +930,7 @@ export const PickingModule = ({ currentUser } = {}) => {
               ) : (
                 <div className="divide-y divide-border/10">
                   {group.tickets.map(tk => (
-                    <div key={tk.ticket_id} className="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2">
+                    <div key={tk.ticket_id} className="flex items-center gap-2 px-4 py-2 hover:bg-secondary/40 transition-colors group/wrow">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-bold truncate">
                           <span className="font-mono">{tk.order_number}</span>
@@ -938,7 +938,11 @@ export const PickingModule = ({ currentUser } = {}) => {
                         </div>
                         <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{(tk.total_pick_qty || 0).toLocaleString()} pzs · {tk.picking_status}</div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      {/* Dotted leader line tying each ticket to its own controls
+                          (the big empty gap made it easy to act on the wrong row).
+                          Highlights on row hover so it's obvious which ticket. */}
+                      <div className="flex-1 self-center border-b border-dotted border-border/40 group-hover/wrow:border-primary/70 min-w-[16px] transition-colors" />
+                      <div className="flex items-center gap-2 shrink-0">
                         <select
                           value=""
                           onChange={(e) => { if (e.target.value) handleQuickAssign(tk.ticket_id, e.target.value); }}
