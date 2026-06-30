@@ -286,28 +286,49 @@ const InOutTab = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [adds, removes] = await Promise.all([
+      // Include adjustments made via "Ajuste masivo" (inventory_adjustment /
+      // _create) and "Mover → ajustar caja" (inventory_adjust_box). Their
+      // direction comes from the delta sign (+ entrada, − salida) so they show
+      // up here just like the manual entradas/salidas.
+      const [adds, removes, adj, adjCreate, adjBox] = await Promise.all([
         fetcher('/movements?movement_type=manual_inventory_add&limit=1000'),
         fetcher('/movements?movement_type=manual_inventory_remove&limit=1000'),
+        fetcher('/movements?movement_type=inventory_adjustment&limit=1000'),
+        fetcher('/movements?movement_type=inventory_adjustment_create&limit=1000'),
+        fetcher('/movements?movement_type=inventory_adjust_box&limit=1000'),
       ]);
       const norm = (m) => {
         const d = m.details || {};
-        const isIn = m.type === 'manual_inventory_add';
+        const type = m.type;
+        let isIn, units, boxes = 0, tag = '';
+        if (type === 'manual_inventory_add') {
+          isIn = true; units = d.added_units ?? 0; boxes = d.added_boxes ?? 0;
+          tag = d.mode === 'accumulated' ? 'ACUMULADO' : 'NUEVO';
+        } else if (type === 'manual_inventory_remove') {
+          isIn = false; units = d.removed_units ?? 0; boxes = d.removed_boxes ?? 0;
+        } else if (type === 'inventory_adjust_box') {
+          const dl = Number(d.delta_units ?? 0);
+          isIn = dl >= 0; units = Math.abs(dl); tag = 'AJUSTE (MOVER)';
+        } else { // inventory_adjustment / inventory_adjustment_create (ajuste masivo)
+          const dl = Number(d.delta ?? 0);
+          isIn = dl >= 0; units = Math.abs(dl);
+          tag = type === 'inventory_adjustment_create' ? 'AJUSTE NUEVO (MASIVO)' : 'AJUSTE MASIVO';
+        }
         return {
           created_at: m.created_at,
           direction: isIn ? 'ENTRADA' : 'SALIDA',
           isIn,
-          reason: d.reason || (isIn ? (d.mode === 'accumulated' ? 'ACUMULADO' : 'NUEVO') : ''),
-          style: d.style || '',
+          reason: d.reason || tag || (isIn ? 'NUEVO' : ''),
+          style: d.style || d.sku || '',
           color: d.color || '',
           size: d.size || '',
           location: d.location || '',
-          units: isIn ? (d.added_units ?? 0) : (d.removed_units ?? 0),
-          boxes: isIn ? (d.added_boxes ?? 0) : (d.removed_boxes ?? 0),
+          units,
+          boxes,
           user: m.user_name || m.user_id || 'Sistema',
         };
       };
-      const merged = [...(adds || []), ...(removes || [])]
+      const merged = [...(adds || []), ...(removes || []), ...(adj || []), ...(adjCreate || []), ...(adjBox || [])]
         .map(norm)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       setRows(merged);
