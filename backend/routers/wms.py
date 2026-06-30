@@ -4134,6 +4134,11 @@ async def list_pick_tickets(
                 "destination": "neck_cutting" if vo.get("art_neck_status") else "production",
                 "job_title_a": vo.get("job_title_a"),
                 "job_title_b": vo.get("job_title_b"),
+                # Deadline so the assigner can prioritize by date instead of
+                # filtering an Excel. cancel_date is the hard deadline (most
+                # populated); due_date is the fallback.
+                "cancel_date": vo.get("cancel_date") or vo.get("due_date") or "",
+                "due_date": vo.get("due_date") or "",
                 "created_at": vo.get("created_at") or now_iso(),
                 "is_virtual": True
             })

@@ -1,11 +1,36 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus } from "lucide-react";
+import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
+
+// Deadline urgency for a pre-ticket (by cancel_date / due_date) so the assigner
+// can prioritize by date instead of filtering an Excel. Returns the bucket,
+// a sort order, a short label and a Tailwind chip class.
+const PRETICKET_BUCKETS = [
+  { key: 'overdue', label: 'Vencidas', dot: 'bg-red-500' },
+  { key: 'today', label: 'Hoy', dot: 'bg-orange-500' },
+  { key: 'week', label: 'Esta semana', dot: 'bg-yellow-500' },
+  { key: 'later', label: 'Próximas', dot: 'bg-emerald-500' },
+  { key: 'none', label: 'Sin fecha', dot: 'bg-muted-foreground/40' },
+];
+function deadlineInfo(dateStr) {
+  const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-secondary/60 text-muted-foreground border-border/30' };
+  if (!dateStr) return none;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return none;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dd = new Date(d); dd.setHours(0, 0, 0, 0);
+  const days = Math.round((dd - today) / 86400000);
+  const fmt = dd.toLocaleDateString();
+  if (days < 0) return { bucket: 'overdue', order: 0, label: `Vencida · ${fmt}`, cls: 'bg-red-500/15 text-red-400 border-red-500/40' };
+  if (days === 0) return { bucket: 'today', order: 1, label: `Hoy · ${fmt}`, cls: 'bg-orange-500/15 text-orange-400 border-orange-500/40' };
+  if (days <= 7) return { bucket: 'week', order: 2, label: `${days}d · ${fmt}`, cls: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/40' };
+  return { bucket: 'later', order: 3, label: fmt, cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
+}
 
 export const PickingModule = ({ currentUser } = {}) => {
   const { t } = useLang();
@@ -485,6 +510,14 @@ export const PickingModule = ({ currentUser } = {}) => {
             <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest min-w-[50px] text-center">
               #{ticket.order_number}
             </span>
+            {ticket.cancel_date && (() => {
+              const di = deadlineInfo(ticket.cancel_date);
+              return (
+                <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 ${di.cls}`} title="Fecha límite (cancel date)">
+                  <Calendar className="w-2.5 h-2.5" /> {di.label}
+                </span>
+              );
+            })()}
             {ticket.is_virtual && (
               <span className="text-[9px] font-black uppercase bg-primary text-black px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
                 <Plus className="w-2 h-2" /> {t('wms_new_pick') || 'NEW'}
@@ -857,9 +890,31 @@ export const PickingModule = ({ currentUser } = {}) => {
       {/* Tab Content */}
       {activeTab === 'pretickets' && (
         <div className="space-y-4" data-testid="pick-pretickets-list">
-          <div className="flex flex-col gap-2">
-            {preTickets.map(ticket => renderTicket(ticket))}
-          </div>
+          {(() => {
+            // Calendar-style view: sort by deadline (overdue/closest first) and
+            // group into urgency buckets so the assigner prioritizes by date.
+            const sorted = [...preTickets].sort((a, b) => {
+              const da = deadlineInfo(a.cancel_date), db_ = deadlineInfo(b.cancel_date);
+              if (da.order !== db_.order) return da.order - db_.order;
+              return new Date(a.cancel_date || '9999-12-31') - new Date(b.cancel_date || '9999-12-31');
+            });
+            return PRETICKET_BUCKETS.map(b => {
+              const items = sorted.filter(tk => deadlineInfo(tk.cancel_date).bucket === b.key);
+              if (items.length === 0) return null;
+              return (
+                <div key={b.key} className="space-y-2">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className={`w-2 h-2 rounded-full ${b.dot}`} />
+                    <span className="text-xs font-black uppercase tracking-widest">{b.label}</span>
+                    <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{items.length}</span>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {items.map(ticket => renderTicket(ticket))}
+                  </div>
+                </div>
+              );
+            });
+          })()}
           {preTickets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
               <ClipboardList className="w-16 h-16 mb-4 stroke-[1px]" />
