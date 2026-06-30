@@ -4522,6 +4522,17 @@ async def pick_size(ticket_id: str, request: Request):
     _ord_no = ticket.get("order_number")
     _ord_id = ticket.get("order_id")
 
+    # Preserve locations already deducted for this size that the payload omits,
+    # so a partial re-submit can't silently return them to stock (the vector
+    # that lost 575 units of S@CARRO 182 on ticket 1784). To drop a location's
+    # pick on purpose, send it explicitly with 0.
+    prev_cells = (ticket.get("deducted_map") or {}).get(size, {})
+    _omitted = [loc for loc in prev_cells if loc not in details]
+    if _omitted:
+        logger.warning("pick_size %s talla %s: payload omitió ubicaciones ya surtidas %s; se preservan", ticket_id, size, _omitted)
+        for loc in _omitted:
+            details[loc] = int(prev_cells[loc] or 0)
+
     # New cumulative picked_sizes with THIS size replaced by the OK'd numbers.
     picked_sizes = dict(ticket.get("picked_sizes") or {})
     total = sum(details.values())
