@@ -54,7 +54,7 @@ export function PutawayWizard() {
 
   useEffect(() => {
     const excluded = new Set([TRANSIT_LEGACY, ...carts.map(c => c.name)].map(n => (n || "").toUpperCase()));
-    fetcher("/locations?summary=false&limit=20000")
+    fetcher("/locations/names")
       .then(rows => setLocOptions((rows || []).filter(l => !excluded.has((l.name || "").toUpperCase()))))
       .catch(logLoadError("destination locations"));
   }, [carts]);

@@ -702,6 +702,33 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
 
     return locs
 
+
+_LOC_NAMES_CACHE = {"data": None, "ts": 0.0}
+_LOC_NAMES_TTL = 60.0
+
+
+@router.get("/locations/names")
+async def list_location_names(request: Request):
+    """Lightweight location list for dropdowns / typeahead — only {name, zone}.
+    The full /locations?summary=false ships ~8.8k COMPLETE docs to every module
+    that merely needs names (Mover, Transit, Putaway, Inventory, Locations'
+    relocate picker), which is a big slice of the WMS tab's RAM on the low-end
+    warehouse PCs. This projection cuts payload + client heap to a fraction.
+    Cached 60s; the catalog rarely changes."""
+    await require_auth(request)
+    import time
+    now = time.monotonic()
+    cached = _LOC_NAMES_CACHE.get("data")
+    if cached is not None and (now - _LOC_NAMES_CACHE["ts"]) < _LOC_NAMES_TTL:
+        return cached
+    rows = await db.wms_locations.find(
+        {}, {"_id": 0, "name": 1, "zone": 1}
+    ).sort("name", 1).to_list(30000)
+    _LOC_NAMES_CACHE["data"] = rows
+    _LOC_NAMES_CACHE["ts"] = now
+    return rows
+
+
 @router.post("/move-location")
 async def move_location_bulk(request: Request):
     """Move ALL inventory from one location to another in one operation.

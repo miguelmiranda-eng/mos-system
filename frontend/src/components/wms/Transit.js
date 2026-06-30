@@ -146,7 +146,7 @@ export const TransitModule = () => {
     const excluded = new Set(
       [TRANSIT_LEGACY, ...(cartInfo.map(c => c.name) || [])].map(n => (n || "").toUpperCase())
     );
-    fetcher("/locations?summary=false&limit=20000")
+    fetcher("/locations/names")
       .then(rows => {
         if (cancelled) return;
         const filtered = (Array.isArray(rows) ? rows : [])

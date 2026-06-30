@@ -152,7 +152,7 @@ export const LocationsModule = ({ currentUser }) => {
     // Kick off the active-locations fetch in parallel — needed by the
     // relocate typeahead. Won't block the detail load.
     if (!activeLocLoaded) {
-      fetcher('/locations?summary=false&limit=20000')
+      fetcher('/locations/names')
         .then(rows => {
           // Include ALL locations (active and inactive) so any slot is a valid
           // relocate/move destination.

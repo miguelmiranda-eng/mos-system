@@ -167,7 +167,7 @@ export function MoverModule({ currentUser }) {
   // Known location names for the type-to-search chips (fetched once).
   const [locNames, setLocNames] = useState([]);
   useEffect(() => {
-    fetcher("/locations?summary=false&limit=20000")
+    fetcher("/locations/names")
       .then(rows => setLocNames((rows || []).map(r => r.name).filter(Boolean)))
       .catch(logLoadError("locations"));
   }, []);

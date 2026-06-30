@@ -412,7 +412,7 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
     // Lazy-load zone → locations map (only on first open).
     if (Object.keys(locationsByZone).length === 0) {
       try {
-        const data = await fetcher('/locations?summary=false&limit=20000');
+        const data = await fetcher('/locations/names');
         const grouped = {};
         for (const l of data) {
           if (!l?.name) continue;
