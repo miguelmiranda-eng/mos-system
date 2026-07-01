@@ -80,6 +80,13 @@ CORE_INDEXES = [
     ("orders", "status", {}),
     ("orders", "order_id", {}),
     ("orders", [("created_at", -1)], {}),
+    # Defense-in-depth against duplicate Printavo imports: no two auto-synced orders
+    # may share an order_number. Partial (source=printavo_auto only) so manual orders
+    # and the trash+recreate flow are unaffected. Custom name to avoid colliding with
+    # the plain order_number_1 index above. Skips silently if legacy duplicates exist
+    # (run dedupe_printavo_orders.py --apply first, then it builds on next boot).
+    ("orders", "order_number", {"unique": True, "name": "uniq_printavo_order_number",
+                                "partialFilterExpression": {"source": "printavo_auto"}}),
     # Notifications / activity / production.
     ("notifications", [("user_id", 1), ("created_at", -1)], {}),
     ("activity_logs", [("timestamp", -1)], {}),

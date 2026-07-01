@@ -21,6 +21,7 @@ Design decisions (see NewOrderForm / import_router for the manual analogue):
 import re
 from datetime import datetime, timezone
 from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from deps import db, logger, OrderCreate
 from routers.import_router import SIZES_MAP
@@ -243,6 +244,10 @@ async def process_invoice(invoice: dict) -> int:
             await internal_create_order(OrderCreate(**data), SYNC_USER)
             created += 1
             logger.info(f"[printavo] created order {order_number} from invoice")
+        except DuplicateKeyError:
+            # The uniq_printavo_order_number index rejected a same-number insert.
+            # This is the intended idempotent outcome — the order already exists.
+            logger.warning(f"[printavo] skip order {order_number}: already exists (unique index)")
         except HTTPException as e:
             # Duplicate (race) or validation issue -> log and move on.
             logger.warning(f"[printavo] skip order {order_number}: {e.detail}")

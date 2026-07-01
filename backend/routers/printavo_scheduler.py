@@ -9,6 +9,7 @@ POST /api/printavo-sync/run-now to test without waiting for the next tick. If
 APScheduler or the Printavo credentials are missing, the app still boots and the
 automatic poll is simply skipped.
 """
+import asyncio
 import os
 from datetime import datetime, timezone
 
@@ -19,6 +20,12 @@ import printavo_client
 from printavo_sync import sync_once, CONFIG_ID
 
 router = APIRouter(prefix="/api")
+
+# Serializes every sync pass (scheduler tick + manual run-now) inside this process.
+# Without it, two overlapping passes read the same stale watermark and each recreate
+# the same invoice — the dedup in process_invoice is check-then-insert and NOT atomic,
+# so concurrent passes produced duplicate orders (e.g. invoice 2103 created 3x).
+_sync_lock = asyncio.Lock()
 
 DEFAULTS = {
     "config_id": CONFIG_ID,
@@ -60,6 +67,15 @@ async def _run_sync(cfg: dict) -> dict:
         raise
 
 
+async def _sync_guarded() -> dict:
+    """Run one sync pass under the process-wide lock, reading a FRESH config inside
+    the lock. A caller that queued behind a running pass therefore uses the updated
+    watermark instead of reprocessing the invoices the previous pass just created."""
+    async with _sync_lock:
+        cfg = await _get_config()
+        return await _run_sync(cfg)
+
+
 # ── Scheduler tick ───────────────────────────────────────────────────────────
 async def _tick():
     try:
@@ -68,7 +84,11 @@ async def _tick():
             return
         if not printavo_client.is_configured():
             return
-        result = await _run_sync({**DEFAULTS, **cfg})
+        # Skip this tick if a pass (manual or a previous tick) is still running.
+        if _sync_lock.locked():
+            logger.info("[printavo-sync] tick skipped — a sync pass is already running")
+            return
+        result = await _sync_guarded()
         if result.get("created"):
             logger.info(f"[printavo-sync] created {result['created']} order(s) this tick")
     except Exception as e:
@@ -133,7 +153,10 @@ async def run_printavo_sync_now(request: Request):
     user = await require_admin(request)
     if not printavo_client.is_configured():
         raise HTTPException(400, "Credenciales de Printavo no configuradas (PRINTAVO_API_EMAIL / PRINTAVO_API_TOKEN)")
-    cfg = await _get_config()
-    result = await _run_sync(cfg)
+    # Reject overlapping manual runs (double-click / run while a tick is polling) so
+    # two passes can't reprocess the same invoices and create duplicate orders.
+    if _sync_lock.locked():
+        raise HTTPException(409, "Ya hay una sincronización en curso. Espera unos segundos e intenta de nuevo.")
+    result = await _sync_guarded()
     await log_activity(user, "run_printavo_sync_now", {"created": result.get("created", 0)})
     return {"status": "ok", **result}
