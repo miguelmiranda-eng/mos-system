@@ -1,0 +1,139 @@
+"""Printavo invoice auto-sync scheduler.
+
+Polls the Printavo GraphQL API on a configurable interval and creates a MOS
+order for every new invoice (see printavo_sync.py for the mapping). Runs inside
+the FastAPI process via APScheduler, mirroring report_scheduler.py.
+
+Starts DISABLED. Enable + set the interval via PUT /api/printavo-sync, then use
+POST /api/printavo-sync/run-now to test without waiting for the next tick. If
+APScheduler or the Printavo credentials are missing, the app still boots and the
+automatic poll is simply skipped.
+"""
+import os
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Request
+
+from deps import db, require_auth, require_admin, log_activity, logger
+import printavo_client
+from printavo_sync import sync_once, CONFIG_ID
+
+router = APIRouter(prefix="/api")
+
+DEFAULTS = {
+    "config_id": CONFIG_ID,
+    "enabled": False,
+    "poll_minutes": int(os.environ.get("PRINTAVO_POLL_MINUTES", "5")),
+    "fetch_size": 25,
+    "last_visual_id": None,   # high-water mark (highest processed invoice number)
+    "last_run_at": None,      # ISO timestamp of last poll attempt
+    "last_error": None,       # last error message, if any
+    "created_count": 0,       # cumulative orders created by the sync
+}
+
+
+async def _get_config() -> dict:
+    cfg = await db.printavo_sync.find_one({"config_id": CONFIG_ID}, {"_id": 0})
+    if not cfg:
+        await db.printavo_sync.insert_one({**DEFAULTS})
+        return {**DEFAULTS}
+    return {**DEFAULTS, **cfg}
+
+
+async def _run_sync(cfg: dict) -> dict:
+    """Run one sync pass and persist the resulting state. Returns a summary."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = await sync_once(cfg)
+        update = {"last_run_at": now, "last_error": None}
+        if result.get("watermark") is not None:
+            update["last_visual_id"] = str(result["watermark"])
+        if result.get("created"):
+            update["created_count"] = int(cfg.get("created_count") or 0) + int(result["created"])
+        await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": update}, upsert=True)
+        return result
+    except Exception as e:
+        logger.error(f"[printavo-sync] run error: {e}")
+        await db.printavo_sync.update_one(
+            {"config_id": CONFIG_ID}, {"$set": {"last_run_at": now, "last_error": str(e)[:500]}}, upsert=True
+        )
+        raise
+
+
+# ── Scheduler tick ───────────────────────────────────────────────────────────
+async def _tick():
+    try:
+        cfg = await db.printavo_sync.find_one({"config_id": CONFIG_ID}, {"_id": 0})
+        if not cfg or not cfg.get("enabled"):
+            return
+        if not printavo_client.is_configured():
+            return
+        result = await _run_sync({**DEFAULTS, **cfg})
+        if result.get("created"):
+            logger.info(f"[printavo-sync] created {result['created']} order(s) this tick")
+    except Exception as e:
+        logger.error(f"[printavo-sync] tick error: {e}")
+
+
+_scheduler = None
+
+
+def start_printavo_scheduler():
+    """Start the polling scheduler. Safe to call once on app startup;
+    no-ops if already started or if APScheduler isn't installed."""
+    global _scheduler
+    if _scheduler is not None:
+        return
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from apscheduler.triggers.interval import IntervalTrigger
+        minutes = int(os.environ.get("PRINTAVO_POLL_MINUTES", "5"))
+        _scheduler = AsyncIOScheduler(timezone="America/Tijuana")
+        _scheduler.add_job(_tick, IntervalTrigger(minutes=max(1, minutes)), id="printavo_sync_tick",
+                           replace_existing=True, max_instances=1, coalesce=True)
+        _scheduler.start()
+        logger.info(f"[printavo-sync] started (checks every {minutes} min)")
+    except Exception as e:
+        logger.error(f"[printavo-sync] not started ({e}). Install 'apscheduler' to enable automatic polling.")
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+@router.get("/printavo-sync")
+async def get_printavo_sync(request: Request):
+    await require_auth(request)
+    cfg = await _get_config()
+    cfg["configured"] = printavo_client.is_configured()
+    return cfg
+
+
+@router.put("/printavo-sync")
+async def update_printavo_sync(request: Request):
+    user = await require_admin(request)
+    body = await request.json()
+    allowed = {}
+    if "enabled" in body:
+        allowed["enabled"] = bool(body["enabled"])
+    if "poll_minutes" in body:
+        allowed["poll_minutes"] = max(1, min(1440, int(body["poll_minutes"])))
+    if "fetch_size" in body:
+        allowed["fetch_size"] = max(1, min(30, int(body["fetch_size"])))
+    # Allow resetting the watermark (e.g. to re-seed or force a backfill window).
+    if "last_visual_id" in body:
+        allowed["last_visual_id"] = str(body["last_visual_id"]).strip() or None
+    await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": allowed}, upsert=True)
+    await log_activity(user, "update_printavo_sync", allowed)
+    cfg = await _get_config()
+    cfg["configured"] = printavo_client.is_configured()
+    return cfg
+
+
+@router.post("/printavo-sync/run-now")
+async def run_printavo_sync_now(request: Request):
+    """Run one sync pass immediately (respects the watermark; seeds it on first run)."""
+    user = await require_admin(request)
+    if not printavo_client.is_configured():
+        raise HTTPException(400, "Credenciales de Printavo no configuradas (PRINTAVO_API_EMAIL / PRINTAVO_API_TOKEN)")
+    cfg = await _get_config()
+    result = await _run_sync(cfg)
+    await log_activity(user, "run_printavo_sync_now", {"created": result.get("created", 0)})
+    return {"status": "ok", **result}

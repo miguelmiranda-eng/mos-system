@@ -679,6 +679,7 @@ const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
 const ShippingModule = lazy(() => import("./components/ShippingModule"));
 const PackingListTool = lazy(() => import("./components/PackingList"));
 const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
+const PrintavoSync = lazy(() => import("./components/PrintavoSync"));
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -835,6 +836,11 @@ function AppRouter() {
       <Route path="/reportes-programados" element={
         <AdminRoute>
           <ScheduledReports />
+        </AdminRoute>
+      } />
+      <Route path="/printavo-sync" element={
+        <AdminRoute>
+          <PrintavoSync />
         </AdminRoute>
       } />
       <Route path="/operators-center" element={

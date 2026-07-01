@@ -25,6 +25,7 @@ import {
   Wrench,
   ClipboardList,
   CalendarClock,
+  Zap,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -320,6 +321,10 @@ const Sidebar = ({
                   <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Reportes Programados" : ""}>
                     <CalendarClock size={15} className={iconCls(false)} />
                     {(isOpen || !isCollapsed) && <span>Reportes Programados</span>}
+                  </button>
+                  <button onClick={() => { navigate('/printavo-sync'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Sync Printavo" : ""}>
+                    <Zap size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>Sync Printavo</span>}
                   </button>
                 </nav>
               </>
