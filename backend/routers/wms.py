@@ -2870,6 +2870,16 @@ async def generate_box(request: Request):
     location = loc.get("name", location)
     await _assert_not_on_hold(user, location)
 
+    # Style must already exist — new styles are added ONLY from the Config module,
+    # never minted here (keeps the normalized catalog clean).
+    known = await db.wms_inventory.find_one(
+        {"$or": [{"style": _ci_eq(style)}, {"sku": _ci_eq(style)}]}, {"_id": 1})
+    if not known:
+        known = await db.wms_catalog_options.find_one(
+            {"type": "styles", "value": {"$regex": f"^{re.escape(style)}$", "$options": "i"}}, {"_id": 1})
+    if not known:
+        raise HTTPException(400, f"El estilo '{style}' no existe. Agrégalo primero en Configuración.")
+
     seq = await _reserve_box_seqs(1)
     box_id = f"BOX-{seq:06d}"
     sku = (body.get("sku") or style).strip().upper()

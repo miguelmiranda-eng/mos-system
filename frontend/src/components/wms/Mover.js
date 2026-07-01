@@ -5,6 +5,7 @@ import {
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
 import { fetcher, poster, cleanScan, logLoadError, API } from "./lib";
+import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
@@ -97,6 +98,14 @@ export function MoverModule({ currentUser }) {
   const [genForm, setGenForm] = useState({ style: '', color: '', size: '', units: '', customer: '', location: '' });
   const [genSubmitting, setGenSubmitting] = useState(false);
   const [genLastBox, setGenLastBox] = useState('');
+  // Style/color options for the generate-box form — solo-catálogo (los valores
+  // nuevos se agregan únicamente desde el módulo de configuración).
+  const [genOptions, setGenOptions] = useState({ styles: [], colors: [] });
+  useEffect(() => {
+    fetcher('/inventory/options?')
+      .then(d => setGenOptions({ styles: d.styles || [], colors: d.colors || [] }))
+      .catch(() => {});
+  }, []);
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -400,12 +409,12 @@ export function MoverModule({ currentUser }) {
               Material que llega de producción sin etiqueta: crea su número de caja (LPN), imprímelo y pégalo en la caja física. Después podrás moverla o ajustarla normalmente.
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <input value={genForm.style} onChange={e => setGenForm(f => ({ ...f, style: e.target.value.toUpperCase() }))}
-                placeholder="Estilo *" data-testid="gen-style"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
-              <input value={genForm.color} onChange={e => setGenForm(f => ({ ...f, color: e.target.value.toUpperCase() }))}
-                placeholder="Color"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
+              <SearchableSelect options={genOptions.styles} value={genForm.style}
+                onChange={v => setGenForm(f => ({ ...f, style: v }))}
+                placeholder="Estilo * (solo catálogo)" testId="gen-style" allowCreate={false} />
+              <SearchableSelect options={genOptions.colors} value={genForm.color}
+                onChange={v => setGenForm(f => ({ ...f, color: v }))}
+                placeholder="Color (solo catálogo)" testId="gen-color" allowCreate={false} />
               <input value={genForm.size} onChange={e => setGenForm(f => ({ ...f, size: e.target.value.toUpperCase() }))}
                 placeholder="Talla"
                 className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
