@@ -1716,15 +1716,17 @@ async def create_receiving(request: Request):
     user = await require_auth(request)
     body = await request.json()
     customer = await _canonical_customer(body.get("customer", ""))
-    manufacturer = body.get("manufacturer", "").strip()
-    # Normalize the identity dimensions to UPPERCASE on write so inventory/boxes
-    # stay consistent (no more 'Sand' vs 'SAND' splitting matches/reports).
-    style = body.get("style", "").strip().upper()
-    color = body.get("color", "").strip().upper()
-    size = body.get("size", "").strip().upper()
-    description = body.get("description", "").strip()
-    country_of_origin = body.get("country_of_origin", "").strip()
-    fabric_content = body.get("fabric_content", "").strip()
+    # Normalize the identity dimensions to UPPERCASE + single-spaced on write so
+    # inventory/boxes/reports stay consistent (no more 'Sand' vs 'SAND' or
+    # 'Bangladesh' vs 'BANGLADESH' splitting matches/reports).
+    _norm = lambda v: re.sub(r"\s+", " ", str(v or "")).strip().upper()
+    manufacturer = _norm(body.get("manufacturer"))
+    style = _norm(body.get("style"))
+    color = _norm(body.get("color"))
+    size = _norm(body.get("size"))
+    description = _norm(body.get("description"))
+    country_of_origin = _norm(body.get("country_of_origin"))
+    fabric_content = _norm(body.get("fabric_content"))
     inv_location = body.get("inv_location", "").strip() or "Locación Temporal"
     lot_number = body.get("lot_number", "").strip()
     sku = body.get("sku", "").strip().upper()
@@ -2871,14 +2873,14 @@ async def generate_box(request: Request):
     seq = await _reserve_box_seqs(1)
     box_id = f"BOX-{seq:06d}"
     sku = (body.get("sku") or style).strip().upper()
-    coo = (body.get("country_of_origin") or "").strip()
-    fabric = (body.get("fabric_content") or "").strip()
+    coo = re.sub(r"\s+", " ", str(body.get("country_of_origin") or "")).strip().upper()
+    fabric = re.sub(r"\s+", " ", str(body.get("fabric_content") or "")).strip().upper()
     is_bpo = bool(body.get("is_bpo", False))
 
     inv_id = await _update_inventory_enhanced(
         style, color, size, units, "add", customer, location, is_bpo,
-        manufacturer=(body.get("manufacturer") or "").strip(),
-        description=(body.get("description") or "").strip(),
+        manufacturer=re.sub(r"\s+", " ", str(body.get("manufacturer") or "")).strip().upper(),
+        description=re.sub(r"\s+", " ", str(body.get("description") or "")).strip().upper(),
         country_of_origin=coo, fabric_content=fabric, box_count=1,
     )
     box_doc = {
