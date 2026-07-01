@@ -7131,7 +7131,7 @@ async def delete_inventory_row(inventory_id: str, request: Request):
 # ==================== IMPORT INVENTORY ====================
 
 @router.post("/import/inventory")
-async def import_inventory(request: Request, file: UploadFile = File(...)):
+async def import_inventory(request: Request, file: UploadFile = File(...), force: bool = False):
     # Admin-only: this endpoint REPLACES the entire warehouse (see wipe below).
     user = await require_admin(request)
     if not file.filename.endswith(('.xlsx', '.xls')):
@@ -7252,7 +7252,23 @@ async def import_inventory(request: Request, file: UploadFile = File(...)):
     if data_rows and skipped > data_rows * 0.5:
         raise HTTPException(400, f"Se omitieron {skipped} de {data_rows} filas — revisa el archivo/encabezados. No se borró nada para proteger el inventario.")
 
-    # Durable rollback snapshot (server-side copy) before the destructive replace.
+    # SHRINK GUARD — the #1 cause of lost boxes: re-importing an OUTDATED Excel
+    # wipes every box received/moved since it was exported. Refuse when the upload
+    # would drop a big chunk of the current boxes unless ?force=true is passed.
+    cur_boxes = await db.wms_boxes.count_documents({})
+    if not force and cur_boxes > 0 and len(box_docs) < cur_boxes * 0.7:
+        raise HTTPException(409,
+            f"El archivo trae {len(box_docs)} cajas vs {cur_boxes} actuales "
+            f"(perderías {cur_boxes - len(box_docs)}). Probablemente sea un Excel "
+            f"desactualizado y borrarías cajas recibidas/movidas después. Si es "
+            f"intencional reenvía con ?force=true. NO se borró nada.")
+
+    # VERSIONED rollback snapshot — a TIMESTAMPED copy per import (never
+    # overwritten), so a second import can't destroy the previous backup the way
+    # the single _prev did. Keeps _prev too for the existing restore flow.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    await db.wms_inventory.aggregate([{"$out": f"wms_inventory_bkp_{stamp}"}]).to_list(1)
+    await db.wms_boxes.aggregate([{"$out": f"wms_boxes_bkp_{stamp}"}]).to_list(1)
     await db.wms_inventory.aggregate([{"$out": "wms_inventory_prev"}]).to_list(1)
     await db.wms_boxes.aggregate([{"$out": "wms_boxes_prev"}]).to_list(1)
 
