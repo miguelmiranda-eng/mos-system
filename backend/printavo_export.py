@@ -171,11 +171,17 @@ def build_quote_input(r: dict, contact_id: str) -> dict:
         li(SPECIAL_NOTES_HEADER),
     ]
 
+    # Printavo requires an explicit, non-null position on every line item (and group).
+    for idx, item in enumerate(line_items):
+        item["position"] = idx
+
     nickname = f"SPENCERS PO# {r['po_number']} - {r['store_po']} - {r['design_num']} - {r['status']}"
+    due_date = _iso(r["cancel_date"]) or _iso(r["ship_date"])
     return {
         "contact": {"id": contact_id},
-        "customerDueAt": _iso(r["cancel_date"]) or _iso(r["ship_date"]),
+        "customerDueAt": due_date,
+        "dueAt": (due_date + "T00:00:00Z") if due_date else None,
         "nickname": nickname,
         "visualPoNumber": r["po_number"],
-        "lineItemGroups": [{"lineItems": line_items}],
+        "lineItemGroups": [{"position": 0, "lineItems": line_items}],
     }
