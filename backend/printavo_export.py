@@ -250,12 +250,18 @@ def _spencers_groups(r, sizes_input):
 
 
 def _tractor_groups(r, sizes_input):
-    """3-group TRACTOR SUPPLY template (matches quote #144): production, warehouse, packing."""
+    """3-group TRACTOR SUPPLY template (matches corrected quote #2127):
+      G1 production (garment + notes; the re-size block lives in SPECIAL NOTES),
+      G2 the PACKING DEPARTMENT header alone,
+      G3 the packing references + NEW BOXES + SPECIAL NOTES.
+    There is NO warehouse/blank-pull group and ALLOWED SHORTAGE is 0%."""
     size_lines = "\n".join(r["pack_lines"])
     front = r["front_print"] or "FRONT PRINT\nNECK LABEL\nFINISHING\nPICK & PACK"
     garment = "\n".join(p for p in [r["description"], r["design_num"], _status_disp(r),
                                     r["division"], size_lines] if p)
     approval = r["approval_method"] or ("PHOTO APPROVAL" if r["photo_approval"] else _status_disp(r))
+    # The re-size instructions (SIZED: RE-SIZE ...) belong to SPECIAL NOTES in G1.
+    special_notes = SPECIAL_NOTES_HEADER + ("\n" + r["resize"] if r["resize"] else "")
 
     g1 = [
         _li(PRODUCTION_DEPT),
@@ -263,20 +269,12 @@ def _tractor_groups(r, sizes_input):
         _li("N/A"),
         _li(front),
         _li("APPROVAL METHOD:\n" + approval),
-        _li("ALLOWED SHORTAGE:\n2%"),
-        _li(SPECIAL_NOTES_HEADER),
+        _li("ALLOWED SHORTAGE:\n0%"),
+        _li(special_notes),
     ]
-    blank_body = "\n".join(p for p in [
-        "BLANK BRAND:", r["blank"], "BLANK TYPE:", "SHORT SLEEVE",
-        "BLANK PULL QTYS:", size_lines, r["resize"]] if p)
-    g2 = [
-        _li("WAREHOUSE DEPARTMENT\n(DO NOT EDIT)"),
-        _li(blank_body, color=r["color"], sizes=sizes_input),
-        _li(SPECIAL_NOTES_HEADER + "\nBLANKS TO BE USE FOR THIS STYLE:\n" + (r["blanks_to_use"] or "")),
-    ]
+    g2 = [_li(PACKING_DEPT)]
     g3 = [
-        _li(PACKING_DEPT),
-        _li("PACKING INSTRUCTIONS FILE\nPACKING INSTRUCTIONS IMAGES\n" + PACK_REFERENCES),
+        _li(PACK_REFERENCES),
         _li(NEW_BOXES, price=2.50),
         _li(SPECIAL_NOTES_HEADER),
     ]
@@ -300,7 +298,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     status = r["status"] or ""
     brand = r.get("brand") or "SPENCERS"
     if is_tractor:
-        nickname = f"{r['store_po']} - {brand} PO#{r['po_number']} - {r['design_num']}"
+        # Matches the corrected quote #2127 header: "TRACTOR SUPPLY PO#21649 - AER0154J1358 - N/A"
+        nickname = f"{brand} PO#{r['po_number']} - {r['design_num']} - {r['store_po'] or 'N/A'}"
     else:
         nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
     if status and status.upper() != "ORIGINAL":
