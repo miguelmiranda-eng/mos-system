@@ -215,8 +215,8 @@ def _iso(d):
     return f"20{m.group(3)}-{months.get(m.group(2), '01')}-{int(m.group(1)):02d}"
 
 
-# ── Spektrum / Culture Kings: image-based PO read with Gemini vision ──────────
-_GEMINI_PROMPT = """You are reading a Culture Kings / Spektrum apparel "cut ticket" purchase order (mostly images).
+# ── Spektrum / Culture Kings: image-based PO read with Claude vision ──────────
+_VISION_PROMPT = """You are reading a Culture Kings / Spektrum apparel "cut ticket" purchase order (mostly images).
 Return ONLY valid JSON (no markdown fences) with exactly these keys:
 {"retailer": string, "range_name": string, "po_number": string, "name": string,
  "color": string, "blank": string, "units": integer, "due_date": string,
@@ -280,17 +280,28 @@ def _spektrum_record(data: dict) -> dict:
 
 
 async def extract_spektrum(pdf_bytes: bytes) -> list:
-    """Extract an image-based Culture Kings/Spektrum PO via Gemini vision (one page = one style)."""
-    import google.generativeai as genai
-    api_key = await _gemini_key()
+    """Extract an image-based Culture Kings/Spektrum PO via Claude vision (one page = one style)."""
+    import base64
+    from claude_client import get_client, json_from_text, text_of, VISION_MODEL
+    client = await get_client()
+    # Render each page to PNG bytes for Claude's image input.
+    pngs = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        images = [p.to_image(resolution=150).original for p in pdf.pages]
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+        for p in pdf.pages:
+            buf = io.BytesIO()
+            p.to_image(resolution=150).original.save(buf, format="PNG")
+            pngs.append(buf.getvalue())
     records = []
-    for img in images:
-        resp = model.generate_content([_GEMINI_PROMPT, img])
-        data = _json_from_text(resp.text)
+    for png in pngs:
+        b64 = base64.standard_b64encode(png).decode("utf-8")
+        msg = await client.messages.create(
+            model=VISION_MODEL, max_tokens=1024,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
+                {"type": "text", "text": _VISION_PROMPT},
+            ]}],
+        )
+        data = json_from_text(text_of(msg))
         if data and data.get("po_number"):
             records.append(_spektrum_record(data))
     return records
