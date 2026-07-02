@@ -42,7 +42,7 @@ PACK_REFERENCES = (
 # design color [colorfull] ln wh ref cloth  description...  qty price extn
 _STYLE_RE = re.compile(
     r"^(?P<design>\S+)\s+(?P<color>\S+)(?:\s+\S+)?\s+(?P<ln>\d+)\s+(?P<wh>[A-Z]{2})\s+"
-    r"(?P<ref>\S+)\s+(?P<cloth>\S+)\s+(?P<desc>.+?)\s+(?P<qty>[\d,]+)\s+[\d,.]+\s+[\d,.]+\s*$"
+    r"(?P<ref>\S+)\s+(?P<cloth>\S+)\s+(?P<desc>.+?)\s+(?P<qty>[\d,]+)\s+(?P<price>[\d,.]+)\s+[\d,.]+\s*$"
 )
 
 _SIZE_TOKENS = set(SIZES_MAP.keys())
@@ -123,6 +123,10 @@ def _parse_goodie_page(page):
     blanks = re.search(r"\*\*BLANKS & TRIM\s*\*\*\s*\n([^\n]+)", text)
     # print/finishing lines sit between the "$.90" cost line and the first "** **".
     fp = re.search(r"BREAKDOWN COSTS INCLUDE[^\n]*\n(.+?)(?=\n\*\*)", text, re.S)
+    # Tractor-specific note blocks.
+    b2u = re.search(r"\*\*BLANKS TO BE USE FOR THIS STYLE:\s*([^\n*]+?)\s*\*\*", text)
+    rs = re.search(r"(SIZED:\s*RE-SIZE.*?)(?=\nNote :|\Z)", text, re.S)
+    photo_approval = bool(re.search(r"\*\*PHOTO APPROVAL\*\*", text))
 
     qty_declared = int(m.group("qty").replace(",", ""))
 
@@ -157,7 +161,11 @@ def _parse_goodie_page(page):
         "front_print": (fp.group(1).strip() if fp else ""),
         "approval_method": (approval.group(1).strip() if approval else ""),
         "blanks_trim": (blanks.group(1).strip() if blanks else ""),
+        "blanks_to_use": (b2u.group(1).strip() if b2u else ""),   # e.g. GI5000-WHITE
+        "resize": (rs.group(1).strip() if rs else ""),            # SIZED: RE-SIZE ... block
+        "photo_approval": photo_approval,
         "qty": qty_declared,
+        "unit_price": float(m.group("price").replace(",", "")) if m.group("price") else 0.0,
         "sizes": sizes,
         "pack_lines": pack_lines,
         "qty_from_sizes": total,
@@ -207,56 +215,94 @@ def _addr_input(addr: dict, company: str, person: str) -> dict:
     return {k: v for k, v in out.items() if v}
 
 
-def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None) -> dict:
-    """Assemble a Printavo QuoteCreateInput reproducing the 11-section template.
+def _li(desc, color=None, sizes=None, price=0.0):
+    """One line item; every item carries an explicit price (0.0 for text sections)."""
+    item = {"description": desc, "price": price}
+    if color:
+        item["color"] = color
+    if sizes:
+        item["sizes"] = sizes
+    return item
 
-    `contact` (from printavo_client.get_contact) supplies the customer's billing/
-    shipping addresses and name, which Printavo does NOT auto-copy from the contact
-    id — without them the quote's Customer Billing/Shipping come out blank.
-    """
+
+def _status_disp(r):
+    s = r["status"] or ""
+    return "n/a" if s.upper() == "ORIGINAL" else s
+
+
+def _spencers_groups(r, sizes_input):
+    """2-group SPENCERS template (matches quote #2110)."""
+    pack_txt = "\n".join(r["pack_lines"])
+    packing_desc = f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n\n{pack_txt}\n\n{PACK_REFERENCES}"
+    front = r["front_print"] if (r["front_print"] and "FRONT PRINT" in r["front_print"]) \
+        else ("FRONT PRINT\n" + r["front_print"] if r["front_print"] else "FRONT PRINT\nNECK LABEL\nFINISHING")
+    g1 = [
+        _li(PRODUCTION_DEPT),
+        _li(_garment_description(r), color=r["color"], sizes=sizes_input, price=r["unit_price"]),
+        _li(SAMPLES_DEFAULT),
+        _li(front),
+        _li("APPROVAL METHOD:\n" + (r["approval_method"] or "")),
+        _li(ALLOWED_SHORTAGE_DEFAULT),
+        _li(SPECIAL_NOTES_HEADER + ("\n" + r["blanks_trim"] if r["blanks_trim"] else "")),
+    ]
+    g2 = [_li(PACKING_DEPT), _li(packing_desc), _li(NEW_BOXES), _li(SPECIAL_NOTES_HEADER)]
+    return [g1, g2]
+
+
+def _tractor_groups(r, sizes_input):
+    """3-group TRACTOR SUPPLY template (matches quote #144): production, warehouse, packing."""
+    size_lines = "\n".join(r["pack_lines"])
+    front = r["front_print"] or "FRONT PRINT\nNECK LABEL\nFINISHING\nPICK & PACK"
+    garment = "\n".join(p for p in [r["description"], r["design_num"], _status_disp(r),
+                                    r["division"], size_lines] if p)
+    approval = r["approval_method"] or ("PHOTO APPROVAL" if r["photo_approval"] else _status_disp(r))
+
+    g1 = [
+        _li(PRODUCTION_DEPT),
+        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
+        _li("N/A"),
+        _li(front),
+        _li("APPROVAL METHOD:\n" + approval),
+        _li("ALLOWED SHORTAGE:\n2%"),
+        _li(SPECIAL_NOTES_HEADER),
+    ]
+    blank_body = "\n".join(p for p in [
+        "BLANK BRAND:", r["blank"], "BLANK TYPE:", "SHORT SLEEVE",
+        "BLANK PULL QTYS:", size_lines, r["resize"]] if p)
+    g2 = [
+        _li("WAREHOUSE DEPARTMENT\n(DO NOT EDIT)"),
+        _li(blank_body, color=r["color"], sizes=sizes_input),
+        _li(SPECIAL_NOTES_HEADER + "\nBLANKS TO BE USE FOR THIS STYLE:\n" + (r["blanks_to_use"] or "")),
+    ]
+    g3 = [
+        _li(PACKING_DEPT),
+        _li("PACKING INSTRUCTIONS FILE\nPACKING INSTRUCTIONS IMAGES\n" + PACK_REFERENCES),
+        _li(NEW_BOXES, price=2.50),
+        _li(SPECIAL_NOTES_HEADER),
+    ]
+    return [g1, g2, g3]
+
+
+def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None) -> dict:
+    """Assemble a Printavo QuoteCreateInput. Picks the SPENCERS (2-group) or
+    TRACTOR SUPPLY (3-group) template by brand. `contact` supplies the customer's
+    billing/shipping addresses, which Printavo does not auto-copy from the contact."""
     sizes_input = [
         {"size": MOS_TO_PRINTAVO_SIZE[k], "count": v}
         for k, v in r["sizes"].items() if k in MOS_TO_PRINTAVO_SIZE
     ]
-    pack_txt = "\n".join(r["pack_lines"])
-    packing_desc = f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n\n{pack_txt}\n\n{PACK_REFERENCES}"
-
-    # Every line item carries an explicit price (0.0 for the text sections).
-    def li(desc, color=None, sizes=None, price=0.0):
-        item = {"description": desc, "price": price}
-        if color:
-            item["color"] = color
-        if sizes:
-            item["sizes"] = sizes
-        return item
-
-    front = r["front_print"] if (r["front_print"] and "FRONT PRINT" in r["front_print"]) \
-        else ("FRONT PRINT\n" + r["front_print"] if r["front_print"] else "FRONT PRINT\nNECK LABEL\nFINISHING")
-
-    # Group 1: production/art. Group 2 (added below): packing.
-    group1 = [
-        li(PRODUCTION_DEPT),
-        li(_garment_description(r), color=r["color"], sizes=sizes_input, price=0.90),
-        li(SAMPLES_DEFAULT),
-        li(front),
-        li("APPROVAL METHOD:\n" + (r["approval_method"] or "")),
-        li(ALLOWED_SHORTAGE_DEFAULT),
-        li(SPECIAL_NOTES_HEADER + ("\n" + r["blanks_trim"] if r["blanks_trim"] else "")),
-    ]
-    group2 = [
-        li(PACKING_DEPT),
-        li(packing_desc),
-        li(NEW_BOXES),
-        li(SPECIAL_NOTES_HEADER),
-    ]
-    for grp in (group1, group2):
+    is_tractor = "TRACTOR" in (r.get("brand") or "").upper()
+    groups = _tractor_groups(r, sizes_input) if is_tractor else _spencers_groups(r, sizes_input)
+    for grp in groups:
         for idx, item in enumerate(grp):
             item["position"] = idx
 
-    # Nickname drops the "ORIGINAL" marker; keeps any other status (REORDER/NEW...).
     status = r["status"] or ""
     brand = r.get("brand") or "SPENCERS"
-    nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
+    if is_tractor:
+        nickname = f"{r['store_po']} - {brand} PO#{r['po_number']} - {r['design_num']}"
+    else:
+        nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
     if status and status.upper() != "ORIGINAL":
         nickname += f" - {status}"
 
@@ -268,15 +314,11 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         "nickname": nickname,
         "visualPoNumber": r["po_number"],
         "customerNote": CUSTOMER_NOTE,
-        "lineItemGroups": [
-            {"position": 0, "lineItems": group1},
-            {"position": 1, "lineItems": group2},
-        ],
+        "lineItemGroups": [{"position": i, "lineItems": g} for i, g in enumerate(groups)],
     }
     if owner_id:
-        quote["owner"] = {"id": owner_id}  # attribute the quote to the MOS user who created it
+        quote["owner"] = {"id": owner_id}
 
-    # Customer Billing / Shipping from the customer's stored addresses.
     cust = (contact or {}).get("customer") or {}
     company = cust.get("companyName") or ""
     person = (contact or {}).get("fullName") or ""
