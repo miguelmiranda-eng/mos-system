@@ -45,18 +45,67 @@ _STYLE_RE = re.compile(
     r"(?P<ref>\S+)\s+(?P<cloth>\S+)\s+(?P<desc>.+?)\s+(?P<qty>[\d,]+)\s+[\d,.]+\s+[\d,.]+\s*$"
 )
 
+_SIZE_TOKENS = set(SIZES_MAP.keys())
+# Nickname brand per retailer (first CUST word -> brand). Matches existing invoices.
+RETAILER_BRAND = {"SPENCER": "SPENCERS", "TRACTOR": "TRACTOR SUPPLY"}
 
-def _parse_goodie_page(text):
+
+def _sizes_from_pack_text(text: str):
+    """Sizes from the clean PACK notes block, e.g. 'MD - 288'. Returns (sizes, total, pack_lines)."""
+    sizes, total, pack_lines = {}, 0, []
+    for sz, q in re.findall(r"([A-Z0-9]{1,4})\s*-\s*(\d+)", text):
+        ms = SIZES_MAP.get(sz.upper())
+        if ms:
+            sizes[ms] = sizes.get(ms, 0) + int(q)
+            total += int(q)
+            pack_lines.append(f"{sz.upper()} - {q}")
+    return sizes, total, pack_lines
+
+
+def _extract_sizes_by_position(page):
+    """Align the SIZE/QTY table columns by x-position. Used for POs (e.g. Tractor
+    Supply) that lack a PACK text block — the table's text extraction is misaligned,
+    but each QTY value sits directly under its SIZE label. Returns (sizes, total, pack_lines)."""
+    labels, nums = [], []
+    for w in page.extract_words():
+        t = w["text"].strip().upper()
+        cx = (w["x0"] + w["x1"]) / 2
+        if t in _SIZE_TOKENS:
+            labels.append((cx, w["top"], t))
+        elif t.isdigit() and len(t) <= 5:      # excludes 12-digit UPCs
+            nums.append((cx, w["top"], int(t)))
+    sizes, total, pack_lines = {}, 0, []
+    for cx, top, token in labels:
+        best, best_d = None, 1e9
+        for ncx, ntop, val in nums:            # the qty word directly below this label
+            if 0 < (ntop - top) < 22 and abs(ncx - cx) < 18:
+                d = (ntop - top) + abs(ncx - cx)
+                if d < best_d:
+                    best_d, best = d, val
+        if best is not None:
+            ms = SIZES_MAP.get(token)
+            if ms:
+                sizes[ms] = sizes.get(ms, 0) + best
+                total += best
+                pack_lines.append(f"{token} - {best}")
+    return sizes, total, pack_lines
+
+
+def _parse_goodie_page(page):
     """Parse one page of a Goodie Two Sleeves Master Cut Ticket. Returns None if
     the page has no style line (e.g. a summary page)."""
+    text = page.extract_text() or ""
     m = next((_STYLE_RE.match(l) for l in text.split("\n") if _STYLE_RE.match(l)), None)
     if not m:
         return None
 
     po = re.search(r"^\d+\s+\d+\s+(\d+)$", text, re.M)                    # 4 26 21505 -> 21505
-    store = re.search(r"CUST PO.*?\n\s*(\d+)", text, re.S)                # table CUST PO (authoritative)
+    # CUST PO = first token of the value row under the "CUST PO ... SHIP MODE" header
+    # (numeric for Spencers like "322586", alphanumeric for Tractor like "PWA").
+    store = re.search(r"CUST PO.*?SHIP MODE\s*\n\s*(\S+)", text, re.S)
     store_notes = re.search(r"\b([A-Z]+)\s+PO\s+(\d+)\b", text)           # "SPENCER PO 322586" (notes)
-    cust = re.search(r"CUST\s+(.+?)\s+ISSUE DATE\s+([\dA-Z\-]+)", text)
+    # CUST can run into "ISSUE DATE" with no space ("...COMPANISSUE DATE").
+    cust = re.search(r"CUST\s+(.+?)\s*ISSUE ?DATE\s+([\dA-Z\-]+)", text)
     ship = re.search(r"\bSHIP\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     cancel = re.search(r"CANCEL\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     colorln = re.search(r"^([A-Z]+)\s+Category", text, re.M)
@@ -65,30 +114,37 @@ def _parse_goodie_page(text):
     # Front print / division / approval / blanks come from the "** **" note blocks.
     # Each note is a single line; stop at the next line to avoid swallowing the
     # PACK block or the page footer.
-    division_m = re.search(r"\*\*DIVISION:\s*\*\*\s*\n([^\n]+)", text)
-    division = division_m.group(1).strip() if division_m else ""
+    # Division can be inline ("**DIVISION: JUNIORS**") or on the next line ("**DIVISION: **\nMEN SS").
+    div_inline = re.search(r"\*\*DIVISION:\s*([^\n*]+?)\s*\*\*", text)
+    div_next = re.search(r"\*\*DIVISION:\s*\*\*\s*\n([^\n]+)", text)
+    division = (div_inline.group(1).strip() if div_inline else "") \
+        or (div_next.group(1).strip() if div_next else "")
     approval = re.search(r"\*\*APPROVAL METHOD:\s*\*\*\s*\n([^\n]+)", text)
     blanks = re.search(r"\*\*BLANKS & TRIM\s*\*\*\s*\n([^\n]+)", text)
     # print/finishing lines sit between the "$.90" cost line and the first "** **".
     fp = re.search(r"BREAKDOWN COSTS INCLUDE[^\n]*\n(.+?)(?=\n\*\*)", text, re.S)
 
-    # Sizes from the clean PACK notes block (the table block is misaligned in text).
-    sizes, total = {}, 0
-    pack_lines = []
-    for sz, q in re.findall(r"([A-Z0-9]{1,4})\s*-\s*(\d+)", text):
-        ms = SIZES_MAP.get(sz.upper())
-        if ms:
-            sizes[ms] = sizes.get(ms, 0) + int(q)
-            total += int(q)
-            pack_lines.append(f"{sz.upper()} - {q}")  # spaced, matches quote #2110 exactly
-
     qty_declared = int(m.group("qty").replace(",", ""))
+
+    # Sizes: prefer the clean PACK notes block (preserves the exact Spencers format);
+    # fall back to x-position column alignment for POs without a PACK block (Tractor).
+    sizes, total, pack_lines = _sizes_from_pack_text(text)
+    if not sizes or total != qty_declared:
+        sizes, total, pack_lines = _extract_sizes_by_position(page)
+
+    # Branding for the nickname: retailer's first word, mapped (SPENCER -> SPENCERS).
+    retailer = cust.group(1).strip() if cust else ""
+    first_word = retailer.split()[0] if retailer else "SPENCER"
+    brand = RETAILER_BRAND.get(first_word, first_word)
+    # Packing-line prefix ("SPENCER PO 322586"): from the notes if present, else brand.
+    brand_prefix = store_notes.group(1) if store_notes else first_word
     return {
         "po_number": po.group(1) if po else None,
         "store_po": store.group(1) if store else (store_notes.group(2) if store_notes else None),
         "store_po_notes": store_notes.group(2) if store_notes else None,
-        "brand_prefix": store_notes.group(1) if store_notes else "SPENCER",  # e.g. "SPENCER"
-        "retailer": cust.group(1).strip() if cust else None,
+        "brand": brand,                # nickname brand (e.g. SPENCERS / TRACTOR SUPPLY)
+        "brand_prefix": brand_prefix,  # packing-line prefix (e.g. SPENCER)
+        "retailer": retailer or None,
         "issue_date": cust.group(2) if cust else None,
         "ship_date": ship.group(1) if ship else None,
         "cancel_date": cancel.group(1) if cancel else None,
@@ -115,7 +171,7 @@ def parse_pdf(pdf_bytes: bytes) -> list:
     out = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
-            rec = _parse_goodie_page(page.extract_text() or "")
+            rec = _parse_goodie_page(page)
             if rec:
                 out.append(rec)
     return out
@@ -199,7 +255,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
 
     # Nickname drops the "ORIGINAL" marker; keeps any other status (REORDER/NEW...).
     status = r["status"] or ""
-    nickname = f"SPENCERS PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
+    brand = r.get("brand") or "SPENCERS"
+    nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
     if status and status.upper() != "ORIGINAL":
         nickname += f" - {status}"
 
