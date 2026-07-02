@@ -226,6 +226,31 @@ def invoice_to_orders(invoice: dict) -> list:
     return orders
 
 
+async def _claim_invoice(invoice_id) -> bool:
+    """Atomically claim a Printavo invoice so exactly one pass/worker processes it.
+
+    Inserts into printavo_processed keyed by the invoice's stable id (unique by
+    definition). The insert is atomic ACROSS PROCESSES, so unlike the in-process
+    asyncio lock it also stops a multi-worker deployment from double-creating.
+    Returns True if we won the claim (first time seen), False if already processed.
+
+    This also fixes the out-of-order bug the VISUAL_ID watermark had: an invoice is
+    claimed the first time it is SEEN, regardless of how its number compares to the
+    others — a late quote->invoice conversion is no longer skipped by a high mark.
+    Works alongside the uniq_printavo_order_number index as defense-in-depth.
+    """
+    if not invoice_id:
+        return False
+    try:
+        await db.printavo_processed.insert_one({
+            "_id": str(invoice_id),
+            "claimed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
+
+
 async def process_invoice(invoice: dict) -> int:
     """Create MOS orders for one invoice. Returns count of orders created."""
     from routers.orders import internal_create_order  # lazy import to avoid cycles
@@ -256,38 +281,49 @@ async def process_invoice(invoice: dict) -> int:
     return created
 
 
-async def sync_once(cfg: dict) -> dict:
-    """Fetch recent invoices and create orders for the new ones.
+def _max_visual_id(nodes) -> str:
+    vids = [_vid_int(n.get("visualId")) for n in nodes]
+    top = max((v for v in vids if v is not None), default=None)
+    return str(top) if top is not None else None
 
-    First run (no watermark) seeds the high-water mark WITHOUT importing the
-    backlog, so enabling the sync never floods MOS with historical invoices.
+
+async def sync_once(cfg: dict) -> dict:
+    """Fetch recent invoices and create an order for each NEW one.
+
+    Dedup is per-invoice via an atomic claim (printavo_processed) instead of a
+    VISUAL_ID watermark. That works across processes AND picks up invoices whose
+    quote converts out of numeric order (the watermark used to skip those). The
+    uniq_printavo_order_number index and the process-wide sync lock stay as
+    defense-in-depth.
+
+    First run seeds every currently-visible invoice as processed WITHOUT importing
+    it, so enabling the sync never floods MOS with the historical backlog.
     """
     from printavo_client import fetch_recent_invoices
 
     fetch_size = int(cfg.get("fetch_size") or 25)
     nodes = await fetch_recent_invoices(fetch_size)
+    watermark = _max_visual_id(nodes)  # cosmetic only: shown in the UI as "last invoice"
 
-    last_int = _vid_int(cfg.get("last_visual_id"))
-    max_int = last_int
-
-    # First-ever run: seed watermark to newest, create nothing.
-    if last_int is None:
-        seed = max((v for v in (_vid_int(n.get("visualId")) for n in nodes) if v is not None), default=None)
-        return {"initialized": True, "created": 0, "seen": len(nodes), "watermark": seed}
-
-    # Process oldest-first among the not-yet-seen invoices so the watermark
-    # advances monotonically even if we crash mid-batch.
-    new_nodes = []
-    for n in nodes:
-        vint = _vid_int(n.get("visualId"))
-        if vint is None or vint > last_int:
-            new_nodes.append((vint, n))
-    new_nodes.sort(key=lambda t: (t[0] is None, t[0] or 0))
+    # First run: claim everything currently visible so we don't backfill history.
+    if not cfg.get("seeded"):
+        for n in nodes:
+            await _claim_invoice(n.get("id"))
+        await db.printavo_sync.update_one(
+            {"config_id": CONFIG_ID}, {"$set": {"seeded": True}}, upsert=True
+        )
+        return {"initialized": True, "created": 0, "seen": len(nodes), "watermark": watermark}
 
     created_total = 0
-    for vint, node in new_nodes:
-        created_total += await process_invoice(node)
-        if vint is not None and (max_int is None or vint > max_int):
-            max_int = vint
+    for node in nodes:
+        inv_id = node.get("id")
+        if not await _claim_invoice(inv_id):
+            continue  # already processed (a prior tick, or another worker)
+        try:
+            created_total += await process_invoice(node)
+        except Exception as e:
+            # Release the claim so a failed invoice is retried on the next tick.
+            logger.error(f"[printavo] invoice {node.get('visualId')} failed, releasing claim: {e}")
+            await db.printavo_processed.delete_one({"_id": str(inv_id)})
 
-    return {"initialized": False, "created": created_total, "seen": len(nodes), "watermark": max_int}
+    return {"initialized": False, "created": created_total, "seen": len(nodes), "watermark": watermark}
