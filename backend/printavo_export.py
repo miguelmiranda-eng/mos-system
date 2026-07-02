@@ -66,8 +66,7 @@ def _parse_goodie_page(text):
     # Each note is a single line; stop at the next line to avoid swallowing the
     # PACK block or the page footer.
     division_m = re.search(r"\*\*DIVISION:\s*\*\*\s*\n([^\n]+)", text)
-    division = re.sub(r"\bLS\b", "L/S", re.sub(r"\bSS\b", "S/S",
-                      division_m.group(1).strip() if division_m else ""))
+    division = division_m.group(1).strip() if division_m else ""
     approval = re.search(r"\*\*APPROVAL METHOD:\s*\*\*\s*\n([^\n]+)", text)
     blanks = re.search(r"\*\*BLANKS & TRIM\s*\*\*\s*\n([^\n]+)", text)
     # print/finishing lines sit between the "$.90" cost line and the first "** **".
@@ -81,7 +80,7 @@ def _parse_goodie_page(text):
         if ms:
             sizes[ms] = sizes.get(ms, 0) + int(q)
             total += int(q)
-            pack_lines.append(f"{sz.upper()}-{q}")  # no spaces, matches the quote template
+            pack_lines.append(f"{sz.upper()} - {q}")  # spaced, matches quote #2110 exactly
 
     qty_declared = int(m.group("qty").replace(",", ""))
     return {
@@ -136,9 +135,9 @@ def _iso(d):
 
 def _garment_description(r):
     """Rebuild the multi-line garment description (matches the invoice template)."""
-    pack = "\n".join(r["pack_lines"])
-    parts = [r["description"], r["design_num"], r["status"], r["blank"], r["division"], pack]
-    return "\n".join(p for p in parts if p)
+    # Body then a blank line then the pack lines — matches quote #2110 exactly.
+    body = "\n".join(p for p in [r["description"], r["design_num"], r["status"], r["blank"], r["division"]] if p)
+    return f"{body}\n\n" + "\n".join(r["pack_lines"])
 
 
 def _addr_input(addr: dict, company: str, person: str) -> dict:
