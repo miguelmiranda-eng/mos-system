@@ -135,8 +135,10 @@ def _iso(d):
 
 def _garment_description(r):
     """Rebuild the multi-line garment description (matches the invoice template)."""
+    # "ORIGINAL" is not a meaningful status for the quote -> show it as n/a.
+    status = "n/a" if (r["status"] or "").upper() == "ORIGINAL" else r["status"]
     # Body then a blank line then the pack lines — matches quote #2110 exactly.
-    body = "\n".join(p for p in [r["description"], r["design_num"], r["status"], r["blank"], r["division"]] if p)
+    body = "\n".join(p for p in [r["description"], r["design_num"], status, r["blank"], r["division"]] if p)
     return f"{body}\n\n" + "\n".join(r["pack_lines"])
 
 
@@ -163,35 +165,44 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None) -> dict:
     pack_txt = "\n".join(r["pack_lines"])
     packing_desc = f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n\n{pack_txt}\n\n{PACK_REFERENCES}"
 
-    def li(desc, color=None, sizes=None, price=None):
-        item = {"description": desc}
+    # Every line item carries an explicit price (0.0 for the text sections).
+    def li(desc, color=None, sizes=None, price=0.0):
+        item = {"description": desc, "price": price}
         if color:
             item["color"] = color
         if sizes:
             item["sizes"] = sizes
-        if price is not None:
-            item["price"] = price
         return item
 
-    line_items = [
+    front = r["front_print"] if (r["front_print"] and "FRONT PRINT" in r["front_print"]) \
+        else ("FRONT PRINT\n" + r["front_print"] if r["front_print"] else "FRONT PRINT\nNECK LABEL\nFINISHING")
+
+    # Group 1: production/art. Group 2 (added below): packing.
+    group1 = [
         li(PRODUCTION_DEPT),
         li(_garment_description(r), color=r["color"], sizes=sizes_input, price=0.90),
         li(SAMPLES_DEFAULT),
-        li("FRONT PRINT\n" + r["front_print"] if r["front_print"] and "FRONT PRINT" not in r["front_print"] else (r["front_print"] or "FRONT PRINT\nNECK LABEL\nFINISHING")),
+        li(front),
         li("APPROVAL METHOD:\n" + (r["approval_method"] or "")),
         li(ALLOWED_SHORTAGE_DEFAULT),
         li(SPECIAL_NOTES_HEADER + ("\n" + r["blanks_trim"] if r["blanks_trim"] else "")),
+    ]
+    group2 = [
         li(PACKING_DEPT),
         li(packing_desc),
         li(NEW_BOXES),
         li(SPECIAL_NOTES_HEADER),
     ]
+    for grp in (group1, group2):
+        for idx, item in enumerate(grp):
+            item["position"] = idx
 
-    # Printavo requires an explicit, non-null position on every line item (and group).
-    for idx, item in enumerate(line_items):
-        item["position"] = idx
+    # Nickname drops the "ORIGINAL" marker; keeps any other status (REORDER/NEW...).
+    status = r["status"] or ""
+    nickname = f"SPENCERS PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
+    if status and status.upper() != "ORIGINAL":
+        nickname += f" - {status}"
 
-    nickname = f"SPENCERS PO# {r['po_number']} - {r['store_po']} - {r['design_num']} - {r['status']}"
     due_date = _iso(r["cancel_date"]) or _iso(r["ship_date"])
     quote = {
         "contact": {"id": contact_id},
@@ -200,7 +211,10 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None) -> dict:
         "nickname": nickname,
         "visualPoNumber": r["po_number"],
         "customerNote": CUSTOMER_NOTE,
-        "lineItemGroups": [{"position": 0, "lineItems": line_items}],
+        "lineItemGroups": [
+            {"position": 0, "lineItems": group1},
+            {"position": 1, "lineItems": group2},
+        ],
     }
 
     # Customer Billing / Shipping from the customer's stored addresses.
