@@ -33,6 +33,7 @@ query RecentInvoices($first: Int!) {
       url
       workorderUrl
       customerNote
+      status { name }
       contact {
         fullName
         customer { companyName }

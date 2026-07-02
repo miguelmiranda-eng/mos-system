@@ -36,6 +36,21 @@ SYNC_USER = {
 
 CONFIG_ID = "invoice_sync"
 
+# Only import invoices whose Printavo status is one of these (case-insensitive).
+# The `invoices` GraphQL list already excludes anything in "Quote" status (those are
+# in the separate `quotes` list the sync never queries), so this is a second, explicit
+# gate: it guarantees an order is never created before it reaches "Scheduled", even if
+# Printavo ever surfaces some other non-Quote intermediate status in the invoices list.
+# Overridable per-install via cfg["required_statuses"].
+DEFAULT_REQUIRED_STATUSES = ["Scheduled"]
+
+
+def _status_ok(node: dict, allowed: set) -> bool:
+    if not allowed:
+        return True
+    name = ((node.get("status") or {}).get("name") or "").strip().lower()
+    return name in allowed
+
 # "SPENCERS PO# 19291 - 311381 - GFM0118M1000 - REORDER"
 # g1 branding, g2 customer PO, g3 store PO, g4 design #
 _HEADER_PO_RE = re.compile(
@@ -304,10 +319,15 @@ async def sync_once(cfg: dict) -> dict:
     fetch_size = int(cfg.get("fetch_size") or 25)
     nodes = await fetch_recent_invoices(fetch_size)
     watermark = _max_visual_id(nodes)  # cosmetic only: shown in the UI as "last invoice"
+    allowed = {s.strip().lower() for s in (cfg.get("required_statuses") or DEFAULT_REQUIRED_STATUSES)}
 
-    # First run: claim everything currently visible so we don't backfill history.
+    # Only act on invoices already in a "ready" status. Non-ready ones are NOT claimed,
+    # so they get picked up on a later tick once they reach "Scheduled".
+    ready = [n for n in nodes if _status_ok(n, allowed)]
+
+    # First run: claim the ready invoices so we don't backfill the existing history.
     if not cfg.get("seeded"):
-        for n in nodes:
+        for n in ready:
             await _claim_invoice(n.get("id"))
         await db.printavo_sync.update_one(
             {"config_id": CONFIG_ID}, {"$set": {"seeded": True}}, upsert=True
@@ -315,7 +335,7 @@ async def sync_once(cfg: dict) -> dict:
         return {"initialized": True, "created": 0, "seen": len(nodes), "watermark": watermark}
 
     created_total = 0
-    for node in nodes:
+    for node in ready:
         inv_id = node.get("id")
         if not await _claim_invoice(inv_id):
             continue  # already processed (a prior tick, or another worker)
