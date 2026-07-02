@@ -114,6 +114,26 @@ query GetContact($id: ID!) {
 """
 
 
+USERS_QUERY = """
+query { account { users(first: 200) { nodes { id name email } } } }
+"""
+
+
+async def find_user_id_by_email(email: str):
+    """Return the Printavo user id whose email matches (case-insensitive), else None.
+    Used to set a quote's `owner` so it shows under the MOS user who created it,
+    not under the shared API token's account."""
+    if not email:
+        return None
+    data = await _graphql(USERS_QUERY, {})
+    users = (((data.get("account") or {}).get("users") or {}).get("nodes")) or []
+    e = email.strip().lower()
+    for u in users:
+        if (u.get("email") or "").strip().lower() == e:
+            return u.get("id")
+    return None
+
+
 async def get_contact(contact_id: str) -> dict:
     """Fetch a contact's name + its customer's billing/shipping addresses (used to
     populate the quote's Customer Billing / Shipping, which Printavo does not copy

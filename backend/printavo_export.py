@@ -151,7 +151,7 @@ def _addr_input(addr: dict, company: str, person: str) -> dict:
     return {k: v for k, v in out.items() if v}
 
 
-def build_quote_input(r: dict, contact_id: str, contact: dict = None) -> dict:
+def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None) -> dict:
     """Assemble a Printavo QuoteCreateInput reproducing the 11-section template.
 
     `contact` (from printavo_client.get_contact) supplies the customer's billing/
@@ -216,6 +216,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None) -> dict:
             {"position": 1, "lineItems": group2},
         ],
     }
+    if owner_id:
+        quote["owner"] = {"id": owner_id}  # attribute the quote to the MOS user who created it
 
     # Customer Billing / Shipping from the customer's stored addresses.
     cust = (contact or {}).get("customer") or {}

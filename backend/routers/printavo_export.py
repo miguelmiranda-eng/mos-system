@@ -62,11 +62,22 @@ async def create_quotes(request: Request):
         logger.error(f"[printavo-export] get_contact failed: {e}")
         contact = None
 
+    # Attribute the quotes to the MOS user who created them (matched to their
+    # Printavo user by email). Falls back to the token's default owner if unmatched.
+    owner_id = None
+    owner_email = (user or {}).get("email")
+    try:
+        owner_id = await printavo_client.find_user_id_by_email(owner_email)
+        if not owner_id:
+            logger.warning(f"[printavo-export] no Printavo user for {owner_email}; quote uses default owner")
+    except Exception as e:
+        logger.error(f"[printavo-export] owner lookup failed: {e}")
+
     results = []
     for r in styles:
         design = r.get("design_num")
         try:
-            quote_input = build_quote_input(r, contact_id, contact=contact)
+            quote_input = build_quote_input(r, contact_id, contact=contact, owner_id=owner_id)
             created = await printavo_client.create_quote(quote_input)
             results.append({"design_num": design, "ok": True,
                             "quote_id": created.get("id"), "visual_id": created.get("visualId")})
@@ -79,4 +90,6 @@ async def create_quotes(request: Request):
                        {"contact_id": contact_id, "created": [x for x in results if x["ok"]]})
     return {"results": results,
             "created": sum(1 for x in results if x["ok"]),
-            "failed": sum(1 for x in results if not x["ok"])}
+            "failed": sum(1 for x in results if not x["ok"]),
+            "owner_email": owner_email,
+            "owner_matched": bool(owner_id)}

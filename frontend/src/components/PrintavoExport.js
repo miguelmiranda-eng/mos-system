@@ -189,6 +189,11 @@ export default function PrintavoExport() {
         {results && (
           <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-3">
             <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground">Resultado</h2>
+            <p className={`text-xs ${results.owner_matched ? "text-muted-foreground" : "text-amber-600 font-semibold"}`}>
+              {results.owner_matched
+                ? `Quotes creadas a nombre de: ${results.owner_email}`
+                : `⚠ Tu email (${results.owner_email}) no coincide con un usuario de Printavo — quedaron con el owner por defecto.`}
+            </p>
             {results.results.map((r, i) => (
               <div key={i} className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${r.ok ? "bg-emerald-500/10 text-emerald-600" : "bg-destructive/10 text-destructive"}`}>
                 {r.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
