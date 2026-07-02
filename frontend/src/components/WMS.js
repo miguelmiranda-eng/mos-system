@@ -6,6 +6,7 @@ import {
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
   Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move,
+  Sparkles,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -30,6 +31,7 @@ import { DirectedWorkModule } from "./wms/DirectedWork";
 import { AsnModule } from "./wms/Asn";
 import { TransitModule } from "./wms/Transit";
 import { MoverModule } from "./wms/Mover";
+import { WmsQueryModule } from "./wms/WmsQuery";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -51,6 +53,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
+    case 'ai_query':     return <WmsQueryModule />;
     default:             return <ReceivingModule />;
   }
 };
@@ -93,6 +96,9 @@ export default function WMS() {
   }, []);
 
   const associatedCustomer = currentUser?.associated_customer || '';
+  // Rastreabilidad IA: solo admin nivel 5 y supersu (el backend también lo valida).
+  const isAdminL5 = currentUser?.role === 'supersu'
+    || (currentUser?.role === 'admin' && Number(currentUser?.admin_level || 1) >= 5);
 
   // Show "switching…" spinner for 200ms whenever the active module changes
   useEffect(() => {
@@ -120,6 +126,7 @@ export default function WMS() {
     { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
     { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
     { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
+    ...(isAdminL5 ? [{ id: 'ai_query', label: 'Rastreabilidad IA', icon: Sparkles, color: 'text-fuchsia-400', desc: 'Consultas en lenguaje natural: cajas, SKU, locaciones, ASN, historial' }] : []),
   ];
 
   const loadBadges = useCallback(async () => {
