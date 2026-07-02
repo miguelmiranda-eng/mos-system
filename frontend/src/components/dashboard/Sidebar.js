@@ -26,6 +26,7 @@ import {
   ClipboardList,
   CalendarClock,
   Zap,
+  Package,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -325,6 +326,10 @@ const Sidebar = ({
                   <button onClick={() => { navigate('/printavo-sync'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Sync Printavo" : ""}>
                     <Zap size={15} className={iconCls(false)} />
                     {(isOpen || !isCollapsed) && <span>Sync Printavo</span>}
+                  </button>
+                  <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "PO a Quote" : ""}>
+                    <Package size={15} className={iconCls(false)} />
+                    {(isOpen || !isCollapsed) && <span>PO → Quote</span>}
                   </button>
                 </nav>
               </>

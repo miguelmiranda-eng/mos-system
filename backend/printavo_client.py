@@ -85,6 +85,39 @@ async def _graphql(query: str, variables: dict) -> dict:
         return data.get("data") or {}
 
 
+CONTACTS_QUERY = """
+query SearchContacts($q: String!) {
+  contacts(first: 15, query: $q) {
+    nodes { id fullName email customer { id companyName } }
+  }
+}
+"""
+
+QUOTE_CREATE = """
+mutation CreateQuote($input: QuoteCreateInput!) {
+  quoteCreate(input: $input) { id visualId }
+}
+"""
+
+
+async def search_contacts(q: str) -> list:
+    """Search Printavo contacts by name/company for the review UI's customer picker."""
+    data = await _graphql(CONTACTS_QUERY, {"q": q})
+    nodes = ((data.get("contacts") or {}).get("nodes")) or []
+    return [{
+        "id": n.get("id"),
+        "name": n.get("fullName"),
+        "email": n.get("email"),
+        "company": (n.get("customer") or {}).get("companyName"),
+    } for n in nodes]
+
+
+async def create_quote(quote_input: dict) -> dict:
+    """Run the quoteCreate mutation. Returns {id, visualId}."""
+    data = await _graphql(QUOTE_CREATE, {"input": quote_input})
+    return (data.get("quoteCreate")) or {}
+
+
 async def fetch_recent_invoices(first: int = 25) -> list:
     """Return up to `first` most-recently-created invoices (raw GraphQL nodes).
 
