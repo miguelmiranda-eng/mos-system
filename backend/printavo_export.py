@@ -31,7 +31,8 @@ PACKING_DEPT = "PACKING DEPARTMENT\n(DO NOT EDIT)"
 NEW_BOXES = "NEW BOXES\nINCLUDE # ON QUANTITY COLUMN"
 ALLOWED_SHORTAGE_DEFAULT = "ALLOWED SHORTAGE:\n0%"
 SAMPLES_DEFAULT = "SAMPLES\nN/A"
-SPECIAL_NOTES_HEADER = "SPECIAL NOTES"
+SPECIAL_NOTES_HEADER = "SPECIAL NOTES:"
+CUSTOMER_NOTE = "DIGITAL PACKING LIST."
 PACK_REFERENCES = (
     "INCLUDES REFERENCES TO:\nPrice Ticket\nHang Tag\nBag/No Bag\n"
     "Bag Size (if specified)\nFolding Type\nFolding Size (if specified)\n"
@@ -138,8 +139,22 @@ def _garment_description(r):
     return "\n".join(p for p in parts if p is not None)
 
 
-def build_quote_input(r: dict, contact_id: str) -> dict:
-    """Assemble a Printavo QuoteCreateInput reproducing the 11-section template."""
+def _addr_input(addr: dict, company: str, person: str) -> dict:
+    """Map a Printavo Address (read) -> CustomerAddressInput (write)."""
+    out = {"companyName": company, "customerName": person,
+           "address1": addr.get("address1"), "address2": addr.get("address2"),
+           "city": addr.get("city"), "stateIso": addr.get("stateIso"),
+           "zipCode": addr.get("zipCode"), "countryIso": addr.get("countryIso") or "US"}
+    return {k: v for k, v in out.items() if v}
+
+
+def build_quote_input(r: dict, contact_id: str, contact: dict = None) -> dict:
+    """Assemble a Printavo QuoteCreateInput reproducing the 11-section template.
+
+    `contact` (from printavo_client.get_contact) supplies the customer's billing/
+    shipping addresses and name, which Printavo does NOT auto-copy from the contact
+    id — without them the quote's Customer Billing/Shipping come out blank.
+    """
     sizes_input = [
         {"size": MOS_TO_PRINTAVO_SIZE[k], "count": v}
         for k, v in r["sizes"].items() if k in MOS_TO_PRINTAVO_SIZE
@@ -177,11 +192,22 @@ def build_quote_input(r: dict, contact_id: str) -> dict:
 
     nickname = f"SPENCERS PO# {r['po_number']} - {r['store_po']} - {r['design_num']} - {r['status']}"
     due_date = _iso(r["cancel_date"]) or _iso(r["ship_date"])
-    return {
+    quote = {
         "contact": {"id": contact_id},
         "customerDueAt": due_date,
         "dueAt": (due_date + "T00:00:00Z") if due_date else None,
         "nickname": nickname,
         "visualPoNumber": r["po_number"],
+        "customerNote": CUSTOMER_NOTE,
         "lineItemGroups": [{"position": 0, "lineItems": line_items}],
     }
+
+    # Customer Billing / Shipping from the customer's stored addresses.
+    cust = (contact or {}).get("customer") or {}
+    company = cust.get("companyName") or ""
+    person = (contact or {}).get("fullName") or ""
+    if cust.get("billingAddress"):
+        quote["billingAddress"] = _addr_input(cust["billingAddress"], company, person)
+    if cust.get("shippingAddress"):
+        quote["shippingAddress"] = _addr_input(cust["shippingAddress"], company, person)
+    return quote

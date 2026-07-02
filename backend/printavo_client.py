@@ -100,6 +100,28 @@ mutation CreateQuote($input: QuoteCreateInput!) {
 """
 
 
+CONTACT_QUERY = """
+query GetContact($id: ID!) {
+  contact(id: $id) {
+    id fullName
+    customer {
+      companyName
+      billingAddress { address1 address2 city stateIso zipCode countryIso }
+      shippingAddress { address1 address2 city stateIso zipCode countryIso }
+    }
+  }
+}
+"""
+
+
+async def get_contact(contact_id: str) -> dict:
+    """Fetch a contact's name + its customer's billing/shipping addresses (used to
+    populate the quote's Customer Billing / Shipping, which Printavo does not copy
+    automatically from the contact)."""
+    data = await _graphql(CONTACT_QUERY, {"id": contact_id})
+    return data.get("contact") or {}
+
+
 async def search_contacts(q: str) -> list:
     """Search Printavo contacts by name/company for the review UI's customer picker."""
     data = await _graphql(CONTACTS_QUERY, {"q": q})

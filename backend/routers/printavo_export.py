@@ -55,11 +55,18 @@ async def create_quotes(request: Request):
     if not styles:
         raise HTTPException(400, "No hay estilos para crear")
 
+    # Fetch the chosen contact once for its customer billing/shipping addresses.
+    try:
+        contact = await printavo_client.get_contact(contact_id)
+    except Exception as e:
+        logger.error(f"[printavo-export] get_contact failed: {e}")
+        contact = None
+
     results = []
     for r in styles:
         design = r.get("design_num")
         try:
-            quote_input = build_quote_input(r, contact_id)
+            quote_input = build_quote_input(r, contact_id, contact=contact)
             created = await printavo_client.create_quote(quote_input)
             results.append({"design_num": design, "ok": True,
                             "quote_id": created.get("id"), "visual_id": created.get("visualId")})
