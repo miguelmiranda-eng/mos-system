@@ -95,9 +95,19 @@ def _parse_goodie_page(page):
     """Parse one page of a Goodie Two Sleeves Master Cut Ticket. Returns None if
     the page has no style line (e.g. a summary page)."""
     text = page.extract_text() or ""
-    m = next((_STYLE_RE.match(l) for l in text.split("\n") if _STYLE_RE.match(l)), None)
+    lines = text.split("\n")
+    m = next((_STYLE_RE.match(l) for l in lines if _STYLE_RE.match(l)), None)
     if not m:
         return None
+
+    # The garment name can wrap: extra words sit on the line(s) between the style
+    # line and the "<color> Category" line (e.g. "...BACK IN THE\nSADDLE\nWHITE Category").
+    desc = m.group("desc").strip()
+    si = next((i for i, l in enumerate(lines) if _STYLE_RE.match(l)), -1)
+    for l in (lines[si + 1:] if si >= 0 else []):
+        if not l.strip() or "Category" in l:
+            break
+        desc += " " + l.strip()
 
     po = re.search(r"^\d+\s+\d+\s+(\d+)$", text, re.M)                    # 4 26 21505 -> 21505
     # CUST PO = first token of the value row under the "CUST PO ... SHIP MODE" header
@@ -155,7 +165,7 @@ def _parse_goodie_page(page):
         "design_num": m.group("design"),
         "blank": m.group("cloth"),
         "color": colorln.group(1) if colorln else m.group("color"),
-        "description": m.group("desc").strip(),
+        "description": desc,
         "status": (status.group(1).strip() if status else "ORIGINAL"),
         "division": division,
         "front_print": (fp.group(1).strip() if fp else ""),
@@ -260,8 +270,9 @@ def _tractor_groups(r, sizes_input):
     garment = "\n".join(p for p in [r["description"], r["design_num"], _status_disp(r),
                                     r["division"], size_lines] if p)
     approval = r["approval_method"] or ("PHOTO APPROVAL" if r["photo_approval"] else _status_disp(r))
-    # The re-size instructions (SIZED: RE-SIZE ...) belong to SPECIAL NOTES in G1.
-    special_notes = SPECIAL_NOTES_HEADER + ("\n" + r["resize"] if r["resize"] else "")
+    # The re-size instructions (SIZED: RE-SIZE ...) belong to SPECIAL NOTES in G1,
+    # separated by a blank line (matches quote #2127).
+    special_notes = SPECIAL_NOTES_HEADER + ("\n\n" + r["resize"] if r["resize"] else "")
 
     g1 = [
         _li(PRODUCTION_DEPT),
@@ -274,7 +285,7 @@ def _tractor_groups(r, sizes_input):
     ]
     g2 = [_li(PACKING_DEPT)]
     g3 = [
-        _li(PACK_REFERENCES),
+        _li("\n" + PACK_REFERENCES),   # leading blank line, matches quote #2127
         _li(NEW_BOXES, price=2.50),
         _li(SPECIAL_NOTES_HEADER),
     ]
