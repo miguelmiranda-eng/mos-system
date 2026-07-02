@@ -12,6 +12,8 @@ Currently supports the Goodie Two Sleeves format; add more retailers by writing
 another _parse_<retailer> and registering it in detect_and_parse().
 """
 import io
+import os
+import json
 import re
 import pdfplumber
 
@@ -196,15 +198,102 @@ def parse_pdf(pdf_bytes: bytes) -> list:
 
 
 def _iso(d):
-    """'18-JUN-26' -> '2026-06-18' (best effort)."""
+    """'18-JUN-26' or '5/8/2026' -> 'YYYY-MM-DD' (best effort)."""
     if not d:
         return None
+    d = d.strip()
+    m2 = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", d)   # M/D/YYYY (Culture Kings)
+    if m2:
+        y = m2.group(3)
+        y = ("20" + y) if len(y) == 2 else y
+        return f"{y}-{int(m2.group(1)):02d}-{int(m2.group(2)):02d}"
     months = {"JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
               "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"}
     m = re.match(r"(\d{1,2})-([A-Z]{3})-(\d{2})", d)
     if not m:
         return None
     return f"20{m.group(3)}-{months.get(m.group(2), '01')}-{int(m.group(1)):02d}"
+
+
+# ── Spektrum / Culture Kings: image-based PO read with Gemini vision ──────────
+_GEMINI_PROMPT = """You are reading a Culture Kings / Spektrum apparel "cut ticket" purchase order (mostly images).
+Return ONLY valid JSON (no markdown fences) with exactly these keys:
+{"retailer": string, "range_name": string, "po_number": string, "name": string,
+ "color": string, "blank": string, "units": integer, "due_date": string,
+ "sizes": {"<SIZE>": integer}}
+Sizes labels are like XS, S, M, L, XL, 2XL, 3XL. Use the sizes summary line. Null for missing fields."""
+
+
+async def _gemini_key() -> str:
+    from deps import db
+    from cryptography.fernet import Fernet
+    config = await db.insights_config.find_one({"config_id": "main"}, {"_id": 0})
+    if not config or not config.get("encrypted_gemini_key"):
+        raise RuntimeError("Gemini API key no configurada (modulo Insights).")
+    enc = os.environ.get("MOS_ENCRYPTION_KEY")
+    return Fernet(enc.encode()).decrypt(config["encrypted_gemini_key"].encode()).decode()
+
+
+def _json_from_text(txt: str):
+    t = (txt or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\n?", "", t).rstrip("`").strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        m = re.search(r"\{.*\}", t, re.S)
+        return json.loads(m.group(0)) if m else None
+
+
+def _spektrum_record(data: dict) -> dict:
+    sizes, pack_lines, total = {}, [], 0
+    for sz, q in (data.get("sizes") or {}).items():
+        ms = SIZES_MAP.get(str(sz).upper())
+        try:
+            q = int(q)
+        except (TypeError, ValueError):
+            q = 0
+        if ms and q:
+            sizes[ms] = sizes.get(ms, 0) + q
+            total += q
+            pack_lines.append(f"{str(sz).upper()} - {q}")
+    units = data.get("units") or total
+    return {
+        "brand": (data.get("retailer") or "CULTURE KINGS").upper(),
+        "retailer": data.get("retailer"),
+        "po_number": data.get("po_number"),
+        "store_po": data.get("po_number"),
+        "store_po_notes": None,
+        "brand_prefix": (data.get("retailer") or "CULTURE KINGS").upper(),
+        "design_num": data.get("po_number"),
+        "description": (data.get("name") or "").strip(),
+        "color": (data.get("color") or "").strip(),
+        "blank": (data.get("blank") or "").strip(),
+        "division": "", "status": "", "front_print": "", "approval_method": "",
+        "blanks_trim": "", "blanks_to_use": "", "resize": "", "photo_approval": False,
+        "range_name": data.get("range_name"),
+        "sizes": sizes, "pack_lines": pack_lines,
+        "qty": units, "qty_from_sizes": total, "unit_price": 0.0,
+        "cancel_date": data.get("due_date"), "ship_date": data.get("due_date"), "issue_date": None,
+        "sizes_match": units == total, "po_discrepancy": False,
+    }
+
+
+async def extract_spektrum(pdf_bytes: bytes) -> list:
+    """Extract an image-based Culture Kings/Spektrum PO via Gemini vision (one page = one style)."""
+    import google.generativeai as genai
+    api_key = await _gemini_key()
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        images = [p.to_image(resolution=150).original for p in pdf.pages]
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    records = []
+    for img in images:
+        resp = model.generate_content([_GEMINI_PROMPT, img])
+        data = _json_from_text(resp.text)
+        if data and data.get("po_number"):
+            records.append(_spektrum_record(data))
+    return records
 
 
 def _garment_description(r):
@@ -292,6 +381,25 @@ def _tractor_groups(r, sizes_input):
     return [g1, g2, g3]
 
 
+def _spektrum_groups(r, sizes_input):
+    """First-pass CULTURE KINGS / SPEKTRUM template (2 groups). No reference quote
+    yet — meant to be reviewed and perfected, then aligned like the others."""
+    size_lines = "\n".join(r["pack_lines"])
+    garment = "\n".join(p for p in [r["description"], r["color"], r["blank"], size_lines] if p)
+    g1 = [
+        _li(PRODUCTION_DEPT),
+        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
+        _li(SPECIAL_NOTES_HEADER),
+    ]
+    g2 = [
+        _li(PACKING_DEPT),
+        _li("\n" + PACK_REFERENCES),
+        _li(NEW_BOXES, price=2.50),
+        _li(SPECIAL_NOTES_HEADER),
+    ]
+    return [g1, g2]
+
+
 def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None) -> dict:
     """Assemble a Printavo QuoteCreateInput. Picks the SPENCERS (2-group) or
     TRACTOR SUPPLY (3-group) template by brand. `contact` supplies the customer's
@@ -300,8 +408,15 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         {"size": MOS_TO_PRINTAVO_SIZE[k], "count": v}
         for k, v in r["sizes"].items() if k in MOS_TO_PRINTAVO_SIZE
     ]
-    is_tractor = "TRACTOR" in (r.get("brand") or "").upper()
-    groups = _tractor_groups(r, sizes_input) if is_tractor else _spencers_groups(r, sizes_input)
+    brand_up = (r.get("brand") or "").upper()
+    is_tractor = "TRACTOR" in brand_up
+    is_spektrum = "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up
+    if is_tractor:
+        groups = _tractor_groups(r, sizes_input)
+    elif is_spektrum:
+        groups = _spektrum_groups(r, sizes_input)
+    else:
+        groups = _spencers_groups(r, sizes_input)
     for grp in groups:
         for idx, item in enumerate(grp):
             item["position"] = idx
@@ -311,6 +426,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     if is_tractor:
         # Matches the corrected quote #2127 header: "TRACTOR SUPPLY PO#21649 - AER0154J1358 - N/A"
         nickname = f"{brand} PO#{r['po_number']} - {r['design_num']} - {r['store_po'] or 'N/A'}"
+    elif is_spektrum:
+        nickname = f"{brand} PO#{r['po_number']} - {r.get('range_name') or ''} - {r['description']}".replace(" -  - ", " - ")
     else:
         nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
     if status and status.upper() != "ORIGINAL":

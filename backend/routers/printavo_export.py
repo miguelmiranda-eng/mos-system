@@ -22,14 +22,20 @@ async def parse_po(request: Request, file: UploadFile = File(...)):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "El archivo debe ser un PDF")
     data = await file.read()
+    engine = "text"
     try:
-        records = parse_pdf(data)
+        records = parse_pdf(data)                         # Goodie text-based (Spencers/Tractor)
+        if not records:
+            # Image-based PO (Culture Kings/Spektrum) -> Gemini vision.
+            from printavo_export import extract_spektrum
+            records = await extract_spektrum(data)
+            engine = "gemini"
     except Exception as e:
         logger.error(f"[printavo-export] parse error: {e}")
         raise HTTPException(500, f"No se pudo leer el PDF: {e}")
     if not records:
         raise HTTPException(422, "No se detectaron estilos en el PDF (formato no reconocido)")
-    return {"count": len(records), "styles": records}
+    return {"count": len(records), "styles": records, "engine": engine}
 
 
 @router.get("/contacts")
