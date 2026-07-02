@@ -179,7 +179,14 @@ export const PickingModule = ({ currentUser } = {}) => {
   // Show youth size rows only when the selected style's inventory is youth (its
   // location lookup returns Y-prefixed sizes). Adult styles keep the adult grid
   // unchanged so operators don't get confused.
-  const gridSizes = Object.keys(sizeLocations).some(s => String(s).toUpperCase().startsWith('Y')) ? YOUTH_SIZES : SIZES_ORDER;
+  // A style can carry BOTH adult and youth sizes (e.g. 5000B has S/M/L/XL AND
+  // YXS..YXL). Show adult-only or youth-only when the inventory is purely one,
+  // but the UNION (ALL_SIZES) when both are present — otherwise the youth check
+  // would flip the grid to youth-only and hide the adult sizes (L/XL/etc.).
+  const _sizeKeys = Object.keys(sizeLocations);
+  const _hasYouth = _sizeKeys.some(s => String(s).toUpperCase().startsWith('Y'));
+  const _hasAdult = _sizeKeys.some(s => s && !String(s).toUpperCase().startsWith('Y'));
+  const gridSizes = (_hasYouth && _hasAdult) ? ALL_SIZES : (_hasYouth ? YOUTH_SIZES : SIZES_ORDER);
 
   const openEdit = (t) => {
     setEditingTicket(t);
