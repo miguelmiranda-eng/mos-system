@@ -28,6 +28,20 @@ export default function PaintModule() {
   const [addOrder, setAddOrder] = useState('');
   const [dragId, setDragId] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState([]);
+
+  // Búsqueda en vivo de cualquier orden (muestra si ya tiene arte).
+  useEffect(() => {
+    const q = addOrder.trim();
+    if (!q) { setResults([]); return; }
+    const id = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/paint/search?q=${encodeURIComponent(q)}`, { credentials: 'include' }).then(r => r.json());
+        setResults(r.results || []);
+      } catch { setResults([]); }
+    }, 250);
+    return () => clearTimeout(id);
+  }, [addOrder]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,15 +166,29 @@ export default function PaintModule() {
       </div>
       {isBacklog && (
         <div className="mt-3 space-y-2">
-          <div className="flex gap-1">
-            <input value={addOrder} onChange={e => setAddOrder(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && addOrder.trim()) addByNumber(addOrder.trim()); }}
-              placeholder="# de orden"
-              className="flex-1 min-w-0 bg-background border border-border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary" />
-            <button onClick={() => addOrder.trim() && addByNumber(addOrder.trim())} disabled={busy || !addOrder.trim()}
-              className="px-2 rounded-lg bg-primary text-black disabled:opacity-40"><Plus size={16} /></button>
-          </div>
-          {suggested.length > 0 && (
+          <input value={addOrder} onChange={e => setAddOrder(e.target.value)}
+            placeholder="Buscar orden (# o cliente)…"
+            className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary" />
+
+          {addOrder.trim() ? (
+            <div className="flex flex-col gap-1 max-h-72 overflow-auto">
+              {results.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground px-1 py-2">Sin resultados</div>
+              ) : results.map(o => (
+                <div key={o.order_id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-border/40">
+                  <span className="font-mono font-bold text-xs">{o.order_number}</span>
+                  <span className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">{o.client}</span>
+                  {o.has_art
+                    ? <span className="text-[9px] font-black uppercase bg-emerald-500/15 text-emerald-500 px-1.5 py-0.5 rounded shrink-0">Con arte</span>
+                    : <span className="text-[9px] font-black uppercase bg-amber-500/15 text-amber-500 px-1.5 py-0.5 rounded shrink-0">Sin arte</span>}
+                  {o.in_paint
+                    ? <span className="text-[10px] text-muted-foreground/70 shrink-0">En cola</span>
+                    : <button onClick={() => addByNumber(null, o.order_id)} disabled={busy}
+                        className="p-1 rounded bg-primary text-black disabled:opacity-40 shrink-0"><Plus size={13} /></button>}
+                </div>
+              ))}
+            </div>
+          ) : suggested.length > 0 && (
             <div>
               <div className="text-[10px] uppercase font-black tracking-widest text-muted-foreground/70 mb-1 mt-2">Sugeridas (arte listo)</div>
               <div className="flex flex-col gap-1 max-h-64 overflow-auto">

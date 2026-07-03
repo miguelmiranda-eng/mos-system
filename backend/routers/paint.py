@@ -8,7 +8,7 @@ fecha, prioridad) se unen EN VIVO desde `orders` — no se duplican.
 from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_role, log_activity, logger
 from datetime import datetime, timezone, timedelta
-import uuid
+import uuid, re
 
 router = APIRouter(prefix="/api/paint")
 
@@ -110,6 +110,31 @@ async def paint_backlog(request: Request):
         if len(suggested) >= 60:
             break
     return {"backlog": tasks, "suggested": suggested}
+
+
+# ── Buscar cualquier orden (con su estatus de arte) para agregar ─────────────
+@router.get("/search")
+async def search_orders(request: Request, q: str = ""):
+    await require_auth(request)
+    q = (q or "").strip()
+    if not q:
+        return {"results": []}
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    fields = {**_ORDER_FIELDS, "art_sep_status": 1, "art_neck_status": 1, "artwork_status": 1}
+    orders = await db.orders.find(
+        {"board": {"$ne": "PAPELERA DE RECICLAJE"},
+         "$or": [{"order_number": rx}, {"client": rx}]},
+        fields
+    ).sort("created_at", -1).limit(25).to_list(25)
+    ids = [o["order_id"] for o in orders]
+    in_paint = set()
+    if ids:
+        in_paint = {d["order_id"] for d in
+                    await db.paint_tasks.find({"order_id": {"$in": ids}}, {"_id": 0, "order_id": 1}).to_list(2000)}
+    for o in orders:
+        o["has_art"] = bool(o.get("art_sep_status") or o.get("art_neck_status"))
+        o["in_paint"] = o["order_id"] in in_paint
+    return {"results": orders}
 
 
 # ── Agregar una orden a la cola de pinturas ──────────────────────────────────
