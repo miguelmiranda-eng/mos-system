@@ -5,6 +5,9 @@ import { toast } from 'sonner';
 import { API } from '../lib/constants';
 import PaintRecipes from './PaintRecipes';
 import PaintInventory from './PaintInventory';
+import { Toaster } from './ui/sonner';
+
+const BUILD = 'v3-asa';   // marcador visible para confirmar el deploy desde la Mac
 
 const INK = {
   pendiente: { label: 'Pendiente', bar: '#888780', pill: 'bg-secondary text-muted-foreground' },
@@ -113,14 +116,16 @@ export default function PaintModule() {
   const moveTask = async (taskId, targetDate, beforeTaskId) => {
     if (!taskId) return;
     const target = [...listFor(targetDate)].filter(t => t.paint_task_id !== taskId);
-    const dragged = [...backlog, ...(board?.days || []).flatMap(d => d.tasks)].find(t => t.paint_task_id === taskId);
+    const allTasks = (board?.days || []).reduce((a, d) => a.concat(d.tasks || []), backlog.slice());
+    const dragged = allTasks.find(t => t.paint_task_id === taskId);
     if (!dragged) return;
     const idx = beforeTaskId ? target.findIndex(t => t.paint_task_id === beforeTaskId) : target.length;
     target.splice(idx < 0 ? target.length : idx, 0, dragged);
     try {
       await api('POST', '/paint/reorder', { date: targetDate, ordered_ids: target.map(t => t.paint_task_id) });
       await load();
-    } catch (e) { toast.error(e.message); }
+      toast.success(targetDate ? 'Orden reprogramada' : 'Movida a sin programar');
+    } catch (e) { toast.error(e.message || 'No se pudo mover'); }
   };
 
   const setStatus = async (t, value) => {
@@ -132,9 +137,11 @@ export default function PaintModule() {
         const d = c.deducted?.length ? `Descontado: ${c.deducted.map(x => `${x.name} (${x.qty}${x.unit || ''})`).join(', ')}` : '';
         const m = c.missing?.length ? ` · Sin match en inventario: ${c.missing.join(', ')}` : '';
         toast.success(`Tinta lista.${d ? ' ' + d : ''}${m}`);
+      } else {
+        toast.success(`Estatus: ${value}`);
       }
       await load();
-    } catch (e) { toast.error(e.message); }
+    } catch (e) { toast.error(e.message || 'No se pudo cambiar el estatus'); }
   };
   const openPicker = (t) => { setRecipeQ(''); setRecipeOpts([]); setPickerTask(t); };
   const linkRecipe = async (rid) => {
@@ -146,8 +153,8 @@ export default function PaintModule() {
     } catch (e) { toast.error(e.message); }
   };
   const toggleHot = async (t) => {
-    try { await api('PUT', `/paint/tasks/${t.paint_task_id}`, { is_hot: !t.is_hot }); await load(); }
-    catch (e) { toast.error(e.message); }
+    try { await api('PUT', `/paint/tasks/${t.paint_task_id}`, { is_hot: !t.is_hot }); await load(); toast.success(!t.is_hot ? 'Marcada urgente' : 'Urgente quitado'); }
+    catch (e) { toast.error(e.message || 'No se pudo actualizar'); }
   };
   const remove = async (t) => {
     if (!window.confirm(`¿Quitar la orden ${t.order_number} de pinturas?`)) return;
@@ -276,7 +283,8 @@ export default function PaintModule() {
           <button onClick={() => navigate('/dashboard')} className="p-2 rounded-lg hover:bg-secondary/40"><ArrowLeft size={18} /></button>
           <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center text-primary"><Brush size={19} /></div>
           <div>
-            <h1 className="text-lg font-black uppercase tracking-widest">Departamento de Pinturas</h1>
+            <h1 className="text-lg font-black uppercase tracking-widest flex items-center gap-2">Departamento de Pinturas
+              <span className="text-[9px] font-bold bg-primary/15 text-primary px-1.5 py-0.5 rounded-full normal-case tracking-normal">{BUILD}</span></h1>
             <p className="text-xs text-muted-foreground">Calendarización de mezcla de tinta — arrastra las órdenes por día y prioridad</p>
           </div>
           <div className="ml-auto flex items-center gap-1.5">
@@ -356,6 +364,8 @@ export default function PaintModule() {
             </div>
           </div>
         )}
+
+        <Toaster position="bottom-right" theme="dark" richColors />
       </div>
     </div>
   );
