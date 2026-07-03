@@ -675,6 +675,7 @@ const QCDashboard = lazy(() => import("./components/QCDashboard"));
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard"));
 const BackupCenter = lazy(() => import("./components/BackupCenter"));
 const ArtModule = lazy(() => import("./components/ArtModule"));
+const PaintModule = lazy(() => import("./components/PaintModule"));
 const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
 const ShippingModule = lazy(() => import("./components/ShippingModule"));
 const PackingListTool = lazy(() => import("./components/PackingList"));
@@ -802,6 +803,11 @@ function AppRouter() {
       <Route path="/art" element={
         <ProtectedRoute>
           <ArtModule />
+        </ProtectedRoute>
+      } />
+      <Route path="/paint" element={
+        <ProtectedRoute>
+          <PaintModule />
         </ProtectedRoute>
       } />
       <Route path="/operator" element={

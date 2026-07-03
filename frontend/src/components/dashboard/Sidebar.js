@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Palette,
+  Brush,
   CalendarDays,
   Truck,
   LayoutTemplate,
@@ -268,6 +269,10 @@ const Sidebar = ({
                     <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title="Módulo de Arte">
                       <Palette size={15} className={iconCls(false)} />
                       <span>Módulo de Arte</span>
+                    </button>
+                    <button onClick={() => { navigate('/paint'); if (isMobile) onClose(); }} className={navItem(false)} title="Departamento de Pinturas">
+                      <Brush size={15} className={iconCls(false)} />
+                      <span>Depto. de Pinturas</span>
                     </button>
                     <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title="Insights">
                       <Sparkles size={15} className={iconCls(false)} />
