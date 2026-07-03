@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw, CalendarDays, Beaker, Package, ExternalLink } from 'lucide-react';
+import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw, CalendarDays, Beaker, Package, ExternalLink, GripVertical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
@@ -160,14 +160,15 @@ export default function PaintModule() {
     const ink = INK[t.ink_status] || INK.pendiente;
     const colors = (t.colors && t.colors.length ? t.colors.map(c => c.name || c) : (o.color ? [o.color] : []));
     return (
-      <div draggable key={t.paint_task_id}
-        onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', t.paint_task_id); } catch (_) {} }}
+      <div key={t.paint_task_id}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); e.stopPropagation(); moveTask(dragId, t.scheduled_date ?? null, t.paint_task_id); setDragId(null); }}
-        className="flex overflow-hidden rounded-xl border border-border bg-card/70 hover:border-primary/40 transition-colors cursor-grab active:cursor-grabbing">
+        className="flex overflow-hidden rounded-xl border border-border bg-card/70 hover:border-primary/40 transition-colors">
         <div style={{ width: 4, background: t.is_hot ? '#E24B4A' : ink.bar }} />
         <div className="flex-1 min-w-0 p-2">
           <div className="flex items-center gap-1.5">
+            <span draggable onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', t.paint_task_id); } catch (_) {} }}
+              title="Arrastrar" className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground -ml-0.5 shrink-0"><GripVertical size={13} /></span>
             <span className="font-mono font-black text-sm text-foreground">{t.order_number}</span>
             {jobUrl(o.job_title_a) && (
               <a href={jobUrl(o.job_title_a)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
