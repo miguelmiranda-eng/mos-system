@@ -2146,6 +2146,7 @@ async def list_boxes(request: Request, sku: str = "", color: str = "", size: str
     if status:
         if status == "received":
             query["status"] = {"$in": ["received", "putaway_pending"]}
+            query["units"] = {"$gt": 0}   # hide fully-picked empties from the putaway list
         else:
             query["status"] = status
     if state: query["state"] = state
@@ -2623,6 +2624,12 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         take = min(b_qty, remaining)
         new_b = b_qty - take
         upd = {"units": new_b, "qty": new_b}
+        # When a pick empties a box, mark it 'depleted' so it drops off the cart /
+        # putaway lists instead of lingering as a 0-unit "putaway_pending" box
+        # (the "cajas con 0 stock al recibir" confusion — the box was received
+        # fine, then fully picked/cross-docked out of the cart).
+        if new_b == 0:
+            upd["status"] = "depleted"
         if order_number is not None:
             upd["order_number"] = order_number
         if order_id is not None:
@@ -5687,7 +5694,7 @@ _ASN_REQUIRED_FIELDS = ("part_number", "qty")
 # Box statuses that mean the units already LEFT inventory (consumed/in process/
 # shipped). Anything else with units>0 is considered still on hand. Whitelisting
 # the "out" set keeps legacy/empty statuses counted as in-stock.
-_BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed"}
+_BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed", "depleted"}
 
 def _box_in_stock(b) -> bool:
     units = int(b.get("units") or b.get("qty") or 0)
