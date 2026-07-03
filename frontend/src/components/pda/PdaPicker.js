@@ -14,9 +14,8 @@ const OPTIONS_URL = `${process.env.REACT_APP_BACKEND_URL}/api/config/options`;
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
 const putter = (url, body) => fetch(`${API}${url}`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
 
-// Adult sizes first, then youth. Views filter to qty>0, so adult tickets never
-// show youth rows — only youth tickets surface YS/YM/YL/etc.
-const SIZES_ORDER = ["XS", "S", "M", "L", "XL", "2X", "3X", "4X", "5X", "YXS", "YS", "YM", "YL", "YXL"];
+// Size rows are derived from the ticket's own `sizes` (qty>0), so ANY size the
+// ticket carries — standard or admin-configured extra — surfaces automatically.
 const norm = (s) => String(s || "").trim().toUpperCase();
 
 // PDA-optimized picking surface (Zebra/Honeywell). The scanner is configured in
@@ -388,7 +387,7 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
 
   const sizes = ticket.sizes || {};
   const sizeLocs = ticket.size_locations || {};
-  const activeSizes = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0);
+  const activeSizes = Object.keys(sizes).filter(sz => parseInt(sizes[sz]) > 0);
 
   const locsFor = (sz) => {
     const l = sizeLocs[sz]?.locations || sizeLocs[sz] || [];

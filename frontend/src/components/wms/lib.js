@@ -48,6 +48,46 @@ export const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
 export const YOUTH_SIZES = ['YXS', 'YS', 'YM', 'YL', 'YXL'];
 export const ALL_SIZES = [...SIZES_ORDER, ...YOUTH_SIZES];
 
+// ─── Configurable sizes (single source of truth) ────────────────────────────
+// Admins add extra sizes in "Configuración WMS → Tallas" (catalog type "sizes").
+// useWmsSizes() merges those into the standard sets so EVERY size selector in the
+// system (Receiving, Picking, PDA, Operator, New Order, Movements) grows without
+// a deploy. Extras starting with 'Y' join the youth list; the rest join adult.
+// The standard arrays above stay as the fallback shown before the fetch resolves.
+const _dedupeSizes = (arr) => {
+  const seen = new Set(), out = [];
+  for (const s of arr) { const v = String(s || '').trim().toUpperCase(); if (v && !seen.has(v)) { seen.add(v); out.push(v); } }
+  return out;
+};
+let _sizeExtras = null;        // cached across components
+let _sizeExtrasPromise = null;
+const _sizeSubs = new Set();
+const _loadSizeExtras = () => {
+  if (_sizeExtrasPromise) return _sizeExtrasPromise;
+  _sizeExtrasPromise = fetcher('/catalogs')
+    .then(d => { _sizeExtras = (d?.sizes || []).map(s => String(s.value || '').trim().toUpperCase()).filter(Boolean); })
+    .catch(() => { _sizeExtras = []; })
+    .finally(() => { _sizeSubs.forEach(fn => fn()); });
+  return _sizeExtrasPromise;
+};
+// Call after adding/removing a size in the catalog UI so open screens refresh.
+export const refreshWmsSizes = () => { _sizeExtras = null; _sizeExtrasPromise = null; _loadSizeExtras(); };
+
+export const useWmsSizes = () => {
+  const [extras, setExtras] = useState(_sizeExtras || []);
+  useEffect(() => {
+    let alive = true;
+    const sync = () => { if (alive) setExtras(_sizeExtras || []); };
+    _sizeSubs.add(sync);
+    _loadSizeExtras().then(sync);
+    return () => { alive = false; _sizeSubs.delete(sync); };
+  }, []);
+  const adult = _dedupeSizes([...SIZES_ORDER, ...extras.filter(s => !s.startsWith('Y'))]);
+  const youth = _dedupeSizes([...YOUTH_SIZES, ...extras.filter(s => s.startsWith('Y'))]);
+  const all = _dedupeSizes([...adult, ...youth]);
+  return { adult, youth, all, extras };
+};
+
 // ─── WMS Context (badges + cross-module actions) ────────────────────────────
 export const WmsContext = createContext({ badges: {}, refreshBadges: () => {} });
 export const useWms = () => useContext(WmsContext);

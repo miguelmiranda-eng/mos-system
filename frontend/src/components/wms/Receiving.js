@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, putter, deleter, logLoadError, SIZES_ORDER, API, cleanScan } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -157,9 +157,8 @@ export const ReceivingModule = () => {
   // never type one). Falls back to inventory-derived styles if a client has none.
   const [customerStyles, setCustomerStyles] = useState([]);
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
-  // Extra sizes configured by admins in "Configuración WMS → Tallas". Merged with
-  // the standard SIZES_ORDER so the Receiving size dropdown can grow without a deploy.
-  const [extraSizes, setExtraSizes] = useState([]);
+  // Full size list (standard + admin-configured extras), single source of truth.
+  const { all: sizeOptions } = useWmsSizes();
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
@@ -320,21 +319,7 @@ export const ReceivingModule = () => {
     fetcher('/transit/info').then(data => {
       setTransitCarts(Array.isArray(data?.carts) ? data.carts : []);
     }).catch(logLoadError('transit info'));
-    fetcher('/catalogs').then(data => {
-      setExtraSizes((data?.sizes || []).map(s => s.value).filter(Boolean));
-    }).catch(logLoadError('catalogs'));
   }, []);
-
-  // Standard sizes first, then any admin-configured extras (dedup, uppercase).
-  const sizeOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    for (const s of [...SIZES_ORDER, ...extraSizes]) {
-      const v = String(s || '').trim().toUpperCase();
-      if (v && !seen.has(v)) { seen.add(v); out.push(v); }
-    }
-    return out;
-  }, [extraSizes]);
 
   // Close the "Recibir a Carro" dropdown on outside click.
   useEffect(() => {

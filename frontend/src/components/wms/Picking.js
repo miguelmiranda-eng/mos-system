@@ -4,7 +4,7 @@ import JsBarcode from "jsbarcode";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, putter, logLoadError, SIZES_ORDER, YOUTH_SIZES, ALL_SIZES } from "./lib";
+import { API, fetcher, poster, putter, logLoadError, useWmsSizes } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
 const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -76,6 +76,8 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [completedTickets, setCompletedTickets] = useState([]);
   const [completedLoaded, setCompletedLoaded] = useState(false);
   const [loadingCompleted, setLoadingCompleted] = useState(false);
+  // Full size system (standard + admin-configured extras), single source of truth.
+  const { adult: SIZES_ORDER, youth: YOUTH_SIZES, all: ALL_SIZES } = useWmsSizes();
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 

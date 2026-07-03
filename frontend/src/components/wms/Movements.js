@@ -3,7 +3,7 @@ import { History, Tag, Search, X, Loader2, User, Trash2, CheckCircle2, ArrowDown
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, SIZES_ORDER } from "./lib";
+import { fetcher, poster, deleter, logLoadError, useWmsSizes } from "./lib";
 
 const TABS = [
   { id: 'movements', label: 'Movimientos',       icon: History },
@@ -496,6 +496,7 @@ const UpcsTab = () => {
   // be opened by scanning the UPC straight off the label.
   const [fixing, setFixing] = useState(null);     // original UPC doc
   const [fixDraft, setFixDraft] = useState(null); // editable copy
+  const { all: SIZES_ORDER } = useWmsSizes();     // full size list (standard + configured)
   const [fixPreview, setFixPreview] = useState(null);
   const [fixBusy, setFixBusy] = useState(false);
   const [scanCode, setScanCode] = useState('');

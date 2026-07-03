@@ -15,9 +15,8 @@ const WS_URL = `${process.env.REACT_APP_BACKEND_URL}`.replace(/^http/, 'ws') + '
 const fetcher = (url) => fetch(`${API}${url}`, { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(r));
 const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
 
-// Adult sizes first, then youth. The view filters to qty>0, so adult tickets
-// never show youth rows — only youth tickets surface YS/YM/YL/etc.
-const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
+// Size rows are derived from the ticket's own `sizes` (qty>0), so ANY size the
+// ticket carries — standard or admin-configured extra — surfaces automatically.
 
 const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
   const sizes = ticket.sizes || {};
@@ -115,7 +114,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
 
   const sizes = ticket.sizes || {};
   const sizeLocs = ticket.size_locations || {};
-  const activeSizes = SIZES_ORDER.filter(sz => parseInt(sizes[sz]) > 0);
+  const activeSizes = Object.keys(sizes).filter(sz => parseInt(sizes[sz]) > 0);
 
   const updatePicked = (sz, loc, val) => {
     const locData = sizeLocs[sz]?.locations || sizeLocs[sz] || [];

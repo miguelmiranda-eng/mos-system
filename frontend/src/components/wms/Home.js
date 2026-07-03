@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, API } from "./lib";
+import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, API } from "./lib";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
@@ -92,6 +92,7 @@ export const HomeModule = () => {
       if (res.ok) {
         toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
         setDrafts(prev => ({ ...prev, [type]: '' }));
+        if (type === 'sizes') refreshWmsSizes();  // live-refresh size selectors
         load();
         if (sources[type]) loadSources(type); // refresh in_catalog flags
       } else {
@@ -110,6 +111,7 @@ export const HomeModule = () => {
     try {
       await deleter(`/catalogs/${catalog_id}`);
       toast.success('Eliminado');
+      refreshWmsSizes();  // in case a size was removed
       load();
     } catch (err) {
       logLoadError('delete catalog')(err);

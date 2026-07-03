@@ -10,8 +10,7 @@ import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "../ui/select";
 import { useLang } from "../../contexts/LanguageContext";
 import SearchableSelect from "../SearchableSelect";
-
-const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
+import { useWmsSizes } from "../wms/lib";
 
 export const NewOrderForm = ({
   formFieldKeys = [],
@@ -28,6 +27,7 @@ export const NewOrderForm = ({
   isPreview = false
 }) => {
   const { t } = useLang();
+  const { adult: SIZES_ORDER } = useWmsSizes();  // adult sizes + admin-configured extras
   const [formData, setFormData] = useState({});
   const [sizes, setSizes] = useState(SIZES_ORDER.reduce((acc, s) => ({ ...acc, [s]: '' }), {}));
   
@@ -608,7 +608,7 @@ export const NewOrderForm = ({
                     type="number"
                     min="0"
                     placeholder="0"
-                    value={sizes[sz]}
+                    value={sizes[sz] ?? ''}
                     disabled={isPreview}
                     onChange={(e) => setSizes(prev => ({ ...prev, [sz]: e.target.value }))}
                     className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-sm font-mono text-foreground text-center focus:border-primary focus:ring-1 focus:ring-primary transition-all shadow-sm"
