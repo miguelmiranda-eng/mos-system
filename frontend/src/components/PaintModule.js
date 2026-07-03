@@ -184,7 +184,7 @@ export default function PaintModule() {
             {o.quantity != null && <span className="text-[10px] text-muted-foreground">{o.quantity} pz</span>}
           </div>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <select value={t.ink_status} onChange={e => setStatus(t, e.target.value)} onClick={e => e.stopPropagation()}
+            <select value={t.ink_status} onChange={e => setStatus(t, e.target.value)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
               title="Estatus de tinta"
               className={`text-[10px] font-black uppercase tracking-wide pl-2 pr-1 py-0.5 rounded-full border-0 appearance-none cursor-pointer ${ink.pill}`}>
               <option value="pendiente">Pendiente</option>
@@ -193,15 +193,15 @@ export default function PaintModule() {
             </select>
             {o.due_date && <span className="text-[10px] text-muted-foreground">Entrega {fmtDate(o.due_date)}</span>}
             <div className="ml-auto flex items-center gap-1">
-              <button onClick={() => toggleHot(t)} title="Marcar urgente" className={`p-1 rounded ${t.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>
-              <button onClick={() => remove(t)} title="Quitar" className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
+              <button onClick={() => toggleHot(t)} onMouseDown={e => e.stopPropagation()} title="Marcar urgente" className={`p-1 rounded ${t.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>
+              <button onClick={() => remove(t)} onMouseDown={e => e.stopPropagation()} title="Quitar" className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
             </div>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             {t.recipe
-              ? <button onClick={() => openPicker(t)} title="Cambiar receta" className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {t.recipe.color_name}</button>
-              : <button onClick={() => openPicker(t)} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> ligar receta</button>}
-            <select value={t.scheduled_date || ''} onChange={e => moveTask(t.paint_task_id, e.target.value || null, null)} onClick={e => e.stopPropagation()}
+              ? <button onClick={() => openPicker(t)} onMouseDown={e => e.stopPropagation()} title="Cambiar receta" className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {t.recipe.color_name}</button>
+              : <button onClick={() => openPicker(t)} onMouseDown={e => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> ligar receta</button>}
+            <select value={t.scheduled_date || ''} onChange={e => moveTask(t.paint_task_id, e.target.value || null, null)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
               title="Programar en un día" className="ml-auto text-[10px] bg-secondary/50 border border-border rounded px-1.5 py-0.5 cursor-pointer max-w-[96px]">
               <option value="">Sin programar</option>
               {dayOptions.map(d => <option key={d.date} value={d.date}>{d.label}</option>)}
