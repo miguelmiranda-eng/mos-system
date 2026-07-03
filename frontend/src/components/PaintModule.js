@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw, CalendarDays, Beaker, Package } from 'lucide-react';
+import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw, CalendarDays, Beaker, Package, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
@@ -11,7 +11,6 @@ const INK = {
   mezclando: { label: 'Mezclando', bar: '#BA7517', pill: 'bg-amber-500/15 text-amber-500' },
   lista:     { label: 'Lista',     bar: '#639922', pill: 'bg-emerald-500/15 text-emerald-500' },
 };
-const NEXT_STATUS = { pendiente: 'mezclando', mezclando: 'lista', lista: 'pendiente' };
 const DAY_NAMES = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 const isoToLabel = (iso, i) => {
@@ -19,6 +18,12 @@ const isoToLabel = (iso, i) => {
   return `${DAY_NAMES[i] || ''} ${d.getDate()}`;
 };
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '');
+// job_title_a puede ser {url,desc} o string; devuelve la URL de Printavo si hay.
+const jobUrl = (v) => {
+  if (!v) return '';
+  const u = typeof v === 'object' ? (v.url || '') : String(v);
+  return /^https?:\/\//i.test(u) ? u : '';
+};
 
 export default function PaintModule() {
   const navigate = useNavigate();
@@ -117,9 +122,10 @@ export default function PaintModule() {
     } catch (e) { toast.error(e.message); }
   };
 
-  const cycleStatus = async (t) => {
+  const setStatus = async (t, value) => {
+    if (!value || value === t.ink_status) return;
     try {
-      const res = await api('PUT', `/paint/tasks/${t.paint_task_id}/status`, { ink_status: NEXT_STATUS[t.ink_status] || 'pendiente' });
+      const res = await api('PUT', `/paint/tasks/${t.paint_task_id}/status`, { ink_status: value });
       const c = res?.consumption;
       if (c && (c.deducted?.length || c.missing?.length)) {
         const d = c.deducted?.length ? `Descontado: ${c.deducted.map(x => `${x.name} (${x.qty}${x.unit || ''})`).join(', ')}` : '';
@@ -162,6 +168,10 @@ export default function PaintModule() {
         <div className="flex-1 min-w-0 p-2">
           <div className="flex items-center gap-1.5">
             <span className="font-mono font-black text-sm text-foreground">{t.order_number}</span>
+            {jobUrl(o.job_title_a) && (
+              <a href={jobUrl(o.job_title_a)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                title="Abrir en Printavo" className="text-primary hover:opacity-70"><ExternalLink size={12} /></a>
+            )}
             {t.is_hot && <span className="ml-auto text-[9px] font-black uppercase tracking-wide bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded-full">HOT</span>}
           </div>
           <div className="text-[11px] text-muted-foreground truncate mt-0.5">{o.client || '—'}{o.branding ? ` · ${o.branding}` : ''}</div>
@@ -172,8 +182,13 @@ export default function PaintModule() {
             {o.quantity != null && <span className="text-[10px] text-muted-foreground">{o.quantity} pz</span>}
           </div>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <button onClick={() => cycleStatus(t)} title="Cambiar estatus de tinta"
-              className={`text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${ink.pill}`}>{ink.label}</button>
+            <select value={t.ink_status} onChange={e => setStatus(t, e.target.value)} onClick={e => e.stopPropagation()}
+              title="Estatus de tinta"
+              className={`text-[10px] font-black uppercase tracking-wide pl-2 pr-1 py-0.5 rounded-full border-0 appearance-none cursor-pointer ${ink.pill}`}>
+              <option value="pendiente">Pendiente</option>
+              <option value="mezclando">Mezclando</option>
+              <option value="lista">Lista</option>
+            </select>
             {o.due_date && <span className="text-[10px] text-muted-foreground">Entrega {fmtDate(o.due_date)}</span>}
             <div className="ml-auto flex items-center gap-1">
               <button onClick={() => toggleHot(t)} title="Marcar urgente" className={`p-1 rounded ${t.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>

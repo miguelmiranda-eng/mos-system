@@ -21,7 +21,8 @@ EXCLUDED_BOARDS = ["PAPELERA DE RECICLAJE", "COMPLETOS", "EDI", "FINAL BILL",
 # Campos de la orden que se muestran en la tarjeta (unidos en vivo).
 _ORDER_FIELDS = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1,
                  "branding": 1, "quantity": 1, "color": 1, "priority": 1,
-                 "due_date": 1, "cancel_date": 1, "board": 1, "production_status": 1}
+                 "due_date": 1, "cancel_date": 1, "board": 1, "production_status": 1,
+                 "job_title_a": 1, "job_title_b": 1}
 
 
 def now_iso():
