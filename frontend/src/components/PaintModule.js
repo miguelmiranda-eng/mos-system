@@ -115,12 +115,12 @@ export default function PaintModule() {
     catch (e) { toast.error(e.message); }
   };
 
-  const Card = ({ t }) => {
+  const Card = (t) => {
     const o = t.order || {};
     const ink = INK[t.ink_status] || INK.pendiente;
     const colors = (t.colors && t.colors.length ? t.colors.map(c => c.name || c) : (o.color ? [o.color] : []));
     return (
-      <div draggable
+      <div draggable key={t.paint_task_id}
         onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); e.stopPropagation(); moveTask(dragId, t.scheduled_date ?? null, t.paint_task_id); setDragId(null); }}
@@ -153,7 +153,7 @@ export default function PaintModule() {
   };
 
   const Column = ({ date, tasks, label, isBacklog }) => (
-    <div
+    <div key={date || 'backlog'}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); moveTask(dragId, isBacklog ? null : date, null); setDragId(null); }}
       className={`flex flex-col min-w-0 ${isBacklog ? 'w-56 shrink-0 bg-secondary/20 rounded-2xl p-2' : 'flex-1'}`}>
@@ -162,7 +162,7 @@ export default function PaintModule() {
         <span className="text-[11px] text-muted-foreground">{tasks.length}</span>
       </div>
       <div className="flex flex-col gap-1.5 min-h-[80px]">
-        {tasks.map(t => <Card key={t.paint_task_id} t={t} />)}
+        {tasks.map(t => Card(t))}
       </div>
       {isBacklog && (
         <div className="mt-3 space-y-2">
@@ -239,10 +239,8 @@ export default function PaintModule() {
           <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
           <div className="flex gap-3 items-start overflow-x-auto pb-4">
-            <Column isBacklog date={null} label="Sin programar" tasks={backlog} />
-            {(board?.days || []).map((d, i) => (
-              <Column key={d.date} date={d.date} label={isoToLabel(d.date, i)} tasks={d.tasks} />
-            ))}
+            {Column({ isBacklog: true, date: null, label: 'Sin programar', tasks: backlog })}
+            {(board?.days || []).map((d, i) => Column({ date: d.date, label: isoToLabel(d.date, i), tasks: d.tasks }))}
           </div>
         )}
 
