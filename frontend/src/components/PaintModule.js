@@ -89,6 +89,7 @@ export default function PaintModule() {
     if (date == null) return backlog;
     return board?.days?.find(d => d.date === date)?.tasks || [];
   };
+  const dayOptions = (board?.days || []).map((d, i) => ({ date: d.date, label: isoToLabel(d.date, i) }));
 
   const api = async (method, path, body) => {
     const res = await fetch(`${API}${path}`, {
@@ -160,7 +161,7 @@ export default function PaintModule() {
     const colors = (t.colors && t.colors.length ? t.colors.map(c => c.name || c) : (o.color ? [o.color] : []));
     return (
       <div draggable key={t.paint_task_id}
-        onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; }}
+        onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', t.paint_task_id); } catch (_) {} }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); e.stopPropagation(); moveTask(dragId, t.scheduled_date ?? null, t.paint_task_id); setDragId(null); }}
         className="flex overflow-hidden rounded-xl border border-border bg-card/70 hover:border-primary/40 transition-colors cursor-grab active:cursor-grabbing">
@@ -195,10 +196,15 @@ export default function PaintModule() {
               <button onClick={() => remove(t)} title="Quitar" className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
             </div>
           </div>
-          <div className="mt-1.5">
+          <div className="mt-1.5 flex items-center gap-2">
             {t.recipe
               ? <button onClick={() => openPicker(t)} title="Cambiar receta" className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {t.recipe.color_name}</button>
               : <button onClick={() => openPicker(t)} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> ligar receta</button>}
+            <select value={t.scheduled_date || ''} onChange={e => moveTask(t.paint_task_id, e.target.value || null, null)} onClick={e => e.stopPropagation()}
+              title="Programar en un día" className="ml-auto text-[10px] bg-secondary/50 border border-border rounded px-1.5 py-0.5 cursor-pointer max-w-[96px]">
+              <option value="">Sin programar</option>
+              {dayOptions.map(d => <option key={d.date} value={d.date}>{d.label}</option>)}
+            </select>
           </div>
         </div>
       </div>
