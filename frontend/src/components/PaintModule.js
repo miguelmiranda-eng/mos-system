@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw } from 'lucide-react';
+import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, RefreshCw, CalendarDays, Beaker, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
+import PaintRecipes from './PaintRecipes';
+import PaintInventory from './PaintInventory';
 
 const INK = {
   pendiente: { label: 'Pendiente', bar: '#888780', pill: 'bg-secondary text-muted-foreground' },
@@ -25,6 +27,7 @@ export default function PaintModule() {
   const [backlog, setBacklog] = useState([]);
   const [suggested, setSuggested] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('board');
   const [addOrder, setAddOrder] = useState('');
   const [dragId, setDragId] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -227,6 +230,20 @@ export default function PaintModule() {
           </div>
         </div>
 
+        {/* Tabs */}
+        <div className="flex items-center gap-1 mb-4 border-b border-border">
+          {[['board', 'Calendario', CalendarDays], ['recipes', 'Recetas', Beaker], ['inventory', 'Inventario', Package]].map(([id, label, Icon]) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-bold border-b-2 -mb-px ${tab === id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+              <Icon size={15} /> {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'recipes' && <PaintRecipes />}
+        {tab === 'inventory' && <PaintInventory />}
+
+        {tab === 'board' && (<>
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Órdenes semana</div><div className="text-2xl font-black">{board?.total ?? 0}</div></div>
@@ -252,6 +269,7 @@ export default function PaintModule() {
           <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#E24B4A' }} />HOT / urgente</span>
           <span className="ml-auto">Clic en el estatus para avanzar · arrastra para reordenar o mover de día</span>
         </div>
+        </>)}
       </div>
     </div>
   );

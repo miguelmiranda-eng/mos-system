@@ -185,7 +185,7 @@ async def add_task(request: Request):
 async def update_task(task_id: str, request: Request):
     user = await require_paint_write(request)
     body = await request.json()
-    allowed = ("scheduled_date", "priority_rank", "is_hot", "ink_type", "colors", "mixer", "notes")
+    allowed = ("scheduled_date", "priority_rank", "is_hot", "ink_type", "colors", "mixer", "notes", "recipe_id", "estimated_volume")
     upd = {k: body[k] for k in allowed if k in body}
     if not upd:
         raise HTTPException(400, "Nada que actualizar")
@@ -251,4 +251,133 @@ async def delete_task(task_id: str, request: Request):
     await db.paint_tasks.delete_one({"paint_task_id": task_id})
     await log_activity(user, "paint_task_removed", {"order_number": task.get("order_number")})
     await _broadcast(task.get("order_id"))
+    return {"ok": True}
+
+
+# ═══════════════ FASE 2 — Cuarto de tintas ═══════════════════════════════════
+
+# ── Recetas / fórmulas de mezcla ─────────────────────────────────────────────
+@router.get("/recipes")
+async def list_recipes(request: Request, q: str = ""):
+    await require_auth(request)
+    query = {}
+    if (q or "").strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        query = {"$or": [{"color_name": rx}, {"pantone": rx}, {"ink_type": rx}]}
+    recipes = await db.paint_recipes.find(query, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    return {"recipes": recipes}
+
+
+@router.post("/recipes")
+async def create_recipe(request: Request):
+    user = await require_paint_write(request)
+    body = await request.json()
+    if not (body.get("color_name") or "").strip():
+        raise HTTPException(400, "El nombre del color es obligatorio")
+    doc = {
+        "recipe_id": gen_id("recipe"),
+        "color_name": body.get("color_name", "").strip().upper(),
+        "pantone": (body.get("pantone") or "").strip().upper(),
+        "ink_type": (body.get("ink_type") or "").strip(),
+        "ingredients": body.get("ingredients") or [],       # [{name, qty, unit}]
+        "total_volume": body.get("total_volume") or 0,
+        "unit": body.get("unit") or "g",
+        "notes": (body.get("notes") or "").strip(),
+        "cost": body.get("cost") or 0,
+        "created_by": user.get("name"),
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.paint_recipes.insert_one(doc); doc.pop("_id", None)
+    await log_activity(user, "paint_recipe_created", {"color": doc["color_name"]})
+    return doc
+
+
+@router.put("/recipes/{recipe_id}")
+async def update_recipe(recipe_id: str, request: Request):
+    user = await require_paint_write(request)
+    body = await request.json()
+    allowed = ("color_name", "pantone", "ink_type", "ingredients", "total_volume", "unit", "notes", "cost")
+    upd = {k: body[k] for k in allowed if k in body}
+    for f in ("color_name", "pantone"):
+        if f in upd:
+            upd[f] = (upd[f] or "").strip().upper()
+    upd["updated_at"] = now_iso()
+    res = await db.paint_recipes.update_one({"recipe_id": recipe_id}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Receta no encontrada")
+    return await db.paint_recipes.find_one({"recipe_id": recipe_id}, {"_id": 0})
+
+
+@router.delete("/recipes/{recipe_id}")
+async def delete_recipe(recipe_id: str, request: Request):
+    await require_paint_write(request)
+    await db.paint_recipes.delete_one({"recipe_id": recipe_id})
+    return {"ok": True}
+
+
+# ── Inventario de tintas base ────────────────────────────────────────────────
+def _low(it):
+    return float(it.get("units_on_hand") or 0) <= float(it.get("reorder_point") or 0)
+
+
+@router.get("/inventory")
+async def list_inventory(request: Request):
+    await require_auth(request)
+    items = await db.paint_inventory.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    for it in items:
+        it["low_stock"] = _low(it)
+    return {"items": items, "low_count": sum(1 for it in items if it["low_stock"])}
+
+
+@router.post("/inventory")
+async def create_inventory(request: Request):
+    user = await require_paint_write(request)
+    body = await request.json()
+    if not (body.get("name") or "").strip():
+        raise HTTPException(400, "El nombre de la tinta es obligatorio")
+    doc = {
+        "ink_id": gen_id("ink"),
+        "name": body["name"].strip().upper(),
+        "brand": (body.get("brand") or "").strip(),
+        "ink_type": (body.get("ink_type") or "").strip(),
+        "color": (body.get("color") or "").strip().upper(),
+        "units_on_hand": float(body.get("units_on_hand") or 0),
+        "unit": body.get("unit") or "kg",
+        "reorder_point": float(body.get("reorder_point") or 0),
+        "cost_per_unit": float(body.get("cost_per_unit") or 0),
+        "updated_at": now_iso(),
+    }
+    await db.paint_inventory.insert_one(doc); doc.pop("_id", None)
+    doc["low_stock"] = _low(doc)
+    return doc
+
+
+@router.put("/inventory/{ink_id}")
+async def update_inventory(ink_id: str, request: Request):
+    user = await require_paint_write(request)
+    body = await request.json()
+    allowed = ("name", "brand", "ink_type", "color", "units_on_hand", "unit", "reorder_point", "cost_per_unit")
+    upd = {k: body[k] for k in allowed if k in body}
+    for f in ("units_on_hand", "reorder_point", "cost_per_unit"):
+        if f in upd:
+            try:
+                upd[f] = float(upd[f] or 0)
+            except (TypeError, ValueError):
+                upd[f] = 0
+    for f in ("name", "color"):
+        if f in upd:
+            upd[f] = (upd[f] or "").strip().upper()
+    upd["updated_at"] = now_iso()
+    res = await db.paint_inventory.update_one({"ink_id": ink_id}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Tinta no encontrada")
+    it = await db.paint_inventory.find_one({"ink_id": ink_id}, {"_id": 0})
+    it["low_stock"] = _low(it)
+    return it
+
+
+@router.delete("/inventory/{ink_id}")
+async def delete_inventory(ink_id: str, request: Request):
+    await require_paint_write(request)
+    await db.paint_inventory.delete_one({"ink_id": ink_id})
     return {"ok": True}
