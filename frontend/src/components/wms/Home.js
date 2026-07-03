@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Lock } from "lucide-react";
+import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, API } from "./lib";
 
@@ -9,6 +9,7 @@ const SECTIONS = [
   { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
   { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
   { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
+  { type: 'sizes', label: 'Tallas', desc: 'Tallas adicionales para el desplegable de "size" en Receiving', icon: Ruler, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
   { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
   { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
   { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },

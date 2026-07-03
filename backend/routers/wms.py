@@ -270,7 +270,7 @@ async def notify_badge_change(badge: str = "all"):
 # Receiving identity catalogs (customers/colors/styles) join the original
 # descriptive ones. These drive the locked dropdowns in Receiving: operators can
 # only pick existing values; only a lead/supervisor may add/rename/clean them.
-CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", "styles"}
+CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", "styles", "sizes"}
 
 # Roles allowed to MUTATE catalogs (add / rename / delete / clean). Maps the
 # business notion of "líder o supervisor" onto the existing elevated roles —
@@ -378,6 +378,7 @@ _CATALOG_FIELD_MAP = {
     "customers":    ("customer", ["wms_inventory", "wms_receiving", "wms_boxes"]),
     "colors":       ("color",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
     "styles":       ("style",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
+    "sizes":        ("size",     ["wms_inventory", "wms_receiving", "wms_boxes"]),
 }
 
 

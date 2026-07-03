@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
@@ -157,6 +157,9 @@ export const ReceivingModule = () => {
   // never type one). Falls back to inventory-derived styles if a client has none.
   const [customerStyles, setCustomerStyles] = useState([]);
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
+  // Extra sizes configured by admins in "Configuración WMS → Tallas". Merged with
+  // the standard SIZES_ORDER so the Receiving size dropdown can grow without a deploy.
+  const [extraSizes, setExtraSizes] = useState([]);
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
@@ -317,7 +320,21 @@ export const ReceivingModule = () => {
     fetcher('/transit/info').then(data => {
       setTransitCarts(Array.isArray(data?.carts) ? data.carts : []);
     }).catch(logLoadError('transit info'));
+    fetcher('/catalogs').then(data => {
+      setExtraSizes((data?.sizes || []).map(s => s.value).filter(Boolean));
+    }).catch(logLoadError('catalogs'));
   }, []);
+
+  // Standard sizes first, then any admin-configured extras (dedup, uppercase).
+  const sizeOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const s of [...SIZES_ORDER, ...extraSizes]) {
+      const v = String(s || '').trim().toUpperCase();
+      if (v && !seen.has(v)) { seen.add(v); out.push(v); }
+    }
+    return out;
+  }, [extraSizes]);
 
   // Close the "Recibir a Carro" dropdown on outside click.
   useEffect(() => {
@@ -980,7 +997,7 @@ export const ReceivingModule = () => {
               </label>
               <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc?.size}>
                 <option value="">{t('select_placeholder')}</option>
-                {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
+                {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
           </div>
@@ -1429,7 +1446,7 @@ export const ReceivingModule = () => {
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
                   <select value={upcDraft.size} onChange={e => setUpcDraft(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono">
                     <option value="">{t('select_placeholder')}</option>
-                    {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
+                    {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               </div>
