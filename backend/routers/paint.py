@@ -49,15 +49,53 @@ async def _broadcast(order_id):
 
 
 async def _enrich(tasks):
-    """Join each task with its live order fields under `.order`."""
+    """Join each task with its live order fields (`.order`) and linked recipe (`.recipe`)."""
     ids = [t["order_id"] for t in tasks if t.get("order_id")]
     omap = {}
     if ids:
         async for o in db.orders.find({"order_id": {"$in": ids}}, _ORDER_FIELDS):
             omap[o["order_id"]] = o
+    rids = [t.get("recipe_id") for t in tasks if t.get("recipe_id")]
+    rmap = {}
+    if rids:
+        async for r in db.paint_recipes.find(
+            {"recipe_id": {"$in": rids}},
+            {"_id": 0, "recipe_id": 1, "color_name": 1, "pantone": 1, "ink_type": 1, "total_volume": 1, "unit": 1}):
+            rmap[r["recipe_id"]] = r
     for t in tasks:
         t["order"] = omap.get(t.get("order_id"), {})
+        t["recipe"] = rmap.get(t.get("recipe_id")) if t.get("recipe_id") else None
     return tasks
+
+
+async def _consume_recipe(task):
+    """Descuenta los ingredientes de la receta ligada del inventario (match por
+    nombre, case-insensitive). Escala por estimated_volume/total_volume si ambos
+    están. Best-effort — devuelve lo descontado y lo que no encontró en inventario."""
+    recipe = await db.paint_recipes.find_one({"recipe_id": task.get("recipe_id")}, {"_id": 0})
+    if not recipe:
+        return None
+    tv = float(recipe.get("total_volume") or 0)
+    ev = float(task.get("estimated_volume") or 0)
+    factor = (ev / tv) if (tv > 0 and ev > 0) else 1.0
+    deducted, missing = [], []
+    for ing in (recipe.get("ingredients") or []):
+        name = (ing.get("name") or "").strip()
+        try:
+            qty = float(ing.get("qty") or 0) * factor
+        except (TypeError, ValueError):
+            qty = 0
+        if not name or qty <= 0:
+            continue
+        inv = await db.paint_inventory.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+        if not inv:
+            missing.append(name)
+            continue
+        newv = max(0.0, round(float(inv.get("units_on_hand") or 0) - qty, 3))
+        await db.paint_inventory.update_one(
+            {"ink_id": inv["ink_id"]}, {"$set": {"units_on_hand": newv, "updated_at": now_iso()}})
+        deducted.append({"name": name, "qty": round(qty, 3), "unit": inv.get("unit")})
+    return {"deducted": deducted, "missing": missing}
 
 
 # ── Tablero de la semana ─────────────────────────────────────────────────────
@@ -221,15 +259,20 @@ async def set_status(task_id: str, request: Request):
     status = (body.get("ink_status") or "").strip().lower()
     if status not in INK_STATUSES:
         raise HTTPException(400, f"ink_status debe ser uno de {INK_STATUSES}")
+    task = await db.paint_tasks.find_one({"paint_task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(404, "Tarea no encontrada")
     upd = {"ink_status": status, "updated_at": now_iso(),
            "mixer": user.get("name"), "mixer_id": user.get("user_id")}
     if status == "mezclando":
         upd["started_at"] = now_iso()
+    consumption = None
     if status == "lista":
         upd["completed_at"] = now_iso()
-    task = await db.paint_tasks.find_one({"paint_task_id": task_id}, {"_id": 0})
-    if not task:
-        raise HTTPException(404, "Tarea no encontrada")
+        # Descuenta la receta ligada del inventario UNA sola vez.
+        if task.get("recipe_id") and not task.get("inventory_consumed"):
+            consumption = await _consume_recipe(task)
+            upd["inventory_consumed"] = True
     await db.paint_tasks.update_one({"paint_task_id": task_id}, {"$set": upd})
     # Señal para producción: la tinta de esta orden ya está lista.
     await db.orders.update_one({"order_id": task["order_id"]},
@@ -238,6 +281,7 @@ async def set_status(task_id: str, request: Request):
     await _broadcast(task["order_id"])
     task.update(upd)
     await _enrich([task])
+    task["consumption"] = consumption
     return task
 
 

@@ -32,6 +32,21 @@ export default function PaintModule() {
   const [dragId, setDragId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState([]);
+  const [pickerTask, setPickerTask] = useState(null);
+  const [recipeQ, setRecipeQ] = useState('');
+  const [recipeOpts, setRecipeOpts] = useState([]);
+
+  // Recetas para el picker de la tarjeta.
+  useEffect(() => {
+    if (!pickerTask) return;
+    const id = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/paint/recipes?q=${encodeURIComponent(recipeQ)}`, { credentials: 'include' }).then(r => r.json());
+        setRecipeOpts(r.recipes || []);
+      } catch { setRecipeOpts([]); }
+    }, 200);
+    return () => clearTimeout(id);
+  }, [pickerTask, recipeQ]);
 
   // Búsqueda en vivo de cualquier orden (muestra si ya tiene arte).
   useEffect(() => {
@@ -104,8 +119,23 @@ export default function PaintModule() {
 
   const cycleStatus = async (t) => {
     try {
-      await api('PUT', `/paint/tasks/${t.paint_task_id}/status`, { ink_status: NEXT_STATUS[t.ink_status] || 'pendiente' });
+      const res = await api('PUT', `/paint/tasks/${t.paint_task_id}/status`, { ink_status: NEXT_STATUS[t.ink_status] || 'pendiente' });
+      const c = res?.consumption;
+      if (c && (c.deducted?.length || c.missing?.length)) {
+        const d = c.deducted?.length ? `Descontado: ${c.deducted.map(x => `${x.name} (${x.qty}${x.unit || ''})`).join(', ')}` : '';
+        const m = c.missing?.length ? ` · Sin match en inventario: ${c.missing.join(', ')}` : '';
+        toast.success(`Tinta lista.${d ? ' ' + d : ''}${m}`);
+      }
       await load();
+    } catch (e) { toast.error(e.message); }
+  };
+  const openPicker = (t) => { setRecipeQ(''); setRecipeOpts([]); setPickerTask(t); };
+  const linkRecipe = async (rid) => {
+    if (!pickerTask) return;
+    try {
+      await api('PUT', `/paint/tasks/${pickerTask.paint_task_id}`, { recipe_id: rid });
+      setPickerTask(null); await load();
+      toast.success(rid ? 'Receta ligada' : 'Receta quitada');
     } catch (e) { toast.error(e.message); }
   };
   const toggleHot = async (t) => {
@@ -149,6 +179,11 @@ export default function PaintModule() {
               <button onClick={() => toggleHot(t)} title="Marcar urgente" className={`p-1 rounded ${t.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>
               <button onClick={() => remove(t)} title="Quitar" className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
             </div>
+          </div>
+          <div className="mt-1.5">
+            {t.recipe
+              ? <button onClick={() => openPicker(t)} title="Cambiar receta" className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {t.recipe.color_name}</button>
+              : <button onClick={() => openPicker(t)} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> ligar receta</button>}
           </div>
         </div>
       </div>
@@ -270,6 +305,35 @@ export default function PaintModule() {
           <span className="ml-auto">Clic en el estatus para avanzar · arrastra para reordenar o mover de día</span>
         </div>
         </>)}
+
+        {pickerTask && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setPickerTask(null)}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[80vh] overflow-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-black uppercase tracking-widest text-sm">Receta · orden {pickerTask.order_number}</h3>
+                <button onClick={() => setPickerTask(null)} className="p-1.5 rounded hover:bg-secondary/40"><X size={18} /></button>
+              </div>
+              <input value={recipeQ} onChange={e => setRecipeQ(e.target.value)} placeholder="Buscar receta (color / pantone)…"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm mb-3" />
+              <div className="flex flex-col gap-1 max-h-72 overflow-auto">
+                {recipeOpts.length === 0 ? (
+                  <div className="text-[12px] text-muted-foreground px-1 py-3">Sin recetas. Créalas en la pestaña <b>Recetas</b>.</div>
+                ) : recipeOpts.map(r => (
+                  <button key={r.recipe_id} onClick={() => linkRecipe(r.recipe_id)}
+                    className={`flex items-center gap-2 text-left px-2 py-1.5 rounded-lg border ${pickerTask.recipe_id === r.recipe_id ? 'border-primary bg-primary/10' : 'border-border/40 hover:border-primary/40'}`}>
+                    <Beaker size={13} className="text-primary shrink-0" />
+                    <span className="font-bold text-xs">{r.color_name}</span>
+                    <span className="text-[11px] text-muted-foreground truncate">{r.pantone ? `Pantone ${r.pantone}` : r.ink_type}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">{r.total_volume || 0} {r.unit || 'g'}</span>
+                  </button>
+                ))}
+              </div>
+              {pickerTask.recipe_id && (
+                <button onClick={() => linkRecipe(null)} className="mt-3 text-xs text-red-400 font-bold">Quitar receta ligada</button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
