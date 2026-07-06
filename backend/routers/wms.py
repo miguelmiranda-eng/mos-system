@@ -2601,13 +2601,20 @@ def _ci_eq(v):
 
 
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
-                             customer="", order_number=None, order_id=None):
+                             customer="", order_number=None, order_id=None,
+                             user=None, ticket_id=None):
     """Deduct `qty` units for a pick from the physical boxes (FIFO) AND the
     inventory row, keeping wms_boxes / units_on_hand / total_boxes in lockstep.
     Used by both pick flows so neither leaves boxes full while stock drops (the
     drift that made a box read 21 units while inventory showed 0). Falls back to
     an inventory-only deduct for the leftover when no boxes back the slot
-    (e.g. Excel-imported bulk)."""
+    (e.g. Excel-imported bulk).
+
+    Every deduction logs a 'pick_deduction' movement with the box_ids it drained.
+    Without that per-box trail, a picked-empty box is indistinguishable from a
+    box lost to data corruption — the orphan-boxes restore (orphanrestore_dc70037d)
+    used "no movements for this box_id" as its data-loss signal and re-materialized
+    ~46k already-picked units into the carros. This movement closes that hole."""
     remaining = int(qty or 0)
     if remaining <= 0:
         return
@@ -2616,6 +2623,7 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
     if location:
         q["location"] = _ci_eq(location)
     boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(500)
+    touched = []
     for box in boxes:
         if remaining <= 0:
             break
@@ -2624,7 +2632,9 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             continue
         take = min(b_qty, remaining)
         new_b = b_qty - take
-        upd = {"units": new_b, "qty": new_b}
+        upd = {"units": new_b, "qty": new_b, "last_picked_at": now_iso()}
+        if ticket_id:
+            upd["last_pick_ticket"] = ticket_id
         # When a pick empties a box, mark it 'depleted' so it drops off the cart /
         # putaway lists instead of lingering as a 0-unit "putaway_pending" box
         # (the "cajas con 0 stock al recibir" confusion — the box was received
@@ -2636,6 +2646,8 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         if order_id is not None:
             upd["last_order_id"] = order_id
         await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+        touched.append({"box_id": box.get("box_id"), "taken": take,
+                        "emptied": new_b == 0, "location": box.get("location", location)})
         # Key the inventory deduct the SAME way _move_box_inventory / receiving
         # CREATE the row: short style first (e.g. "5000"), composite sku only as
         # fallback. Boxes carry the composite sku ("5000-BLACK-XL") but shelf
@@ -2654,6 +2666,18 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
     if remaining > 0:
         await _update_inventory_enhanced(style, color, size, remaining, inv_operation,
                                          location=location, customer=customer)
+    # Per-box audit trail. box_ids is the field future sweeps/restores check to
+    # tell "picked empty" apart from "lost"; no_box_units flags the portion that
+    # left WITHOUT a backing box so it can never be mistaken for still-on-hand.
+    if touched or remaining > 0:
+        await log_movement(user or {"user_id": "system", "name": "system"}, "pick_deduction", {
+            "ticket_id": ticket_id, "order_number": order_number,
+            "style": style, "color": color, "size": size, "location": location or "",
+            "qty": int(qty or 0),
+            "box_ids": [t["box_id"] for t in touched if t.get("box_id")],
+            "boxes": touched,
+            "no_box_units": remaining if remaining > 0 else 0,
+        })
 
 
 async def _available_units(style, color, size, location=""):
@@ -4302,6 +4326,7 @@ async def report_incident(ticket_id: str, request: Request):
                     inv_operation="incident_replacement",
                     customer=ticket.get("customer", ""),
                     order_number=ticket.get("order_number"),
+                    user=user, ticket_id=ticket_id,
                 )
             except Exception as e:
                 deduct_errors.append(f"{size}: {str(e)}")
@@ -4568,7 +4593,8 @@ async def save_pick_progress(ticket_id: str, request: Request):
     # stock not deducted (that was a ghost-inventory source).
     try:
         for sz, loc, d in pos:
-            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id)
+            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
+                                     user=user, ticket_id=ticket_id)
         for sz, loc, d in neg:
             # Correction downward: return the units to the shelf they came from.
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
@@ -4696,7 +4722,8 @@ async def pick_size(ticket_id: str, request: Request):
     # WMS-003: abort on failure so we never record a deduction that didn't apply.
     try:
         for sz, loc, d in pos:
-            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id)
+            await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
+                                     user=user, ticket_id=ticket_id)
         for sz, loc, d in neg:
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
     except HTTPException:
@@ -4763,6 +4790,7 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     inv_operation = "pick_to_neck" if is_neck_cutting else "deduct"
 
     # Handle confirmed lines (legacy or explicit)
+    _line_box_ids = []
     if confirmed_lines:
         for line in confirmed_lines:
             box_id = line.get("box_id")
@@ -4772,15 +4800,18 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                 # Support both 'units' and 'qty' field names
                 current_qty = box.get("units") if box.get("units") is not None else box.get("qty", 0)
                 new_qty = max(0, current_qty - pick_qty)
-                
+
                 # Update box: just reduce units and link to order
                 box_update = {
-                    "units": new_qty, 
+                    "units": new_qty,
                     "qty": new_qty,
                     "order_number": ticket.get("order_number"),
-                    "last_order_id": ticket.get("order_id")
+                    "last_order_id": ticket.get("order_id"),
+                    "last_picked_at": now_iso(),
+                    "last_pick_ticket": target_id,
                 }
                 await db.wms_boxes.update_one({"box_id": box_id}, {"$set": box_update})
+                _line_box_ids.append(box_id)
 
                 # Move to neck process area OR deduct from global
                 _inv_id = await _update_inventory_enhanced(box["sku"], box.get("color", ""), box.get("size", ""), pick_qty, inv_operation, location=box.get("location", ""), customer=box.get("customer", ""))
@@ -4811,7 +4842,8 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                     for loc, loc_qty in (data.get("details") or {}).items():
                         if int(loc_qty or 0) > 0:
                             await _deduct_pick_boxes(style, color, sz, loc, int(loc_qty),
-                                                     inv_operation, customer, order_number, order_id)
+                                                     inv_operation, customer, order_number, order_id,
+                                                     user=user, ticket_id=target_id)
                     continue
                 qty_to_pick = int(data.get("total", 0))
             else:
@@ -4819,7 +4851,8 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
             # No shelf chosen → FIFO across this SKU's boxes (location="").
             if qty_to_pick > 0:
                 await _deduct_pick_boxes(style, color, sz, "", qty_to_pick,
-                                         inv_operation, customer, order_number, order_id)
+                                         inv_operation, customer, order_number, order_id,
+                                         user=user, ticket_id=target_id)
 
     new_status = "in_neck_cutting" if is_neck_cutting else "confirmed"
     
@@ -4832,7 +4865,10 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     await db.orders.update_one({"order_id": ticket.get("order_id")}, {"$set": {"wms_status": "picked"}})
     await log_movement(user, "pick_confirmed", {
         "ticket_id": target_id,
-        "items_confirmed": len(confirmed_lines) if confirmed_lines else "auto"
+        "items_confirmed": len(confirmed_lines) if confirmed_lines else "auto",
+        # Per-box trail for the legacy lines flow (the picked_sizes flow logs its
+        # own 'pick_deduction' movements inside _deduct_pick_boxes).
+        **({"box_ids": _line_box_ids} if _line_box_ids else {}),
     })
     await notify_badge_change("picking")
     return {"message": "Pick confirmado", "ticket_id": target_id}
@@ -5217,7 +5253,8 @@ async def create_shipment(request: Request):
     shipment_doc.pop("_id", None)
     if order_id:
         await db.orders.update_one({"$or": [{"order_id": order_id}, {"order_number": order_id}]}, {"$set": {"wms_status": "shipped"}})
-    await log_movement(user, "shipment", {"shipment_id": shipment_id, "total_boxes": len(shipped_boxes), "total_units": total_units})
+    await log_movement(user, "shipment", {"shipment_id": shipment_id, "total_boxes": len(shipped_boxes), "total_units": total_units,
+                                          "box_ids": [b["box_id"] for b in shipped_boxes]})
     return shipment_doc
 
 @router.get("/shipments")
