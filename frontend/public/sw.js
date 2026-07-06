@@ -1,6 +1,6 @@
 /* MOS PDA service worker — enables PWA install + a basic offline app shell.
    Network-first for navigations/static GETs; never caches API mutations. */
-const CACHE = "mos-pda-v2";
+const CACHE = "mos-pda-v3";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) =>
@@ -30,8 +30,24 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
         return res;
       })
-      .catch(() =>
-        caches.match(request).then((r) => r || caches.match("/pda") || caches.match("/"))
-      )
+      .catch(async () => {
+        // Offline fallback. Must ALWAYS resolve to a Response object:
+        // resolving to undefined throws "Failed to convert value to 'Response'"
+        // and the app gets stuck on a network-error page until the SW is
+        // manually unregistered (seen when the backend/frontend was down).
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        if (request.mode === "navigate") {
+          const shell =
+            (await caches.match("/pda")) ||
+            (await caches.match("/")) ||
+            (await caches.match("/index.html"));
+          if (shell) return shell;
+        }
+        return new Response("Sin conexión con el servidor. Reintenta en unos segundos.", {
+          status: 503,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      })
   );
 });
