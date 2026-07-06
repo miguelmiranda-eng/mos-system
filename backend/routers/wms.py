@@ -5317,6 +5317,12 @@ def _build_box_labels_html(items):
     for idx, r in enumerate(items):
         bid = esc(r.get("box_id", ""))
         upc = esc(r.get("upc", ""))
+        # Carros se abrevian a "C.<num>" para que el numero quepa ENORME;
+        # bins y demas ubicaciones se imprimen tal cual.
+        raw_loc = str(r.get("location") or "").strip()
+        carro_m = re.match(r"(?i)^CARRO\s*(\S+)$", raw_loc)
+        loc_disp = f"C.{carro_m.group(1)}" if carro_m else raw_loc
+        loc_size = "52px" if carro_m else "40px"
         pages.append(f'''
       <div class="label-page">
         <div style="text-align:center;margin-bottom:6px"><svg id="bc-{idx}"></svg></div>
@@ -5326,8 +5332,8 @@ def _build_box_labels_html(items):
             <td class="cell" style="width:40%"><span class="label">PO</span><span class="value">{esc(r.get("po"))}</span></td>
           </tr>
           <tr class="row">
-            <td class="cell" style="width:60%"><span class="label">Lote</span><span class="value">{esc(r.get("lot_number"))}</span></td>
-            <td class="cell" style="width:40%"><span class="label">Ubicacion</span><span class="value">{esc(r.get("location"))}</span></td>
+            <td class="cell" style="width:40%"><span class="label">Lote</span><span class="value">{esc(r.get("lot_number"))}</span></td>
+            <td class="cell" style="width:60%;text-align:center;position:relative"><span style="position:absolute;top:2px;left:4px;font-size:9px;color:#666;font-weight:bold">L</span><span class="value" style="font-size:{loc_size};letter-spacing:1px;line-height:1;display:block">{esc(loc_disp)}</span></td>
           </tr>
           <tr class="row"><td class="cell" colspan="2"><span class="label">Fabricante</span><span class="value">{esc(r.get("manufacturer"))}</span></td></tr>
           <tr class="row">
@@ -5344,9 +5350,8 @@ def _build_box_labels_html(items):
             <td class="cell" style="width:50%"><span class="label">Tela</span><span class="value">{esc(r.get("fabric_content"))}</span></td>
           </tr>
           <tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px">{esc(r.get("units", 0))}</span></td></tr>
-          {f'<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">{upc}</span></td></tr>' if upc else ''}
         </table>
-        {f'<div style="text-align:center;margin-top:8px"><svg id="upc-{idx}"></svg></div>' if upc else ''}
+        {f'<div style="text-align:center;margin-top:4px"><span class="label">UPC</span><svg id="upc-{idx}"></svg></div>' if upc else ''}
         <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
             <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">{bid}</span></div>
@@ -5362,7 +5367,7 @@ def _build_box_labels_html(items):
         # in scanned or imported box_id/upc values. esc() only covers HTML.
         calls.append(f'JsBarcode("#bc-{idx}", {json.dumps(str(r.get("box_id") or ""))}, {{width:1.5,height:40,displayValue:true,fontSize:10,margin:0}});')
         if upc:
-            calls.append(f'JsBarcode("#upc-{idx}", {json.dumps(str(r.get("upc") or ""))}, {{width:1.4,height:34,displayValue:true,fontSize:10,margin:0}});')
+            calls.append(f'JsBarcode("#upc-{idx}", {json.dumps(str(r.get("upc") or ""))}, {{width:1.6,height:44,displayValue:true,fontSize:14,margin:0}});')
     return f'''<html><head><title>Etiqueta(s) de caja</title>
       <style>
         @page {{ size: 4in 6in; margin: 5mm; }}

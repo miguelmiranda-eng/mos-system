@@ -726,6 +726,13 @@ export const ReceivingModule = () => {
       return d.toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     };
 
+    // Carros se abrevian a "C.<num>" para que el numero quepa ENORME;
+    // bins y demas ubicaciones se imprimen tal cual.
+    const rawLoc = (r.inv_location || '').trim();
+    const carroMatch = /^CARRO\s*(\S+)$/i.exec(rawLoc);
+    const locDisplay = carroMatch ? `C.${carroMatch[1]}` : rawLoc;
+    const locSize = carroMatch ? '52px' : '40px';
+
     let html = `<html><head><title>${t('wms_mod_receiving')} - ${r.receiving_id}</title>
       <style>
         @page { size: 4in 6in; margin: 5mm; }
@@ -753,8 +760,8 @@ export const ReceivingModule = () => {
             <td class="cell" style="width:40%"><span class="label">${t('wms_label_po')}</span><span class="value">${r.po || ''}</span></td>
           </tr>
           <tr class="row">
-            <td class="cell" style="width:60%"><span class="label">${t('wms_label_lot')}</span><span class="value">${r.lot_number || ''}</span></td>
-            <td class="cell" style="width:40%"><span class="label">${t('wms_label_location')}</span><span class="value">${r.inv_location || ''}</span></td>
+            <td class="cell" style="width:40%"><span class="label">${t('wms_label_lot')}</span><span class="value">${r.lot_number || ''}</span></td>
+            <td class="cell" style="width:60%;text-align:center;position:relative"><span style="position:absolute;top:2px;left:4px;font-size:9px;color:#666;font-weight:bold">L</span><span class="value" style="font-size:${locSize};letter-spacing:1px;line-height:1;display:block">${locDisplay}</span></td>
           </tr>
           <tr class="row">
             <td class="cell" colspan="2"><span class="label">${t('wms_label_manufacturer')}</span><span class="value">${r.manufacturer || ''}</span></td>
@@ -777,9 +784,8 @@ export const ReceivingModule = () => {
           <tr class="row">
             <td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px;color:#000">${box.units}</span></td>
           </tr>
-          ${r.upc ? `<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">${r.upc}</span></td></tr>` : ''}
         </table>
-        ${r.upc ? `<div style="text-align:center;margin-top:8px"><svg id="upcbar-${idx}"></svg></div>` : ''}
+        ${r.upc ? `<div style="text-align:center;margin-top:4px"><span class="label">UPC</span><svg id="upcbar-${idx}"></svg></div>` : ''}
         <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
             <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">${box.box_id}</span></div>
@@ -801,7 +807,7 @@ export const ReceivingModule = () => {
             JsBarcode("#barcode-${idx}", "${box.box_id}", {
               width: 1.5, height: 40, displayValue: true, fontSize: 10, margin: 0
             });
-            ${r.upc ? `JsBarcode("#upcbar-${idx}", "${r.upc}", { width: 1.4, height: 34, displayValue: true, fontSize: 10, margin: 0 });` : ''}
+            ${r.upc ? `JsBarcode("#upcbar-${idx}", "${r.upc}", { width: 1.6, height: 44, displayValue: true, fontSize: 14, margin: 0 });` : ''}
           `).join('\n')}
           setTimeout(function(){window.print()}, 800);
         } catch(e) {}
