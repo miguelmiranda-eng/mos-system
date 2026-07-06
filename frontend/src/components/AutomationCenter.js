@@ -64,6 +64,23 @@ const AutomationCenter = () => {
   const [options, setOptions] = useState({});
   const [watchFields, setWatchFields] = useState(() => buildWatchFields());
 
+  // Tipo de condición sobre el campo observado. Se persiste dentro de
+  // watch_value: los modos especiales van como valor literal (el backend ya
+  // los entiende) y "equals" guarda el valor esperado tal cual.
+  const SPECIAL_CONDS = ['date_updated', 'not_empty', 'is_empty'];
+  const [condMode, setCondMode] = useState('');
+  const deriveCondMode = (watchValue) => {
+    if (!watchValue) return '';
+    return SPECIAL_CONDS.includes(watchValue) ? watchValue : 'equals';
+  };
+  const onCondModeChange = (mode) => {
+    setCondMode(mode);
+    setCurrentAuto(prev => ({
+      ...prev,
+      trigger_conditions: { ...prev.trigger_conditions, watch_value: mode === 'equals' ? '' : mode },
+    }));
+  };
+
   // Opciones del "Nuevo valor esperado" para un campo observado: catálogo global
   // (config/options via optionKey), valores inline de una columna personalizada
   // tipo estado, o null → input de texto libre.
@@ -201,6 +218,7 @@ const AutomationCenter = () => {
       is_active: true,
       boards: []
     });
+    setCondMode('');
     setIsEditing(false);
     setWizardStep(1);
     setShowWizard(true);
@@ -208,6 +226,7 @@ const AutomationCenter = () => {
 
   const openEditWizard = (auto) => {
     setCurrentAuto({ ...auto });
+    setCondMode(deriveCondMode((auto.trigger_conditions || {}).watch_value));
     setIsEditing(true);
     setWizardStep(1);
     setShowWizard(true);
@@ -318,6 +337,22 @@ const AutomationCenter = () => {
                     </select>
                   </div>
                   <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Condición</span>
+                    <select
+                      value={condMode}
+                      onChange={e => onCondModeChange(e.target.value)}
+                      className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                    >
+                      <option value="">-- Seleccionar --</option>
+                      <option value="date_updated">Cambia (cualquier valor)</option>
+                      <option value="equals">Es igual a…</option>
+                      <option value="not_empty">Es asignado (recibe valor)</option>
+                      <option value="is_empty">Queda vacío</option>
+                    </select>
+                  </div>
+                </div>
+                {condMode === 'equals' && (
+                  <div>
                     <span className="text-xs text-muted-foreground mb-1 block">Nuevo valor esperado</span>
                     {getValueOptions(currentAuto.trigger_conditions.watch_field) ? (
                       <select
@@ -326,16 +361,13 @@ const AutomationCenter = () => {
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                       >
                         <option value="">-- Seleccionar --</option>
-                        <option value="date_updated">Cualquier cambio (date_updated)</option>
-                        <option value="not_empty">Que sea asignado (not_empty)</option>
-                        <option value="is_empty">Que quede vacío (is_empty)</option>
                         {getValueOptions(currentAuto.trigger_conditions.watch_field).map(v => (
                           <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
                     ) : (
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={currentAuto.trigger_conditions.watch_value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, watch_value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
@@ -343,8 +375,18 @@ const AutomationCenter = () => {
                       />
                     )}
                   </div>
-                </div>
-                <p className="text-[10px] text-muted-foreground italic">Use 'date_updated', 'is_empty', 'not_empty' para condiciones especiales.</p>
+                )}
+                <p className="text-[10px] text-muted-foreground italic">
+                  {condMode === 'date_updated'
+                    ? `La regla se activa con CUALQUIER cambio en ${fieldLabel(currentAuto.trigger_conditions.watch_field) || 'el campo'}.`
+                    : condMode === 'not_empty'
+                    ? 'Se activa cuando el campo pasa de vacío a tener un valor.'
+                    : condMode === 'is_empty'
+                    ? 'Se activa cuando el campo queda vacío tras el cambio.'
+                    : condMode === 'equals'
+                    ? 'Se activa cuando el campo cambia y queda con exactamente ese valor.'
+                    : 'Elige el campo y la condición que disparan la regla.'}
+                </p>
               </div>
             )}
 
