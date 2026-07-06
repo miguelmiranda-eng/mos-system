@@ -81,6 +81,16 @@ const AutomationCenter = () => {
     }));
   };
 
+  // Condición adicional (filtro Y): la regla solo dispara si ADEMÁS otra
+  // columna de la orden tiene cierto valor. Se persiste como clave extra en
+  // trigger_conditions ({cliente: "X"}) — el backend ya evalúa esas claves.
+  const RESERVED_COND_KEYS = ['watch_field', 'watch_value', 'from_board', 'to_board'];
+  const [extraCond, setExtraCond] = useState({ enabled: false, field: '', value: '' });
+  const deriveExtraCond = (conds = {}) => {
+    const key = Object.keys(conds).find(k => !RESERVED_COND_KEYS.includes(k) && conds[k]);
+    return key ? { enabled: true, field: key, value: conds[key] } : { enabled: false, field: '', value: '' };
+  };
+
   // Opciones del "Nuevo valor esperado" para un campo observado: catálogo global
   // (config/options via optionKey), valores inline de una columna personalizada
   // tipo estado, o null → input de texto libre.
@@ -118,21 +128,21 @@ const AutomationCenter = () => {
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
     if (!conds) return 'Cualquier cambio';
+    const parts = [];
     if (conds.watch_field && conds.watch_value) {
-      if (conds.watch_value === 'date_updated') return `Cualquier cambio en ${fieldLabel(conds.watch_field)}`;
-      if (conds.watch_value === 'is_empty') return `Si ${fieldLabel(conds.watch_field)} queda vacío`;
-      if (conds.watch_value === 'not_empty') return `Si ${fieldLabel(conds.watch_field)} es asignado`;
-      return `Si ${fieldLabel(conds.watch_field)} = ${conds.watch_value}`;
+      if (conds.watch_value === 'date_updated') parts.push(`Cualquier cambio en ${fieldLabel(conds.watch_field)}`);
+      else if (conds.watch_value === 'is_empty') parts.push(`Si ${fieldLabel(conds.watch_field)} queda vacío`);
+      else if (conds.watch_value === 'not_empty') parts.push(`Si ${fieldLabel(conds.watch_field)} es asignado`);
+      else parts.push(`Si ${fieldLabel(conds.watch_field)} = ${conds.watch_value}`);
     }
-    const keys = Object.keys(conds).filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k]);
-    if (keys.length > 0) {
-      return keys.map(k => {
-        if (k === 'to_board') return `Si entra a tablero: ${conds[k]}`;
-        if (k === 'from_board') return `Si sale de tablero: ${conds[k]}`;
-        return `${k} = ${conds[k]}`;
-      }).join(' y ');
-    }
-    return 'Al ejecutarse el disparador';
+    Object.keys(conds)
+      .filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k])
+      .forEach(k => {
+        if (k === 'to_board') parts.push(`Si entra a tablero: ${conds[k]}`);
+        else if (k === 'from_board') parts.push(`Si sale de tablero: ${conds[k]}`);
+        else parts.push(`solo si ${fieldLabel(k)} = ${conds[k]}`);
+      });
+    return parts.length ? parts.join(' y ') : 'Al ejecutarse el disparador';
   };
 
   const getActionParamString = (type, params) => {
@@ -219,6 +229,7 @@ const AutomationCenter = () => {
       boards: []
     });
     setCondMode('');
+    setExtraCond({ enabled: false, field: '', value: '' });
     setIsEditing(false);
     setWizardStep(1);
     setShowWizard(true);
@@ -227,6 +238,7 @@ const AutomationCenter = () => {
   const openEditWizard = (auto) => {
     setCurrentAuto({ ...auto });
     setCondMode(deriveCondMode((auto.trigger_conditions || {}).watch_value));
+    setExtraCond(deriveExtraCond(auto.trigger_conditions));
     setIsEditing(true);
     setWizardStep(1);
     setShowWizard(true);
@@ -242,13 +254,21 @@ const AutomationCenter = () => {
         alert("El nombre es requerido");
         return;
       }
+      // Reconstruir la condición adicional: limpiar cualquier clave extra vieja
+      // y escribir la vigente solo si está activa y completa.
+      const conds = { ...(currentAuto.trigger_conditions || {}) };
+      Object.keys(conds).forEach(k => { if (!RESERVED_COND_KEYS.includes(k)) delete conds[k]; });
+      if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
+        conds[extraCond.field] = extraCond.value;
+      }
+      const payload = { ...currentAuto, trigger_conditions: conds };
       const url = isEditing ? `${API}/automations/${currentAuto.automation_id}` : `${API}/automations`;
       const method = isEditing ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(currentAuto)
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         closeWizard();
@@ -387,6 +407,68 @@ const AutomationCenter = () => {
                     ? 'Se activa cuando el campo cambia y queda con exactamente ese valor.'
                     : 'Elige el campo y la condición que disparan la regla.'}
                 </p>
+
+                <div className="border-t border-border/50 pt-3 space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={extraCond.enabled}
+                      onChange={e => setExtraCond({ ...extraCond, enabled: e.target.checked })}
+                      className="w-4 h-4 accent-yellow-500"
+                    />
+                    <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">
+                      Condición adicional (Y si…)
+                    </span>
+                  </label>
+                  {extraCond.enabled && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <span className="text-xs text-muted-foreground mb-1 block">Si la columna</span>
+                          <select
+                            value={extraCond.field}
+                            onChange={e => setExtraCond({ ...extraCond, field: e.target.value, value: '' })}
+                            className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                          >
+                            <option value="">-- Seleccionar --</option>
+                            {watchFields.map(f => (
+                              <option key={f.key} value={f.key}>{f.label}</option>
+                            ))}
+                            {extraCond.field && !watchFields.some(f => f.key === extraCond.field) && (
+                              <option value={extraCond.field}>{extraCond.field}</option>
+                            )}
+                          </select>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted-foreground mb-1 block">Tiene el valor</span>
+                          {getValueOptions(extraCond.field) ? (
+                            <select
+                              value={extraCond.value}
+                              onChange={e => setExtraCond({ ...extraCond, value: e.target.value })}
+                              className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                            >
+                              <option value="">-- Seleccionar --</option>
+                              {getValueOptions(extraCond.field).map(v => (
+                                <option key={v} value={v}>{v}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={extraCond.value}
+                              onChange={e => setExtraCond({ ...extraCond, value: e.target.value })}
+                              className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                              placeholder="Ej. GOODIE TWO SLEEVES"
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground italic">
+                        La regla solo dispara si, al momento del cambio, {extraCond.field ? fieldLabel(extraCond.field) : 'esa columna'} tiene exactamente ese valor.
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
