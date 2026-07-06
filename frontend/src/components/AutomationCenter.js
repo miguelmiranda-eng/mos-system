@@ -4,7 +4,7 @@ import {
   Zap, Settings, Plus, ArrowLeft, Trash2, Edit2, 
   ChevronRight, Check, CheckCircle2, Factory, X, Play, Loader2
 } from 'lucide-react';
-import { API, BOARDS } from '../lib/constants';
+import { API, BOARDS, DEFAULT_COLUMNS } from '../lib/constants';
 
 
 const TRIGGER_LABELS = {
@@ -22,10 +22,27 @@ const ACTION_LABELS = {
   notify_slack: 'Notificar Slack'
 };
 
-const CONDITION_FIELDS = [
-  "priority", "client", "branding", "blank_status", "production_status", 
-  "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping"
+// "Campo a observar": todas las columnas del tablero (default + personalizadas),
+// no solo las de estado. Las columnas fórmula se excluyen porque se calculan en
+// el frontend y nunca aparecen en changed_fields del backend.
+const EXTRA_WATCH_FIELDS = [
+  { key: 'board', label: 'Tablero (board)', optionKey: 'boards' },
 ];
+
+const buildWatchFields = (colData = {}) => {
+  const removed = colData.removed_default_columns || [];
+  const defaultKeys = new Set(DEFAULT_COLUMNS.map(c => c.key));
+  const defaults = DEFAULT_COLUMNS
+    .filter(c => !removed.includes(c.key) && c.type !== 'formula');
+  const customs = (colData.custom_columns || [])
+    .filter(c => c.key && !defaultKeys.has(c.key) && c.type !== 'formula');
+  return [...defaults, ...customs, ...EXTRA_WATCH_FIELDS].map(c => ({
+    key: c.key,
+    label: c.label || c.key,
+    optionKey: c.optionKey || null,
+    statusOptions: Array.isArray(c.statusOptions) ? c.statusOptions.map(s => s.value) : null,
+  }));
+};
 
 const AutomationCenter = () => {
   const navigate = useNavigate();
@@ -45,6 +62,21 @@ const AutomationCenter = () => {
   const [automations, setAutomations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState({});
+  const [watchFields, setWatchFields] = useState(() => buildWatchFields());
+
+  // Opciones del "Nuevo valor esperado" para un campo observado: catálogo global
+  // (config/options via optionKey), valores inline de una columna personalizada
+  // tipo estado, o null → input de texto libre.
+  const getValueOptions = (fieldKey) => {
+    if (!fieldKey) return null;
+    const def = watchFields.find(c => c.key === fieldKey);
+    const optKey = (def && def.optionKey) || OPTIONS_MAPPING[fieldKey];
+    if (optKey && options && Array.isArray(options[optKey]) && options[optKey].length) {
+      return options[optKey];
+    }
+    if (def && def.statusOptions && def.statusOptions.length) return def.statusOptions;
+    return null;
+  };
   
   // Wizard State
   const [showWizard, setShowWizard] = useState(false);
@@ -60,14 +92,20 @@ const AutomationCenter = () => {
     boards: []
   });
   
+  // Etiqueta visible de una columna observada (cae a la clave si ya no existe).
+  const fieldLabel = (key) => {
+    const def = watchFields.find(f => f.key === key);
+    return (def && def.label) || key;
+  };
+
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
     if (!conds) return 'Cualquier cambio';
     if (conds.watch_field && conds.watch_value) {
-      if (conds.watch_value === 'date_updated') return `Cualquier cambio en ${conds.watch_field}`;
-      if (conds.watch_value === 'is_empty') return `Si ${conds.watch_field} queda vacío`;
-      if (conds.watch_value === 'not_empty') return `Si ${conds.watch_field} es asignado`;
-      return `Si ${conds.watch_field} = ${conds.watch_value}`;
+      if (conds.watch_value === 'date_updated') return `Cualquier cambio en ${fieldLabel(conds.watch_field)}`;
+      if (conds.watch_value === 'is_empty') return `Si ${fieldLabel(conds.watch_field)} queda vacío`;
+      if (conds.watch_value === 'not_empty') return `Si ${fieldLabel(conds.watch_field)} es asignado`;
+      return `Si ${fieldLabel(conds.watch_field)} = ${conds.watch_value}`;
     }
     const keys = Object.keys(conds).filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k]);
     if (keys.length > 0) {
@@ -115,9 +153,21 @@ const AutomationCenter = () => {
     }
   };
 
+  const fetchColumns = async () => {
+    try {
+      const res = await fetch(`${API}/config/columns`, { credentials: 'include' });
+      if (res.ok) {
+        setWatchFields(buildWatchFields(await res.json()));
+      }
+    } catch (e) {
+      console.error(e); // se queda con las columnas default
+    }
+  };
+
   useEffect(() => {
     fetchAutomations();
     fetchOptions();
+    fetchColumns();
   }, []);
 
   const handleToggleActive = async (auto) => {
@@ -255,19 +305,31 @@ const AutomationCenter = () => {
                       className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                     >
                       <option value="">-- Seleccionar --</option>
-                      {CONDITION_FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
+                      {watchFields.map(f => (
+                        <option key={f.key} value={f.key}>{f.label}</option>
+                      ))}
+                      {/* Automatizaciones viejas con un campo que ya no existe como columna */}
+                      {currentAuto.trigger_conditions.watch_field &&
+                        !watchFields.some(f => f.key === currentAuto.trigger_conditions.watch_field) && (
+                        <option value={currentAuto.trigger_conditions.watch_field}>
+                          {currentAuto.trigger_conditions.watch_field}
+                        </option>
+                      )}
                     </select>
                   </div>
                   <div>
                     <span className="text-xs text-muted-foreground mb-1 block">Nuevo valor esperado</span>
-                    {(currentAuto.trigger_conditions.watch_field && OPTIONS_MAPPING[currentAuto.trigger_conditions.watch_field] && options && options[OPTIONS_MAPPING[currentAuto.trigger_conditions.watch_field]]) ? (
-                      <select 
+                    {getValueOptions(currentAuto.trigger_conditions.watch_field) ? (
+                      <select
                         value={currentAuto.trigger_conditions.watch_value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, watch_value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                       >
                         <option value="">-- Seleccionar --</option>
-                        {options[OPTIONS_MAPPING[currentAuto.trigger_conditions.watch_field]].map(v => (
+                        <option value="date_updated">Cualquier cambio (date_updated)</option>
+                        <option value="not_empty">Que sea asignado (not_empty)</option>
+                        <option value="is_empty">Que quede vacío (is_empty)</option>
+                        {getValueOptions(currentAuto.trigger_conditions.watch_field).map(v => (
                           <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
