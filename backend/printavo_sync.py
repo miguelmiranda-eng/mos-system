@@ -197,7 +197,9 @@ def invoice_to_orders(invoice: dict) -> list:
     real = []
     for li in _flatten_line_items(invoice):
         sizes, qty = _map_sizes(li)
-        if qty > 0:
+        has_sizes = bool(sizes)
+        has_color = bool((li.get("color") or "").strip())
+        if qty > 0 and (has_sizes or has_color):
             real.append((li, sizes, qty))
 
     orders = []
