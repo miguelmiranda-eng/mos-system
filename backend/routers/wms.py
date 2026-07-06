@@ -5293,6 +5293,19 @@ async def _enrich_box_for_label(box):
     return r
 
 
+def _fmt_label_date(iso):
+    """dd/mm/yyyy HH:MM en hora del almacén (America/Tijuana) para la etiqueta."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo:
+            d = d.astimezone(ZoneInfo("America/Tijuana"))
+        return d.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return ""
+
+
 def _build_box_labels_html(items):
     """Printable HTML (4x6) — one label per box, barcodes rendered in the browser
     via JsBarcode. No server-side barcode/reportlab dependency. Mirrors the
@@ -5334,8 +5347,15 @@ def _build_box_labels_html(items):
           {f'<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">{upc}</span></td></tr>' if upc else ''}
         </table>
         {f'<div style="text-align:center;margin-top:8px"><svg id="upc-{idx}"></svg></div>' if upc else ''}
-        <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
-          <span>{bid}</span><span>{idx + 1} of {n}</span><span>{esc(r.get("received_by_name"))}</span>
+        <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">{bid}</span></div>
+            <div style="text-align:right"><span class="label">Etiqueta</span><span style="font-size:16px;font-weight:bold">{idx + 1} de {n}</span></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
+            <div><span class="label">Fecha de recibo</span><span style="font-size:15px;font-weight:bold">{esc(_fmt_label_date(r.get("created_at")))}</span></div>
+            <div style="text-align:right"><span class="label">Recibi&oacute;</span><span style="font-size:15px;font-weight:bold">{esc(r.get("received_by_name"))}</span></div>
+          </div>
         </div>
       </div>''')
         # JS-context escape: json.dumps neutralizes quotes/backslashes/</script>

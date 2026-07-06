@@ -720,6 +720,12 @@ export const ReceivingModule = () => {
 
     const boxes = r.boxes || [{ box_id: r.receiving_id, units: r.total_units }];
 
+    const fmtLabelDate = (iso) => {
+      const d = new Date(iso || Date.now());
+      if (isNaN(d)) return '';
+      return d.toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    };
+
     let html = `<html><head><title>${t('wms_mod_receiving')} - ${r.receiving_id}</title>
       <style>
         @page { size: 4in 6in; margin: 5mm; }
@@ -774,10 +780,15 @@ export const ReceivingModule = () => {
           ${r.upc ? `<tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UPC</span><span class="value" style="font-family:monospace;font-size:15px">${r.upc}</span></td></tr>` : ''}
         </table>
         ${r.upc ? `<div style="text-align:center;margin-top:8px"><svg id="upcbar-${idx}"></svg></div>` : ''}
-        <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#666">
-          <span>${box.box_id}</span>
-          <span>${idx + 1} of ${boxes.length}</span>
-          <span>${r.received_by_name || ''}</span>
+        <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">${box.box_id}</span></div>
+            <div style="text-align:right"><span class="label">Etiqueta</span><span style="font-size:16px;font-weight:bold">${idx + 1} de ${boxes.length}</span></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
+            <div><span class="label">Fecha de recibo</span><span style="font-size:15px;font-weight:bold">${fmtLabelDate(box.created_at || r.created_at)}</span></div>
+            <div style="text-align:right"><span class="label">Recibi&oacute;</span><span style="font-size:15px;font-weight:bold">${r.received_by_name || ''}</span></div>
+          </div>
         </div>
       </div>`;
     });
