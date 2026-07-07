@@ -29,6 +29,10 @@ export default function PdaPicker() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [locatorOpen, setLocatorOpen] = useState(false); // box→location lookup (Case# 004)
+  // Fallo de descuento en tiempo real → modal BLOQUEANTE. Un toast se
+  // desvanece y el surtidor puede seguir pickeando creyendo que desconto;
+  // el modal obliga a enterarse (era la receta del inventario fantasma).
+  const [errorModal, setErrorModal] = useState(null); // { title, message }
 
   useEffect(() => {
     if (user === null) navigate("/", { replace: true });
@@ -73,10 +77,20 @@ export default function PdaPicker() {
         return true;
       }
       const err = await res.json().catch(() => ({}));
-      toast.error(err.detail || "No se pudo descontar la talla");
-      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      setErrorModal({
+        title: `NO se descontó la talla ${size}`,
+        message: err.detail || "El servidor rechazó el descuento. El inventario NO se movió — verifica el stock de esa talla antes de continuar.",
+      });
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       return false;
-    } catch { toast.error("Error de conexión"); return false; }
+    } catch {
+      setErrorModal({
+        title: `NO se descontó la talla ${size}`,
+        message: "Sin conexión con el servidor. El inventario NO se movió — reintenta cuando vuelva la señal.",
+      });
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      return false;
+    }
   };
 
   const handleSave = async (ticketId, pickedSizes, isComplete) => {
@@ -99,15 +113,45 @@ export default function PdaPicker() {
         await loadTickets();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "Error al guardar");
+        setErrorModal({
+          title: "NO se guardó el surtido",
+          message: err.detail || "El servidor rechazó el guardado. El progreso y el descuento NO se aplicaron.",
+        });
+        if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       }
-    } catch { toast.error("Error de conexión"); }
+    } catch {
+      setErrorModal({
+        title: "NO se guardó el surtido",
+        message: "Sin conexión con el servidor. El progreso y el descuento NO se aplicaron — reintenta cuando vuelva la señal.",
+      });
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+    }
     finally { setSaving(false); }
   };
 
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100 select-none" style={{ WebkitTapHighlightColor: "transparent" }}>
       <Toaster position="top-center" theme="dark" richColors />
+
+      {/* Modal BLOQUEANTE de fallo de descuento: no desaparece solo, hay que
+          tocar ENTENDIDO. Un error de descuento ignorado = inventario fantasma. */}
+      {errorModal && (
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-5">
+          <div className="w-full max-w-sm bg-[#1a0f0f] border-2 border-red-500 rounded-2xl p-5 text-center shadow-[0_0_40px_rgba(239,68,68,0.4)]">
+            <div className="mx-auto w-14 h-14 rounded-full bg-red-500/20 border border-red-500/50 flex items-center justify-center mb-3">
+              <AlertTriangle className="w-8 h-8 text-red-400" />
+            </div>
+            <div className="text-lg font-black uppercase tracking-wide text-red-300 mb-2">{errorModal.title}</div>
+            <div className="text-sm text-slate-200 leading-snug mb-5">{errorModal.message}</div>
+            <button
+              onClick={() => setErrorModal(null)}
+              className="w-full py-4 rounded-xl bg-red-500 text-white text-base font-black uppercase tracking-widest active:bg-red-600"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="sticky top-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-b border-white/10 px-3 py-2.5 flex items-center gap-2">
         {(selected || locatorOpen) ? (
