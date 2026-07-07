@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -5289,6 +5289,384 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
     if movement_type: query["type"] = movement_type
     movements = await db.wms_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return movements
+
+
+# ==================== AUDITORIA (SOLO SUPER ADMIN) ====================
+# Modulo de auditoria del flujo completo: salud/consistencia del sistema,
+# trazabilidad por caja, trazabilidad por SKU y busqueda de movimientos.
+# Todo gated a require_supersu.
+
+def _norm_cell(loc, key, color, size):
+    return (str(loc or "").strip().upper(), str(key or "").strip().upper(),
+            str(color or "").strip().upper(), str(size or "").strip().upper())
+
+
+@router.get("/audit/health")
+async def audit_health(request: Request):
+    """Panel de consistencia: totales, drift inventario vs cajas por celda,
+    tickets con picks sin descontar, negativos y cajas estancadas."""
+    await require_supersu(request)
+    from collections import defaultdict
+
+    inv_agg = await db.wms_inventory.aggregate([
+        {"$group": {"_id": None, "units": {"$sum": "$units_on_hand"}, "rows": {"$sum": 1}}}]).to_list(1)
+    box_agg = await db.wms_boxes.aggregate([
+        {"$match": {"units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}}},
+        {"$group": {"_id": None, "units": {"$sum": "$units"}, "boxes": {"$sum": 1}}}]).to_list(1)
+
+    # Drift por celda (location/style/color/size): inventario vs cajas vivas.
+    inv_cells = defaultdict(int)
+    async for r in db.wms_inventory.find({}, {"_id": 0, "location": 1, "style": 1, "sku": 1, "color": 1, "size": 1, "units_on_hand": 1}):
+        inv_cells[_norm_cell(r.get("location"), r.get("style") or r.get("sku"), r.get("color"), r.get("size"))] += int(r.get("units_on_hand", 0) or 0)
+    box_cells = defaultdict(int)
+    async for b in db.wms_boxes.find({"units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}},
+                                     {"_id": 0, "location": 1, "style": 1, "color": 1, "size": 1, "units": 1}):
+        box_cells[_norm_cell(b.get("location"), b.get("style"), b.get("color"), b.get("size"))] += int(b.get("units", 0) or 0)
+    drift = []
+    for cell in set(inv_cells) | set(box_cells):
+        diff = inv_cells.get(cell, 0) - box_cells.get(cell, 0)
+        if diff != 0:
+            drift.append({"location": cell[0], "style": cell[1], "color": cell[2], "size": cell[3],
+                          "inventario": inv_cells.get(cell, 0), "cajas": box_cells.get(cell, 0), "diff": diff})
+    drift.sort(key=lambda d: -abs(d["diff"]))
+
+    # Tickets REALMENTE sin descontar. Ojo: "sin deducted_map" NO basta —
+    # ese campo solo lo escribe el flujo incremental del PDA. Un ticket
+    # confirmado por el flujo clasico (confirm_pick) descuenta bien pero deja
+    # un movimiento 'pick_confirmed' sin deducted_map, y los liquidados por el
+    # fix de junio quedan con deducted_map vacio + phantom_settled. El criterio
+    # verdadero (el que uso el fix): picked>0 Y sin deducted_map Y sin phantom_
+    # settled Y sin NINGUN movimiento pick_confirmed/pick_deduction del ticket.
+    candidates = []
+    async for t in db.wms_pick_tickets.find(
+            {"status": {"$in": ["confirmed", "in_neck_cutting", "pending"]},
+             "deducted_map": {"$in": [None, {}]}, "phantom_settled": {"$ne": True}},
+            {"_id": 0, "ticket_id": 1, "order_number": 1, "style": 1, "color": 1, "status": 1, "picked_sizes": 1, "created_at": 1}):
+        picked = 0
+        for v in (t.get("picked_sizes") or {}).values():
+            if isinstance(v, dict):
+                picked += int(v.get("total", 0) or 0)
+        if picked > 0:
+            candidates.append((t, picked))
+    # Un solo query: que tickets candidatos SI tienen movimiento de descuento.
+    cand_ids = [t["ticket_id"] for t, _ in candidates]
+    settled_ids = set()
+    if cand_ids:
+        settled_ids = set(await db.wms_movements.distinct("details.ticket_id", {
+            "type": {"$in": ["pick_confirmed", "pick_deduction"]},
+            "details.ticket_id": {"$in": cand_ids}}))
+    undeducted = [
+        {"ticket_id": t["ticket_id"], "order": t.get("order_number"),
+         "style": t.get("style"), "color": t.get("color"),
+         "status": t.get("status"), "picked": picked, "created_at": t.get("created_at")}
+        for t, picked in candidates if t["ticket_id"] not in settled_ids
+    ]
+
+    negativos = await db.wms_inventory.count_documents({"$expr": {"$gt": ["$units_allocated", "$units_on_hand"]}})
+    ceros_con_cajas = await db.wms_inventory.count_documents({"units_on_hand": {"$lte": 0}, "total_boxes": {"$gt": 0}})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    stale_pending = await db.wms_boxes.count_documents({"status": "putaway_pending", "units": {"$gt": 0}, "created_at": {"$lt": cutoff}})
+
+    return {
+        "generated_at": now_iso(),
+        "totales": {
+            "inventario_unidades": (inv_agg[0]["units"] if inv_agg else 0),
+            "inventario_filas": (inv_agg[0]["rows"] if inv_agg else 0),
+            "cajas_unidades": (box_agg[0]["units"] if box_agg else 0),
+            "cajas_vivas": (box_agg[0]["boxes"] if box_agg else 0),
+        },
+        "drift": {"celdas": len(drift), "unidades_abs": sum(abs(d["diff"]) for d in drift), "top": drift[:50]},
+        "sin_descontar": {"tickets": len(undeducted), "top": sorted(undeducted, key=lambda x: -x["picked"])[:25]},
+        "negativos_allocated": negativos,
+        "ceros_con_cajas": ceros_con_cajas,
+        "cajas_pendientes_14d": stale_pending,
+    }
+
+
+@router.get("/audit/box/{box_id}")
+async def audit_box(box_id: str, request: Request):
+    """Ciclo de vida completo de una caja: recibo, estado actual, renglon de
+    inventario ligado, ticket que la surtio y todos sus movimientos."""
+    await require_supersu(request)
+    bid = box_id.strip()
+    box = await db.wms_boxes.find_one({"$or": [{"box_id": bid}, {"barcode": bid}, {"lpn_id": bid}]}, {"_id": 0})
+
+    receiving = None
+    rid = (box or {}).get("receiving_id")
+    if rid:
+        receiving = await db.wms_receiving.find_one({"receiving_id": rid}, {"_id": 0})
+    if not box:
+        # Caja ausente de wms_boxes: buscarla dentro de los recibos (huerfana / embarcada)
+        receiving = await db.wms_receiving.find_one({"boxes.box_id": bid}, {"_id": 0})
+
+    movements = await db.wms_movements.find({"$or": [
+        {"details.box_id": bid}, {"details.box_ids": bid}, {"details.boxes.box_id": bid},
+    ]}, {"_id": 0}).sort("created_at", 1).to_list(300)
+
+    ticket = None
+    tid = (box or {}).get("last_pick_ticket")
+    if tid:
+        ticket = await db.wms_pick_tickets.find_one({"ticket_id": tid},
+            {"_id": 0, "ticket_id": 1, "order_number": 1, "status": 1, "style": 1, "color": 1,
+             "assigned_to_name": 1, "completed_at": 1, "deducted_map": 1})
+
+    inventory = None
+    iid = (box or {}).get("inventory_id")
+    if iid:
+        inventory = await db.wms_inventory.find_one({"inventory_id": iid}, {"_id": 0})
+
+    if not box and not receiving and not movements:
+        raise HTTPException(404, f"Sin rastro de la caja {bid} en cajas, recibos ni movimientos")
+    return {"box_id": bid, "box": box, "receiving": receiving, "inventory": inventory,
+            "pick_ticket": ticket, "movements": movements, "movement_count": len(movements)}
+
+
+@router.get("/audit/sku")
+async def audit_sku(request: Request, style: str, color: str = "", size: str = ""):
+    """Balance del flujo completo de un SKU: recibido - pickeado vs en mano,
+    cajas por estatus y su historial de movimientos."""
+    await require_supersu(request)
+    if not style.strip():
+        raise HTTPException(400, "style requerido")
+    st = _ci_eq(style.strip())
+    q_recv = {"style": st}
+    q_inv = {"$or": [{"style": st}, {"sku": st}]}
+    q_box = {"$or": [{"style": st}, {"sku": st}]}
+    q_tk = {"style": st}
+    if color.strip():
+        for q in (q_recv, q_inv, q_box, q_tk):
+            q["color"] = _ci_eq(color.strip())
+    if size.strip():
+        for q in (q_recv, q_inv, q_box):
+            q["size"] = _ci_eq(size.strip())
+
+    recibido, recv_list = 0, []
+    async for r in db.wms_receiving.find(q_recv, {"_id": 0, "receiving_id": 1, "size": 1, "total_units": 1,
+                                                  "inv_location": 1, "created_at": 1, "received_by_name": 1}).sort("created_at", 1):
+        recibido += int(r.get("total_units", 0) or 0)
+        recv_list.append(r)
+
+    pickeado, tickets = 0, []
+    async for t in db.wms_pick_tickets.find(q_tk, {"_id": 0, "ticket_id": 1, "order_number": 1, "status": 1,
+                                                   "picked_sizes": 1, "created_at": 1}).sort("created_at", 1):
+        tot = 0
+        for sz, v in (t.get("picked_sizes") or {}).items():
+            if size.strip() and str(sz).strip().upper() != size.strip().upper():
+                continue
+            if isinstance(v, dict):
+                tot += int(v.get("total", 0) or 0)
+        if tot > 0:
+            pickeado += tot
+            tickets.append({"ticket_id": t["ticket_id"], "order": t.get("order_number"),
+                            "status": t.get("status"), "picked": tot, "created_at": t.get("created_at")})
+
+    on_hand, inv_rows = 0, []
+    async for i in db.wms_inventory.find(q_inv, {"_id": 0, "location": 1, "size": 1, "units_on_hand": 1,
+                                                 "units_allocated": 1, "total_boxes": 1}).sort("location", 1):
+        on_hand += int(i.get("units_on_hand", 0) or 0)
+        if int(i.get("units_on_hand", 0) or 0) != 0:
+            inv_rows.append(i)
+
+    boxes_by_status = {}
+    async for g in db.wms_boxes.aggregate([{"$match": q_box},
+            {"$group": {"_id": "$status", "cajas": {"$sum": 1}, "unidades": {"$sum": "$units"}}}]):
+        boxes_by_status[str(g["_id"])] = {"cajas": g["cajas"], "unidades": g["unidades"]}
+
+    movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
+    esperado = recibido - pickeado
+    return {
+        "style": style.strip().upper(), "color": color.strip().upper(), "size": size.strip().upper(),
+        "balance": {"recibido": recibido, "pickeado": pickeado, "esperado": esperado,
+                    "en_mano": on_hand, "diferencia": on_hand - esperado},
+        "recibos": recv_list, "tickets": tickets, "inventario": inv_rows,
+        "cajas_por_status": boxes_by_status, "movimientos": movements,
+    }
+
+
+@router.get("/audit/movements")
+async def audit_movements(request: Request, q: str = "", movement_type: str = "", user: str = "",
+                          since: str = "", until: str = "", limit: int = 200):
+    """Busqueda de movimientos con filtros: texto libre (caja/sku/orden/
+    ubicacion/ticket), tipo, usuario y rango de fechas."""
+    await require_supersu(request)
+    query = {}
+    if movement_type.strip():
+        query["type"] = movement_type.strip()
+    if user.strip():
+        query["user_name"] = {"$regex": re.escape(user.strip()), "$options": "i"}
+    if since.strip() or until.strip():
+        rng = {}
+        if since.strip():
+            rng["$gte"] = since.strip()
+        if until.strip():
+            rng["$lte"] = until.strip() + ("T23:59:59" if len(until.strip()) == 10 else "")
+        query["created_at"] = rng
+    if q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        query["$or"] = [
+            {"details.box_id": rx}, {"details.box_ids": rx}, {"details.sku": rx},
+            {"details.style": rx}, {"details.color": rx}, {"details.ticket_id": rx},
+            {"details.order_number": rx}, {"details.location": rx}, {"details.from": rx},
+            {"details.to": rx}, {"details.receiving_id": rx}, {"details.batch_id": rx},
+            {"movement_id": rx},
+        ]
+    limit = max(1, min(int(limit or 200), 1000))
+    movements = await db.wms_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    total = await db.wms_movements.count_documents(query)
+    return {"total": total, "count": len(movements), "movements": movements}
+
+
+# ── Self-test: simula el flujo completo con datos marcados y auto-limpieza ──
+_SELFTEST_STYLE = "__SELFTEST__"
+_SELFTEST_CUSTOMER = "__SELFTEST__"
+_SELFTEST_CART = "__SELFTEST_CARRO__"
+_SELFTEST_BIN = "__SELFTEST_BIN__"
+
+
+async def _selftest_cleanup(receiving_id, ticket_id, box_ids):
+    """Borra TODO rastro del self-test. Se corre pase lo que pase (finally).
+    Todo esta marcado con el style/customer/ubicaciones reservados, imposibles
+    de colisionar con material real, asi que el borrado es exhaustivo y seguro."""
+    deleted = {}
+    deleted["boxes"] = (await db.wms_boxes.delete_many({"style": _SELFTEST_STYLE})).deleted_count
+    deleted["inventory"] = (await db.wms_inventory.delete_many(
+        {"$or": [{"style": _SELFTEST_STYLE}, {"location": {"$in": [_SELFTEST_CART, _SELFTEST_BIN]}}]})).deleted_count
+    if receiving_id:
+        deleted["receiving"] = (await db.wms_receiving.delete_many({"receiving_id": receiving_id})).deleted_count
+    if ticket_id:
+        deleted["tickets"] = (await db.wms_pick_tickets.delete_many({"ticket_id": ticket_id})).deleted_count
+    deleted["movements"] = (await db.wms_movements.delete_many({"$or": [
+        {"details.style": _SELFTEST_STYLE},
+        {"details.receiving_id": receiving_id} if receiving_id else {"_id": None},
+        {"details.ticket_id": ticket_id} if ticket_id else {"_id": None},
+        {"details.box_id": {"$in": box_ids}} if box_ids else {"_id": None},
+    ]})).deleted_count
+    deleted["tasks"] = (await db.wms_tasks.delete_many({"context.sku": _SELFTEST_STYLE})).deleted_count
+    return deleted
+
+
+@router.post("/audit/self-test")
+async def audit_self_test(request: Request):
+    """Simula el ciclo completo — Recibo → Putaway → Pick Ticket → Surtido —
+    ejecutando las MISMAS funciones internas del sistema real (donde vivio el
+    bug de descuento), con datos de prueba marcados y limpieza automatica.
+    Verifica el inventario en cada paso. No toca nada de material real."""
+    user = await require_supersu(request)
+    body = await request.json() if request.headers.get("content-length") else {}
+    color = "TESTCOLOR"
+    size = "M"
+    units_per_box = int(body.get("units_per_box", 10) or 10)
+    n_boxes = int(body.get("boxes", 3) or 3)
+    pick_units = int(body.get("pick_units", units_per_box * 2) or units_per_box * 2)  # 2 cajas completas
+    total_units = units_per_box * n_boxes
+
+    steps = []
+    receiving_id = gen_id("rcv")
+    ticket_id = "pick_" + uuid.uuid4().hex[:12]
+    box_ids = []
+
+    def step(name, ok, detail, expected=None, got=None):
+        steps.append({"step": len(steps) + 1, "name": name, "status": "PASS" if ok else "FAIL",
+                      "detail": detail, "expected": expected, "got": got})
+        return ok
+
+    try:
+        # ───── PASO 1: RECIBO ─────
+        seq = await _reserve_box_seqs(n_boxes) - 1
+        box_docs = []
+        for _ in range(n_boxes):
+            seq += 1
+            bid = f"BOX-{seq:06d}"
+            box_ids.append(bid)
+            box_docs.append({
+                "box_id": bid, "barcode": bid, "lpn_id": bid, "receiving_id": receiving_id,
+                "customer": _SELFTEST_CUSTOMER, "manufacturer": "SELFTEST", "style": _SELFTEST_STYLE,
+                "sku": f"{_SELFTEST_STYLE}-{color}-{size}", "color": color, "size": size,
+                "units": units_per_box, "qty": units_per_box, "seq_num": seq, "location": _SELFTEST_CART,
+                "status": "putaway_pending", "state": "raw", "is_bpo": False,
+                "coo": "TEST", "country_of_origin": "TEST", "fabric_content": "100%TEST",
+                "description": "SELF TEST", "created_at": now_iso(),
+            })
+        await db.wms_boxes.insert_many(box_docs)
+        await db.wms_receiving.insert_one({
+            "receiving_id": receiving_id, "customer": _SELFTEST_CUSTOMER, "manufacturer": "SELFTEST",
+            "style": _SELFTEST_STYLE, "color": color, "size": size, "inv_location": _SELFTEST_CART,
+            "total_units": total_units, "country_of_origin": "TEST", "fabric_content": "100%TEST",
+            "received_by_name": user.get("name", "self-test"), "created_at": now_iso(),
+            "boxes": [{"box_id": b["box_id"], "units": b["units"]} for b in box_docs],
+        })
+        inv_id = None
+        for b in box_docs:
+            inv_id = await _update_inventory_enhanced(
+                _SELFTEST_STYLE, color, size, units_per_box, "add",
+                customer=_SELFTEST_CUSTOMER, location=_SELFTEST_CART, box_count=1)
+        row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_CART})
+        got = int((row or {}).get("units_on_hand", 0))
+        step("Recibo", got == total_units,
+             f"{n_boxes} cajas de {units_per_box} u recibidas al {_SELFTEST_CART}", total_units, got)
+
+        # ───── PASO 2: PUTAWAY ─────
+        moved = 0
+        for b in box_docs:
+            await db.wms_boxes.update_one({"box_id": b["box_id"]},
+                {"$set": {"location": _SELFTEST_BIN, "status": "located"}})
+            await _move_box_inventory({**b, "style": _SELFTEST_STYLE}, _SELFTEST_CART, _SELFTEST_BIN)
+            moved += 1
+        bin_row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_BIN})
+        cart_row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_CART})
+        bin_units = int((bin_row or {}).get("units_on_hand", 0))
+        cart_units = int((cart_row or {}).get("units_on_hand", 0))
+        step("Putaway", bin_units == total_units and cart_units == 0,
+             f"{moved} cajas movidas {_SELFTEST_CART} → {_SELFTEST_BIN}",
+             f"bin={total_units}, carro=0", f"bin={bin_units}, carro={cart_units}")
+
+        # ───── PASO 3: PICK TICKET ─────
+        await db.wms_pick_tickets.insert_one({
+            "ticket_id": ticket_id, "order_number": "SELFTEST", "style": _SELFTEST_STYLE,
+            "color": color, "customer": _SELFTEST_CUSTOMER, "status": "pending",
+            "picking_status": "assigned", "assigned_to": user.get("user_id"),
+            "assigned_to_name": user.get("name", "self-test"),
+            "sizes": {size: pick_units}, "picked_sizes": {},
+            "created_at": now_iso(),
+        })
+        tk = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0, "ticket_id": 1})
+        step("Crear pick ticket", tk is not None,
+             f"Ticket para surtir {pick_units} u talla {size}", ticket_id, (tk or {}).get("ticket_id"))
+
+        # ───── PASO 4: SURTIDO (DESCUENTO REAL) ─────
+        before = bin_units
+        await _deduct_pick_boxes(_SELFTEST_STYLE, color, size, _SELFTEST_BIN, pick_units,
+                                 "deduct", _SELFTEST_CUSTOMER, "SELFTEST", None,
+                                 user=user, ticket_id=ticket_id)
+        after_row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_BIN})
+        after = int((after_row or {}).get("units_on_hand", 0))
+        depleted = await db.wms_boxes.count_documents({"style": _SELFTEST_STYLE, "status": "depleted"})
+        mov = await db.wms_movements.count_documents({"type": "pick_deduction", "details.ticket_id": ticket_id})
+        expected_after = before - pick_units
+        expected_depleted = pick_units // units_per_box
+        ok4 = (after == expected_after and depleted == expected_depleted and mov > 0)
+        step("Surtido y descuento", ok4,
+             f"Surtidas {pick_units} u; inventario baja y cajas se agotan; movimiento pick_deduction registrado",
+             f"en_mano={expected_after}, cajas_depleted={expected_depleted}, movimiento=sí",
+             f"en_mano={after}, cajas_depleted={depleted}, movimiento={'sí' if mov else 'NO'}")
+
+        # ───── PASO 5: TRAZABILIDAD ─────
+        trace_box = box_ids[0]
+        trace_mov = await db.wms_movements.count_documents({"details.box_ids": trace_box})
+        step("Trazabilidad por caja", trace_mov > 0,
+             f"La caja {trace_box} deja rastro por box_id en movimientos", "≥1 movimiento", trace_mov)
+
+    finally:
+        cleanup = await _selftest_cleanup(receiving_id, ticket_id, box_ids)
+
+    passed = sum(1 for s in steps if s["status"] == "PASS")
+    return {
+        "ok": passed == len(steps) and len(steps) == 5,
+        "passed": passed, "total": len(steps),
+        "steps": steps, "cleanup": cleanup,
+        "ran_at": now_iso(),
+        "params": {"boxes": n_boxes, "units_per_box": units_per_box, "pick_units": pick_units},
+    }
 
 # ==================== LABELS (PDF) ====================
 

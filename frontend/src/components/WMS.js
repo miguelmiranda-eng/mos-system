@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move,
+  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -30,6 +30,7 @@ import { DirectedWorkModule } from "./wms/DirectedWork";
 import { AsnModule } from "./wms/Asn";
 import { TransitModule } from "./wms/Transit";
 import { MoverModule } from "./wms/Mover";
+import { AuditModule } from "./wms/Audit";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -51,6 +52,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
+    case 'audit':        return <AuditModule />;
     default:             return <ReceivingModule />;
   }
 };
@@ -120,6 +122,8 @@ export default function WMS() {
     { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
     { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
     { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
+    // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
+    { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
   ];
 
   const loadBadges = useCallback(async () => {
@@ -370,6 +374,7 @@ export default function WMS() {
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
+            if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
             if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
             return true;
