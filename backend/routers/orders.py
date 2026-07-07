@@ -61,13 +61,14 @@ async def _run_automations(trigger_type, order, user, context=None):
     return await run_automations(trigger_type, order, user, context)
 
 @router.get("")
-async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000):
+async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000,
+                     include_images: bool = False):
     api_key = request.query_params.get("api_key")
     if api_key != MASTER_API_KEY:
         await require_auth(request)
-    
+
     # Cache stampede protection
-    cache_key = f"orders_{board}_{search}_{limit}"
+    cache_key = f"orders_{board}_{search}_{limit}_{include_images}"
     cached = get_orders_cached(cache_key)
     if cached is not None: return cached
 
@@ -89,7 +90,13 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
             query["board"] = board
         # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
         # These are fetched individually when opening the order details.
+        # 'images' (metadatos de adjuntos) era el 79% del payload del tablero
+        # (~3.5 MB) y NINGUNA vista lo lee del listado — los modales piden
+        # /orders/{id}/images bajo demanda. include_images=true lo restaura
+        # para integraciones externas que lo necesiten.
         projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
+        if not include_images:
+            projection["images"] = 0
         if search:
             # Global, dynamic-column-safe search: match the query against ANY field
             # value in Python — covers custom columns with odd names like

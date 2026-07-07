@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pathlib import Path
@@ -35,6 +36,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Comprime respuestas grandes (los tableros pesan ~4.4 MB de JSON y cada
+# cambio de orden hace que TODOS los clientes conectados los re-descarguen;
+# gzip los deja en ~10%). minimum_size evita comprimir respuestas chicas.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Servir archivos estáticos de facturas
 UPLOAD_DIR = "uploads/invoices"

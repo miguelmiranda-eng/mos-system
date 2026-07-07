@@ -3043,6 +3043,16 @@ async def _update_inventory_enhanced(
             )
             new_hand = int((updated or {}).get("units_on_hand", 0) or 0)
 
+            # Fila totalmente vacía y sin cajas que la respalden → se elimina
+            # (mismo criterio que _adjust_inventory_boxes al vaciarse la última
+            # caja). Sin esto, los descuentos SIN caja de respaldo (bulk/Excel)
+            # dejaban renglones fantasma en 0 para siempre en Locaciones.
+            # El historial queda en wms_movements.
+            if (updated is not None and new_hand <= 0
+                    and int(updated.get("units_allocated", 0) or 0) <= 0
+                    and int(updated.get("total_boxes", 0) or 0) <= 0):
+                await db.wms_inventory.delete_one({"_id": updated["_id"]})
+
             # WMS 2.0 Cycle Count Trigger
             if new_hand < 50:
                 existing_cc = await db.wms_tasks.find_one({"task_type": "cycle_count", "context.sku": sku, "status": "pending"})
@@ -3055,14 +3065,21 @@ async def _update_inventory_enhanced(
         elif operation == "pick_to_neck":
             # 1. ATOMIC deduct-and-clamp from the current shelf (same race-free
             #    guard as "deduct" above).
-            await db.wms_inventory.find_one_and_update(
+            updated = await db.wms_inventory.find_one_and_update(
                 doc_key,
                 [{"$set": {
                     "units_on_hand": {"$max": [0, {"$subtract": ["$units_on_hand", qty]}]},
                     "units_allocated": {"$max": [0, {"$subtract": ["$units_allocated", qty]}]},
                     "updated_at": now_iso(),
                 }}],
+                return_document=ReturnDocument.AFTER,
             )
+            # Igual que en "deduct": renglón vacío sin cajas → fuera.
+            if (updated is not None
+                    and int(updated.get("units_on_hand", 0) or 0) <= 0
+                    and int(updated.get("units_allocated", 0) or 0) <= 0
+                    and int(updated.get("total_boxes", 0) or 0) <= 0):
+                await db.wms_inventory.delete_one({"_id": updated["_id"]})
             # 2. Add to CUTTING_NECK (keep it allocated/reserved for the order)
             # Use the same sku/style as the source record for consistency
             inv_sku = inv.get("sku") or inv.get("style") or sku
