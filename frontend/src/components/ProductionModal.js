@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "./ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Loader2, Plus, Trash2, ClipboardList, Factory, Search, CheckCircle2 } from "lucide-react";
+import { Loader2, Plus, Trash2, ClipboardList, Factory, CheckCircle2, X, ChevronRight } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
 
@@ -36,6 +36,10 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
   const { t } = useLang();
   const [orderSearch, setOrderSearch] = useState('');
   const [matchedOrder, setMatchedOrder] = useState(null);
+  // Flujo por máquina: el operador elige una máquina y luego una orden de esa
+  // máquina (evita teclear mal el número de orden).
+  const [pickerMachine, setPickerMachine] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [quantity, setQuantity] = useState('');
   const [machine, setMachine] = useState('');
   const [setup, setSetup] = useState(() => localStorage.getItem(SETUP_KEY) || '');
@@ -49,7 +53,6 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
   const [totalProduced, setTotalProduced] = useState(0);
   const [logsLoading, setLogsLoading] = useState(false);
   const [operatorsList, setOperatorsList] = useState([]);
-  const searchRef = useRef(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -66,6 +69,26 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
 
   const remaining = matchedOrder ? Math.max(0, (matchedOrder.quantity || 0) - totalProduced) : 0;
   const progress = matchedOrder && matchedOrder.quantity > 0 ? Math.min(100, (totalProduced / matchedOrder.quantity) * 100) : 0;
+
+  // Máquinas que tienen órdenes asignadas (board MAQUINA*), y las órdenes de cada una.
+  const ordersForMachine = useCallback((m) => (orders || []).filter(
+    o => o.board === m && o.order_number && o.board !== 'PAPELERA DE RECICLAJE'
+  ), [orders]);
+  const machinesWithOrders = useMemo(() => {
+    const set = new Set();
+    (orders || []).forEach(o => {
+      if (o.order_number && o.board && /^MAQUINA/i.test(o.board)) set.add(o.board);
+    });
+    return Array.from(set).sort((a, b) =>
+      (parseInt(a.replace(/\D/g, '')) || 0) - (parseInt(b.replace(/\D/g, '')) || 0));
+  }, [orders]);
+
+  const pickOrder = (o) => {
+    setMatchedOrder(o);
+    setOrderSearch(o.order_number ? String(o.order_number) : '');
+    if (o.board) setMachine(o.board); // auto-llena la máquina de producción
+    setPickerOpen(false);
+  };
 
   useEffect(() => {
     if (!orderSearch.trim()) { setMatchedOrder(null); setLogs([]); setTotalProduced(0); return; }
@@ -84,7 +107,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
   }, []);
 
   useEffect(() => { if (matchedOrder) fetchLogs(matchedOrder.order_id); else { setLogs([]); setTotalProduced(0); } }, [matchedOrder, fetchLogs]);
-  useEffect(() => { if (!isOpen) { setOrderSearch(''); setMatchedOrder(null); setQuantity(''); setMachine(''); setLogs([]); setTotalProduced(0); setOperator(''); setShift(''); setDesignType(''); setStopCause(''); setSupervisor(''); } else { setTimeout(() => searchRef.current?.focus(), 100); } }, [isOpen]);
+  useEffect(() => { if (!isOpen) { setOrderSearch(''); setMatchedOrder(null); setQuantity(''); setMachine(''); setLogs([]); setTotalProduced(0); setOperator(''); setShift(''); setDesignType(''); setStopCause(''); setSupervisor(''); setPickerMachine(''); setPickerOpen(false); } }, [isOpen]);
   useEffect(() => { if (setup !== '') localStorage.setItem(SETUP_KEY, setup); }, [setup]);
 
   const handleSubmit = async (e) => {
@@ -145,16 +168,37 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3 pb-4 border-b border-border">
-          {/* Order search */}
-          <div>
-            <label className="text-xs uppercase tracking-wider font-bold text-muted-foreground mb-1 block">{t('order_po')}</label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input ref={searchRef} type="text" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} placeholder={t('order_search_placeholder')}
-                className={`w-full h-9 pl-9 pr-3 text-sm bg-secondary border rounded text-foreground ${matchedOrder ? 'border-green-500' : orderSearch.trim() ? 'border-red-500/50' : 'border-border'}`} data-testid="production-order-input" />
-              {matchedOrder && <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-green-500" />}
+          {/* Paso 1: máquina — Paso 2: orden de esa máquina (evita teclear mal el número). */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs uppercase tracking-wider font-bold text-muted-foreground mb-1 block">Máquina</label>
+              <Select value={pickerMachine} onValueChange={(m) => { setPickerMachine(m); setPickerOpen(true); }}>
+                <SelectTrigger className="h-9 text-sm bg-secondary border-border" data-testid="production-pick-machine">
+                  <SelectValue placeholder="Selecciona una máquina" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border z-[1001]">
+                  {machinesWithOrders.length === 0
+                    ? <div className="px-3 py-2 text-xs text-muted-foreground">Ninguna máquina tiene órdenes asignadas</div>
+                    : machinesWithOrders.map(m => (
+                      <SelectItem key={m} value={m}>{m} ({ordersForMachine(m).length})</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
-            {orderSearch.trim() && !matchedOrder && <p className="text-xs text-red-400 mt-1">{t('order_not_found')}</p>}
+            <div>
+              <label className="text-xs uppercase tracking-wider font-bold text-muted-foreground mb-1 block">Número de Orden</label>
+              {matchedOrder ? (
+                <button type="button" onClick={() => { if (pickerMachine) setPickerOpen(true); }}
+                  className="w-full h-9 px-3 flex items-center justify-between bg-secondary border border-green-500 rounded text-sm" data-testid="production-picked-order">
+                  <span className="font-bold flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> {matchedOrder.order_number}</span>
+                  <span className="text-[10px] text-primary font-bold uppercase">Cambiar</span>
+                </button>
+              ) : (
+                <div className="h-9 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded text-muted-foreground">
+                  Elige una máquina primero
+                </div>
+              )}
+            </div>
           </div>
           {matchedOrder && (
             <div className="grid grid-cols-3 gap-3">
@@ -227,6 +271,37 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
             </table>
           ) : matchedOrder ? <p className="text-center text-muted-foreground text-sm py-4">{t('no_production')}</p> : <p className="text-center text-muted-foreground text-sm py-4">{t('select_order_history')}</p>}
         </div>
+
+        {/* Modal secundario: órdenes de la máquina elegida. */}
+        {pickerOpen && (
+          <div className="absolute inset-0 z-[1002] bg-card flex flex-col sm:rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="font-barlow text-lg uppercase tracking-wide flex items-center gap-2">
+                <Factory className="w-5 h-5 text-primary" /> Órdenes en {pickerMachine || '—'}
+              </h3>
+              <button type="button" onClick={() => setPickerOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary" data-testid="production-picker-close">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {ordersForMachine(pickerMachine).length === 0 ? (
+                <p className="text-center text-muted-foreground py-10">Esta máquina no tiene órdenes asignadas.</p>
+              ) : ordersForMachine(pickerMachine).map(o => (
+                <button key={o.order_id} type="button" onClick={() => pickOrder(o)} data-testid={`production-pick-${o.order_number}`}
+                  className="w-full text-left p-3 rounded-xl border border-border hover:border-primary hover:bg-secondary/40 flex items-center justify-between transition-colors">
+                  <div className="min-w-0">
+                    <div className="font-black text-base">{o.order_number}</div>
+                    <div className="text-xs text-muted-foreground truncate">{o.client || '-'}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-muted-foreground font-mono">{o.quantity || 0} pz</span>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
