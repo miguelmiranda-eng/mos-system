@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
-  Unlock, CheckCircle2, ListChecks,
+  Unlock, CheckCircle2, ListChecks, Download,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
 
@@ -58,6 +59,43 @@ export const ReconciliationModule = () => {
     } catch { toast.error("Error de conexión"); }
   };
 
+  const [exporting, setExporting] = useState(false);
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      // Trae datos frescos para que el export sea completo, sin importar la pestaña.
+      const [pen, lg] = await Promise.all([fetcher("/recon/pending"), fetcher("/recon/log")]);
+      const wb = XLSX.utils.book_new();
+
+      const conciliadas = (lg.locations || []).map(l => ({
+        Ubicacion: l.location, "Conciliada por": l.reconciled_by_name || "",
+        Fecha: l.reconciled_at ? fmt(l.reconciled_at) : "",
+        Confirmadas: l.counts?.confirmadas ?? "", Movidas: l.counts?.movidas ?? "",
+        Creadas: l.counts?.creadas ?? "", Faltantes: l.counts?.faltantes ?? "",
+        Escaneadas: l.counts?.escaneadas ?? "",
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(conciliadas.length ? conciliadas : [{}]), "Conciliadas");
+
+      const faltantes = (pen.faltantes || []).map(b => ({
+        Caja: b.box_id, Style: b.style, Color: b.color, Talla: b.size, Unidades: b.units,
+        "Esperada en": b.recon_missing_from, "Marcada por": b.recon_flagged_by,
+        Fecha: b.recon_flagged_at ? fmt(b.recon_flagged_at) : "",
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(faltantes.length ? faltantes : [{}]), "Faltantes");
+
+      const creadas = (pen.creadas || []).map(b => ({
+        Caja: b.box_id, Ubicacion: b.location, Unidades: b.units,
+        "Creada por": b.recon_counted_by, Fecha: b.recon_counted_at ? fmt(b.recon_counted_at) : "",
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(creadas.length ? creadas : [{}]), "Creadas");
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `conciliacion_${stamp}.xlsx`);
+      toast.success("Exportado a Excel");
+    } catch { toast.error("Error al exportar"); }
+    finally { setExporting(false); }
+  };
+
   const reopen = async (location) => {
     if (!window.confirm(`¿Reabrir ${location} para volver a conciliarla?`)) return;
     try {
@@ -77,6 +115,10 @@ export const ReconciliationModule = () => {
           <h2 className="text-xl font-black uppercase tracking-wide">Conciliación</h2>
           <p className="text-[11px] text-muted-foreground">Cajas por resolver y registro de ubicaciones conciliadas</p>
         </div>
+        <button onClick={exportExcel} disabled={exporting}
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
+          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
+        </button>
         <button onClick={() => tab === "pending" ? loadPending() : loadLog()}
           className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40">
           <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
