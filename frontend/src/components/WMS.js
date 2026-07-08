@@ -269,6 +269,15 @@ export default function WMS() {
                   </button>
                 );
               })}
+              {/* Conciliación física: ruta PDA dedicada (/pda-recon). */}
+              <button onClick={() => navigate('/pda-recon')} data-testid="picker-launch-recon"
+                className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-emerald-500/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
+                <div className="p-4 sm:p-6 rounded-2xl bg-emerald-500/10">
+                  <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-emerald-400" />
+                </div>
+                <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">Conciliación</span>
+                <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
+              </button>
             </div>
           </div>
         </div>
