@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
-  Unlock, CheckCircle2, ListChecks, Download, Ban,
+  Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { fetcher, poster } from "./lib";
 const TABS = [
   { id: "pending", label: "Por resolver", icon: PackageX },
   { id: "log", label: "Ubicaciones conciliadas", icon: ListChecks },
+  { id: "adjustments", label: "Ajustes de cajas", icon: History },
   { id: "lpn", label: "Bloqueadas por LPN", icon: Ban },
 ];
 
@@ -29,6 +30,7 @@ export const ReconciliationModule = () => {
   const [pending, setPending] = useState(null);
   const [log, setLog] = useState(null);
   const [lpn, setLpn] = useState(null);
+  const [adj, setAdj] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const loadPending = useCallback(async () => {
@@ -51,11 +53,19 @@ export const ReconciliationModule = () => {
     finally { setLoading(false); }
   }, []);
 
+  const loadAdj = useCallback(async () => {
+    setLoading(true);
+    try { setAdj(await fetcher("/recon/adjustments")); }
+    catch { toast.error("Error al cargar ajustes"); }
+    finally { setLoading(false); }
+  }, []);
+
   useEffect(() => {
     if (tab === "pending" && !pending) loadPending();
     if (tab === "log" && !log) loadLog();
     if (tab === "lpn" && !lpn) loadLpn();
-  }, [tab, pending, log, lpn, loadPending, loadLog, loadLpn]);
+    if (tab === "adjustments" && !adj) loadAdj();
+  }, [tab, pending, log, lpn, adj, loadPending, loadLog, loadLpn, loadAdj]);
 
   const resolve = async (box_id, action) => {
     let location;
@@ -139,7 +149,7 @@ export const ReconciliationModule = () => {
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
           {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
         </button>
-        <button onClick={() => tab === "pending" ? loadPending() : tab === "log" ? loadLog() : loadLpn()}
+        <button onClick={() => tab === "pending" ? loadPending() : tab === "log" ? loadLog() : tab === "adjustments" ? loadAdj() : loadLpn()}
           className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40">
           <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
         </button>
@@ -150,6 +160,7 @@ export const ReconciliationModule = () => {
           const Icon = t.icon;
           const badge = t.id === "pending" && pending ? (pending.faltantes_count + pending.creadas_count)
             : t.id === "log" && log ? log.count
+            : t.id === "adjustments" && adj ? adj.count
             : t.id === "lpn" && lpn ? lpn.count : null;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
@@ -259,6 +270,53 @@ export const ReconciliationModule = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {/* ── Ajustes de cajas ── */}
+      {tab === "adjustments" && (
+        loading && !adj ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        : adj && (
+          adj.count === 0 ? <p className="text-center text-muted-foreground py-10">Sin ajustes de cajas registrados.</p>
+          : <div className="space-y-4">
+            {adj.adjustments.map((a, i) => (
+              <div key={i} className="border border-sky-500/30 rounded-xl overflow-hidden">
+                <div className="px-3 py-2 bg-sky-500/10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sky-300 text-[11px] font-black uppercase tracking-widest">
+                    <PackageCheck className="w-4 h-4" /> {a.type === "lpn_recon_restore" ? "Restauración de cajas LPN" : a.type}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{fmt(a.created_at)} · {a.created_by}</div>
+                </div>
+                <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
+                  <b className="text-foreground">{a.count}</b> cajas · <b className="text-foreground">{(a.units || 0).toLocaleString()}</b> u · {a.reason}
+                </div>
+                <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border">
+                  {(a.locations || []).map((l, j) => (
+                    <span key={j} className="px-2 py-1 rounded-lg bg-secondary/60 text-xs font-mono">
+                      {l.location}: {l.cajas}c / {l.unidades}u
+                    </span>
+                  ))}
+                </div>
+                <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-card"><tr>
+                      <Th>Caja (LPN)</Th><Th>Ubicación</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th><Th right>Unid.</Th>
+                    </tr></thead>
+                    <tbody>
+                      {(a.boxes || []).map((b, k) => (
+                        <tr key={k} className="border-t border-border/40 text-xs">
+                          <td className="p-2 font-mono">{b.box_id}</td>
+                          <td className="p-2 font-mono">{b.location}</td>
+                          <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td>
+                          <td className="p-2">{b.size}</td><td className="p-2 text-right">{b.units}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
       )}
 
       {/* ── Bloqueadas por LPN ── */}

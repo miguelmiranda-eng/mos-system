@@ -5921,6 +5921,15 @@ async def recon_lpn_locations(request: Request):
     return {"count": len(out), "locations": out}
 
 
+@router.get("/recon/adjustments")
+async def recon_adjustments(request: Request):
+    """Admin: registro de ajustes de cajas (p. ej. restauracion de LPN marcadas
+    faltantes por conciliacion). Visible en el modulo de Conciliacion."""
+    await require_admin(request)
+    adj = await db.wms_recon_adjustments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"count": len(adj), "adjustments": adj}
+
+
 @router.post("/recon/resolve")
 async def recon_resolve(request: Request):
     """Admin: resuelve una caja pendiente/creada.
