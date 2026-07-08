@@ -39,7 +39,9 @@ export default function PdaRecon() {
     setBusy(true);
     try {
       const data = await fetcher(`/recon/location/${encodeURIComponent(v)}`);
-      if (data.locked) {
+      if (data.blocked_lpn) {
+        setLoc(data); setPhase("lpn"); buzz([120, 60, 120]);
+      } else if (data.locked) {
         setLoc(data); setPhase("locked"); buzz([120, 60, 120]);
       } else {
         setLoc(data); setScanned([]); setPhase("scan"); buzz(50);
@@ -126,6 +128,32 @@ export default function PdaRecon() {
             <p className="text-sm text-slate-400">
               Por {loc.lock?.reconciled_by_name || "?"}. Pide al administrador que la reabra si necesitas repetirla.
             </p>
+            <button onClick={reset} className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
+              Otra ubicación
+            </button>
+          </div>
+        )}
+
+        {/* ── PANTALLA bloqueada por LPN físico ── */}
+        {phase === "lpn" && (
+          <div className="space-y-5 pt-10 text-center">
+            <div className="mx-auto w-16 h-16 rounded-full bg-red-500/20 border-2 border-red-500/50 flex items-center justify-center">
+              <AlertTriangle className="w-9 h-9 text-red-400" />
+            </div>
+            <h2 className="text-xl font-black uppercase">{loc.location}</h2>
+            <p className="text-base text-red-300 font-bold">No se puede conciliar aquí</p>
+            <p className="text-sm text-slate-300">
+              Esta ubicación tiene {loc.lpn_boxes?.length || 0} caja(s) con <b>LPN físico</b> (licencia real, sin
+              prefijo BOX). Este proceso solo maneja cajas BOX.
+            </p>
+            {loc.lpn_boxes?.length > 0 && (
+              <div className="rounded-2xl bg-white/5 border border-white/10 p-3 text-left">
+                {loc.lpn_boxes.slice(0, 6).map((b, i) => (
+                  <div key={i} className="font-mono text-xs py-0.5 text-amber-300">{b.lpn || b.box_id}</div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-slate-400">Repórtala al administrador.</p>
             <button onClick={reset} className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
               Otra ubicación
             </button>

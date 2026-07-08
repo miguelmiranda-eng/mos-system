@@ -5684,7 +5684,23 @@ async def _recon_present_boxes(loc):
     return await db.wms_boxes.find({
         "location": {"$regex": f"^{re.escape(loc)}$", "$options": "i"},
         "status": {"$nin": list(_BOX_OUT_STATUSES)},
-    }, {"_id": 0, "box_id": 1, "sku": 1, "style": 1, "color": 1, "size": 1, "units": 1, "status": 1}).to_list(3000)
+    }, {"_id": 0, "box_id": 1, "barcode": 1, "lpn_id": 1, "generic_lpn": 1, "lpn_reconciled_at": 1,
+        "sku": 1, "style": 1, "color": 1, "size": 1, "units": 1, "status": 1}).to_list(3000)
+
+
+def _recon_lpn_boxes(boxes):
+    """Cajas con LPN fisico real (identificador sin prefijo BOX). La conciliacion
+    por-BOX no las puede casar, asi que su ubicacion se bloquea. Se detecta por
+    lpn_id/barcode sin prefijo BOX o por la marca de reconciliacion de LPN."""
+    out = []
+    for b in boxes:
+        lpn = str(b.get("lpn_id") or "").strip().upper()
+        bc = str(b.get("barcode") or "").strip().upper()
+        has_lpn = (lpn and not lpn.startswith("BOX")) or (bc and not bc.startswith("BOX")) \
+            or bool(b.get("lpn_reconciled_at")) or bool(b.get("generic_lpn"))
+        if has_lpn:
+            out.append({"box_id": b.get("box_id"), "lpn": b.get("lpn_id") or b.get("barcode")})
+    return out
 
 
 @router.get("/recon/location/{loc}")
@@ -5697,12 +5713,17 @@ async def recon_location(loc: str, request: Request):
         raise HTTPException(400, "Ubicacion requerida")
     lock = await db.wms_reconciled_locations.find_one({"location": location}, {"_id": 0})
     expected = await _recon_present_boxes(location)
+    lpn_boxes = _recon_lpn_boxes(expected)
     return {
         "location": location,
         "locked": bool(lock and lock.get("status") == "done"),
         "lock": lock,
+        # Bloqueo por LPN: hay cajas con licencia fisica real que la conciliacion
+        # por-BOX no puede casar; esta ubicacion no debe conciliarse aqui.
+        "blocked_lpn": len(lpn_boxes) > 0,
+        "lpn_boxes": lpn_boxes,
         "expected_count": len(expected),
-        "expected": expected,
+        "expected": [{k: v for k, v in b.items() if k in ("box_id", "sku", "style", "color", "size", "units", "status")} for b in expected],
     }
 
 
@@ -5745,6 +5766,14 @@ async def recon_commit(request: Request):
 
     # Respaldo: cajas presentes actuales + inventario de la ubicacion.
     pre_boxes = await _recon_present_boxes(location)
+
+    # Bloqueo por LPN: si la ubicacion tiene cajas con licencia fisica real, la
+    # conciliacion por-BOX no aplica (no puede casarlas). Se rechaza.
+    lpn_boxes = _recon_lpn_boxes(pre_boxes)
+    if lpn_boxes:
+        ejemplos = ", ".join(str(x.get("lpn") or x.get("box_id")) for x in lpn_boxes[:3])
+        raise HTTPException(409, f"La ubicacion {location} tiene {len(lpn_boxes)} caja(s) con LPN fisico "
+                                 f"(ej. {ejemplos}) y no puede conciliarse aqui. Repórtala al administrador.")
     pre_inv = await db.wms_inventory.find({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}, {"_id": 0}).to_list(2000)
     scanned_docs = await db.wms_boxes.find({"box_id": {"$in": scanned}}, {"_id": 0}).to_list(3000) if scanned else []
     await db.wms_recon_bak.insert_one({
