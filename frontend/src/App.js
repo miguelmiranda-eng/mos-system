@@ -271,10 +271,11 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
         navigate('/', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && !['/wms', '/pda'].includes(window.location.pathname)) {
+      } else if (user.role === 'picker' && !['/wms', '/pda', '/pda-recon'].includes(window.location.pathname)) {
         // Pickers use the WMS launcher: "Picking" returns to their original /pda
-        // view, "Putaway 2.0" is the WMS module. Allow both; bounce anything else
-        // back to the launcher (covers the iPad PWA entry too).
+        // view, "Putaway 2.0" is the WMS module, "/pda-recon" es la conciliacion
+        // fisica. Allow those; bounce anything else back to the launcher (covers
+        // the iPad PWA entry too).
         navigate('/wms', { replace: true });
       } else if (QC_ROLES.includes(user.role) && window.location.pathname !== '/qc') {
         // QC inspectors are locked to the QC dashboard, like operators to /operator.
