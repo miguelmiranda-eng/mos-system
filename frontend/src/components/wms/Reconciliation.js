@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
-  Unlock, CheckCircle2, ListChecks, Download,
+  Unlock, CheckCircle2, ListChecks, Download, Ban,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { fetcher, poster } from "./lib";
 const TABS = [
   { id: "pending", label: "Por resolver", icon: PackageX },
   { id: "log", label: "Ubicaciones conciliadas", icon: ListChecks },
+  { id: "lpn", label: "Bloqueadas por LPN", icon: Ban },
 ];
 
 const fmt = (iso) => {
@@ -27,6 +28,7 @@ export const ReconciliationModule = () => {
   const [tab, setTab] = useState("pending");
   const [pending, setPending] = useState(null);
   const [log, setLog] = useState(null);
+  const [lpn, setLpn] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const loadPending = useCallback(async () => {
@@ -42,7 +44,18 @@ export const ReconciliationModule = () => {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { if (tab === "pending" && !pending) loadPending(); if (tab === "log" && !log) loadLog(); }, [tab, pending, log, loadPending, loadLog]);
+  const loadLpn = useCallback(async () => {
+    setLoading(true);
+    try { setLpn(await fetcher("/recon/lpn-locations")); }
+    catch { toast.error("Error al cargar ubicaciones LPN"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "pending" && !pending) loadPending();
+    if (tab === "log" && !log) loadLog();
+    if (tab === "lpn" && !lpn) loadLpn();
+  }, [tab, pending, log, lpn, loadPending, loadLog, loadLpn]);
 
   const resolve = async (box_id, action) => {
     let location;
@@ -64,7 +77,9 @@ export const ReconciliationModule = () => {
     setExporting(true);
     try {
       // Trae datos frescos para que el export sea completo, sin importar la pestaña.
-      const [pen, lg] = await Promise.all([fetcher("/recon/pending"), fetcher("/recon/log")]);
+      const [pen, lg, lp] = await Promise.all([
+        fetcher("/recon/pending"), fetcher("/recon/log"), fetcher("/recon/lpn-locations"),
+      ]);
       const wb = XLSX.utils.book_new();
 
       const conciliadas = (lg.locations || []).map(l => ({
@@ -88,6 +103,11 @@ export const ReconciliationModule = () => {
         "Creada por": b.recon_counted_by, Fecha: b.recon_counted_at ? fmt(b.recon_counted_at) : "",
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(creadas.length ? creadas : [{}]), "Creadas");
+
+      const bloqueadas = (lp.locations || []).map(l => ({
+        Ubicacion: l.location, "Cajas LPN": l.cajas, Unidades: l.unidades,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bloqueadas.length ? bloqueadas : [{}]), "Bloqueadas LPN");
 
       const stamp = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `conciliacion_${stamp}.xlsx`);
@@ -119,7 +139,7 @@ export const ReconciliationModule = () => {
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
           {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
         </button>
-        <button onClick={() => tab === "pending" ? loadPending() : loadLog()}
+        <button onClick={() => tab === "pending" ? loadPending() : tab === "log" ? loadLog() : loadLpn()}
           className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40">
           <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
         </button>
@@ -129,7 +149,8 @@ export const ReconciliationModule = () => {
         {TABS.map(t => {
           const Icon = t.icon;
           const badge = t.id === "pending" && pending ? (pending.faltantes_count + pending.creadas_count)
-            : t.id === "log" && log ? log.count : null;
+            : t.id === "log" && log ? log.count
+            : t.id === "lpn" && lpn ? lpn.count : null;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-colors
@@ -238,6 +259,36 @@ export const ReconciliationModule = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {/* ── Bloqueadas por LPN ── */}
+      {tab === "lpn" && (
+        loading && !lpn ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        : lpn && (
+          <div className="border border-amber-500/30 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 bg-amber-500/10 text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
+              <Ban className="w-4 h-4" /> {lpn.count.toLocaleString()} ubicaciones con cajas LPN — NO se pueden conciliar en el PDA
+            </div>
+            <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
+              Estas ubicaciones tienen cajas con licencia física (LPN, sin prefijo BOX). Avísale a los contadores que las omitan.
+            </div>
+            <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-card"><tr><Th>Ubicación</Th><Th right>Cajas LPN</Th><Th right>Unidades</Th></tr></thead>
+                <tbody>
+                  {lpn.locations.map((l, i) => (
+                    <tr key={i} className="border-t border-border/40 text-xs">
+                      <td className="p-2 font-mono font-bold">{l.location}</td>
+                      <td className="p-2 text-right">{l.cajas.toLocaleString()}</td>
+                      <td className="p-2 text-right">{(l.unidades || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {lpn.count === 0 && <tr><td colSpan={3} className="p-3 text-xs text-muted-foreground">Ninguna ubicación tiene cajas LPN.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
       )}
     </div>
   );

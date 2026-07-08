@@ -5695,16 +5695,21 @@ async def _recon_present_boxes(loc):
 
 def _recon_lpn_boxes(boxes):
     """Cajas con LPN fisico real (identificador sin prefijo BOX). La conciliacion
-    por-BOX no las puede casar, asi que su ubicacion se bloquea. Se detecta por
-    lpn_id/barcode sin prefijo BOX o por la marca de reconciliacion de LPN."""
+    por-BOX no las puede casar, asi que su ubicacion se bloquea. Se detecta por el
+    box_id sin prefijo BOX (las LPN migradas tienen el LPN EN el box_id, ej.
+    'LPN_1506992C'), o por lpn_id/barcode sin prefijo BOX, o por la marca de
+    reconciliacion de LPN."""
     out = []
     for b in boxes:
+        bid = str(b.get("box_id") or "").strip().upper()
         lpn = str(b.get("lpn_id") or "").strip().upper()
         bc = str(b.get("barcode") or "").strip().upper()
-        has_lpn = (lpn and not lpn.startswith("BOX")) or (bc and not bc.startswith("BOX")) \
+        has_lpn = (bid and not bid.startswith("BOX")) \
+            or (lpn and not lpn.startswith("BOX")) \
+            or (bc and not bc.startswith("BOX")) \
             or bool(b.get("lpn_reconciled_at")) or bool(b.get("generic_lpn"))
         if has_lpn:
-            out.append({"box_id": b.get("box_id"), "lpn": b.get("lpn_id") or b.get("barcode")})
+            out.append({"box_id": b.get("box_id"), "lpn": b.get("lpn_id") or b.get("barcode") or b.get("box_id")})
     return out
 
 
@@ -5895,6 +5900,25 @@ async def recon_log(request: Request):
     await require_admin(request)
     locs = await db.wms_reconciled_locations.find({}, {"_id": 0}).sort("reconciled_at", -1).to_list(5000)
     return {"count": len(locs), "locations": locs}
+
+
+@router.get("/recon/lpn-locations")
+async def recon_lpn_locations(request: Request):
+    """Admin: ubicaciones que tienen cajas con LPN fisico y por lo tanto NO se
+    pueden conciliar por el flujo PDA (para avisar a los contadores de antemano).
+    El sistema ya lo sabe sin necesidad de escanear."""
+    await require_admin(request)
+    rows = await db.wms_boxes.aggregate([
+        {"$match": {"status": {"$nin": list(_BOX_OUT_STATUSES)}, "units": {"$gt": 0}, "$or": [
+            {"box_id": {"$not": {"$regex": "^BOX", "$options": "i"}}},
+            {"lpn_reconciled_at": {"$exists": True, "$ne": None}},
+            {"generic_lpn": {"$exists": True, "$ne": None}},
+        ]}},
+        {"$group": {"_id": "$location", "cajas": {"$sum": 1}, "unidades": {"$sum": "$units"}}},
+        {"$sort": {"cajas": -1}},
+    ]).to_list(10000)
+    out = [{"location": r["_id"], "cajas": r["cajas"], "unidades": r["unidades"]} for r in rows if r["_id"]]
+    return {"count": len(out), "locations": out}
 
 
 @router.post("/recon/resolve")
