@@ -4,7 +4,7 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, LayoutGrid,
-  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search,
+  MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search, ClipboardCheck,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
 
@@ -172,6 +172,9 @@ export default function PdaPicker() {
         )}
         {selected && (
           <button onClick={() => openComments(selected.order_number)} className="p-2 rounded-xl text-sky-300 active:bg-white/10" title="Comentarios"><MessageSquare className="w-5 h-5" /></button>
+        )}
+        {!selected && !locatorOpen && (
+          <button onClick={() => navigate('/pda-recon')} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title="Conciliación"><ClipboardCheck className="w-5 h-5" /></button>
         )}
         {!selected && !locatorOpen && (
           <button onClick={() => setLocatorOpen(true)} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title="Localizar caja"><Search className="w-5 h-5" /></button>

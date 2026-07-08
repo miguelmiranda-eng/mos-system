@@ -663,6 +663,7 @@ const Dashboard = lazy(() => import("./components/Dashboard"));
 const WMS = lazy(() => import("./components/WMS"));
 const OperatorView = lazy(() => import("./components/OperatorView"));
 const PdaPicker = lazy(() => import("./components/pda/PdaPicker"));
+const PdaRecon = lazy(() => import("./components/pda/PdaRecon"));
 const AutomationCenter = lazy(() => import("./components/AutomationCenter"));
 const ActivityLogCenter = lazy(() => import("./components/ActivityLogCenter"));
 const LogsCenter = lazy(() => import("./components/LogsCenter"));
@@ -818,6 +819,11 @@ function AppRouter() {
       <Route path="/pda" element={
         <ProtectedRoute>
           <PdaPicker />
+        </ProtectedRoute>
+      } />
+      <Route path="/pda-recon" element={
+        <ProtectedRoute>
+          <PdaRecon />
         </ProtectedRoute>
       } />
       <Route path="/automation-center" element={

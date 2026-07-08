@@ -5668,6 +5668,241 @@ async def audit_self_test(request: Request):
         "params": {"boxes": n_boxes, "units_per_box": units_per_box, "pick_units": pick_units},
     }
 
+
+# ==================== CONCILIACION FISICA (PDA + PC) ====================
+# El picker escanea una ubicacion y luego las cajas fisicamente presentes. El
+# sistema "casa" el inventario a la realidad: confirma las presentes, marca las
+# faltantes para el admin, jala cajas que aparezcan de otra ubicacion, y crea
+# las que se escaneen y no existan. Cada ubicacion conciliada queda bloqueada.
+RECON_DEFAULT_UNITS = 72  # no hay cajas en 0 en piso: una caja presente en 0 se rellena a 72
+_RECON_NORM = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().upper()
+
+
+async def _recon_present_boxes(loc):
+    """Cajas del sistema que se ESPERAN fisicamente en `loc` (en piso, con stock,
+    no ya-salidas ni faltantes-pendientes)."""
+    return await db.wms_boxes.find({
+        "location": {"$regex": f"^{re.escape(loc)}$", "$options": "i"},
+        "status": {"$nin": list(_BOX_OUT_STATUSES)},
+    }, {"_id": 0, "box_id": 1, "sku": 1, "style": 1, "color": 1, "size": 1, "units": 1, "status": 1}).to_list(3000)
+
+
+@router.get("/recon/location/{loc}")
+async def recon_location(loc: str, request: Request):
+    """Estado de una ubicacion para conciliar: cajas esperadas + si ya fue
+    conciliada (bloqueada)."""
+    await require_auth(request)
+    location = _RECON_NORM(loc)
+    if not location:
+        raise HTTPException(400, "Ubicacion requerida")
+    lock = await db.wms_reconciled_locations.find_one({"location": location}, {"_id": 0})
+    expected = await _recon_present_boxes(location)
+    return {
+        "location": location,
+        "locked": bool(lock and lock.get("status") == "done"),
+        "lock": lock,
+        "expected_count": len(expected),
+        "expected": expected,
+    }
+
+
+@router.post("/recon/commit")
+async def recon_commit(request: Request):
+    """Concilia una ubicacion contra las cajas fisicamente escaneadas.
+
+    body: { location, scanned_box_ids: [BOX-...] }
+    - Confirma las presentes (rellena a 72 las que esten en 0).
+    - Jala cajas que el sistema tenia en otra ubicacion / pendientes.
+    - Crea las cajas BOX escaneadas que no existan (a revision del admin).
+    - Marca faltantes (esperadas y no escaneadas) como recon_pending -> tabla admin.
+    - Reconstruye el inventario de la ubicacion desde las cajas presentes.
+    - Bloquea la ubicacion. Reversible via wms_recon_bak + commit_id.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    if not location:
+        raise HTTPException(400, "Ubicacion requerida")
+    scanned = []
+    seen = set()
+    for raw in (body.get("scanned_box_ids") or []):
+        bid = str(raw or "").strip().upper()
+        if not bid or bid in seen:
+            continue
+        if not bid.startswith("BOX"):
+            continue  # solo cajas del sistema (prefijo BOX)
+        seen.add(bid)
+        scanned.append(bid)
+
+    # Claim atomico del lock: primer commit gana; si ya esta 'done' -> bloqueada.
+    existing = await db.wms_reconciled_locations.find_one({"location": location})
+    if existing and existing.get("status") == "done":
+        raise HTTPException(409, f"La ubicacion {location} ya fue conciliada por "
+                                 f"{existing.get('reconciled_by_name','?')}. Pide al admin reabrirla.")
+
+    commit_id = "rcn_" + uuid.uuid4().hex[:12]
+    uname = user.get("name", user.get("email", "?"))
+
+    # Respaldo: cajas presentes actuales + inventario de la ubicacion.
+    pre_boxes = await _recon_present_boxes(location)
+    pre_inv = await db.wms_inventory.find({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}, {"_id": 0}).to_list(2000)
+    scanned_docs = await db.wms_boxes.find({"box_id": {"$in": scanned}}, {"_id": 0}).to_list(3000) if scanned else []
+    await db.wms_recon_bak.insert_one({
+        "commit_id": commit_id, "location": location, "created_at": now_iso(),
+        "boxes_before": pre_boxes + [d for d in scanned_docs if d.get("location") != location],
+        "inventory_before": pre_inv,
+    })
+
+    expected_ids = {b["box_id"] for b in pre_boxes}
+    scanned_set = set(scanned)
+    confirmadas = movidas = creadas = faltantes = 0
+    stamp = {"recon_batch": commit_id, "recon_counted_at": now_iso(), "recon_counted_by": uname}
+
+    for bid in scanned:
+        box = await db.wms_boxes.find_one({"box_id": bid})
+        if not box:
+            # Caja BOX que no existe -> crearla en la ubicacion, a revision del admin.
+            seqp = re.match(r"BOX-?(\d+)", bid)
+            await db.wms_boxes.insert_one({
+                "box_id": bid, "barcode": bid, "lpn_id": bid, "location": location,
+                "style": "(SIN IDENTIFICAR)", "sku": bid, "color": "", "size": "",
+                "units": RECON_DEFAULT_UNITS, "qty": RECON_DEFAULT_UNITS,
+                "status": "located", "state": "raw",
+                "customer": "", "manufacturer": "", "country_of_origin": "", "fabric_content": "",
+                "seq_num": int(seqp.group(1)) if seqp else 0,
+                "recon_created": True, "created_at": now_iso(), **stamp,
+            })
+            creadas += 1
+        else:
+            u = int(box.get("units") or box.get("qty") or 0)
+            new_u = RECON_DEFAULT_UNITS if u <= 0 else u
+            was_elsewhere = _RECON_NORM(box.get("location")) != location or box.get("status") == "recon_pending"
+            upd = {"location": location, "status": "located", "units": new_u, "qty": new_u, **stamp}
+            upd["recon_pending"] = False
+            upd["recon_missing_from"] = None
+            await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+            if was_elsewhere:
+                movidas += 1
+            else:
+                confirmadas += 1
+
+    # Faltantes: esperadas pero NO escaneadas -> pendientes para el admin.
+    missing_ids = expected_ids - scanned_set
+    if missing_ids:
+        await db.wms_boxes.update_many(
+            {"box_id": {"$in": list(missing_ids)}},
+            {"$set": {"status": "recon_pending", "recon_pending": True,
+                      "recon_missing_from": location, "recon_flagged_at": now_iso(),
+                      "recon_flagged_by": uname, "recon_batch": commit_id}})
+        faltantes = len(missing_ids)
+
+    # Reconstruir inventario de la ubicacion desde las cajas AHORA presentes.
+    from collections import defaultdict as _dd
+    present = await db.wms_boxes.find({
+        "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"},
+        "status": "located", "units": {"$gt": 0},
+    }, {"_id": 0, "style": 1, "sku": 1, "color": 1, "size": 1, "units": 1, "customer": 1,
+        "manufacturer": 1, "country_of_origin": 1, "fabric_content": 1}).to_list(5000)
+    groups = _dd(lambda: {"units": 0, "boxes": 0, "meta": {}})
+    for b in present:
+        key = (b.get("style") or b.get("sku") or "", b.get("color") or "", b.get("size") or "")
+        g = groups[key]
+        g["units"] += int(b.get("units") or 0)
+        g["boxes"] += 1
+        if not g["meta"]:
+            g["meta"] = {k: b.get(k, "") for k in ("customer", "manufacturer", "country_of_origin", "fabric_content", "sku")}
+    await db.wms_inventory.delete_many({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}})
+    if groups:
+        await db.wms_inventory.insert_many([{
+            "inventory_id": gen_id("inv"), "style": st, "sku": g["meta"].get("sku") or st,
+            "color": co, "size": sz, "location": location,
+            "units_on_hand": g["units"], "units_allocated": 0, "total_boxes": g["boxes"],
+            "customer": g["meta"].get("customer", ""), "manufacturer": g["meta"].get("manufacturer", ""),
+            "country_of_origin": g["meta"].get("country_of_origin", ""),
+            "fabric_content": g["meta"].get("fabric_content", ""),
+            "recon_batch": commit_id, "updated_at": now_iso(),
+        } for (st, co, sz), g in groups.items()])
+
+    # Registrar/bloquear la ubicacion.
+    lock_doc = {
+        "location": location, "status": "done", "commit_id": commit_id,
+        "reconciled_by": user.get("user_id"), "reconciled_by_name": uname,
+        "reconciled_at": now_iso(),
+        "counts": {"escaneadas": len(scanned), "confirmadas": confirmadas, "movidas": movidas,
+                   "creadas": creadas, "faltantes": faltantes},
+    }
+    await db.wms_reconciled_locations.update_one({"location": location}, {"$set": lock_doc}, upsert=True)
+    await log_movement(user, "reconciliation_commit", {
+        "commit_id": commit_id, "location": location, **lock_doc["counts"]})
+
+    return {"ok": True, "location": location, "commit_id": commit_id, **lock_doc["counts"]}
+
+
+@router.get("/recon/pending")
+async def recon_pending(request: Request):
+    """Admin: cajas faltantes (recon_pending) + creadas/desconocidas."""
+    await require_admin(request)
+    faltantes = await db.wms_boxes.find(
+        {"status": "recon_pending"},
+        {"_id": 0, "box_id": 1, "style": 1, "color": 1, "size": 1, "units": 1,
+         "recon_missing_from": 1, "recon_flagged_by": 1, "recon_flagged_at": 1}
+    ).sort("recon_flagged_at", -1).to_list(2000)
+    creadas = await db.wms_boxes.find(
+        {"recon_created": True},
+        {"_id": 0, "box_id": 1, "location": 1, "units": 1, "recon_counted_by": 1, "recon_counted_at": 1}
+    ).sort("recon_counted_at", -1).to_list(2000)
+    return {"faltantes": faltantes, "faltantes_count": len(faltantes),
+            "creadas": creadas, "creadas_count": len(creadas)}
+
+
+@router.get("/recon/log")
+async def recon_log(request: Request):
+    """Admin: registro de ubicaciones conciliadas."""
+    await require_admin(request)
+    locs = await db.wms_reconciled_locations.find({}, {"_id": 0}).sort("reconciled_at", -1).to_list(5000)
+    return {"count": len(locs), "locations": locs}
+
+
+@router.post("/recon/resolve")
+async def recon_resolve(request: Request):
+    """Admin: resuelve una caja pendiente/creada.
+    body: { box_id, action: 'assign'|'delete', location? }"""
+    user = await require_admin(request)
+    body = await request.json()
+    bid = str(body.get("box_id", "")).strip().upper()
+    action = body.get("action")
+    box = await db.wms_boxes.find_one({"box_id": bid})
+    if not box:
+        raise HTTPException(404, "Caja no encontrada")
+    if action == "delete":
+        await db.wms_boxes.delete_one({"_id": box["_id"]})
+        await log_movement(user, "recon_resolve_delete", {"box_id": bid})
+        return {"ok": True, "box_id": bid, "action": "delete"}
+    if action == "assign":
+        loc = _RECON_NORM(body.get("location"))
+        if not loc:
+            raise HTTPException(400, "Ubicacion requerida para asignar")
+        u = int(box.get("units") or 0) or RECON_DEFAULT_UNITS
+        await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": {
+            "location": loc, "status": "located", "units": u, "qty": u,
+            "recon_pending": False, "recon_missing_from": None, "updated_at": now_iso()}})
+        await log_movement(user, "recon_resolve_assign", {"box_id": bid, "location": loc})
+        return {"ok": True, "box_id": bid, "action": "assign", "location": loc}
+    raise HTTPException(400, "action debe ser 'assign' o 'delete'")
+
+
+@router.post("/recon/reopen")
+async def recon_reopen(request: Request):
+    """Admin: reabre una ubicacion bloqueada para volver a conciliarla."""
+    user = await require_admin(request)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    r = await db.wms_reconciled_locations.delete_one({"location": location})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Esa ubicacion no estaba conciliada")
+    await log_movement(user, "recon_reopen", {"location": location})
+    return {"ok": True, "location": location}
+
 # ==================== LABELS (PDF) ====================
 
 async def _enrich_box_for_label(box):
@@ -6152,7 +6387,7 @@ _ASN_REQUIRED_FIELDS = ("part_number", "qty")
 # Box statuses that mean the units already LEFT inventory (consumed/in process/
 # shipped). Anything else with units>0 is considered still on hand. Whitelisting
 # the "out" set keeps legacy/empty statuses counted as in-stock.
-_BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed", "depleted"}
+_BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed", "depleted", "recon_pending"}
 
 def _box_in_stock(b) -> bool:
     units = int(b.get("units") or b.get("qty") or 0)

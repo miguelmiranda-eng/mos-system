@@ -31,6 +31,7 @@ import { AsnModule } from "./wms/Asn";
 import { TransitModule } from "./wms/Transit";
 import { MoverModule } from "./wms/Mover";
 import { AuditModule } from "./wms/Audit";
+import { ReconciliationModule } from "./wms/Reconciliation";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -52,6 +53,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
+    case 'reconciliation': return <ReconciliationModule />;
     case 'audit':        return <AuditModule />;
     default:             return <ReceivingModule />;
   }
@@ -122,6 +124,8 @@ export default function WMS() {
     { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
     { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
     { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
+    // Conciliación física: panel PC (admin+). El PDA de los contadores vive en /pda-recon.
+    { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', adminOnly: true },
     // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
     { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
   ];
@@ -375,6 +379,7 @@ export default function WMS() {
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
             if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
+            if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
             if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
             return true;
