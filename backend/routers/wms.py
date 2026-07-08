@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -278,12 +278,17 @@ CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", 
 CATALOG_MANAGER_ROLES = {"admin", "supersu", "ceo"}
 
 
+CATALOG_MIN_LEVEL = 3  # la identidad del inventario (estilos/colores/tallas/…) solo se edita nivel 3+
+
 def _assert_catalog_manager(user):
-    """Raise 403 unless the user is a catalog manager (lead/supervisor)."""
-    if (user or {}).get("role") not in CATALOG_MANAGER_ROLES:
+    """Raise 403 salvo admin nivel 3+ (supersu = max). Los catálogos de identidad
+    (styles/colors/sizes/customers/countries/fabrics/descriptions) solo se
+    modifican desde Configuración por admin nivel 3 o superior — nadie mas puede
+    cambiar estos valores."""
+    if get_admin_level(user) < CATALOG_MIN_LEVEL:
         raise HTTPException(
             status_code=403,
-            detail="Solo personal líder/supervisor puede modificar los catálogos.",
+            detail="Requiere admin nivel 3 o superior para modificar los catálogos de identidad.",
         )
 
 

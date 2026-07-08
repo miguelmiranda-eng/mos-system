@@ -36,13 +36,17 @@ export const HomeModule = () => {
       .catch(() => {});
   }, []);
 
-  // Only a lead/supervisor (admin/supersu/ceo) may add/rename/clean catalogs.
-  // Mirrors the backend guard; here it just hides the controls for everyone else.
+  // Solo admin nivel 3+ (supersu = max) puede agregar/renombrar/limpiar los
+  // catálogos de identidad. Refleja el guard del backend; aquí solo oculta los
+  // controles para todos los demás.
   const [isManager, setIsManager] = useState(false);
   useEffect(() => {
     fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(u => setIsManager(['admin', 'supersu', 'ceo'].includes(u?.role)))
+      .then(u => {
+        const level = u?.role === 'supersu' ? 5 : (u?.role === 'admin' ? Math.max(1, parseInt(u?.admin_level || 1)) : 0);
+        setIsManager(level >= 3);
+      })
       .catch(() => {});
   }, []);
 
