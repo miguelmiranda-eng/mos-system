@@ -3798,9 +3798,13 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
         return size_locations
 
     async def _run(q):
+        # Limite alto: un SKU muy fragmentado puede vivir en +50 ubicaciones
+        # (5000 BLACK L estaba en 96). Con .to_list(50) el picker no veia el stock
+        # de la ubicacion #51+ aunque tuviera cajas fisicas (caso PS06-A30). Se
+        # ordena por unidades desc, asi que las mas llenas siguen primero.
         recs = await db.wms_inventory.find(
             q, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}
-        ).sort("units_on_hand", -1).to_list(50)
+        ).sort("units_on_hand", -1).to_list(500)
         locs = [{
             "location": r.get("location", ""),
             "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0),
@@ -3954,7 +3958,7 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
                 }
                 if color:
                     inv_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
-                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}).sort("units_on_hand", -1).to_list(50)
+                inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}).sort("units_on_hand", -1).to_list(500)  # ver nota en _compute_size_locations: no ocultar stock de SKUs muy repartidos
                 locs = [{"location": r.get("location", ""), "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0), "boxes": r.get("total_boxes", 0), "country_of_origin": r.get("country_of_origin", "")} for r in inv_records if r.get("location")]
                 locs = [l for l in locs if l["available"] > 0]
                 total_sz_avail = sum(l["available"] for l in locs)
@@ -4963,7 +4967,7 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
             inv_items = await db.wms_inventory.find(
                 {"style": {"$regex": f"^{re.escape(new_style)}$", "$options": "i"}, "color": {"$regex": f"^{re.escape(new_color)}$", "$options": "i"}, "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"}},
                 {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "country_of_origin": 1}
-            ).sort("units_on_hand", -1).to_list(50)
+            ).sort("units_on_hand", -1).to_list(500)  # ver nota en _compute_size_locations: no ocultar stock de SKUs muy repartidos
             locs = [{"location": it.get("location", ""), "available": it.get("units_on_hand", 0) - it.get("units_allocated", 0), "boxes": it.get("total_boxes", 0), "country_of_origin": it.get("country_of_origin", "")} for it in inv_items if it.get("location")]
             locs = [l for l in locs if l["available"] > 0]
             total_sz_avail = sum(l["available"] for l in locs)
