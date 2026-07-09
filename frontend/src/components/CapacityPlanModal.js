@@ -16,7 +16,6 @@ const STATUS_CONFIG = {
 const CapacityPlanModal = ({ isOpen, onClose }) => {
   const { t } = useLang();
   const [machines, setMachines] = useState([]);
-  const [totalPiecesSystem, setTotalPiecesSystem] = useState(0);
   const [totalCompleted, setTotalCompleted] = useState(0);
   const [inProduction, setInProduction] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -28,7 +27,6 @@ const CapacityPlanModal = ({ isOpen, onClose }) => {
       if (res.ok) {
         const data = await res.json();
         setMachines(data.machines);
-        setTotalPiecesSystem(data.total_pieces_system || 0);
         setTotalCompleted(data.total_completed || 0);
         setInProduction(data.in_production || 0);
       }
@@ -41,6 +39,7 @@ const CapacityPlanModal = ({ isOpen, onClose }) => {
   const activeMachines = machines.filter(m => m.order_count > 0);
   const totalRemaining = machines.reduce((s, m) => s + m.remaining_pieces, 0);
   const overloaded = machines.filter(m => m.load_status === 'red').length;
+  const ordersInProduction = machines.reduce((s, m) => s + (m.orders_in_progress?.length || 0), 0);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -55,8 +54,8 @@ const CapacityPlanModal = ({ isOpen, onClose }) => {
         {/* Summary cards */}
         <div className="grid grid-cols-6 gap-3 pb-3 border-b border-border">
           <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 text-center">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">{t('total_pieces_system')}</p>
-            <p className="text-2xl font-bold text-primary font-mono" data-testid="plan-total-pieces-system">{totalPiecesSystem.toLocaleString()}</p>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">{t('orders_in_production')}</p>
+            <p className="text-2xl font-bold text-primary font-mono" data-testid="plan-orders-in-production">{ordersInProduction.toLocaleString()}</p>
           </div>
           <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-center">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Completado</p>
