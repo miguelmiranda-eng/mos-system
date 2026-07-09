@@ -5974,6 +5974,71 @@ async def recon_reopen(request: Request):
     await log_movement(user, "recon_reopen", {"location": location})
     return {"ok": True, "location": location}
 
+
+@router.post("/recon/second-count/start")
+async def recon_second_count_start(request: Request):
+    """Admin: libera (reabre) todas las ubicaciones que tienen cajas marcadas
+    como faltantes (recon_pending), para que los operadores hagan un segundo
+    conteo fisico de esas ubicaciones en el PDA. Deja un registro en Ajustes
+    de cajas con el detalle de que ubicaciones se liberaron."""
+    user = await require_admin(request)
+    pending = await db.wms_boxes.find(
+        {"status": "recon_pending"},
+        {"_id": 0, "units": 1, "recon_missing_from": 1}
+    ).to_list(5000)
+
+    from collections import defaultdict as _dd
+    groups = _dd(lambda: {"cajas": 0, "unidades": 0})
+    for b in pending:
+        loc = b.get("recon_missing_from")
+        if not loc:
+            continue
+        groups[loc]["cajas"] += 1
+        groups[loc]["unidades"] += int(b.get("units") or 0)
+
+    if not groups:
+        return {"ok": True, "count": 0, "locations": []}
+
+    locations = list(groups.keys())
+
+    # Foto del primer conteo antes de borrarlo: al recontar, su registro en
+    # wms_reconciled_locations se sobreescribe con los numeros del segundo
+    # conteo, asi que se guarda aqui para no perder de vista lo que dio el
+    # primero (queda visible en la pestana de Ajustes aunque ya no en el log).
+    first_counts = {
+        d["location"]: d
+        for d in await db.wms_reconciled_locations.find(
+            {"location": {"$in": locations}}, {"_id": 0}
+        ).to_list(len(locations))
+    }
+
+    reopened = await db.wms_reconciled_locations.delete_many({"location": {"$in": locations}})
+
+    uname = user.get("name", user.get("email", "?"))
+    adj_locations = sorted(
+        (
+            {
+                "location": loc, "cajas": g["cajas"], "unidades": g["unidades"],
+                "first_count": (first_counts.get(loc) or {}).get("counts"),
+                "first_count_by": (first_counts.get(loc) or {}).get("reconciled_by_name"),
+                "first_count_at": (first_counts.get(loc) or {}).get("reconciled_at"),
+            }
+            for loc, g in groups.items()
+        ),
+        key=lambda x: -x["cajas"],
+    )
+    await db.wms_recon_adjustments.insert_one({
+        "type": "second_count_start",
+        "created_at": now_iso(), "created_by": uname,
+        "count": len(locations),
+        "units": sum(g["unidades"] for g in groups.values()),
+        "reason": f"Segundo conteo: se liberaron {len(locations)} ubicaciones con cajas faltantes para volver a contarlas fisicamente.",
+        "locations": adj_locations,
+        "boxes": [],
+    })
+    await log_movement(user, "recon_second_count_start", {"locations_count": len(locations), "reopened": reopened.deleted_count})
+    return {"ok": True, "count": len(locations), "reopened": reopened.deleted_count, "locations": adj_locations}
+
 # ==================== LABELS (PDF) ====================
 
 async def _enrich_box_for_label(box):

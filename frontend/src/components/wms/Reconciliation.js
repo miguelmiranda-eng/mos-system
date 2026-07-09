@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
-  Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck,
+  Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -12,10 +12,16 @@ import { fetcher, poster } from "./lib";
 
 const TABS = [
   { id: "pending", label: "Por resolver", icon: PackageX },
+  { id: "second_count", label: "Segundo conteo", icon: RotateCcw },
   { id: "log", label: "Ubicaciones conciliadas", icon: ListChecks },
   { id: "adjustments", label: "Ajustes de cajas", icon: History },
   { id: "lpn", label: "Bloqueadas por LPN", icon: Ban },
 ];
+
+const ADJ_TYPE_LABELS = {
+  lpn_recon_restore: "Restauración de cajas LPN",
+  second_count_start: "Segundo conteo — ubicaciones liberadas",
+};
 
 const fmt = (iso) => {
   if (!iso) return "-";
@@ -61,11 +67,79 @@ export const ReconciliationModule = () => {
   }, []);
 
   useEffect(() => {
-    if (tab === "pending" && !pending) loadPending();
-    if (tab === "log" && !log) loadLog();
+    if ((tab === "pending" || tab === "second_count") && !pending) loadPending();
+    if ((tab === "log" || tab === "second_count") && !log) loadLog();
     if (tab === "lpn" && !lpn) loadLpn();
-    if (tab === "adjustments" && !adj) loadAdj();
+    if ((tab === "adjustments" || tab === "second_count") && !adj) loadAdj();
   }, [tab, pending, log, lpn, adj, loadPending, loadLog, loadLpn, loadAdj]);
+
+  // Ubicaciones con cajas faltantes agrupadas — candidatas a segundo conteo,
+  // con su estado actual (bloqueada = aun conciliada, liberada = lista para recontar)
+  // y, si ya se liberaron antes, el conteo anterior (al liberar) vs el nuevo
+  // (actual, tras el reconteo) para ver si hubo diferencia.
+  const lockedLocations = useMemo(() => new Set((log?.locations || []).map(l => l.location)), [log]);
+  const reconciledAtByLoc = useMemo(() => {
+    const m = new Map();
+    for (const l of (log?.locations || [])) m.set(l.location, l.reconciled_at);
+    return m;
+  }, [log]);
+  const lastSecondCountByLoc = useMemo(() => {
+    const m = new Map();
+    for (const a of (adj?.adjustments || [])) {
+      if (a.type !== "second_count_start") continue;
+      for (const l of (a.locations || [])) {
+        const prev = m.get(l.location);
+        if (!prev || new Date(a.created_at) > new Date(prev.created_at)) {
+          m.set(l.location, { cajas: l.cajas, unidades: l.unidades, created_at: a.created_at });
+        }
+      }
+    }
+    return m;
+  }, [adj]);
+  const secondCountLocations = useMemo(() => {
+    if (!pending) return [];
+    const byLoc = new Map();
+    for (const b of pending.faltantes) {
+      const loc = b.recon_missing_from || "(desconocida)";
+      const g = byLoc.get(loc) || { location: loc, cajas: 0, unidades: 0 };
+      g.cajas += 1;
+      g.unidades += b.units || 0;
+      byLoc.set(loc, g);
+    }
+    return [...byLoc.values()]
+      .map(g => {
+        const locked = lockedLocations.has(g.location);
+        const lastLiberated = lastSecondCountByLoc.get(g.location);
+        // Se reconto si, tras liberarla, la ubicacion volvio a quedar bloqueada
+        // con una conciliacion mas reciente que la liberacion.
+        const recountedAt = reconciledAtByLoc.get(g.location);
+        const recounted = !!(lastLiberated && locked && recountedAt && new Date(recountedAt) > new Date(lastLiberated.created_at));
+        return {
+          ...g, locked,
+          anterior: lastLiberated ? lastLiberated.cajas : g.cajas,
+          nuevo: recounted ? g.cajas : null,
+          diff: recounted ? (lastLiberated.cajas - g.cajas) : null,
+        };
+      })
+      .sort((a, b) => b.cajas - a.cajas);
+  }, [pending, lockedLocations, lastSecondCountByLoc, reconciledAtByLoc]);
+  const lockedCount = secondCountLocations.filter(l => l.locked).length;
+
+  const [startingSecondCount, setStartingSecondCount] = useState(false);
+  const startSecondCount = async () => {
+    if (!secondCountLocations.length) return;
+    if (!window.confirm(`¿Liberar ${secondCountLocations.length} ubicaciones con faltantes para que se vuelvan a contar en el PDA?`)) return;
+    setStartingSecondCount(true);
+    try {
+      const res = await poster("/recon/second-count/start", {});
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`${data.count} ubicaciones liberadas para segundo conteo`);
+        loadLog(); loadAdj();
+      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || "Error"); }
+    } catch { toast.error("Error de conexión"); }
+    finally { setStartingSecondCount(false); }
+  };
 
   const resolve = async (box_id, action) => {
     let location;
@@ -149,7 +223,13 @@ export const ReconciliationModule = () => {
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
           {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
         </button>
-        <button onClick={() => tab === "pending" ? loadPending() : tab === "log" ? loadLog() : tab === "adjustments" ? loadAdj() : loadLpn()}
+        <button onClick={() => {
+            if (tab === "pending") loadPending();
+            else if (tab === "second_count") { loadPending(); loadLog(); }
+            else if (tab === "log") loadLog();
+            else if (tab === "adjustments") loadAdj();
+            else loadLpn();
+          }}
           className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40">
           <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
         </button>
@@ -159,6 +239,7 @@ export const ReconciliationModule = () => {
         {TABS.map(t => {
           const Icon = t.icon;
           const badge = t.id === "pending" && pending ? (pending.faltantes_count + pending.creadas_count)
+            : t.id === "second_count" && pending ? lockedCount
             : t.id === "log" && log ? log.count
             : t.id === "adjustments" && adj ? adj.count
             : t.id === "lpn" && lpn ? lpn.count : null;
@@ -236,6 +317,63 @@ export const ReconciliationModule = () => {
         </div>
       )}
 
+      {/* ── Segundo conteo ── */}
+      {tab === "second_count" && (
+        loading && !pending ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        : pending && (
+          <div className="border border-fuchsia-500/30 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 bg-fuchsia-500/10 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-fuchsia-300 text-[11px] font-black uppercase tracking-widest">
+                <RotateCcw className="w-4 h-4" /> {secondCountLocations.length} ubicaciones con faltantes — {lockedCount} aún bloqueadas
+              </div>
+              <button onClick={startSecondCount} disabled={startingSecondCount || lockedCount === 0}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-fuchsia-500/20 text-fuchsia-200 hover:bg-fuchsia-500/30 border border-fuchsia-500/30 disabled:opacity-40 text-[11px] font-black uppercase tracking-wider">
+                {startingSecondCount ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
+                Liberar {lockedCount > 0 ? `${lockedCount} ` : ""}para segundo conteo
+              </button>
+            </div>
+            <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
+              Estas ubicaciones ya se conciliaron una vez y quedaron cajas esperadas sin encontrar. Al liberarlas, se
+              reabren en el PDA para que el operador las vuelva a contar físicamente; queda registro en "Ajustes de cajas".
+            </div>
+            <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-card"><tr>
+                  <Th>Ubicación</Th><Th right>Conteo anterior</Th><Th right>Conteo nuevo</Th><Th right>Diferencia</Th>
+                  <Th right>Unidades</Th><Th>Estado</Th>
+                </tr></thead>
+                <tbody>
+                  {secondCountLocations.map((l, i) => (
+                    <tr key={i} className="border-t border-border/40 text-xs">
+                      <td className="p-2 font-mono font-bold">{l.location}</td>
+                      <td className="p-2 text-right text-red-400">{l.anterior}</td>
+                      <td className="p-2 text-right">
+                        {l.nuevo === null ? <span className="text-muted-foreground">—</span> : l.nuevo}
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {l.diff === null ? <span className="text-muted-foreground font-normal">—</span>
+                          : l.diff > 0 ? <span className="text-emerald-400">-{l.diff}</span>
+                          : l.diff === 0 ? <span className="text-muted-foreground">0</span>
+                          : <span className="text-red-400">+{-l.diff}</span>}
+                      </td>
+                      <td className="p-2 text-right">{l.unidades.toLocaleString()}</td>
+                      <td className="p-2">
+                        {l.nuevo !== null
+                          ? <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 text-[10px] font-black uppercase">Recontada</span>
+                          : l.locked
+                          ? <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-black uppercase">Bloqueada</span>
+                          : <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-black uppercase">Liberada — lista para recontar</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {secondCountLocations.length === 0 && <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">No hay ubicaciones con faltantes pendientes.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+
       {/* ── Registro ── */}
       {tab === "log" && log && (
         <div className="border border-border rounded-xl overflow-hidden">
@@ -282,37 +420,66 @@ export const ReconciliationModule = () => {
               <div key={i} className="border border-sky-500/30 rounded-xl overflow-hidden">
                 <div className="px-3 py-2 bg-sky-500/10 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sky-300 text-[11px] font-black uppercase tracking-widest">
-                    <PackageCheck className="w-4 h-4" /> {a.type === "lpn_recon_restore" ? "Restauración de cajas LPN" : a.type}
+                    <PackageCheck className="w-4 h-4" /> {ADJ_TYPE_LABELS[a.type] || a.type}
                   </div>
                   <div className="text-xs text-muted-foreground">{fmt(a.created_at)} · {a.created_by}</div>
                 </div>
                 <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
                   <b className="text-foreground">{a.count}</b> cajas · <b className="text-foreground">{(a.units || 0).toLocaleString()}</b> u · {a.reason}
                 </div>
-                <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border">
-                  {(a.locations || []).map((l, j) => (
-                    <span key={j} className="px-2 py-1 rounded-lg bg-secondary/60 text-xs font-mono">
-                      {l.location}: {l.cajas}c / {l.unidades}u
-                    </span>
-                  ))}
-                </div>
-                <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                  <table className="w-full">
-                    <thead className="sticky top-0 bg-card"><tr>
-                      <Th>Caja (LPN)</Th><Th>Ubicación</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th><Th right>Unid.</Th>
-                    </tr></thead>
-                    <tbody>
-                      {(a.boxes || []).map((b, k) => (
-                        <tr key={k} className="border-t border-border/40 text-xs">
-                          <td className="p-2 font-mono">{b.box_id}</td>
-                          <td className="p-2 font-mono">{b.location}</td>
-                          <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td>
-                          <td className="p-2">{b.size}</td><td className="p-2 text-right">{b.units}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {a.type !== "second_count_start" && (
+                  <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border">
+                    {(a.locations || []).map((l, j) => (
+                      <span key={j} className="px-2 py-1 rounded-lg bg-secondary/60 text-xs font-mono">
+                        {l.location}: {l.cajas}c / {l.unidades}u
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {a.type === "second_count_start" ? (
+                  <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-card"><tr>
+                        <Th>Ubicación</Th><Th right>Faltantes</Th><Th right>Unid.</Th>
+                        <Th>1er conteo (conf./mov./cre./falt.)</Th><Th>Conciliada por</Th><Th>Fecha 1er conteo</Th>
+                      </tr></thead>
+                      <tbody>
+                        {(a.locations || []).map((l, j) => (
+                          <tr key={j} className="border-t border-border/40 text-xs">
+                            <td className="p-2 font-mono font-bold">{l.location}</td>
+                            <td className="p-2 text-right text-red-400">{l.cajas}</td>
+                            <td className="p-2 text-right">{l.unidades}</td>
+                            <td className="p-2 font-mono">
+                              {l.first_count
+                                ? `${l.first_count.confirmadas ?? 0} / ${l.first_count.movidas ?? 0} / ${l.first_count.creadas ?? 0} / ${l.first_count.faltantes ?? 0}`
+                                : "-"}
+                            </td>
+                            <td className="p-2">{l.first_count_by || "-"}</td>
+                            <td className="p-2">{fmt(l.first_count_at)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-card"><tr>
+                        <Th>Caja (LPN)</Th><Th>Ubicación</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th><Th right>Unid.</Th>
+                      </tr></thead>
+                      <tbody>
+                        {(a.boxes || []).map((b, k) => (
+                          <tr key={k} className="border-t border-border/40 text-xs">
+                            <td className="p-2 font-mono">{b.box_id}</td>
+                            <td className="p-2 font-mono">{b.location}</td>
+                            <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td>
+                            <td className="p-2">{b.size}</td><td className="p-2 text-right">{b.units}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ))}
           </div>
