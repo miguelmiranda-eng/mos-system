@@ -64,10 +64,11 @@ export default function PdaPicker() {
     } catch { toast.error("Error de conexión"); }
   };
 
-  // Per-size immediate deduction: the instant the operator OKs a size, the
-  // material leaves inventory — no waiting for full/partial completion. Does NOT
-  // reload the ticket list (keeps the operator's in-progress local state); the
-  // size row flips to "descontado" locally on success.
+  // Per-size immediate deduction: la material sale de inventario apenas el
+  // operador OK-ea. Refresca la lista DESPUES del descuento para que si el
+  // picker sale del ticket y vuelve, vea el picked_sizes actualizado (el bug
+  // del REMPLAZO: backend correcto pero UI mostraba "faltan 10" porque el
+  // ticket prop tenia data stale).
   const handlePickSize = async (ticketId, size, details) => {
     try {
       const res = await putter(`/pick-tickets/${ticketId}/pick-size`, { size, details });
@@ -75,6 +76,15 @@ export default function PdaPicker() {
         const data = await res.json().catch(() => ({}));
         toast.success(data.message || `Talla ${size} descontada`);
         if (navigator.vibrate) navigator.vibrate(60);
+        // Refresh silencioso (sin setLoading) para actualizar el ticket local
+        // con lo que ya se descontó. No bloquea la UI del picker.
+        try {
+          const fresh = await fetcher("/operator/my-tickets");
+          if (Array.isArray(fresh)) {
+            setTickets(fresh);
+            setSelected(prev => prev ? (fresh.find(x => x.ticket_id === prev.ticket_id) || prev) : null);
+          }
+        } catch { /* silencioso: el descuento ya se aplicó, el refresh es best-effort */ }
         return true;
       }
       const err = await res.json().catch(() => ({}));
