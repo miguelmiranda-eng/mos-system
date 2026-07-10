@@ -3794,6 +3794,14 @@ def apply_picking_strategy(size_locations: dict, strategy: str) -> dict:
     return size_locations
 
 
+# Cache in-memory para size_locations. Cada picker recarga sus tickets 3-5 veces
+# durante un turno de trabajo; sin cache eso era 3-5x N regex-queries a Mongo por
+# recarga (my-tickets tardaba ~2 min en producción). TTL corto para no servir
+# stock muerto — el ticket que ya usó una ubicación tiene 30s hasta refrescarse.
+_SIZE_LOCS_CACHE: dict = {}
+_SIZE_LOCS_TTL = 30.0   # seg
+
+
 async def _compute_size_locations(style: str, color: str, sizes: dict, strategy: str = "default") -> dict:
     """Build {size: {locations:[...], total_available}} from CURRENT inventory.
 
@@ -3808,6 +3816,14 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
     size_locations: dict = {}
     if not style:
         return size_locations
+
+    # Cache lookup — key inmutable con las tallas del ticket
+    import time as _time
+    cache_key = (style.upper(), color.upper(), strategy,
+                 tuple(sorted((str(k), int(v or 0)) for k, v in (sizes or {}).items())))
+    cached = _SIZE_LOCS_CACHE.get(cache_key)
+    if cached and (_time.monotonic() - cached[0]) < _SIZE_LOCS_TTL:
+        return cached[1]
 
     async def _run(q):
         # Limite alto: un SKU muy fragmentado puede vivir en +50 ubicaciones
@@ -3910,7 +3926,16 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             l["percentage"] = round((l["available"] / total) * 100) if total > 0 else 0
         size_locations[sz] = {"locations": locs, "total_available": total}
 
-    return apply_picking_strategy(size_locations, strategy if strategy in PICK_STRATEGIES else "default")
+    result = apply_picking_strategy(size_locations, strategy if strategy in PICK_STRATEGIES else "default")
+    # Guarda en cache — próxima llamada con mismo (style, color, sizes) devuelve
+    # instantáneo por hasta 30s.
+    _SIZE_LOCS_CACHE[cache_key] = (_time.monotonic(), result)
+    # Evita crecimiento ilimitado: purga entradas viejas cuando el cache pasa 5000
+    if len(_SIZE_LOCS_CACHE) > 5000:
+        cutoff = _time.monotonic() - _SIZE_LOCS_TTL
+        for k in [k for k, v in _SIZE_LOCS_CACHE.items() if v[0] < cutoff]:
+            _SIZE_LOCS_CACHE.pop(k, None)
+    return result
 
 
 async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
@@ -4471,7 +4496,10 @@ async def get_operator_tickets(request: Request):
     # operator with many tickets). A semaphore bounds concurrency so we don't
     # flood the Mongo connection pool when a picker has a large queue.
     pending = [tk for tk in tickets if tk.get("picking_status") != "completed"]
-    sem = asyncio.Semaphore(8)
+    # 4 en paralelo (bajado de 8) porque los queries regex de _compute_size_locations
+    # golpean fuerte cuando el picker tiene 15+ tickets y Mongo se congestiona.
+    # Con el cache de 30s la mayoria de tickets no dispara query real.
+    sem = asyncio.Semaphore(4)
 
     async def _attach(tk):
         async with sem:
