@@ -127,7 +127,7 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS') params.append('board', currentBoard);
+      if (currentBoard !== 'MASTER') params.append('board', currentBoard);
       // Pull every order, not just the newest 1000 (the backend default). MASTER
       // aggregates all active boards (~1.4k+ and growing); the old cap silently
       // hid the oldest orders, so filtering MASTER returned fewer rows than the

@@ -122,6 +122,7 @@ from routers.report_scheduler import router as report_scheduler_router, start_re
 from routers.printavo_scheduler import router as printavo_scheduler_router, start_printavo_scheduler
 from routers.printavo_export import router as printavo_export_router
 from routers.paint import router as paint_router
+from routers.samples import router as samples_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -147,6 +148,7 @@ app.include_router(report_scheduler_router)
 app.include_router(printavo_scheduler_router)
 app.include_router(printavo_export_router)
 app.include_router(paint_router)
+app.include_router(samples_router)
 
 @app.on_event("startup")
 async def startup_event():

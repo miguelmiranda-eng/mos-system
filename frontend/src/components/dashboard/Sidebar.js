@@ -274,6 +274,10 @@ const Sidebar = ({
                       <Brush size={15} className={iconCls(false)} />
                       <span>Depto. de Pinturas</span>
                     </button>
+                    <button onClick={() => { navigate('/samples'); if (isMobile) onClose(); }} className={navItem(false)} title="Calendario de Ejemplos">
+                      <Beaker size={15} className={iconCls(false)} />
+                      <span>Ejemplos</span>
+                    </button>
                     <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title="Insights">
                       <Sparkles size={15} className={iconCls(false)} />
                       <span>Insights</span>

@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users,
   Database, Boxes, Tags, UserSquare, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, ShieldCheck, Search,
-  ChevronRight, Palette, ArrowLeft,
+  ChevronRight, Palette, ArrowLeft, Beaker, Brush,
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { GlobalColumnManager } from './dashboard/GlobalColumnManager';
@@ -13,7 +13,7 @@ import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
 const ICON_MAP = {
   Warehouse, Boxes, Database, History, Zap, Users, Tags,
   UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp,
-  ShieldCheck, Palette,
+  ShieldCheck, Palette, Beaker, Brush,
 };
 
 const SECTIONS_DEFS = [
@@ -22,6 +22,14 @@ const SECTIONS_DEFS = [
     title: 'Gestión de Inventario',
     items: [
       { name: 'WMS Central', path: '/wms', desc: 'Gestión completa de almacén y ubicaciones.', icon: 'Warehouse' },
+    ]
+  },
+  {
+    id: 'production',
+    title: 'Producción & Muestras',
+    items: [
+      { name: 'Calendario de Ejemplos', path: '/samples', desc: 'Programa muestras por día con recursos y operadores.', icon: 'Beaker' },
+      { name: 'Depto. de Pinturas', path: '/paint', desc: 'Calendarización de mezcla de tinta.', icon: 'Brush' },
     ]
   },
   {

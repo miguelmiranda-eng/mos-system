@@ -268,6 +268,61 @@ async def _claim_invoice(invoice_id) -> bool:
         return False
 
 
+async def _flag_prov_matches(order_number: str) -> None:
+    """Marca en la orden real los sample_task provisionales que la UI debería
+    ofrecer fusionar. Se llama después de crear una orden desde Printavo.
+    Match: mismo style+client, due_date dentro de ±5 días.
+    """
+    if not order_number:
+        return
+    real = await db.orders.find_one(
+        {"order_number": order_number, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0, "order_id": 1, "style": 1, "client": 1, "due_date": 1,
+         "is_provisional": 1},
+    )
+    if not real or real.get("is_provisional"):
+        return
+    style = (real.get("style") or "").strip().upper()
+    client = (real.get("client") or "").strip().upper()
+    if not style or not client:
+        return
+    prov_orders = await db.orders.find(
+        {"is_provisional": True, "style": style, "client": client,
+         "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0, "order_id": 1, "due_date": 1},
+    ).to_list(20)
+    if not prov_orders:
+        return
+    real_due = (real.get("due_date") or "").strip()
+    matched_ids = []
+    for p in prov_orders:
+        pdue = (p.get("due_date") or "").strip()
+        if real_due and pdue:
+            try:
+                d1 = datetime.strptime(real_due[:10], "%Y-%m-%d").date()
+                d2 = datetime.strptime(pdue[:10], "%Y-%m-%d").date()
+                if abs((d1 - d2).days) > 5:
+                    continue
+            except ValueError:
+                pass
+        matched_ids.append(p["order_id"])
+    if not matched_ids:
+        return
+    # Filtra a los que sí tengan un sample_task activo, para no ofrecer
+    # banners fantasmas cuando el PROV- ya fue borrado del calendario.
+    active = await db.sample_tasks.find(
+        {"order_id": {"$in": matched_ids}}, {"_id": 0, "order_id": 1}
+    ).to_list(50)
+    active_ids = [t["order_id"] for t in active]
+    if not active_ids:
+        return
+    await db.orders.update_one(
+        {"order_id": real["order_id"]},
+        {"$set": {"sample_prov_matches": active_ids,
+                  "sample_prov_matches_at": datetime.now(timezone.utc).isoformat()}},
+    )
+
+
 async def process_invoice(invoice: dict) -> int:
     """Create MOS orders for one invoice. Returns count of orders created."""
     from routers.orders import internal_create_order  # lazy import to avoid cycles
@@ -286,6 +341,12 @@ async def process_invoice(invoice: dict) -> int:
             await internal_create_order(OrderCreate(**data), SYNC_USER)
             created += 1
             logger.info(f"[printavo] created order {order_number} from invoice")
+            # Auto-match: si algún ejemplo PROV- coincide en style+client+due_date,
+            # se etiqueta la orden real para que la UI de Ejemplos ofrezca fusionar.
+            try:
+                await _flag_prov_matches(order_number)
+            except Exception as e:
+                logger.warning(f"[printavo] prov-match check failed for {order_number}: {e}")
         except DuplicateKeyError:
             # The uniq_printavo_order_number index rejected a same-number insert.
             # This is the intended idempotent outcome — the order already exists.

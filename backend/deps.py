@@ -102,7 +102,7 @@ DEFAULT_OPTIONS = {
     "betty_columns": ["HOLD", "REORDER", "LICENCIA-EJEMPLO PRIMERO", "PRODUCCION-EJEMPLO PRIMERO", "APROBADO"],
     "shippings": ["CUSTOMER", "CUSTOMER WILL PROVIDE LABELS", "SHIPPING"],
     "boards": [
-        "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EJEMPLOS", "COMPLETOS", "EDI",
+        "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "COMPLETOS", "EDI",
         "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
         "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
         "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL", "CONTROL DE CALIDAD"
@@ -124,8 +124,11 @@ async def get_dynamic_boards():
     else:
         boards = BOARDS.copy()
     
-    # Always filter out 'PAPELERA DE RECICLAJE' from the board dropdown list
-    return [b for b in boards if b != "PAPELERA DE RECICLAJE"]
+    # Always filter out 'PAPELERA DE RECICLAJE' (papelera interna) and
+    # 'EJEMPLOS' (reemplazado por el módulo /samples; puede seguir existiendo
+    # en Mongo como parking de PROV-, pero no debe verse en el sidebar).
+    _hide = {"PAPELERA DE RECICLAJE", "EJEMPLOS"}
+    return [b for b in boards if b not in _hide]
 
 async def save_boards(boards_list):
     """Persist boards to DB."""
