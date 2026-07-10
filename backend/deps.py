@@ -111,10 +111,12 @@ DEFAULT_OPTIONS = {
     "action_types": ["send_email", "move_board", "assign_field", "notify_slack"],
     "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping"],
     # WMS: forzar que el picker escanee la caja fisica antes de descontar. Cuando
-    # esta en True, cualquier /pick-size sin box_id explicito se rechaza. Default
-    # False: se prende manualmente desde catalog-center cuando el equipo esta
-    # listo, para no bloquear pickers legacy que aun no ven el boton de scan.
-    "pick_requires_scan": False,
+    # esta en True (default), /pick-size sin box_id explicito se rechaza y el
+    # frontend obliga al scan. Si el LPN escaneado no matchea (no es BOX- o no
+    # esta en sistema) se dispara el cuestionario de binding (BoxBindModal) que
+    # pregunta talla y cantidad real, ata el LPN a la caja FIFO de esa loc y
+    # reconcilia el conteo. Apagable desde catalog-center en emergencias.
+    "pick_requires_scan": True,
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]
