@@ -363,29 +363,33 @@ function TicketList({ tickets, onSelect, onComments }) {
   );
 }
 
+// ═════════════════════ PickScreen ════════════════════════════════════════════
+// Máquina de estados lineal — una decisión por pantalla, sin scroll infinito:
+//   sizes     → lista de tallas a surtir
+//   locations → ubicaciones disponibles con input de scan
+//   boxes     → escanea la caja física en la ubicación confirmada
+//   binding   → cuestionario (solo si LPN externo desconocido)
+//   quantity  → captura cuántas piezas de la caja identificada
 function PickScreen({ ticket, onSave, onPickSize, saving }) {
   const [pickedSizes, setPickedSizes] = useState({});
-  // Sizes already OK'd → deducted from inventory. Locked from further edits
-  // unless the operator explicitly re-opens to correct.
   const [committed, setCommitted] = useState(() => new Set());
-  const [committing, setCommitting] = useState(null); // size being OK'd right now
-  const [openSize, setOpenSize] = useState(null);
-  const [scan, setScan] = useState("");
-  const [scanHit, setScanHit] = useState(null); // {sz, location}
-  const scanRef = useRef(null);
-  // Box-scan state: por cada (talla, ubicación) guardamos la caja física
-  // identificada por LPN. Sin scan no se puede OK'ear (require_scan=true).
-  const [pickedBoxes, setPickedBoxes] = useState({});  // { sz: { loc: {box_id, units} } }
-  const [scanningCell, setScanningCell] = useState(null);   // { sz, loc } → abre modal scan
-  const [bindingModal, setBindingModal] = useState(null);   // {lpn, location, ticket_context, sizes_needed}
-  // True while a qty field is being edited — suspends the scan box's aggressive
-  // auto-refocus so the operator can actually type a quantity (instead of being
-  // forced to tap −/+ one unit at a time).
-  const editingRef = useRef(false);
+  const [committing, setCommitting] = useState(false);
 
-  // MOS blank status — let the operator update the order's blank_status from the
-  // picking screen. Resolved from the real CRM order (the ticket only carries
-  // the order_number).
+  // Máquina de stages
+  const [stage, setStage] = useState('sizes');            // sizes|locations|boxes|binding|quantity
+  const [activeSize, setActiveSize] = useState(null);
+  const [activeLocation, setActiveLocation] = useState(null);
+  const [activeBox, setActiveBox] = useState(null);        // {box_id, units, lpn}
+  const [bindingInfo, setBindingInfo] = useState(null);    // {lpn, ticket_context, sizes_needed}
+  const [takeQty, setTakeQty] = useState(0);
+
+  // Inputs de scan por stage
+  const locScanRef = useRef(null);
+  const boxScanRef = useRef(null);
+  const [locScan, setLocScan] = useState("");
+  const [boxScan, setBoxScan] = useState("");
+
+  // Blank status (se conserva)
   const [orderId, setOrderId] = useState(null);
   const [blankStatus, setBlankStatus] = useState("");
   const [blankOptions, setBlankOptions] = useState([]);
@@ -393,15 +397,15 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
 
   useEffect(() => {
     setPickedSizes(ticket.picked_sizes || {});
-    // A size present in the server's picked_sizes with units was already
-    // deducted (per-size OK or a prior save) → start it locked.
     setCommitted(new Set(
       Object.entries(ticket.picked_sizes || {})
         .filter(([, v]) => (parseInt(v?.total ?? v) || 0) > 0)
         .map(([k]) => k)
     ));
-    setOpenSize(null);
-    setScanHit(null);
+    setStage('sizes');
+    setActiveSize(null); setActiveLocation(null); setActiveBox(null);
+    setBindingInfo(null); setTakeQty(0);
+    setLocScan(""); setBoxScan("");
   }, [ticket]);
 
   useEffect(() => {
@@ -422,18 +426,23 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     return () => { alive = false; };
   }, []);
 
+  // Focus scanner al entrar a cada stage
+  useEffect(() => {
+    if (stage === 'locations') setTimeout(() => locScanRef.current?.focus(), 100);
+    if (stage === 'boxes')     setTimeout(() => boxScanRef.current?.focus(), 100);
+  }, [stage]);
+
   const updateBlankStatus = async (val) => {
-    if (!orderId) { toast.error("Orden aún no carga, intenta de nuevo"); return; }
+    if (!orderId) { toast.error("Orden aún no carga"); return; }
     const prev = blankStatus;
-    setBlankStatus(val);
-    setSavingStatus(true);
+    setBlankStatus(val); setSavingStatus(true);
     try {
       const r = await fetch(`${ORDERS_API}/${orderId}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ blank_status: val }),
       });
-      if (r.ok) { toast.success("Blank status actualizado"); }
-      else { setBlankStatus(prev); toast.error("No se pudo actualizar el status"); }
+      if (r.ok) toast.success("Blank status actualizado");
+      else { setBlankStatus(prev); toast.error("No se pudo actualizar"); }
     } catch { setBlankStatus(prev); toast.error("Error de conexión"); }
     finally { setSavingStatus(false); }
   };
@@ -447,163 +456,154 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     return Array.isArray(l) ? l : [];
   };
 
-  const updatePicked = (sz, loc, val) => {
-    const target = locsFor(sz).find(l => l.location === loc);
-    if (!target) return;
-    const numVal = Math.max(0, Math.min(parseInt(val) || 0, target.available));
-    setPickedSizes(p => {
-      const cur = p[sz] || { total: 0, details: {} };
-      const details = { ...cur.details, [loc]: numVal };
-      const total = Object.values(details).reduce((a, b) => a + b, 0);
-      const required = parseInt(sizes[sz]) || 0;
-      if (total > required) { toast.error(`Máximo ${required} para talla ${sz}`); return p; }
-      return { ...p, [sz]: { total, details } };
-    });
+  // ── Helpers de progreso ──────────────────────────────────────────────────
+  const remainingOf = (sz) => {
+    const req = parseInt(sizes[sz]) || 0;
+    const done = parseInt(pickedSizes[sz]?.total ?? pickedSizes[sz]) || 0;
+    return Math.max(0, req - done);
+  };
+  const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
+  const totalCommitted = activeSizes.reduce(
+    (s, sz) => s + (parseInt(pickedSizes[sz]?.total) || 0), 0);
+  const isComplete = totalCommitted >= totalRequired && totalRequired > 0;
+  const committedPicked = () => {
+    const out = {};
+    activeSizes.forEach(sz => { if (pickedSizes[sz]) out[sz] = pickedSizes[sz]; });
+    return out;
   };
 
-  // OK a single size → deduct it from inventory NOW. Locks the row on success.
-  const okSize = async (sz) => {
-    const data = pickedSizes[sz] || { total: 0, details: {} };
-    const details = data.details || {};
-    const total = Object.values(details).reduce((a, b) => a + (parseInt(b) || 0), 0);
-    if (total <= 0) { toast.error(`Captura cantidades para la talla ${sz}`); return; }
+  // ── Navegación entre stages ──────────────────────────────────────────────
+  const goToLocations = (sz) => {
+    setActiveSize(sz); setActiveLocation(null); setActiveBox(null);
+    setLocScan(""); setBoxScan(""); setBindingInfo(null);
+    setStage('locations');
+  };
+  const backToSizes = () => {
+    setActiveSize(null); setActiveLocation(null); setActiveBox(null);
+    setBindingInfo(null); setStage('sizes');
+  };
+  const backToLocations = () => {
+    setActiveLocation(null); setActiveBox(null);
+    setBindingInfo(null); setBoxScan("");
+    setStage('locations');
+  };
+  const backToBoxes = () => {
+    setActiveBox(null); setBindingInfo(null); setBoxScan("");
+    setStage('boxes');
+  };
 
-    // Cada celda con qty>0 debe tener una caja escaneada. Sin scan no
-    // se descuenta — el sistema rechaza igual el backend.
-    const boxes = pickedBoxes[sz] || {};
-    const missing = Object.entries(details).filter(([loc, qty]) => (parseInt(qty)||0) > 0 && !boxes[loc]?.box_id);
-    if (missing.length) {
-      toast.error(`Escanea la caja para ${missing.map(([l])=>l).join(', ')}`);
+  // ── Scan de UBICACIÓN ─────────────────────────────────────────────────────
+  const handleLocationScan = (raw) => {
+    const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
+    setLocScan("");
+    if (!code) return;
+    const hit = locsFor(activeSize).find(l => norm(l.location) === code);
+    if (!hit) {
+      toast.error(`Ubicación "${code}" no es válida para la talla ${activeSize}`);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
-    // Estructura nueva: { loc: {qty, box_id} } en lugar de { loc: qty }
-    const detailsWithBoxes = Object.fromEntries(
-      Object.entries(details).map(([loc, qty]) => [loc, {
-        qty: parseInt(qty) || 0,
-        box_id: boxes[loc]?.box_id || null,
-      }])
-    );
-    setCommitting(sz);
-    const ok = await onPickSize(ticket.ticket_id, sz, detailsWithBoxes);
-    setCommitting(null);
-    if (ok) {
-      setCommitted(prev => new Set(prev).add(sz));
-      setOpenSize(null);
-    }
+    setActiveLocation(hit);
+    setStage('boxes');
+    toast.success(`✓ Ubicación ${hit.location} · ${hit.available} pz aquí`);
+    if (navigator.vibrate) navigator.vibrate(60);
   };
 
-  // ── Box scan (por celda) ─────────────────────────────────────────────────
-  const handleBoxScan = async (rawLpn) => {
-    if (!scanningCell) return;
-    const { sz, loc } = scanningCell;
-    const lpn = String(rawLpn || "").trim();
+  // ── Scan de CAJA ─────────────────────────────────────────────────────────
+  const handleBoxScan = async (raw) => {
+    const lpn = String(raw || "").trim();
+    setBoxScan("");
     if (!lpn) return;
     try {
       const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/scan-box`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lpn, location: loc }),
+        body: JSON.stringify({ lpn, location: activeLocation.location }),
       });
       const data = await r.json();
       if (!r.ok) { toast.error(data.detail || "Error al escanear"); return; }
       if (data.status === "matched") {
-        setPickedBoxes(p => ({
-          ...p,
-          [sz]: { ...(p[sz]||{}), [loc]: { box_id: data.box.box_id, units: data.box.units, lpn } },
-        }));
-        setScanningCell(null);
-        toast.success(`Caja ${data.box.box_id} identificada (${data.box.units} pz)`);
+        setActiveBox({ box_id: data.box.box_id, units: data.box.units, lpn });
+        // Default = min(caja, restante)
+        const remain = remainingOf(activeSize);
+        setTakeQty(Math.min(data.box.units, remain));
+        setStage('quantity');
+        toast.success(`✓ Caja ${data.box.box_id} · ${data.box.units} pz`);
         if (navigator.vibrate) navigator.vibrate(60);
       } else if (data.status === "wrong_ticket") {
-        toast.error(data.message || "La caja escaneada no es de este ticket");
+        toast.error(data.message || "La caja no es de este ticket");
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       } else if (data.status === "needs_binding") {
-        setScanningCell(null);
-        setBindingModal({ ...data, cell: { sz, loc } });
+        setBindingInfo(data);
+        setStage('binding');
       }
     } catch (e) { toast.error("Error de conexión al escanear"); }
   };
 
+  // ── Bind inline (LPN externo no registrado) ──────────────────────────────
   const submitBinding = async ({ size, actual_units }) => {
-    if (!bindingModal) return;
-    const { lpn, location, cell } = bindingModal;
     try {
       const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/bind-box`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lpn, location, size, actual_units }),
+        body: JSON.stringify({
+          lpn: bindingInfo.lpn, location: activeLocation.location,
+          size, actual_units,
+        }),
       });
       const data = await r.json();
       if (!r.ok) { toast.error(data.detail || "Error al ligar caja"); return; }
-      // El bind mueve al cell que iniciamos el scan (mantenemos loc + cambiamos sz si hizo falta)
-      const targetSz = cell?.sz || size;
-      const targetLoc = cell?.loc || location;
-      setPickedBoxes(p => ({
-        ...p,
-        [targetSz]: { ...(p[targetSz]||{}), [targetLoc]: {
-          box_id: data.box.box_id, units: data.box.units, lpn,
-        }},
-      }));
-      setBindingModal(null);
+      setActiveBox({ box_id: data.box.box_id, units: data.box.units, lpn: bindingInfo.lpn });
+      const remain = remainingOf(activeSize);
+      setTakeQty(Math.min(data.box.units, remain));
+      setBindingInfo(null);
+      setStage('quantity');
       toast.success(data.reconciled
-        ? `Caja ligada + inventario ajustado (${data.delta>0?'+':''}${data.delta})`
+        ? `Caja ligada + ajuste (${data.delta > 0 ? '+' : ''}${data.delta})`
         : `Caja ${data.box.box_id} ligada`);
       if (navigator.vibrate) navigator.vibrate(80);
     } catch (e) { toast.error("Error de conexión al ligar"); }
   };
 
-  // Reopen an already-deducted size to correct it (re-OK applies the delta).
-  const editSize = (sz) => {
-    setCommitted(prev => { const n = new Set(prev); n.delete(sz); return n; });
-    setOpenSize(sz);
-  };
+  // ── Descuento final ──────────────────────────────────────────────────────
+  const confirmQuantity = async () => {
+    const qty = parseInt(takeQty) || 0;
+    if (qty <= 0) { toast.error("Ingresa una cantidad"); return; }
+    if (qty > activeBox.units) { toast.error(`La caja solo tiene ${activeBox.units} pz`); return; }
+    const remain = remainingOf(activeSize);
+    if (qty > remain) { toast.error(`Máximo ${remain} pz para talla ${activeSize}`); return; }
 
-  // Scanner (DataWedge keyboard mode): types the code + Enter into this box.
-  const handleScan = (raw) => {
-    // Strip any scanner preamble/prefix (e.g. "%-") before matching — the label
-    // barcodes are clean Code128 of the location name. Locations always start
-    // with a letter/digit, so dropping leading non-alphanumerics is safe.
-    const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
-    setScan("");
-    if (!code) return;
-    // A single shelf can hold several sizes of the same style. Collect EVERY
-    // active size that has this location so the operator sees all of them, not
-    // just the first match (the old loop returned on the first hit).
-    const matches = [];
-    let matchedLocation = "";
-    for (const sz of activeSizes) {
-      const hit = locsFor(sz).find(l => norm(l.location) === code);
-      if (hit) { matches.push(sz); matchedLocation = hit.location; }
+    // Estructura para pick-size: incluye todas las locs ya deducted + la nueva
+    const prev = pickedSizes[activeSize]?.details || {};
+    const nextDetails = { ...prev, [activeLocation.location]: (prev[activeLocation.location] || 0) + qty };
+    const detailsWithBoxes = Object.fromEntries(
+      Object.entries(nextDetails).map(([loc, q]) => [loc, {
+        qty: q,
+        box_id: loc === activeLocation.location ? activeBox.box_id : null,
+      }])
+    );
+    setCommitting(true);
+    const ok = await onPickSize(ticket.ticket_id, activeSize, detailsWithBoxes);
+    setCommitting(false);
+    if (ok) {
+      // Actualiza el estado local para reflejar el descuento sin re-fetch
+      setPickedSizes(p => ({
+        ...p,
+        [activeSize]: {
+          total: (parseInt(p[activeSize]?.total) || 0) + qty,
+          details: nextDetails,
+        },
+      }));
+      setCommitted(prev => new Set(prev).add(activeSize));
+      backToSizes();
     }
-    if (matches.length === 0) {
-      toast.error(`Ubicación "${code}" no pertenece a este surtido`);
-      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
-      return;
-    }
-    setOpenSize(matches[0]);
-    setScanHit({ location: matchedLocation, sizes: matches });
-    toast.success(matches.length > 1
-      ? `Ubicación ${matchedLocation} · tallas ${matches.join(", ")}`
-      : `Ubicación ${matchedLocation} · talla ${matches[0]}`);
-    if (navigator.vibrate) navigator.vibrate(60);
   };
 
-  const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
-  // Deducted = sizes already OK'd. Progress + completion act on THIS, not on
-  // typed-but-not-OK'd numbers (those haven't left inventory).
-  const totalCommitted = activeSizes.reduce(
-    (s, sz) => s + (committed.has(sz) ? (parseInt(pickedSizes[sz]?.total) || 0) : 0), 0);
-  const committedPicked = () => {
-    const out = {};
-    activeSizes.forEach(sz => { if (committed.has(sz) && pickedSizes[sz]) out[sz] = pickedSizes[sz]; });
-    return out;
-  };
-  const isComplete = totalCommitted >= totalRequired && totalRequired > 0;
-
+  // ══════════════════ RENDER ═══════════════════════════════════════════════
   return (
     <div className="pb-28">
-      {/* Ticket info + scan box */}
-      <div className="p-3 space-y-3">
+      {/* Header fijo con progreso */}
+      <div className="p-3">
         <div className="bg-[#131a2b] border border-white/10 rounded-2xl p-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 text-sm font-mono font-black">{ticket.style}</span>
@@ -615,317 +615,310 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
             <span className={`text-sm font-black ${isComplete ? "text-emerald-400" : "text-amber-400"}`}>{totalCommitted} / {totalRequired} pz</span>
           </div>
           <div className="mt-1.5 h-2.5 bg-white/10 rounded-full overflow-hidden">
-            <div className={`h-full ${isComplete ? "bg-emerald-500" : totalCommitted > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${totalRequired > 0 ? Math.round((totalCommitted / totalRequired) * 100) : 0}%` }} />
+            <div className={`h-full ${isComplete ? "bg-emerald-500" : totalCommitted > 0 ? "bg-amber-500" : "bg-slate-600"}`}
+                 style={{ width: `${totalRequired > 0 ? Math.round((totalCommitted / totalRequired) * 100) : 0}%` }} />
           </div>
 
-          {/* MOS blank status — editable from the picking screen */}
-          <div className="mt-3 pt-3 border-t border-white/10">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <Tag className="w-3.5 h-3.5 text-blue-300" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blank Status (MOS)</span>
-              {savingStatus && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300 ml-auto" />}
+          {/* Blank status — solo en la lista de tallas */}
+          {stage === 'sizes' && (
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Tag className="w-3.5 h-3.5 text-blue-300" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blank Status (MOS)</span>
+                {savingStatus && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300 ml-auto" />}
+              </div>
+              <select value={blankStatus} onChange={(e) => updateBlankStatus(e.target.value)}
+                disabled={savingStatus || !orderId}
+                className="w-full h-12 bg-black/30 border border-white/10 rounded-xl px-3 text-base font-bold focus:outline-none focus:border-blue-400 disabled:opacity-50">
+                <option value="">— Sin status —</option>
+                {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                {blankStatus && !blankOptions.includes(blankStatus) && (
+                  <option value={blankStatus}>{blankStatus}</option>
+                )}
+              </select>
             </div>
-            <select
-              value={blankStatus}
-              onChange={(e) => updateBlankStatus(e.target.value)}
-              onFocus={() => { editingRef.current = true; }}
-              onBlur={() => { editingRef.current = false; setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50); }}
-              disabled={savingStatus || !orderId}
-              className="w-full h-12 bg-black/30 border border-white/10 rounded-xl px-3 text-base font-bold focus:outline-none focus:border-blue-400 disabled:opacity-50"
-            >
-              <option value="">— Sin status —</option>
-              {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
-              {blankStatus && !blankOptions.includes(blankStatus) && (
-                <option value={blankStatus}>{blankStatus}</option>
-              )}
-            </select>
-          </div>
-        </div>
-
-        <div className="relative">
-          <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
-          <input
-            ref={scanRef}
-            autoFocus
-            value={scan}
-            onChange={(e) => setScan(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScan(scan); } }}
-            onBlur={() => setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50)}
-            inputMode="none"
-            placeholder="Escanea la ubicación…"
-            className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-blue-400"
-          />
+          )}
         </div>
       </div>
 
-      {/* Sizes */}
-      <div className="px-3 space-y-2">
-        {activeSizes.map(sz => {
-          const required = parseInt(sizes[sz]) || 0;
-          const data = pickedSizes[sz] || { total: 0, details: {} };
-          const picked = data.total;
-          const isCommitted = committed.has(sz);
-          const isOpen = openSize === sz;
-          const locs = locsFor(sz);
-          return (
-            <div key={sz} className={`rounded-2xl border overflow-hidden ${isCommitted ? "border-emerald-500/60 bg-emerald-500/10" : "border-white/10 bg-[#131a2b]"}`}>
-              <button onClick={() => isCommitted ? editSize(sz) : setOpenSize(isOpen ? null : sz)} className="w-full flex items-center gap-3 p-3.5 active:bg-white/5">
-                {isCommitted ? <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" /> : <Package className="w-6 h-6 text-slate-400 shrink-0" />}
+      {/* ══════ STAGE 1: SIZES ══════ */}
+      {stage === 'sizes' && (
+        <div className="px-3 space-y-2">
+          <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
+            Tallas por surtir · toca para escanear
+          </div>
+          {activeSizes.map(sz => {
+            const req = parseInt(sizes[sz]) || 0;
+            const done = parseInt(pickedSizes[sz]?.total) || 0;
+            const remain = req - done;
+            const isDone = remain <= 0;
+            return (
+              <button key={sz} onClick={() => !isDone && goToLocations(sz)} disabled={isDone}
+                className={`w-full rounded-2xl border p-4 flex items-center gap-3 active:bg-white/5 disabled:opacity-50 ${
+                  isDone ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-[#131a2b]"
+                }`}>
+                {isDone
+                  ? <CheckCircle2 className="w-7 h-7 text-emerald-400 shrink-0" />
+                  : <Package className="w-7 h-7 text-slate-400 shrink-0" />}
                 <div className="flex-1 text-left">
-                  <div className="text-xl font-black flex items-center gap-2">{sz}
-                    {isCommitted && <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase tracking-widest">Descontado</span>}
+                  <div className="text-2xl font-black">{sz}</div>
+                  <div className="text-[11px] text-slate-400">
+                    {isDone
+                      ? `Completo · ${done} descontado`
+                      : `Requerido ${req} · descontado ${done} · faltan ${remain}`}
                   </div>
-                  <div className="text-[11px] text-slate-400">Requerido: {required}{isCommitted ? " · toca para corregir" : ""}</div>
                 </div>
-                <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${isCommitted ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5"}`}>{picked}</div>
+                <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${
+                  isDone ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-200"
+                }`}>{done}/{req}</div>
               </button>
-
-              {isOpen && (
-                <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-2">
-                  {locs.length === 0 ? (
-                    <div className="flex items-center gap-2 text-amber-400 py-2">
-                      <AlertTriangle className="w-5 h-5 shrink-0" />
-                      <span className="text-xs font-bold">Sin stock para esta talla/color.</span>
-                    </div>
-                  ) : locs.map((l, i) => {
-                    const cur = data.details[l.location] || 0;
-                    const hit = scanHit && scanHit.location === l.location;
-                    const need = required - picked + cur;
-                    return (
-                      <div key={i} className={`rounded-xl border p-3 ${hit ? "border-blue-400 ring-2 ring-blue-400/40 bg-blue-500/10" : "border-white/10 bg-black/20"}`}>
-                        <div className="flex items-center justify-between">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="w-4 h-4 text-blue-300 shrink-0" />
-                              <span className="font-mono font-black text-blue-300 text-base">{l.location}</span>
-                            </div>
-                            <div className="text-[11px] text-slate-400 mt-0.5">Disp: <b className="text-emerald-400">{l.available}</b>{l.country_of_origin ? ` · ${l.country_of_origin}` : ""}</div>
-                          </div>
-                          <button onClick={() => {
-                              updatePicked(sz, l.location, Math.min(need, l.available));
-                              // Drop straight into the field so they can correct the
-                              // amount by typing instead of tapping − repeatedly.
-                              editingRef.current = true;
-                              const el = document.getElementById(`pick-${sz}-${i}`);
-                              if (el) { el.focus(); el.select(); }
-                            }}
-                            className="px-3 py-2 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest">MAX</button>
-                        </div>
-                        <div className="mt-2.5 flex items-center gap-2">
-                          <button onClick={() => updatePicked(sz, l.location, cur - 1)} className="w-12 h-12 rounded-xl bg-white/5 active:bg-white/10 text-2xl font-black">−</button>
-                          <input
-                            id={`pick-${sz}-${i}`}
-                            type="number" inputMode="numeric" min="0" max={l.available}
-                            value={cur || ""}
-                            onChange={(e) => updatePicked(sz, l.location, e.target.value)}
-                            onFocus={(e) => { editingRef.current = true; e.target.select(); }}
-                            onBlur={() => { editingRef.current = false; setTimeout(() => { if (!editingRef.current) scanRef.current?.focus(); }, 50); }}
-                            placeholder="0"
-                            className="flex-1 h-12 bg-black/30 border border-white/10 rounded-xl text-center text-2xl font-mono font-black focus:outline-none focus:border-blue-400"
-                          />
-                          <button onClick={() => updatePicked(sz, l.location, cur + 1)} className="w-12 h-12 rounded-xl bg-white/5 active:bg-white/10 text-2xl font-black">＋</button>
-                        </div>
-                        {/* Fila del scan de caja: obligatoria para poder OK-ear */}
-                        {(() => {
-                          const boxInfo = (pickedBoxes[sz] || {})[l.location];
-                          if (boxInfo?.box_id) {
-                            return (
-                              <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2">
-                                <Barcode className="w-4 h-4 text-emerald-300 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-[11px] font-black text-emerald-300 truncate">
-                                    Caja: {boxInfo.box_id}
-                                    {boxInfo.lpn && boxInfo.lpn !== boxInfo.box_id && (
-                                      <span className="ml-1 opacity-70 font-mono">({boxInfo.lpn})</span>
-                                    )}
-                                  </div>
-                                  <div className="text-[10px] text-emerald-400/80">{boxInfo.units} pz en caja</div>
-                                </div>
-                                <button onClick={() => {
-                                    setPickedBoxes(p => {
-                                      const cp = { ...(p[sz]||{}) }; delete cp[l.location];
-                                      return { ...p, [sz]: cp };
-                                    });
-                                    setScanningCell({ sz, loc: l.location });
-                                  }}
-                                  className="px-2 py-1 rounded-md bg-white/10 active:bg-white/20 text-[10px] font-black uppercase tracking-widest">
-                                  Cambiar
-                                </button>
-                              </div>
-                            );
-                          }
-                          return (
-                            <button onClick={() => setScanningCell({ sz, loc: l.location })}
-                              className="mt-2 w-full h-12 rounded-xl bg-blue-600/20 border-2 border-dashed border-blue-500/50 active:bg-blue-600/30 text-blue-300 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2">
-                              <QrCode className="w-5 h-5" /> Escanear caja
-                            </button>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })}
-                  {locs.length > 0 && (
-                    <button
-                      onClick={() => okSize(sz)}
-                      disabled={committing === sz || (data.total || 0) <= 0}
-                      className="w-full h-12 rounded-xl bg-emerald-600 active:bg-emerald-700 text-white text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
-                      {committing === sz ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                      OK · Descontar {data.total || 0} pz
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Sticky action bar — material already leaves inventory per-size as it's
-          OK'd above; this button only finalizes the ticket (full or partial). */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-t border-white/10 p-3">
-        <button onClick={() => onSave(ticket.ticket_id, committedPicked(), true)} disabled={saving || totalCommitted === 0}
-          className={`w-full h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} {isComplete ? "Completar surtido" : "Cerrar parcial"}
-        </button>
-      </div>
-
-      {/* Modal: input de scan de caja física */}
-      {scanningCell && (
-        <BoxScanModal
-          cell={scanningCell}
-          onClose={() => setScanningCell(null)}
-          onScan={handleBoxScan}
-        />
+            );
+          })}
+        </div>
       )}
 
-      {/* Modal: cuestionario de binding cuando el LPN no está registrado */}
-      {bindingModal && (
-        <BoxBindModal
-          info={bindingModal}
-          onClose={() => setBindingModal(null)}
-          onSubmit={submitBinding}
-        />
-      )}
-    </div>
-  );
-}
-
-// ═════════════ BoxScanModal ═════════════════════════════════════════════════
-// Input focused para DataWedge (keyboard mode). El scanner "teclea" el LPN +
-// Enter directo en el input. Textbox grande para modo manual también.
-function BoxScanModal({ cell, onClose, onScan }) {
-  const [value, setValue] = useState("");
-  const inputRef = useRef(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#131a2b] border border-blue-500/40 rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-black uppercase tracking-widest text-blue-300 flex items-center gap-2">
-            <QrCode className="w-5 h-5" /> Escanear caja
-          </h3>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="text-xs text-slate-400 mb-3">
-          Talla <b className="text-slate-200">{cell.sz}</b> · Ubicación <b className="text-blue-300 font-mono">{cell.loc}</b>
-        </div>
-        <div className="relative">
-          <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
-          <input
-            ref={inputRef}
-            value={value}
-            onChange={e => setValue(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onScan(value); }}}
-            placeholder="BOX-000000 o LPN de proveedor…"
-            className="w-full h-16 pl-12 pr-3 bg-black/40 border-2 border-blue-500/60 rounded-2xl text-lg font-mono font-black focus:outline-none focus:border-blue-400"
-            inputMode="text"
-            autoComplete="off"
-          />
-        </div>
-        <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-          El scanner del PDA lo teclea automático. Si es una caja BOX- ya registrada, se identifica al instante. Si es un LPN de proveedor, se abrirá un cuestionario para atarla.
-        </div>
-        <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="flex-1 h-12 rounded-xl border border-white/10 text-sm font-black uppercase tracking-widest">Cancelar</button>
-          <button onClick={() => onScan(value)} disabled={!value.trim()}
-            className="flex-1 h-12 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-sm font-black uppercase tracking-widest disabled:opacity-40">
-            Identificar
+      {/* ══════ STAGE 2: LOCATIONS ══════ */}
+      {stage === 'locations' && activeSize && (
+        <div className="px-3 space-y-3">
+          <button onClick={backToSizes}
+            className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+            <ChevronLeft className="w-4 h-4" /> Volver a tallas
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-3">
+            <div className="text-[10px] font-black uppercase tracking-widest text-blue-300">Talla activa</div>
+            <div className="text-3xl font-black text-white">{activeSize}</div>
+            <div className="text-xs text-slate-300 mt-1">Faltan <b className="text-amber-300">{remainingOf(activeSize)} pz</b></div>
+          </div>
 
-// ═════════════ BoxBindModal ═════════════════════════════════════════════════
-// Cuando el LPN escaneado no está en sistema. Pide talla (dropdown de las que
-// aún faltan en el ticket) y cantidad real que trae la caja. Sirve para atar
-// el LPN físico a un box_id de la BD y reconciliar la cuenta.
-function BoxBindModal({ info, onClose, onSubmit }) {
-  const preset = info.cell?.sz || (info.sizes_needed[0]?.size || "");
-  const [size, setSize] = useState(preset);
-  const [units, setUnits] = useState(() => {
-    const remain = info.sizes_needed.find(s => s.size === preset)?.remaining;
-    return remain != null ? String(remain) : "";
-  });
-  const remaining = info.sizes_needed.find(s => s.size === size)?.remaining || 0;
+          <div className="relative">
+            <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
+            <input ref={locScanRef} autoFocus value={locScan}
+              onChange={(e) => setLocScan(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleLocationScan(locScan); }}}
+              onBlur={() => setTimeout(() => locScanRef.current?.focus(), 50)}
+              inputMode="none" placeholder="Escanea la ubicación…"
+              className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-blue-400" />
+          </div>
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#131a2b] border border-amber-500/40 rounded-2xl w-full max-w-md p-5 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
-            <Barcode className="w-5 h-5" /> Caja no registrada
-          </h3>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
-          <div className="text-[11px] text-amber-300 mb-1">LPN escaneado</div>
-          <div className="font-mono font-black text-lg text-amber-200">{info.lpn}</div>
-        </div>
-        <div className="text-xs text-slate-400 mb-3 leading-relaxed">
-          Vamos a atar esta etiqueta a la caja de la BD. El ticket es{" "}
-          <b className="text-slate-200">{info.ticket_context.style}</b> ·{" "}
-          <b className="text-slate-200">{info.ticket_context.color}</b>{" "}
-          en <b className="text-blue-300 font-mono">{info.location}</b>. Confirma:
-        </div>
-
-        <div className="mb-3">
-          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Talla real de la caja</label>
-          <select value={size} onChange={e => {
-              setSize(e.target.value);
-              const r = info.sizes_needed.find(s => s.size === e.target.value)?.remaining;
-              if (r != null) setUnits(String(r));
-            }}
-            className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-lg font-mono font-black focus:outline-none focus:border-amber-400">
-            {info.sizes_needed.map(s => (
-              <option key={s.size} value={s.size}>{s.size} · faltan {s.remaining}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="mb-3">
-          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
-            Cantidad REAL en la caja (cuenta física)
-          </label>
-          <input type="number" inputMode="numeric" min="0" value={units} onChange={e => setUnits(e.target.value)}
-            placeholder="0"
-            className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-2xl text-center font-mono font-black focus:outline-none focus:border-amber-400" />
-          <div className="text-[10px] text-slate-500 mt-1">
-            El sistema ajustará el inventario si difiere de la BD.
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
+              Ubicaciones disponibles
+            </div>
+            <div className="space-y-1.5">
+              {locsFor(activeSize).length === 0 ? (
+                <div className="flex items-center gap-2 text-amber-400 py-4 justify-center">
+                  <AlertTriangle className="w-5 h-5 shrink-0" />
+                  <span className="text-xs font-bold">Sin stock para esta talla/color</span>
+                </div>
+              ) : locsFor(activeSize).map((l, i) => (
+                <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3">
+                  <MapPin className="w-5 h-5 text-blue-300 shrink-0" />
+                  <div className="flex-1">
+                    <div className="font-mono font-black text-blue-300 text-lg">{l.location}</div>
+                    {l.country_of_origin && <div className="text-[10px] text-slate-500">{l.country_of_origin}</div>}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl font-mono font-black text-emerald-400">{l.available}</div>
+                    <div className="text-[9px] uppercase text-slate-500 font-black tracking-widest">pz</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 h-12 rounded-xl border border-white/10 text-sm font-black uppercase tracking-widest">Cancelar</button>
-          <button
-            onClick={() => onSubmit({ size, actual_units: parseInt(units) || 0 })}
-            disabled={!size || !units}
-            className="flex-1 h-12 rounded-xl bg-amber-500 active:bg-amber-600 text-black text-sm font-black uppercase tracking-widest disabled:opacity-40">
-            Ligar y continuar
+      {/* ══════ STAGE 3: BOXES ══════ */}
+      {stage === 'boxes' && activeSize && activeLocation && (
+        <div className="px-3 space-y-3">
+          <button onClick={backToLocations}
+            className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+            <ChevronLeft className="w-4 h-4" /> Volver a ubicaciones
+          </button>
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              <div className="flex-1">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Ubicación confirmada</div>
+                <div className="font-mono font-black text-emerald-100 text-xl">{activeLocation.location}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-mono font-black text-emerald-300">{activeLocation.available}</div>
+                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz aquí</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1 flex items-center gap-1">
+              <QrCode className="w-3.5 h-3.5" /> Escanea la caja
+            </div>
+            <div className="relative">
+              <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
+              <input ref={boxScanRef} autoFocus value={boxScan}
+                onChange={(e) => setBoxScan(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleBoxScan(boxScan); }}}
+                onBlur={() => setTimeout(() => boxScanRef.current?.focus(), 50)}
+                inputMode="text" placeholder="BOX-000000 o LPN de proveedor…"
+                className="w-full h-16 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/60 rounded-2xl text-lg font-mono font-black focus:outline-none focus:border-blue-400" />
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500 px-1 leading-relaxed">
+              Si es BOX- registrada se identifica al instante. Si es LPN de proveedor, te pediremos ligar la caja.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ STAGE 4a: BINDING (LPN externo) ══════ */}
+      {stage === 'binding' && bindingInfo && (
+        <BindingStage
+          info={bindingInfo}
+          location={activeLocation.location}
+          onBack={backToBoxes}
+          onSubmit={submitBinding}
+          defaultSize={activeSize}
+        />
+      )}
+
+      {/* ══════ STAGE 4b: QUANTITY ══════ */}
+      {stage === 'quantity' && activeBox && activeLocation && (
+        <div className="px-3 space-y-3">
+          <button onClick={backToBoxes}
+            className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+            <ChevronLeft className="w-4 h-4" /> Volver a caja
+          </button>
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <Barcode className="w-5 h-5 text-emerald-400" />
+              <div className="flex-1">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Caja identificada</div>
+                <div className="font-mono font-black text-emerald-100 text-lg">{activeBox.box_id}</div>
+                {activeBox.lpn && activeBox.lpn !== activeBox.box_id && (
+                  <div className="text-[10px] text-emerald-400/60 font-mono">LPN: {activeBox.lpn}</div>
+                )}
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-mono font-black text-emerald-300">{activeBox.units}</div>
+                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz en caja</div>
+              </div>
+            </div>
+            <div className="text-[10px] text-slate-400 pt-2 border-t border-emerald-500/20">
+              Talla <b className="text-emerald-300">{activeSize}</b> · Ubic. <b className="text-blue-300 font-mono">{activeLocation.location}</b> · Faltan <b className="text-amber-300">{remainingOf(activeSize)} pz</b>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
+              ¿Cuántas piezas vas a tomar?
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setTakeQty(Math.max(0, (parseInt(takeQty) || 0) - 1))}
+                className="w-16 h-16 rounded-2xl bg-white/5 active:bg-white/10 text-3xl font-black">−</button>
+              <input type="number" inputMode="numeric" min="0"
+                max={Math.min(activeBox.units, remainingOf(activeSize))}
+                value={takeQty} onChange={(e) => setTakeQty(e.target.value)}
+                onFocus={(e) => e.target.select()}
+                className="flex-1 h-16 bg-black/40 border-2 border-blue-500/40 rounded-2xl text-center text-4xl font-mono font-black focus:outline-none focus:border-blue-400" />
+              <button onClick={() => setTakeQty(Math.min(Math.min(activeBox.units, remainingOf(activeSize)), (parseInt(takeQty) || 0) + 1))}
+                className="w-16 h-16 rounded-2xl bg-white/5 active:bg-white/10 text-3xl font-black">＋</button>
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500 px-1">
+              Default = mínimo entre {activeBox.units} (caja) y {remainingOf(activeSize)} (restante)
+            </div>
+          </div>
+
+          <button onClick={confirmQuantity} disabled={committing || (parseInt(takeQty) || 0) <= 0}
+            className="w-full h-16 rounded-2xl bg-emerald-600 active:bg-emerald-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
+            {committing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
+            Descontar {parseInt(takeQty) || 0} pz
           </button>
         </div>
+      )}
+
+      {/* Sticky action bar — solo visible en sizes */}
+      {stage === 'sizes' && (
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0b0f1a]/95 backdrop-blur border-t border-white/10 p-3">
+          <button onClick={() => onSave(ticket.ticket_id, committedPicked(), true)}
+            disabled={saving || totalCommitted === 0}
+            className={`w-full h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${
+              isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+            {isComplete ? "Completar surtido" : "Cerrar parcial"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════ BindingStage ══════════════════════════════════════════
+// Cuestionario inline (no modal) cuando el LPN escaneado no está en sistema.
+// Pide talla + cantidad real, llama /bind-box y regresa al stage quantity.
+function BindingStage({ info, location, onBack, onSubmit, defaultSize }) {
+  const preselected = defaultSize && info.sizes_needed.find(s => s.size === defaultSize)
+    ? defaultSize
+    : (info.sizes_needed[0]?.size || "");
+  const [size, setSize] = useState(preselected);
+  const [units, setUnits] = useState(() => {
+    const r = info.sizes_needed.find(s => s.size === preselected)?.remaining;
+    return r != null ? String(r) : "";
+  });
+
+  return (
+    <div className="px-3 space-y-3">
+      <button onClick={onBack}
+        className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+        <ChevronLeft className="w-4 h-4" /> Volver a caja
+      </button>
+
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle className="w-5 h-5 text-amber-400" />
+          <div className="text-sm font-black uppercase tracking-widest text-amber-300">Caja no registrada</div>
+        </div>
+        <div className="text-[10px] text-amber-400/70 mb-1">LPN escaneado</div>
+        <div className="font-mono font-black text-lg text-amber-100 break-all">{info.lpn}</div>
+        <div className="mt-2 text-[10px] text-slate-400 leading-relaxed">
+          Vas a atar esta etiqueta a la caja de la BD en{" "}
+          <b className="text-blue-300 font-mono">{location}</b>. Confirma:
+        </div>
       </div>
+
+      <div>
+        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
+          Talla real de la caja
+        </label>
+        <select value={size} onChange={e => {
+            setSize(e.target.value);
+            const r = info.sizes_needed.find(s => s.size === e.target.value)?.remaining;
+            if (r != null) setUnits(String(r));
+          }}
+          className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-lg font-mono font-black focus:outline-none focus:border-amber-400">
+          {info.sizes_needed.map(s => (
+            <option key={s.size} value={s.size}>{s.size} · faltan {s.remaining}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
+          Cantidad REAL en la caja (cuenta física)
+        </label>
+        <input type="number" inputMode="numeric" min="0" value={units}
+          onChange={e => setUnits(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          placeholder="0"
+          className="w-full h-16 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-3xl text-center font-mono font-black focus:outline-none focus:border-amber-400" />
+        <div className="text-[10px] text-slate-500 mt-1">
+          El sistema ajustará el inventario si difiere de la BD.
+        </div>
+      </div>
+
+      <button onClick={() => onSubmit({ size, actual_units: parseInt(units) || 0 })}
+        disabled={!size || !units}
+        className="w-full h-16 rounded-2xl bg-amber-500 active:bg-amber-600 text-black text-base font-black uppercase tracking-widest disabled:opacity-40">
+        Ligar y continuar
+      </button>
     </div>
   );
 }
