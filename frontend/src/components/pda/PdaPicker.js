@@ -247,9 +247,10 @@ function BoxLocator() {
           autoFocus
           value={scan}
           onChange={(e) => setScan(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(scan); } }}
-          inputMode="none"
-          placeholder="Escanea el número de caja / LPN…"
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.currentTarget.value); } }}
+          inputMode="text"
+          autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
+          placeholder="Escanea o teclea el número de caja / LPN…"
           className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-emerald-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-emerald-400"
         />
       </div>
@@ -694,11 +695,22 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
             <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
             <input ref={locScanRef} autoFocus value={locScan}
               onChange={(e) => setLocScan(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleLocationScan(locScan); }}}
-              onBlur={() => setTimeout(() => locScanRef.current?.focus(), 50)}
-              inputMode="none" placeholder="Escanea la ubicación…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  // Toma el valor DIRECTO del input para no depender del state
+                  // (evita closure stale cuando DataWedge dispara Enter rapido).
+                  handleLocationScan(e.currentTarget.value);
+                }
+              }}
+              inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
+              placeholder="Escanea o teclea la ubicación…"
               className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-blue-400" />
           </div>
+          <button onClick={() => handleLocationScan(locScan)} disabled={!locScan.trim()}
+            className="w-full h-11 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest disabled:opacity-40 -mt-1">
+            Confirmar ubicación
+          </button>
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
@@ -757,11 +769,20 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
               <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
               <input ref={boxScanRef} autoFocus value={boxScan}
                 onChange={(e) => setBoxScan(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleBoxScan(boxScan); }}}
-                onBlur={() => setTimeout(() => boxScanRef.current?.focus(), 50)}
-                inputMode="text" placeholder="BOX-000000 o LPN de proveedor…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleBoxScan(e.currentTarget.value);
+                  }
+                }}
+                inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
+                placeholder="BOX-000000 o LPN de proveedor…"
                 className="w-full h-16 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/60 rounded-2xl text-lg font-mono font-black focus:outline-none focus:border-blue-400" />
             </div>
+            <button onClick={() => handleBoxScan(boxScan)} disabled={!boxScan.trim()}
+              className="w-full h-11 mt-2 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest disabled:opacity-40">
+              Identificar caja
+            </button>
             <div className="mt-2 text-[10px] text-slate-500 px-1 leading-relaxed">
               Si es BOX- registrada se identifica al instante. Si es LPN de proveedor, te pediremos ligar la caja.
             </div>
