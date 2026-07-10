@@ -2633,6 +2633,25 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         specific = await db.wms_boxes.find_one({"box_id": only_box_id})
         if not specific or int(specific.get("units") or 0) <= 0:
             raise HTTPException(409, f"La caja {only_box_id} no tiene unidades disponibles")
+        # CROSS-CHECK: la caja escaneada debe corresponder al style/color/size
+        # del ticket. Si no calza, algo va MUY mal (frontend stale, corrupción,
+        # bug) y hay que abortar antes de descontar de la caja equivocada.
+        b_style = (specific.get("style") or (specific.get("sku") or "").split("-")[0] or "").strip().upper()
+        b_color = (specific.get("color") or "").strip().upper()
+        b_size  = (specific.get("size") or "").strip().upper()
+        t_style = (style or "").strip().upper()
+        t_color = (color or "").strip().upper()
+        t_size  = (size or "").strip().upper()
+        if b_size != t_size or b_color != t_color:
+            raise HTTPException(409, (
+                f"La caja {only_box_id} contiene {b_color}/{b_size}, "
+                f"no {t_color}/{t_size}. Escanea otra caja."
+            ))
+        # style: aceptamos que el sku venga como "STYLE-COLOR-SIZE" o solo "STYLE"
+        if b_style != t_style and not (specific.get("sku") or "").upper().startswith(t_style + "-"):
+            raise HTTPException(409, (
+                f"La caja {only_box_id} es de style {b_style}, no {t_style}. Escanea otra."
+            ))
         boxes = [specific]
     else:
         q = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
@@ -2662,7 +2681,44 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             upd["order_number"] = order_number
         if order_id is not None:
             upd["last_order_id"] = order_id
-        await db.wms_boxes.update_one({"_id": box["_id"]}, {"$set": upd})
+        # ATÓMICO: solo actualiza si la caja aún tiene los `b_qty` que leímos.
+        # Si dos pickers descuentan simultáneamente, el segundo find_one_and_update
+        # falla su filtro (units != b_qty tras la primera baja) y reintenta con
+        # la lectura fresca — sin ghost inventory ni units negativos.
+        atomic_res = await db.wms_boxes.find_one_and_update(
+            {"_id": box["_id"], "units": b_qty},
+            {"$set": upd},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not atomic_res:
+            # Otro proceso movió la caja entre el find y el update. Re-lee y
+            # reintenta esta iteración solo si aún hay unidades.
+            fresh = await db.wms_boxes.find_one({"_id": box["_id"]})
+            if not fresh or int(fresh.get("units") or 0) <= 0:
+                if only_box_id:
+                    raise HTTPException(409, (
+                        f"La caja {only_box_id} fue vaciada por otro picker "
+                        "durante tu descuento. Escanea otra caja."
+                    ))
+                continue
+            new_fresh_qty = int(fresh.get("units") or 0)
+            take = min(new_fresh_qty, remaining)
+            new_b = new_fresh_qty - take
+            upd["units"] = new_b; upd["qty"] = new_b
+            if new_b == 0: upd["status"] = "depleted"
+            atomic_res = await db.wms_boxes.find_one_and_update(
+                {"_id": box["_id"], "units": new_fresh_qty},
+                {"$set": upd},
+                return_document=ReturnDocument.AFTER,
+            )
+            if not atomic_res:
+                # 2do intento falló también: race conditions muy raras. Aborta
+                # esta caja limpiamente en vez de dejar inventory drift.
+                if only_box_id:
+                    raise HTTPException(409, (
+                        f"Contención alta en la caja {only_box_id}. Reintenta."
+                    ))
+                continue
         touched.append({"box_id": box.get("box_id"), "taken": take,
                         "emptied": new_b == 0, "location": box.get("location", location)})
         # Key the inventory deduct the SAME way _move_box_inventory / receiving
@@ -2694,7 +2750,17 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             "box_ids": [t["box_id"] for t in touched if t.get("box_id")],
             "boxes": touched,
             "no_box_units": remaining if remaining > 0 else 0,
+            "scanned": bool(only_box_id),         # <— True cuando el picker escaneó específica
         })
+        # Log estructurado adicional para trazabilidad rápida en producción:
+        # una línea por descuento con solo lo esencial (grep-eable).
+        logger.info(
+            "pick_deduction ticket=%s order=%s sku=%s/%s/%s loc=%s qty=%d scanned=%s boxes=%s left_ledger=%d",
+            ticket_id, order_number, style, color, size, location or "-",
+            int(qty or 0), bool(only_box_id),
+            ",".join(t["box_id"] for t in touched if t.get("box_id")) or "-",
+            remaining if remaining > 0 else 0,
+        )
 
 
 async def _available_units(style, color, size, location=""):
