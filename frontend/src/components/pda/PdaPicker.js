@@ -5,6 +5,7 @@ import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, LayoutGrid,
   MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search, ClipboardCheck,
+  QrCode, X, Barcode,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
 
@@ -372,6 +373,11 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
   const [scan, setScan] = useState("");
   const [scanHit, setScanHit] = useState(null); // {sz, location}
   const scanRef = useRef(null);
+  // Box-scan state: por cada (talla, ubicación) guardamos la caja física
+  // identificada por LPN. Sin scan no se puede OK'ear (require_scan=true).
+  const [pickedBoxes, setPickedBoxes] = useState({});  // { sz: { loc: {box_id, units} } }
+  const [scanningCell, setScanningCell] = useState(null);   // { sz, loc } → abre modal scan
+  const [bindingModal, setBindingModal] = useState(null);   // {lpn, location, ticket_context, sizes_needed}
   // True while a qty field is being edited — suspends the scan box's aggressive
   // auto-refocus so the operator can actually type a quantity (instead of being
   // forced to tap −/+ one unit at a time).
@@ -461,13 +467,89 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     const details = data.details || {};
     const total = Object.values(details).reduce((a, b) => a + (parseInt(b) || 0), 0);
     if (total <= 0) { toast.error(`Captura cantidades para la talla ${sz}`); return; }
+
+    // Cada celda con qty>0 debe tener una caja escaneada. Sin scan no
+    // se descuenta — el sistema rechaza igual el backend.
+    const boxes = pickedBoxes[sz] || {};
+    const missing = Object.entries(details).filter(([loc, qty]) => (parseInt(qty)||0) > 0 && !boxes[loc]?.box_id);
+    if (missing.length) {
+      toast.error(`Escanea la caja para ${missing.map(([l])=>l).join(', ')}`);
+      return;
+    }
+    // Estructura nueva: { loc: {qty, box_id} } en lugar de { loc: qty }
+    const detailsWithBoxes = Object.fromEntries(
+      Object.entries(details).map(([loc, qty]) => [loc, {
+        qty: parseInt(qty) || 0,
+        box_id: boxes[loc]?.box_id || null,
+      }])
+    );
     setCommitting(sz);
-    const ok = await onPickSize(ticket.ticket_id, sz, details);
+    const ok = await onPickSize(ticket.ticket_id, sz, detailsWithBoxes);
     setCommitting(null);
     if (ok) {
       setCommitted(prev => new Set(prev).add(sz));
       setOpenSize(null);
     }
+  };
+
+  // ── Box scan (por celda) ─────────────────────────────────────────────────
+  const handleBoxScan = async (rawLpn) => {
+    if (!scanningCell) return;
+    const { sz, loc } = scanningCell;
+    const lpn = String(rawLpn || "").trim();
+    if (!lpn) return;
+    try {
+      const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/scan-box`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lpn, location: loc }),
+      });
+      const data = await r.json();
+      if (!r.ok) { toast.error(data.detail || "Error al escanear"); return; }
+      if (data.status === "matched") {
+        setPickedBoxes(p => ({
+          ...p,
+          [sz]: { ...(p[sz]||{}), [loc]: { box_id: data.box.box_id, units: data.box.units, lpn } },
+        }));
+        setScanningCell(null);
+        toast.success(`Caja ${data.box.box_id} identificada (${data.box.units} pz)`);
+        if (navigator.vibrate) navigator.vibrate(60);
+      } else if (data.status === "wrong_ticket") {
+        toast.error(data.message || "La caja escaneada no es de este ticket");
+        if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      } else if (data.status === "needs_binding") {
+        setScanningCell(null);
+        setBindingModal({ ...data, cell: { sz, loc } });
+      }
+    } catch (e) { toast.error("Error de conexión al escanear"); }
+  };
+
+  const submitBinding = async ({ size, actual_units }) => {
+    if (!bindingModal) return;
+    const { lpn, location, cell } = bindingModal;
+    try {
+      const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/bind-box`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lpn, location, size, actual_units }),
+      });
+      const data = await r.json();
+      if (!r.ok) { toast.error(data.detail || "Error al ligar caja"); return; }
+      // El bind mueve al cell que iniciamos el scan (mantenemos loc + cambiamos sz si hizo falta)
+      const targetSz = cell?.sz || size;
+      const targetLoc = cell?.loc || location;
+      setPickedBoxes(p => ({
+        ...p,
+        [targetSz]: { ...(p[targetSz]||{}), [targetLoc]: {
+          box_id: data.box.box_id, units: data.box.units, lpn,
+        }},
+      }));
+      setBindingModal(null);
+      toast.success(data.reconciled
+        ? `Caja ligada + inventario ajustado (${data.delta>0?'+':''}${data.delta})`
+        : `Caja ${data.box.box_id} ligada`);
+      if (navigator.vibrate) navigator.vibrate(80);
+    } catch (e) { toast.error("Error de conexión al ligar"); }
   };
 
   // Reopen an already-deducted size to correct it (re-OK applies the delta).
@@ -643,6 +725,42 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
                           />
                           <button onClick={() => updatePicked(sz, l.location, cur + 1)} className="w-12 h-12 rounded-xl bg-white/5 active:bg-white/10 text-2xl font-black">＋</button>
                         </div>
+                        {/* Fila del scan de caja: obligatoria para poder OK-ear */}
+                        {(() => {
+                          const boxInfo = (pickedBoxes[sz] || {})[l.location];
+                          if (boxInfo?.box_id) {
+                            return (
+                              <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2">
+                                <Barcode className="w-4 h-4 text-emerald-300 shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[11px] font-black text-emerald-300 truncate">
+                                    Caja: {boxInfo.box_id}
+                                    {boxInfo.lpn && boxInfo.lpn !== boxInfo.box_id && (
+                                      <span className="ml-1 opacity-70 font-mono">({boxInfo.lpn})</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-emerald-400/80">{boxInfo.units} pz en caja</div>
+                                </div>
+                                <button onClick={() => {
+                                    setPickedBoxes(p => {
+                                      const cp = { ...(p[sz]||{}) }; delete cp[l.location];
+                                      return { ...p, [sz]: cp };
+                                    });
+                                    setScanningCell({ sz, loc: l.location });
+                                  }}
+                                  className="px-2 py-1 rounded-md bg-white/10 active:bg-white/20 text-[10px] font-black uppercase tracking-widest">
+                                  Cambiar
+                                </button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <button onClick={() => setScanningCell({ sz, loc: l.location })}
+                              className="mt-2 w-full h-12 rounded-xl bg-blue-600/20 border-2 border-dashed border-blue-500/50 active:bg-blue-600/30 text-blue-300 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2">
+                              <QrCode className="w-5 h-5" /> Escanear caja
+                            </button>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -669,6 +787,144 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
           className={`w-full h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
           {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} {isComplete ? "Completar surtido" : "Cerrar parcial"}
         </button>
+      </div>
+
+      {/* Modal: input de scan de caja física */}
+      {scanningCell && (
+        <BoxScanModal
+          cell={scanningCell}
+          onClose={() => setScanningCell(null)}
+          onScan={handleBoxScan}
+        />
+      )}
+
+      {/* Modal: cuestionario de binding cuando el LPN no está registrado */}
+      {bindingModal && (
+        <BoxBindModal
+          info={bindingModal}
+          onClose={() => setBindingModal(null)}
+          onSubmit={submitBinding}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═════════════ BoxScanModal ═════════════════════════════════════════════════
+// Input focused para DataWedge (keyboard mode). El scanner "teclea" el LPN +
+// Enter directo en el input. Textbox grande para modo manual también.
+function BoxScanModal({ cell, onClose, onScan }) {
+  const [value, setValue] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#131a2b] border border-blue-500/40 rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-black uppercase tracking-widest text-blue-300 flex items-center gap-2">
+            <QrCode className="w-5 h-5" /> Escanear caja
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="text-xs text-slate-400 mb-3">
+          Talla <b className="text-slate-200">{cell.sz}</b> · Ubicación <b className="text-blue-300 font-mono">{cell.loc}</b>
+        </div>
+        <div className="relative">
+          <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onScan(value); }}}
+            placeholder="BOX-000000 o LPN de proveedor…"
+            className="w-full h-16 pl-12 pr-3 bg-black/40 border-2 border-blue-500/60 rounded-2xl text-lg font-mono font-black focus:outline-none focus:border-blue-400"
+            inputMode="text"
+            autoComplete="off"
+          />
+        </div>
+        <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+          El scanner del PDA lo teclea automático. Si es una caja BOX- ya registrada, se identifica al instante. Si es un LPN de proveedor, se abrirá un cuestionario para atarla.
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button onClick={onClose} className="flex-1 h-12 rounded-xl border border-white/10 text-sm font-black uppercase tracking-widest">Cancelar</button>
+          <button onClick={() => onScan(value)} disabled={!value.trim()}
+            className="flex-1 h-12 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-sm font-black uppercase tracking-widest disabled:opacity-40">
+            Identificar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════ BoxBindModal ═════════════════════════════════════════════════
+// Cuando el LPN escaneado no está en sistema. Pide talla (dropdown de las que
+// aún faltan en el ticket) y cantidad real que trae la caja. Sirve para atar
+// el LPN físico a un box_id de la BD y reconciliar la cuenta.
+function BoxBindModal({ info, onClose, onSubmit }) {
+  const preset = info.cell?.sz || (info.sizes_needed[0]?.size || "");
+  const [size, setSize] = useState(preset);
+  const [units, setUnits] = useState(() => {
+    const remain = info.sizes_needed.find(s => s.size === preset)?.remaining;
+    return remain != null ? String(remain) : "";
+  });
+  const remaining = info.sizes_needed.find(s => s.size === size)?.remaining || 0;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#131a2b] border border-amber-500/40 rounded-2xl w-full max-w-md p-5 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
+            <Barcode className="w-5 h-5" /> Caja no registrada
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
+          <div className="text-[11px] text-amber-300 mb-1">LPN escaneado</div>
+          <div className="font-mono font-black text-lg text-amber-200">{info.lpn}</div>
+        </div>
+        <div className="text-xs text-slate-400 mb-3 leading-relaxed">
+          Vamos a atar esta etiqueta a la caja de la BD. El ticket es{" "}
+          <b className="text-slate-200">{info.ticket_context.style}</b> ·{" "}
+          <b className="text-slate-200">{info.ticket_context.color}</b>{" "}
+          en <b className="text-blue-300 font-mono">{info.location}</b>. Confirma:
+        </div>
+
+        <div className="mb-3">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Talla real de la caja</label>
+          <select value={size} onChange={e => {
+              setSize(e.target.value);
+              const r = info.sizes_needed.find(s => s.size === e.target.value)?.remaining;
+              if (r != null) setUnits(String(r));
+            }}
+            className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-lg font-mono font-black focus:outline-none focus:border-amber-400">
+            {info.sizes_needed.map(s => (
+              <option key={s.size} value={s.size}>{s.size} · faltan {s.remaining}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mb-3">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
+            Cantidad REAL en la caja (cuenta física)
+          </label>
+          <input type="number" inputMode="numeric" min="0" value={units} onChange={e => setUnits(e.target.value)}
+            placeholder="0"
+            className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-2xl text-center font-mono font-black focus:outline-none focus:border-amber-400" />
+          <div className="text-[10px] text-slate-500 mt-1">
+            El sistema ajustará el inventario si difiere de la BD.
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 h-12 rounded-xl border border-white/10 text-sm font-black uppercase tracking-widest">Cancelar</button>
+          <button
+            onClick={() => onSubmit({ size, actual_units: parseInt(units) || 0 })}
+            disabled={!size || !units}
+            className="flex-1 h-12 rounded-xl bg-amber-500 active:bg-amber-600 text-black text-sm font-black uppercase tracking-widest disabled:opacity-40">
+            Ligar y continuar
+          </button>
+        </div>
       </div>
     </div>
   );

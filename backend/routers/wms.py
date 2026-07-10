@@ -2607,13 +2607,17 @@ def _ci_eq(v):
 
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                              customer="", order_number=None, order_id=None,
-                             user=None, ticket_id=None):
-    """Deduct `qty` units for a pick from the physical boxes (FIFO) AND the
+                             user=None, ticket_id=None, only_box_id=None):
+    """Deduct `qty` units for a pick from the physical boxes AND the
     inventory row, keeping wms_boxes / units_on_hand / total_boxes in lockstep.
-    Used by both pick flows so neither leaves boxes full while stock drops (the
-    drift that made a box read 21 units while inventory showed 0). Falls back to
-    an inventory-only deduct for the leftover when no boxes back the slot
-    (e.g. Excel-imported bulk).
+
+    Cuando `only_box_id` viene (el picker escaneó una caja específica), se
+    deduce ÚNICAMENTE de esa caja — no FIFO ciego. Este es el modo que quita
+    el problema de "el sistema vaciaba una caja que aún tenía material" porque
+    el picker escanea la caja física real de la que está sacando piezas.
+
+    Si `only_box_id` no viene, cae al FIFO tradicional (usado por flujos que
+    todavía no requieren scan o cuando el toggle `pick_requires_scan` está OFF).
 
     Every deduction logs a 'pick_deduction' movement with the box_ids it drained.
     Without that per-box trail, a picked-empty box is indistinguishable from a
@@ -2623,11 +2627,19 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
     remaining = int(qty or 0)
     if remaining <= 0:
         return
-    q = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
-         "color": _ci_eq(color), "size": _ci_eq(size), "units": {"$gt": 0}}
-    if location:
-        q["location"] = _ci_eq(location)
-    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(500)
+    if only_box_id:
+        # Modo scan: agarra SOLO esa caja. Sin caídas al FIFO — si la caja no
+        # da, se propaga el faltante y el picker debe escanear otra.
+        specific = await db.wms_boxes.find_one({"box_id": only_box_id})
+        if not specific or int(specific.get("units") or 0) <= 0:
+            raise HTTPException(409, f"La caja {only_box_id} no tiene unidades disponibles")
+        boxes = [specific]
+    else:
+        q = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
+             "color": _ci_eq(color), "size": _ci_eq(size), "units": {"$gt": 0}}
+        if location:
+            q["location"] = _ci_eq(location)
+        boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(500)
     touched = []
     for box in boxes:
         if remaining <= 0:
@@ -4659,7 +4671,248 @@ async def save_pick_progress(ticket_id: str, request: Request):
         "is_full": is_full,
     }
 
-@router.put("/pick-tickets/{ticket_id}/pick-size")
+
+# ═══════════════ SCAN + BIND DE CAJA FISICA ═══════════════════════════════════
+# Cierra el hueco donde el picker no podia decir "esta caja fisica es tal en
+# la BD" — el descuento FIFO ciego vaciaba la caja mas vieja de la base cuando
+# el picker en realidad estaba jalando material de otra. El scan ata el LPN
+# fisico a un box_id especifico y desde ahi el descuento va a esa caja.
+
+def _norm_lpn(s):
+    """Canoniza el LPN: strip, uppercase, quita espacios/guiones extras."""
+    return re.sub(r"\s+", "", (s or "").strip().upper())
+
+
+async def _find_box_by_lpn(lpn):
+    """Busca una caja por LPN en 3 lugares: box_id (etiquetas BOX-), campo
+    physical_lpn (bindeo previo) o entrada en lpn_aliases (por si se re-etiqueto).
+    Devuelve None si nada matchea."""
+    lpn = _norm_lpn(lpn)
+    if not lpn:
+        return None
+    return await db.wms_boxes.find_one(
+        {"$or": [
+            {"box_id": lpn},
+            {"physical_lpn": lpn},
+            {"lpn_aliases": lpn},
+        ]},
+        {"_id": 0},
+    )
+
+
+@router.post("/pick-tickets/{ticket_id}/scan-box")
+async def scan_box(ticket_id: str, request: Request):
+    """Identifica una caja escaneada durante el picking.
+
+    Body: { lpn: "BOX-000123" o "SUP-XYZ", location?: str }
+
+    Respuestas:
+      { status: "matched",       box: {...} }              # ya conocida → deduce
+      { status: "needs_binding", ticket_context: {...},    # no conocida →
+                                 sizes_needed: [...],      #   pide talla y
+                                 candidates: [...] }       #   cantidad al picker
+      { status: "wrong_ticket",  box: {...} }              # existe pero es otro style/color
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    lpn = _norm_lpn(body.get("lpn"))
+    location = (body.get("location") or "").strip().upper()
+    if not lpn:
+        raise HTTPException(400, "lpn requerido")
+
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
+        raise HTTPException(409, "El pick ya fue finalizado")
+
+    # Autorizacion (misma regla que pick-size).
+    assignee = (ticket.get("assigned_to") or "").strip()
+    caller_ids = {user.get("user_id", ""), user.get("email", "")}
+    elevated = user.get("role") in {"admin", "supersu", "ceo"}
+    if assignee and assignee not in caller_ids and not elevated:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
+
+    t_style = (ticket.get("style") or "").strip().upper()
+    t_color = (ticket.get("color") or "").strip().upper()
+
+    # Tallas pendientes en el ticket (requerido - picked). Para el modal cuestionario.
+    required = {str(k): int(v or 0) for k, v in (ticket.get("sizes") or {}).items()}
+    picked_map = ticket.get("picked_sizes") or {}
+    def _picked_of(sz):
+        v = picked_map.get(sz)
+        if isinstance(v, dict): return int(v.get("total") or 0)
+        return int(v or 0)
+    sizes_needed = [
+        {"size": sz, "remaining": max(0, qty - _picked_of(sz))}
+        for sz, qty in required.items() if qty > 0 and _picked_of(sz) < qty
+    ]
+
+    ticket_context = {
+        "style": t_style, "color": t_color,
+        "customer": ticket.get("customer") or "",
+        "order_number": ticket.get("order_number") or "",
+    }
+
+    # 1) Caja ya identificada
+    box = await _find_box_by_lpn(lpn)
+    if box:
+        b_style = (box.get("style") or box.get("sku", "").split("-")[0] or "").upper()
+        b_color = (box.get("color") or "").upper()
+        # Compare tolerando SKU compuesto (style o sku column)
+        matches = (b_style == t_style or box.get("sku", "").upper().startswith(t_style)) and b_color == t_color
+        if not matches:
+            return {
+                "status": "wrong_ticket",
+                "message": f"Esta caja es {b_style}/{b_color}, no {t_style}/{t_color}",
+                "box": box,
+                "ticket_context": ticket_context,
+            }
+        return {
+            "status": "matched",
+            "box": box,
+            "ticket_context": ticket_context,
+            "sizes_needed": sizes_needed,
+        }
+
+    # 2) LPN desconocido → pide binding (modal cuestionario)
+    # Ofrece candidatas en la loc reportada: cajas del ticket sin physical_lpn.
+    cand_q = {
+        "$or": [{"style": t_style}, {"sku": {"$regex": f"^{re.escape(t_style)}-"}}],
+        "color": t_color,
+        "units": {"$gt": 0},
+        "$and": [
+            {"$or": [{"physical_lpn": {"$exists": False}}, {"physical_lpn": None}]},
+        ],
+    }
+    if location:
+        cand_q["location"] = location
+    candidates = await db.wms_boxes.find(
+        cand_q, {"_id": 0, "box_id": 1, "size": 1, "units": 1, "location": 1}
+    ).sort("created_at", 1).limit(50).to_list(50)
+
+    return {
+        "status": "needs_binding",
+        "lpn": lpn,
+        "location": location,
+        "ticket_context": ticket_context,
+        "sizes_needed": sizes_needed,
+        "candidates": candidates,
+    }
+
+
+@router.post("/pick-tickets/{ticket_id}/bind-box")
+async def bind_box(ticket_id: str, request: Request):
+    """Ata un LPN físico a una wms_boxes doc del ticket. Corre después de un
+    scan que devolvió `needs_binding`, con la respuesta del cuestionario.
+
+    Body: { lpn, location, size, actual_units }
+
+    Estrategia:
+      1. Busca una caja en (location, style=ticket, color=ticket, size) sin
+         physical_lpn aún. FIFO por created_at.
+      2. Le pone physical_lpn = lpn.
+      3. Si actual_units != box.units → ajusta y logea reconciliación.
+      4. Devuelve la caja lista para deducir.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    lpn = _norm_lpn(body.get("lpn"))
+    location = (body.get("location") or "").strip().upper()
+    size = (body.get("size") or "").strip().upper()
+    try:
+        actual_units = int(body.get("actual_units") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "actual_units debe ser entero")
+    if not (lpn and location and size and actual_units >= 0):
+        raise HTTPException(400, "lpn, location, size y actual_units requeridos")
+
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
+        raise HTTPException(409, "El pick ya fue finalizado")
+
+    assignee = (ticket.get("assigned_to") or "").strip()
+    caller_ids = {user.get("user_id", ""), user.get("email", "")}
+    elevated = user.get("role") in {"admin", "supersu", "ceo"}
+    if assignee and assignee not in caller_ids and not elevated:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
+
+    # Que otro picker no haya bindeado este LPN en simultáneo entre el scan y el bind.
+    dup = await _find_box_by_lpn(lpn)
+    if dup:
+        return {"status": "already_bound", "box": dup,
+                "message": "Este LPN ya estaba atado a otra caja mientras respondías"}
+
+    t_style = (ticket.get("style") or "").strip().upper()
+    t_color = (ticket.get("color") or "").strip().upper()
+
+    q = {
+        "$or": [{"style": t_style}, {"sku": {"$regex": f"^{re.escape(t_style)}-"}}],
+        "color": t_color,
+        "size": size,
+        "location": location,
+        "$and": [
+            {"$or": [{"physical_lpn": {"$exists": False}}, {"physical_lpn": None}]},
+        ],
+    }
+    # FIFO: la más vieja primero para mantener la disciplina de rotación.
+    box = await db.wms_boxes.find_one_and_update(
+        q,
+        {"$set": {"physical_lpn": lpn, "bound_by": user.get("user_id"),
+                  "bound_at": now_iso()}},
+        sort=[("created_at", 1)],
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not box:
+        raise HTTPException(404, (
+            f"No hay cajas sin identificar para {t_style}/{t_color}/{size} en {location}. "
+            "Verifica ubicación y talla, o pide al admin registrar la caja como nueva."
+        ))
+
+    # Reconciliación de cantidad si el picker contó distinto
+    db_units = int(box.get("units") or 0)
+    delta = actual_units - db_units
+    reconciled = False
+    if delta != 0:
+        await db.wms_boxes.update_one(
+            {"box_id": box["box_id"]},
+            {"$set": {"units": actual_units, "qty": actual_units,
+                      "last_bind_reconciliation": {
+                          "picker": user.get("user_id"),
+                          "at": now_iso(),
+                          "from": db_units,
+                          "to": actual_units,
+                          "delta": delta,
+                          "ticket_id": ticket_id,
+                      }}}
+        )
+        # Ajusta la fila de wms_inventory correspondiente (+ o −)
+        await _update_inventory_enhanced(
+            box.get("style") or box.get("sku"), box.get("color"), box.get("size"),
+            abs(delta), "add" if delta > 0 else "deduct",
+            location=box.get("location"), customer=box.get("customer", ""),
+        )
+        await log_movement(user, "pick_bind_reconciliation", {
+            "ticket_id": ticket_id, "box_id": box["box_id"], "lpn": lpn,
+            "from_units": db_units, "to_units": actual_units, "delta": delta,
+        })
+        box["units"] = actual_units
+        box["qty"] = actual_units
+        reconciled = True
+
+    await log_movement(user, "box_bound", {
+        "ticket_id": ticket_id, "box_id": box["box_id"],
+        "physical_lpn": lpn, "location": location, "size": size,
+    })
+    box["physical_lpn"] = lpn
+    return {"status": "bound", "box": box, "reconciled": reconciled,
+            "delta": delta}
+
+
+
 async def pick_size(ticket_id: str, request: Request):
     """Deduct ONE size the instant the operator OKs it — no need to wait for the
     full pick or a partial close. Scoped strictly to the given size: it diffs
@@ -4674,9 +4927,34 @@ async def pick_size(ticket_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
     size = (body.get("size") or "").strip()
-    details = {str(k): int(v or 0) for k, v in (body.get("details") or {}).items()}
+    # `details` acepta 2 formatos (compat + nuevo):
+    #   viejo: { "NA04-A17": 30 }                        → FIFO ciego
+    #   nuevo: { "NA04-A17": {"qty": 30, "box_id": "BOX-000123"} }
+    raw = body.get("details") or {}
+    details = {}       # {loc: qty}
+    box_by_loc = {}    # {loc: box_id | None}
+    for loc, v in raw.items():
+        if isinstance(v, dict):
+            details[str(loc)] = int(v.get("qty") or 0)
+            box_by_loc[str(loc)] = (v.get("box_id") or None)
+        else:
+            details[str(loc)] = int(v or 0)
+            box_by_loc[str(loc)] = None
     if not size:
         raise HTTPException(400, "size requerido")
+
+    # Toggle global de scan obligatorio (config_options).
+    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
+    require_scan = bool(cfg.get("pick_requires_scan",
+                                DEFAULT_OPTIONS.get("pick_requires_scan", True)))
+    if require_scan:
+        missing = [loc for loc, bx in box_by_loc.items()
+                   if details.get(loc, 0) > 0 and not bx]
+        if missing:
+            raise HTTPException(400, (
+                f"Debes escanear la caja para: {', '.join(missing)}. "
+                "El descuento sin scan está deshabilitado (pick_requires_scan)."
+            ))
 
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
     if not ticket:
@@ -4748,8 +5026,12 @@ async def pick_size(ticket_id: str, request: Request):
     # WMS-003: abort on failure so we never record a deduction that didn't apply.
     try:
         for sz, loc, d in pos:
+            # Si el picker escaneó una caja para esta celda, descontamos de ESA
+            # caja; si no, cae al FIFO (permitido solo cuando require_scan=False).
+            only_box = box_by_loc.get(loc)
             await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
-                                     user=user, ticket_id=ticket_id)
+                                     user=user, ticket_id=ticket_id,
+                                     only_box_id=only_box)
         for sz, loc, d in neg:
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
     except HTTPException:

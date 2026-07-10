@@ -20,6 +20,10 @@ WMS_INDEXES = [
     ("wms_boxes", "receiving_id", {}),
     ("wms_boxes", [("status", 1), ("state", 1)], {}),
     ("wms_boxes", "seq_num", {}),
+    # Etiqueta física escaneable (LPN externo o BOX- registrado). Sparse porque
+    # solo se llena cuando el picker escanea por primera vez la caja física.
+    # Unique para que un mismo LPN nunca apunte a dos cajas distintas.
+    ("wms_boxes", "physical_lpn", {"unique": True, "sparse": True, "name": "uniq_physical_lpn"}),
     ("wms_pick_tickets", "ticket_id", {"unique": True}),
     ("wms_pick_tickets", [("assigned_to", 1), ("status", 1)], {}),
     ("wms_pick_tickets", "order_id", {}),

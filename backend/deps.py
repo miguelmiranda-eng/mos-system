@@ -109,7 +109,11 @@ DEFAULT_OPTIONS = {
     ],
     "trigger_types": ["create", "move", "update", "status_change"],
     "action_types": ["send_email", "move_board", "assign_field", "notify_slack"],
-    "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping"]
+    "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping"],
+    # WMS: forzar que el picker escanee la caja fisica antes de descontar. Cuando
+    # esta en True, cualquier /pick-size sin box_id explicito se rechaza. El
+    # admin puede apagarlo temporalmente en emergencias desde config_options.
+    "pick_requires_scan": True,
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]
