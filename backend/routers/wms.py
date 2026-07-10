@@ -4940,7 +4940,7 @@ async def bind_box(ticket_id: str, request: Request):
             "delta": delta}
 
 
-
+@router.put("/pick-tickets/{ticket_id}/pick-size")
 async def pick_size(ticket_id: str, request: Request):
     """Deduct ONE size the instant the operator OKs it — no need to wait for the
     full pick or a partial close. Scoped strictly to the given size: it diffs
