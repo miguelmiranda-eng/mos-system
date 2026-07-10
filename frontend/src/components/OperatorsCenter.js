@@ -2,10 +2,37 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLang } from "../contexts/LanguageContext";
 import { API } from "../lib/constants";
-import { 
-  ArrowLeft, Users, Plus, Loader2, Pencil, Check, X, 
-  Trash2, UserCheck, UserMinus, ShieldAlert
+import {
+  ArrowLeft, Users, Plus, Loader2, Pencil, Check, X,
+  Trash2, UserCheck, UserMinus, ShieldAlert, Factory, Beaker, Brush,
 } from "lucide-react";
+
+const ROLE_META = [
+  { id: 'machine', label: 'Máquinas',  icon: Factory, color: 'blue' },
+  { id: 'sample',  label: 'Ejemplos',  icon: Beaker,  color: 'indigo' },
+  { id: 'paint',   label: 'Pinturas',  icon: Brush,   color: 'amber' },
+];
+
+function RoleChips({ selected, onToggle, size = 'sm' }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {ROLE_META.map(r => {
+        const Icon = r.icon;
+        const on = selected.includes(r.id);
+        const pad = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs';
+        return (
+          <button key={r.id} type="button" onClick={() => onToggle(r.id)}
+            className={`${pad} font-black uppercase tracking-wider rounded-full border flex items-center gap-1 transition-all
+              ${on
+                ? `bg-${r.color}-500/20 text-${r.color}-500 border-${r.color}-500/50`
+                : 'bg-secondary/40 text-muted-foreground border-border hover:border-muted-foreground/40'}`}>
+            <Icon className="w-3 h-3" /> {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 import { toast } from "sonner";
 
 export default function OperatorsCenter() {
@@ -17,11 +44,14 @@ export default function OperatorsCenter() {
   
   // Create state
   const [newName, setNewName] = useState("");
+  const [newRoles, setNewRoles] = useState(["machine"]);
   const [adding, setAdding] = useState(false);
+  const [filterRole, setFilterRole] = useState('all');
 
   // Edit state
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
+  const [editRoles, setEditRoles] = useState([]);
 
   useEffect(() => {
     fetchOperators();
@@ -41,33 +71,43 @@ export default function OperatorsCenter() {
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
+    if (newRoles.length === 0) { toast.error("Selecciona al menos un rol"); return; }
     setAdding(true);
     try {
       const res = await fetch(`${API}/operators`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ name: newName.trim() })
+        body: JSON.stringify({ name: newName.trim(), roles: newRoles })
       });
-      if (res.ok) { 
-        toast.success(`Operador "${newName.trim()}" agregado al sistema`); 
-        setNewName(""); 
-        fetchOperators(); 
-      } else { 
-        const err = await res.json(); 
-        toast.error(err.detail || "Error al crear"); 
+      if (res.ok) {
+        toast.success(`Operador "${newName.trim()}" agregado al sistema`);
+        setNewName("");
+        setNewRoles(["machine"]);
+        fetchOperators();
+      } else {
+        const err = await res.json();
+        toast.error(err.detail || "Error al crear");
       }
-    } catch { 
-      toast.error("Error al agregar operador"); 
-    } finally { 
-      setAdding(false); 
+    } catch {
+      toast.error("Error al agregar operador");
+    } finally {
+      setAdding(false);
     }
+  };
+
+  const toggleNewRole = (r) => {
+    setNewRoles(newRoles.includes(r) ? newRoles.filter(x => x !== r) : [...newRoles, r]);
+  };
+  const toggleEditRole = (r) => {
+    setEditRoles(editRoles.includes(r) ? editRoles.filter(x => x !== r) : [...editRoles, r]);
   };
 
   const handleUpdate = async (id) => {
     if (!editName.trim()) return;
+    if (editRoles.length === 0) { toast.error("Selecciona al menos un rol"); return; }
     try {
       const res = await fetch(`${API}/operators/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ name: editName.trim() })
+        body: JSON.stringify({ name: editName.trim(), roles: editRoles })
       });
       if (res.ok) { 
         toast.success("Nombre del operador actualizado"); 
@@ -114,6 +154,9 @@ export default function OperatorsCenter() {
 
   const activeOperators = operators.filter(o => o.active).length;
   const inactiveOperators = operators.length - activeOperators;
+  const displayed = filterRole === 'all'
+    ? operators
+    : operators.filter(o => (o.roles || ['machine']).includes(filterRole));
 
   return (
     <div className="min-h-screen bg-background text-foreground font-barlow flex flex-col relative overflow-hidden">
@@ -158,21 +201,33 @@ export default function OperatorsCenter() {
         <div className="flex-1 flex flex-col bg-card/20 border border-white/5 rounded-2xl backdrop-blur-md overflow-hidden relative shadow-sm">
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
           
-          <div className="p-5 border-b border-white/5 bg-secondary/30 relative z-10 flex items-center justify-between">
+          <div className="p-5 border-b border-white/5 bg-secondary/30 relative z-10 flex items-center justify-between flex-wrap gap-3">
             <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Directorio de Operadores</h3>
-            <span className="text-xs font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border border-border">Total: {operators.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 bg-background border border-border rounded-lg p-0.5">
+                {[{ id: 'all', label: 'Todos' }, ...ROLE_META].map(r => (
+                  <button key={r.id} onClick={() => setFilterRole(r.id)}
+                    className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded transition-colors ${
+                      filterRole === r.id ? 'bg-blue-500 text-white' : 'text-muted-foreground hover:text-foreground'
+                    }`}>{r.label}</button>
+                ))}
+              </div>
+              <span className="text-xs font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border border-border">Total: {displayed.length}</span>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-5 relative z-10 space-y-3">
             {loading ? (
               <div className="flex justify-center p-10"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>
-            ) : operators.length === 0 ? (
+            ) : displayed.length === 0 ? (
               <div className="text-center py-16 border border-dashed border-border rounded-xl bg-secondary/10">
-                <p className="text-muted-foreground font-mono">No hay operadores registrados</p>
-                <p className="text-xs text-muted-foreground/60 mt-2">Crea el primer operador usando el panel de la derecha.</p>
+                <p className="text-muted-foreground font-mono">
+                  {filterRole === 'all' ? 'No hay operadores registrados' : `Ningún operador con rol "${filterRole}"`}
+                </p>
+                <p className="text-xs text-muted-foreground/60 mt-2">Crea uno usando el panel de la derecha.</p>
               </div>
             ) : (
-              operators.map(op => {
+              displayed.map(op => {
                 const isEditing = editingId === op.operator_id;
                 return (
                   <div 
@@ -193,23 +248,38 @@ export default function OperatorsCenter() {
                     {/* Editor vs View */}
                     <div className="flex-1 min-w-0">
                       {isEditing ? (
-                        <div className="flex items-center gap-2">
-                          <input 
-                            type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleUpdate(op.operator_id); if (e.key === "Escape") setEditingId(null); }}
-                            className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none" 
-                            autoFocus 
-                          />
-                          <button onClick={() => handleUpdate(op.operator_id)} className="p-1.5 hover:bg-green-500/20 rounded-md transition-colors" title="Guardar">
-                            <Check className="w-4 h-4 text-green-500" />
-                          </button>
-                          <button onClick={() => setEditingId(null)} className="p-1.5 hover:bg-secondary rounded-md" title="Cancelar">
-                            <X className="w-4 h-4 text-muted-foreground" />
-                          </button>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") handleUpdate(op.operator_id); if (e.key === "Escape") setEditingId(null); }}
+                              className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none"
+                              autoFocus
+                            />
+                            <button onClick={() => handleUpdate(op.operator_id)} className="p-1.5 hover:bg-green-500/20 rounded-md transition-colors" title="Guardar">
+                              <Check className="w-4 h-4 text-green-500" />
+                            </button>
+                            <button onClick={() => setEditingId(null)} className="p-1.5 hover:bg-secondary rounded-md" title="Cancelar">
+                              <X className="w-4 h-4 text-muted-foreground" />
+                            </button>
+                          </div>
+                          <RoleChips selected={editRoles} onToggle={toggleEditRole} />
                         </div>
                       ) : (
-                        <div className="flex items-center gap-3">
-                           <span className={`text-base font-black uppercase tracking-wide truncate ${!op.active && 'line-through decoration-muted-foreground/40'}`}>{op.name}</span>
+                        <div className="flex flex-col gap-1">
+                          <span className={`text-base font-black uppercase tracking-wide truncate ${!op.active && 'line-through decoration-muted-foreground/40'}`}>{op.name}</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {(op.roles || ['machine']).map(rid => {
+                              const meta = ROLE_META.find(m => m.id === rid);
+                              if (!meta) return null;
+                              const Icon = meta.icon;
+                              return (
+                                <span key={rid} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider rounded bg-secondary/60 text-muted-foreground border border-border">
+                                  <Icon className="w-2.5 h-2.5" /> {meta.label}
+                                </span>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -230,10 +300,10 @@ export default function OperatorsCenter() {
 
                         <div className="w-px h-5 bg-border mx-1"></div>
 
-                        <button 
-                          onClick={() => { setEditingId(op.operator_id); setEditName(op.name); }}
+                        <button
+                          onClick={() => { setEditingId(op.operator_id); setEditName(op.name); setEditRoles(op.roles && op.roles.length ? [...op.roles] : ['machine']); }}
                           className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-blue-500/10 hover:text-blue-500 transition-colors text-muted-foreground"
-                          title="Editar nombre"
+                          title="Editar nombre y roles"
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
@@ -264,17 +334,23 @@ export default function OperatorsCenter() {
             <div className="space-y-4 relative z-10">
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">Nombre del Operador</label>
-                <input 
-                  type="text" 
-                  value={newName} 
-                  onChange={(e) => setNewName(e.target.value)} 
-                  onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }} 
-                  placeholder="Ej. Juan Pérez" 
-                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none tracking-wide shadow-inner" 
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
+                  placeholder="Ej. Juan Pérez"
+                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none tracking-wide shadow-inner"
                 />
               </div>
-              
-              <button 
+
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">Roles funcionales</label>
+                <RoleChips selected={newRoles} onToggle={toggleNewRole} size="md" />
+                <div className="text-[10px] text-muted-foreground/60 mt-1.5">Un operador puede tener varios roles (aparece en el desplegable de cada módulo).</div>
+              </div>
+
+              <button
                 onClick={handleAdd} 
                 disabled={adding || !newName.trim()}
                 className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg font-black tracking-widest text-xs uppercase transition-all hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(59,130,246,0.5)] disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none flex items-center justify-center gap-2"

@@ -46,15 +46,26 @@ def invalidate_cache(prefix: str = None):
 # ==================== OPERATORS CRUD ====================
 
 @router.get("/operators")
-async def list_operators(request: Request):
+async def list_operators(request: Request, role: str = ""):
+    """Lista operadores. `role` (opcional) filtra por rol funcional
+    ("sample", "paint", "machine"). Operadores legacy sin campo `roles`
+    se tratan como "machine" para no romper el flujo existente."""
     await require_auth(request)
     operators = await db.operators.find({}, {"_id": 0}).sort("name", 1).to_list(500)
     if not any(op.get("operator_id") == "contador_1" or op.get("name") == "Contador 1" for op in operators):
         operators.insert(0, {
             "operator_id": "contador_1",
             "name": "Contador 1",
-            "active": True
+            "active": True,
+            "roles": ["machine"],
         })
+    # Backfill implícito: sin `roles` significa "machine" (compat con maquinas).
+    for op in operators:
+        if not op.get("roles"):
+            op["roles"] = ["machine"]
+    role = (role or "").strip().lower()
+    if role:
+        operators = [op for op in operators if role in op.get("roles", [])]
     return operators
 
 @router.post("/operators")
@@ -67,14 +78,20 @@ async def create_operator(request: Request):
     existing = await db.operators.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=400, detail="Operator already exists")
+    raw_roles = body.get("roles") or ["machine"]
+    if not isinstance(raw_roles, list):
+        raw_roles = [raw_roles]
+    roles = sorted({str(r).strip().lower() for r in raw_roles if str(r).strip()})
+    roles = [r for r in roles if r in {"machine", "sample", "paint"}] or ["machine"]
     doc = {
         "operator_id": f"op_{uuid.uuid4().hex[:12]}",
         "name": name,
         "active": True,
+        "roles": roles,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.operators.insert_one(doc)
-    await log_activity(user, "create_operator", {"name": name})
+    await log_activity(user, "create_operator", {"name": name, "roles": roles})
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @router.put("/operators/{operator_id}")
@@ -95,6 +112,13 @@ async def update_operator(operator_id: str, request: Request):
         update_data["name"] = name
     if "active" in body:
         update_data["active"] = bool(body["active"])
+    if "roles" in body:
+        raw = body["roles"] or []
+        if not isinstance(raw, list):
+            raw = [raw]
+        cleaned = sorted({str(r).strip().lower() for r in raw if str(r).strip()})
+        cleaned = [r for r in cleaned if r in {"machine", "sample", "paint"}]
+        update_data["roles"] = cleaned or ["machine"]
     if update_data:
         await db.operators.update_one({"operator_id": operator_id}, {"$set": update_data})
         await log_activity(user, "update_operator", {"operator_id": operator_id, **update_data})
