@@ -2003,7 +2003,10 @@ async def create_receiving(request: Request):
     description = _norm(body.get("description"))
     country_of_origin = _norm(body.get("country_of_origin"))
     fabric_content = _norm(body.get("fabric_content"))
-    inv_location = body.get("inv_location", "").strip() or "Locación Temporal"
+    # Default a UBICACION TEMPORAL (uppercase, el nombre oficial usado por el
+    # modulo de Putaway/Transit). El viejo default 'Locación Temporal' (casing
+    # mixto + acento) generaba filas que el match exacto de _ci_eq no encontraba.
+    inv_location = body.get("inv_location", "").strip() or "UBICACION TEMPORAL"
     lot_number = body.get("lot_number", "").strip()
     sku = body.get("sku", "").strip().upper()
     dozens = int(body.get("dozens", 0) or 0)
@@ -2948,13 +2951,22 @@ async def _move_box_inventory(box, old_loc, new_loc):
 
 
 def _ci_eq(v):
-    """Case-insensitive exact match for a Mongo string field. Inventory and boxes
-    store the same color/style with inconsistent casing (e.g. 'Sand' vs 'SAND'),
-    and the picker UI (_compute_size_locations) matches case-insensitively — so
-    the stock check AND the deduction must too. Exact matching here silently found
-    nothing, which blocked legit picks and (before the guard) never deducted →
-    ghost inventory."""
-    return {"$regex": f"^{re.escape(v or '')}$", "$options": "i"}
+    """Exact match normalizado a MAYUSCULAS + espacios colapsados.
+
+    HISTORIA: antes devolvia {"$regex": "^v$", "$options": "i"} para tolerar
+    casing inconsistente ('Sand' vs 'SAND'). PERO un regex case-insensitive NO
+    usa indices en Mongo -> forzaba COLLECTION SCAN de wms_boxes (78k docs) en
+    CADA stock-check/deduccion del picking, disparando el CPU al 100% (reportado
+    2026-07-13).
+
+    Desde 2026-07-01 los campos de identidad (style/sku/color/size/location)
+    estan normalizados a MAYUSCULAS system-wide (wms-identity-normalized-uppercase);
+    verificado: 0 docs con minusculas en wms_boxes y wms_inventory. Por eso el
+    match exacto en uppercase es 100% equivalente al regex viejo PERO usa los
+    indices existentes (sku_1_color_1_size_1_location_1, style_1_color_1_size_1).
+    Colapsa espacios internos igual que el normalizador de escritura para que
+    'LIGHT  PINK' matchee 'LIGHT PINK'."""
+    return re.sub(r"\s+", " ", (v or "")).strip().upper()
 
 
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
