@@ -676,7 +676,7 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
         # report already reads boxes for these slots — mirror it. Inventory wins
         # when a row exists for the slot, so we never double-count.
         box_pipeline = [
-            {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}}},
+            {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}, "status": {"$ne": "depleted"}}},
             {"$group": {
                 "_id": {"location": "$location", "style": {"$ifNull": ["$style", "$sku"]}},
                 "style_units": {"$sum": "$units"},
@@ -831,7 +831,7 @@ async def transit_info(request: Request):
     # hold stock — a box fully picked out (units=0) has left the cart even though
     # the doc lingers for traceability, so it must not inflate the cart count.
     pipeline = [
-        {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}}},
+        {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}, "status": {"$ne": "depleted"}}},
         {"$group": {"_id": "$location", "n": {"$sum": 1}}},
     ]
     counts = {row["_id"]: row["n"] async for row in db.wms_boxes.aggregate(pipeline)}
