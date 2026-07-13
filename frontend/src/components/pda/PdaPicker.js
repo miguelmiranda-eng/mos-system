@@ -605,8 +605,28 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
           details: nextDetails,
         },
       }));
-      setCommitted(prev => new Set(prev).add(activeSize));
-      backToSizes();
+
+      // Post-descuento: no siempre hay que volver al selector de tallas. Si
+      // aun faltan piezas de esta talla Y la ubicacion actual sigue teniendo
+      // stock, quedar en `boxes` esperando otra caja de la MISMA locacion
+      // (evita re-escanear la ubicacion cada vez). Solo volvemos a `sizes`
+      // cuando la talla ya se completo; a `locations` si la ubic se agoto.
+      const stillNeed = Math.max(0, remainingOf(activeSize) - qty);
+      const remainHere = Math.max(0, (activeLocation.available || 0) - qty);
+      if (stillNeed <= 0) {
+        setCommitted(prev => new Set(prev).add(activeSize));
+        backToSizes();
+      } else if (remainHere > 0) {
+        // Restamos localmente el available de la ubic para que la UI muestre el nuevo saldo.
+        setActiveLocation(prev => prev ? { ...prev, available: remainHere } : prev);
+        setActiveBox(null); setBindingInfo(null); setBoxScan(""); setTakeQty("");
+        setStage("boxes");
+        toast.info(`Faltan ${stillNeed} pz de talla ${activeSize}. Escanea otra caja en ${activeLocation.location}.`);
+      } else {
+        // La ubic se agoto — al selector de ubicaciones para elegir la siguiente.
+        backToLocations();
+        toast.info(`Ubic ${activeLocation.location} agotada. Faltan ${stillNeed} pz de talla ${activeSize} — elige otra ubicacion.`);
+      }
     }
   };
 
