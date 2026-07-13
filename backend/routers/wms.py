@@ -9466,7 +9466,50 @@ async def update_upc(upc: str, request: Request):
     update["updated_at"] = now_iso()
     update["updated_by"] = user.get("user_id")
     await db.wms_upc_catalog.update_one({"upc": code}, {"$set": update})
-    return await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
+
+    # Propagacion opcional a cajas / receivings / inventory que ya usan este UPC.
+    # Solo campos DESCRIPTIVOS (description, country_of_origin, fabric_content,
+    # brand) — nunca identity (style/sku/color/size/customer/manufacturer), que
+    # requieren el flujo de /upc/{upc}/correct (mueve inventario, guarda
+    # allocations). Sin este flag, el catalogo queda actualizado pero las cajas
+    # ya recibidas quedan con el valor viejo (bug del receiving GILDAN 5000
+    # BLACK L, 2026-07-13: pais editado en UPC pero las 12 cajas se imprimieron
+    # con el valor previo).
+    propagate = bool(body.get("propagate_to_boxes"))
+    propagate_result = None
+    if propagate:
+        PROPAGABLE = {"description", "country_of_origin", "fabric_content", "brand"}
+        prop_set = {k: v for k, v in update.items()
+                     if k in PROPAGABLE}
+        if prop_set:
+            box_set = dict(prop_set)
+            if "country_of_origin" in prop_set:
+                box_set["coo"] = prop_set["country_of_origin"]  # mirror field en boxes
+            box_set["updated_at"] = now_iso()
+            # Todas las cajas con este UPC O que compartan receiving con este UPC
+            rcvs = await db.wms_receiving.find({"upc": code}, {"receiving_id": 1}).to_list(2000)
+            rcv_ids = [r["receiving_id"] for r in rcvs]
+            or_clauses = [{"upc": code}]
+            if rcv_ids:
+                or_clauses.append({"receiving_id": {"$in": rcv_ids}})
+            rb = await db.wms_boxes.update_many({"$or": or_clauses}, {"$set": box_set})
+            rr = await db.wms_receiving.update_many({"upc": code}, {"$set": {**prop_set, "updated_at": now_iso()}})
+            ri = await db.wms_inventory.update_many(
+                {"receiving_id": {"$in": rcv_ids}} if rcv_ids else {"_id": {"$exists": False}},
+                {"$set": {**prop_set, "updated_at": now_iso()}}
+            )
+            propagate_result = {
+                "boxes": rb.modified_count,
+                "receivings": rr.modified_count,
+                "inventory": ri.modified_count,
+            }
+            await log_movement(user, "upc_propagate", {
+                "upc": code, "changes": prop_set, **propagate_result,
+            })
+    doc = await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
+    if propagate_result is not None:
+        doc["_propagate"] = propagate_result
+    return doc
 
 
 @router.post("/upc/{upc}/correct")

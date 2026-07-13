@@ -183,6 +183,11 @@ export const ReceivingModule = () => {
     upc: '', customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '', brand: '',
   });
+  // Cuando el operador edita un UPC, opcion de propagar cambios descriptivos
+  // (description/country/fabric/brand) a las cajas/receivings/inventory que
+  // ya usan este UPC. Sin este flag, el catalogo queda actualizado pero las
+  // cajas fisicas se imprimieron con el valor viejo.
+  const [upcPropagate, setUpcPropagate] = useState(false);
   // Inline ASN creation — used when the operator wants to receive material
   // for an ASN that wasn't pre-imported via Excel.
   const [createAsnOpen, setCreateAsnOpen] = useState(false);
@@ -460,10 +465,11 @@ export const ReceivingModule = () => {
       brand: '',
     });
     setUpcEditMode(false);
+    setUpcPropagate(false);
     setCreateUpcOpen(true);
   };
 
-  // Open the modal pre-filled with the resolved UPC for editing (admin only).
+  // Open the modal pre-filled with the resolved UPC for editing.
   const openEditUpc = () => {
     if (!upcDoc) return;
     setUpcDraft({
@@ -479,6 +485,7 @@ export const ReceivingModule = () => {
       brand: upcDoc.brand || '',
     });
     setUpcEditMode(true);
+    setUpcPropagate(false);
     setCreateUpcOpen(true);
   };
 
@@ -501,16 +508,23 @@ export const ReceivingModule = () => {
     if (!upcDraft.style?.trim()) { toast.error('Style es obligatorio'); return; }
     setCreatingUpc(true);
     try {
+      const payload = upcEditMode
+        ? { ...upcDraft, upc: code, propagate_to_boxes: upcPropagate }
+        : { ...upcDraft, upc: code };
       const res = upcEditMode
-        ? await putter(`/upc/${encodeURIComponent(code)}`, { ...upcDraft, upc: code })
-        : await poster('/upc', { ...upcDraft, upc: code });
+        ? await putter(`/upc/${encodeURIComponent(code)}`, payload)
+        : await poster('/upc', payload);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || (upcEditMode ? 'No se pudo actualizar el UPC' : 'No se pudo crear el UPC'));
         return;
       }
       const doc = await res.json();
-      toast.success(`UPC ${doc.upc} ${upcEditMode ? 'actualizado' : 'guardado'} en catálogo`);
+      const prop = doc._propagate;
+      const propMsg = prop
+        ? ` · Propagado: ${prop.boxes} caja(s), ${prop.receivings} receiving(s), ${prop.inventory} inventario`
+        : '';
+      toast.success(`UPC ${doc.upc} ${upcEditMode ? 'actualizado' : 'guardado'} en catálogo${propMsg}`);
       setUpcDoc(doc);
       setUpc(doc.upc);
       // Aplicar valores del catálogo al form para reflejar el lock visual.
@@ -1507,6 +1521,32 @@ export const ReceivingModule = () => {
                   />
                 </div>
               </div>
+
+              {/* Propagacion: solo modo edicion. Aplica cambios descriptivos
+                  (description/country/fabric/brand) a cajas + receivings + inv
+                  que ya usan este UPC. Necesario cuando el UPC se corrigio
+                  DESPUES del receiving (ej: pais cambiado en catalogo pero las
+                  cajas se etiquetaron con el valor viejo). */}
+              {upcEditMode && (
+                <label className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/40 rounded-xl cursor-pointer hover:bg-amber-500/15 transition-colors" data-testid="upc-propagate-wrap">
+                  <input
+                    type="checkbox"
+                    checked={upcPropagate}
+                    onChange={e => setUpcPropagate(e.target.checked)}
+                    className="mt-0.5 accent-amber-500"
+                    data-testid="upc-propagate"
+                  />
+                  <div className="flex-1">
+                    <div className="text-[11px] font-black uppercase tracking-widest text-amber-500">
+                      Aplicar también a las cajas ya recibidas con este UPC
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                      Propaga <b>description / país / fabric / brand</b> a boxes, receivings e inventory que usen este UPC.
+                      Cambios de <b>style / color / talla</b> requieren el flujo de corrección (admin).
+                    </div>
+                  </div>
+                </label>
+              )}
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">
