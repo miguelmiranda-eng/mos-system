@@ -69,21 +69,20 @@ def _sizes_from_pack_text(text: str):
 
 
 def _color_from_position(page):
-    """Extrae el color usando COORDENADAS de las palabras del PDF, no el texto plano.
-    Motivo: pdfplumber junta la ultima linea de la DESCRIPTION con la primera del COLOR
-    cuando estan cerca en Y (ej: 'WHOLE MILK' + 'WHITE' -> 'WHOLE MILKWHITE'). Usando la
-    posicion X del header 'COLOR' evitamos concatenar palabras de la columna descripcion.
+    """Extrae el color aislando el RECTANGULO de la columna COLOR con page.crop() y
+    extrayendo texto SOLO de esa region. Robusto contra:
+      - pdfplumber juntando descripcion con color en 'WHOLE MILKWHITE'
+      - la palabra 'SA' de la columna WH que se pegaba por tolerancia X
+      - colores multi-palabra donde 'LIGHT' y 'PINK' pueden estar desalineados
+        y no matchear al mismo top_max con extract_words().
 
     Approach:
-      1) localizar el header 'COLOR' → x0 = borde izquierdo de la columna.
-      2) localizar el siguiente header ('Ln' → 'WH' → 'REF' → 'CLOTH' → 'DESCRIPTION')
-         en la MISMA fila que COLOR pero con x mayor → borde derecho preciso (asi 'SA' de
-         la columna WH no se cuela). Fallback: +45 si no se encuentra otro header.
-      3) localizar 'Category' → row inferior justo debajo del color.
-      4) tomar palabras en ese rango [x0, x_next) entre header y Category, filtradas a
-         SOLO letras (excluye numeros y simbolos).
-      5) devolver la row mas cercana a 'Category' (el nombre COMPLETO 'LIGHT PINK', no
-         la abreviacion 'LPK' que va arriba en la misma columna).
+      1) localizar el header 'COLOR' -> x0, top.
+      2) localizar el siguiente header ('Ln'/'WH'/...) para el borde derecho.
+      3) localizar 'Category' -> borde inferior.
+      4) page.crop(color_x0, color_top+altura_del_header, next_x0, category_top).
+      5) extract_text() del crop → varias lineas, la ULTIMA es el nombre completo
+         (ej: crop devuelve 'LPK\\nLIGHT PINK' -> tomamos 'LIGHT PINK').
     """
     try:
         words = page.extract_words()
@@ -93,8 +92,6 @@ def _color_from_position(page):
     cat = next((w for w in words if w["text"].strip() == "Category"), None)
     if not color_hdr or not cat:
         return None
-    # Borde derecho = x0 del siguiente header en la misma fila que COLOR.
-    # Los headers estan en la misma row que 'COLOR' (misma top +/- 3px).
     NEXT_HDRS = {"Ln", "WH", "REF", "CLOTH", "DESCRIPTION", "QTY", "PRICE"}
     next_hdr = None
     for w in words:
@@ -106,25 +103,29 @@ def _color_from_position(page):
             continue
         if next_hdr is None or w["x0"] < next_hdr["x0"]:
             next_hdr = w
-    col_x0 = color_hdr["x0"] - 5
-    col_x1 = (next_hdr["x0"] - 3) if next_hdr else (color_hdr["x1"] + 45)
-    candidates = []
-    for w in words:
-        cx = (w["x0"] + w["x1"]) / 2
-        if not (col_x0 <= cx < col_x1):
-            continue
-        if not (color_hdr["top"] < w["top"] < cat["top"]):
-            continue
-        if not re.match(r"^[A-Z]+$", w["text"]):
-            continue
-        candidates.append(w)
-    if not candidates:
+    x0 = max(0, color_hdr["x0"] - 3)
+    x1 = (next_hdr["x0"] - 3) if next_hdr else (color_hdr["x1"] + 45)
+    top = color_hdr["bottom"] + 1
+    bottom = cat["top"] - 1
+    if x1 <= x0 or bottom <= top:
         return None
-    # Row mas cercana a 'Category' (el nombre COMPLETO, no la abreviacion).
-    top_max = max(c["top"] for c in candidates)
-    row = [c for c in candidates if abs(c["top"] - top_max) < 3]
-    row.sort(key=lambda w: w["x0"])
-    return " ".join(w["text"] for w in row).strip() or None
+    try:
+        crop = page.crop((x0, top, x1, bottom))
+        raw = crop.extract_text() or ""
+    except Exception:
+        return None
+    lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    if not lines:
+        return None
+    # La ULTIMA linea del crop = nombre completo (ej: 'LIGHT PINK'), lo de arriba
+    # es la abreviacion (LPK/BLK/WHT). Ademas: sanitizar a solo letras + espacios.
+    last = lines[-1]
+    # Si la ultima linea tiene solo mayusculas y espacios (esperado para un color),
+    # devolverla. Si contiene otra cosa (numeros, simbolos), intentar la anterior.
+    for candidate in reversed(lines):
+        if re.match(r"^[A-Z]+(?:\s+[A-Z]+)*$", candidate):
+            return candidate
+    return last if re.match(r"^[A-Z ]+$", last) else None
 
 
 def _pack_raw_from_text(text: str) -> str:
