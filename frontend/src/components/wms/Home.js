@@ -73,22 +73,36 @@ export const HomeModule = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  // For styles the "Fuentes desde inventario" panel MUST scope by the selected
+  // client — otherwise the list mixes every customer's raw values and looks like
+  // "two lists". Same fix applied to the typo detector below.
   const loadSources = useCallback(async (type) => {
     setSourcesLoading(p => ({ ...p, [type]: true }));
     try {
-      const data = await fetcher(`/catalogs/${type}/sources?limit=2000`);
+      const params = new URLSearchParams({ limit: '2000' });
+      if (type === 'styles' && styleCustomer) params.set('customer', styleCustomer);
+      const data = await fetcher(`/catalogs/${type}/sources?${params.toString()}`);
       setSources(p => ({ ...p, [type]: data }));
     } catch (err) {
       logLoadError(`sources ${type}`)(err);
       toast.error(`No se pudieron cargar fuentes de ${type}`);
     } finally { setSourcesLoading(p => ({ ...p, [type]: false })); }
-  }, []);
+  }, [styleCustomer]);
 
   const toggleExpanded = (type) => {
     const isOpen = !!expanded[type];
     setExpanded(p => ({ ...p, [type]: !isOpen }));
     if (!isOpen && !sources[type]) loadSources(type);
   };
+
+  // Refresh styles' Fuentes + Typos when the client changes, so switching from
+  // SPEKTRUM to TRUMP swaps the panel instead of showing stale mixed data.
+  useEffect(() => {
+    if (!styleCustomer) return;
+    if (expanded.styles) loadSources('styles');
+    if (showSimilar.styles) loadSimilar('styles');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [styleCustomer]);
 
   const handleAdd = async (type) => {
     const value = drafts[type]?.trim();
@@ -202,13 +216,15 @@ export const HomeModule = () => {
   const loadSimilar = useCallback(async (type) => {
     setSimilarLoading(p => ({ ...p, [type]: true }));
     try {
-      const data = await fetcher(`/catalogs/${type}/similar?max_dist=2&min_count=1`);
+      const params = new URLSearchParams({ max_dist: '2', min_count: '1' });
+      if (type === 'styles' && styleCustomer) params.set('customer', styleCustomer);
+      const data = await fetcher(`/catalogs/${type}/similar?${params.toString()}`);
       setSimilar(p => ({ ...p, [type]: data }));
     } catch (err) {
       logLoadError(`similar ${type}`)(err);
       toast.error('No se pudieron detectar typos');
     } finally { setSimilarLoading(p => ({ ...p, [type]: false })); }
-  }, []);
+  }, [styleCustomer]);
 
   const toggleSimilar = (type) => {
     const open = !!showSimilar[type];

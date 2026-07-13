@@ -390,21 +390,30 @@ _CATALOG_FIELD_MAP = {
 
 
 @router.get("/catalogs/{ctype}/sources")
-async def list_catalog_sources(ctype: str, request: Request, limit: int = 500):
+async def list_catalog_sources(ctype: str, request: Request, limit: int = 500, customer: str = ""):
     """List the distinct values currently present in inventory/receiving for
     the given catalog type, with usage counts. Powers the "Fuentes desde
-    inventario" panel in WMS Configuration so admins can see + clean typos."""
+    inventario" panel in WMS Configuration so admins can see + clean typos.
+
+    `customer` scopes the aggregate to rows of that client (case-insensitive).
+    Sin este filtro, styles/colors mezclan valores de TODOS los clientes y la
+    lista se ve "contaminada" cuando el usuario ya eligio un cliente arriba."""
     await require_auth(request)
     if ctype not in _CATALOG_FIELD_MAP:
         raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
     field, collections = _CATALOG_FIELD_MAP[ctype]
+
+    match_stage = {field: {"$ne": None, "$nin": ["", "."]}}
+    cust = (customer or "").strip()
+    if cust:
+        match_stage["customer"] = {"$regex": f"^{re.escape(cust)}$", "$options": "i"}
 
     # Aggregate counts across all source collections (inventory + receiving).
     counts: dict[str, int] = {}
     for coll_name in collections:
         coll = getattr(db, coll_name)
         cursor = coll.aggregate([
-            {"$match": {field: {"$ne": None, "$nin": ["", "."]}}},
+            {"$match": match_stage},
             {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
         ])
         async for doc in cursor:
@@ -414,8 +423,11 @@ async def list_catalog_sources(ctype: str, request: Request, limit: int = 500):
             counts[v] = counts.get(v, 0) + int(doc.get("count", 0))
 
     # Mark which ones are already in the curated catalog so the UI can show a badge.
+    curated_query = {"type": ctype}
+    if cust and ctype == "styles":
+        curated_query["customer"] = cust.upper()
     curated_docs = await db.wms_catalog_options.find(
-        {"type": ctype}, {"_id": 0, "value": 1}
+        curated_query, {"_id": 0, "value": 1}
     ).to_list(2000)
     curated_set = {(c.get("value") or "").strip().upper() for c in curated_docs}
 
@@ -460,7 +472,7 @@ def _levenshtein(a: str, b: str) -> int:
 
 
 @router.get("/catalogs/{ctype}/similar")
-async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2, min_count: int = 1):
+async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2, min_count: int = 1, customer: str = ""):
     """Devuelve pares de valores del catálogo cuya distancia de edición es
     ≤ `max_dist` (default 2). Sirve para cazar typos como LIGH PINK vs LIGHT PINK,
     BANGLANDESH vs BANGLADESH, etc.
@@ -484,12 +496,19 @@ async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2,
         raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
     field, collections = _CATALOG_FIELD_MAP[ctype]
 
+    # Scope opcional por cliente — mismo motivo que /sources: sin filtrar,
+    # los pares de typos se mezclan entre clientes.
+    match_stage = {field: {"$nin": [None, "", "."]}}
+    cust = (customer or "").strip()
+    if cust:
+        match_stage["customer"] = {"$regex": f"^{re.escape(cust)}$", "$options": "i"}
+
     # Recuenta ocurrencias por valor
     counts: dict[str, int] = {}
     for coll_name in collections:
         coll = getattr(db, coll_name)
         async for doc in coll.aggregate([
-            {"$match": {field: {"$nin": [None, "", "."]}}},
+            {"$match": match_stage},
             {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
         ]):
             v = (doc.get("_id") or "").strip()
