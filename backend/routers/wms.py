@@ -5281,18 +5281,14 @@ async def pick_size(ticket_id: str, request: Request):
     if not size:
         raise HTTPException(400, "size requerido")
 
-    # Toggle global de scan obligatorio (config_options).
+    # Toggle global de scan obligatorio (config_options). Solo se resuelve; el
+    # chequeo real ocurre mas abajo, sobre el DELTA positivo (pos) — no sobre
+    # el total cumulativo. Antes rechazabamos si CUALQUIER loc con qty>0 no
+    # traia box_id, aunque delta=0 (ej: re-OK de talla porque el operador aniade
+    # de OTRA caja/loc). Ahora solo se pide scan cuando hay extraccion nueva.
     cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
     require_scan = bool(cfg.get("pick_requires_scan",
                                 DEFAULT_OPTIONS.get("pick_requires_scan", True)))
-    if require_scan:
-        missing = [loc for loc, bx in box_by_loc.items()
-                   if details.get(loc, 0) > 0 and not bx]
-        if missing:
-            raise HTTPException(400, (
-                f"Debes escanear la caja para: {', '.join(missing)}. "
-                "El descuento sin scan está deshabilitado (pick_requires_scan)."
-            ))
 
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
     if not ticket:
@@ -5367,6 +5363,11 @@ async def pick_size(ticket_id: str, request: Request):
             # Si el picker escaneó una caja para esta celda, descontamos de ESA
             # caja; si no, cae al FIFO (permitido solo cuando require_scan=False).
             only_box = box_by_loc.get(loc)
+            if require_scan and not only_box:
+                raise HTTPException(400, (
+                    f"Debes escanear la caja para descontar {d} pz en {loc} (talla {sz}). "
+                    "El descuento sin scan está deshabilitado (pick_requires_scan)."
+                ))
             await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
                                      user=user, ticket_id=ticket_id,
                                      only_box_id=only_box)
