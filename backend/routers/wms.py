@@ -389,6 +389,52 @@ _CATALOG_FIELD_MAP = {
 }
 
 
+# ── Rechazo duro de valores fuera del catalogo curado ─────────────────────────
+# Politica: si el catalogo curado de un campo tiene >= 1 valor para el customer
+# (para styles) o global (para el resto), el receiving/UPC solo puede usar esos
+# valores. Bootstrap: si el catalogo esta vacio, deja pasar hasta que exista el
+# primer curado.
+#
+# Historial: SPEKTRUM llego a tener 72 estilos por captura libre (2026-07-13);
+# esta guardia evita que el desorden vuelva a crecer. Ver:
+# `wms-style-vs-sku-policy` en memoria.
+_IDENTITY_LABELS = {
+    "styles": "Estilo",
+    "colors": "Color",
+    "sizes": "Talla",
+    "descriptions": "Descripcion",
+    "countries": "Pais de origen",
+    "fabrics": "Contenido/fabric",
+}
+
+
+async def _assert_curated_identity(customer: str, values: dict):
+    """Rechaza (HTTP 400) si algun valor no esta en el catalogo curado.
+    `values`: {ctype: value_string}. Vacios se ignoran. `styles` se scopea por
+    customer (unico campo per-cliente); el resto son globales."""
+    for ctype, raw in values.items():
+        v = (raw or "").strip()
+        if not v:
+            continue
+        query = {"type": ctype}
+        if ctype == "styles":
+            query["customer"] = (customer or "").strip().upper()
+        curated = await db.wms_catalog_options.find(
+            query, {"_id": 0, "value": 1}
+        ).to_list(5000)
+        if not curated:
+            continue  # bootstrap: cliente sin catalogo aun, deja capturar
+        curated_set = {(c.get("value") or "").strip().upper() for c in curated}
+        if v.upper() not in curated_set:
+            label = _IDENTITY_LABELS.get(ctype, ctype)
+            scope = f" de {customer}" if ctype == "styles" and customer else ""
+            raise HTTPException(
+                400,
+                f"{label} '{v}' no esta en el catalogo curado{scope}. "
+                f"Pidele al lider que lo agregue en Config WMS antes de recibir.",
+            )
+
+
 @router.get("/catalogs/{ctype}/sources")
 async def list_catalog_sources(ctype: str, request: Request, limit: int = 500, customer: str = ""):
     """List the distinct values currently present in inventory/receiving for
@@ -1900,6 +1946,16 @@ async def create_receiving(request: Request):
 
     if not style:
         raise HTTPException(400, "Style requerido")
+    # Guardia de catalogo: los 6 campos de identidad deben venir del catalogo
+    # curado del cliente (o global). Si el catalogo esta vacio, bootstrap.
+    await _assert_curated_identity(customer, {
+        "styles": style,
+        "colors": color,
+        "sizes": size,
+        "descriptions": description,
+        "countries": country_of_origin,
+        "fabrics": fabric_content,
+    })
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
     if asn_ref:
@@ -9278,6 +9334,17 @@ async def create_upc(request: Request):
     }
     if not doc["style"]:
         raise HTTPException(400, "style es obligatorio para crear un UPC")
+    # Misma guardia que create_receiving: los 6 campos de identidad deben venir
+    # del catalogo curado. El UPC es la puerta trasera preferida para basura,
+    # antes se escribia libre en un <input> del modal.
+    await _assert_curated_identity(doc["customer"], {
+        "styles": doc["style"],
+        "colors": doc["color"],
+        "sizes": doc["size"],
+        "descriptions": doc["description"],
+        "countries": doc["country_of_origin"],
+        "fabrics": doc["fabric_content"],
+    })
     await db.wms_upc_catalog.insert_one(doc)
     doc.pop("_id", None)
     return doc

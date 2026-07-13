@@ -985,7 +985,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('style')} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={customerStyles.length ? customerStyles : (options.styles || [])} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style} allowCreate={false} />
+              <SearchableSelect options={customerStyles} value={form.style} onChange={handleStyleChange} placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && customerStyles.length === 0)} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1433,16 +1433,34 @@ export const ReceivingModule = () => {
                 </div>
               </div>
 
+              {/* Todos los campos de identidad se eligen del catalogo curado.
+                  Backend rechaza cualquier valor libre (create_upc valida contra
+                  wms_catalog_options). Style se scopea al customer del receiving. */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
                     Style <span className="text-red-400">*</span>
                   </label>
-                  <input value={upcDraft.style} onChange={e => setUpcDraft(p => ({ ...p, style: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold" data-testid="upc-draft-style" />
+                  <SearchableSelect
+                    options={customerStyles}
+                    value={upcDraft.style}
+                    onChange={val => setUpcDraft(p => ({ ...p, style: val }))}
+                    placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo' : t('wms_search_style')}
+                    testId="upc-draft-style"
+                    allowCreate={false}
+                    disabled={form.customer && customerStyles.length === 0}
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
-                  <input value={upcDraft.color} onChange={e => setUpcDraft(p => ({ ...p, color: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
+                  <SearchableSelect
+                    options={options.colors || []}
+                    value={upcDraft.color}
+                    onChange={val => setUpcDraft(p => ({ ...p, color: val }))}
+                    placeholder={t('wms_search_color')}
+                    testId="upc-draft-color"
+                    allowCreate={false}
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
@@ -1455,17 +1473,38 @@ export const ReceivingModule = () => {
 
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
-                <input value={upcDraft.description} onChange={e => setUpcDraft(p => ({ ...p, description: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                <SearchableSelect
+                  options={fieldOptions.descriptions}
+                  value={upcDraft.description}
+                  onChange={val => setUpcDraft(p => ({ ...p, description: val }))}
+                  placeholder={t('wms_search_desc')}
+                  testId="upc-draft-desc"
+                  allowCreate={false}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
-                  <input value={upcDraft.country_of_origin} onChange={e => setUpcDraft(p => ({ ...p, country_of_origin: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                  <SearchableSelect
+                    options={fieldOptions.countries}
+                    value={upcDraft.country_of_origin}
+                    onChange={val => setUpcDraft(p => ({ ...p, country_of_origin: val }))}
+                    placeholder={t('wms_search_country')}
+                    testId="upc-draft-country"
+                    allowCreate={false}
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
-                  <input value={upcDraft.fabric_content} onChange={e => setUpcDraft(p => ({ ...p, fabric_content: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
+                  <SearchableSelect
+                    options={fieldOptions.fabrics}
+                    value={upcDraft.fabric_content}
+                    onChange={val => setUpcDraft(p => ({ ...p, fabric_content: val }))}
+                    placeholder={t('wms_search_fabric')}
+                    testId="upc-draft-fabric"
+                    allowCreate={false}
+                  />
                 </div>
               </div>
             </div>
