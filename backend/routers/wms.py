@@ -6389,15 +6389,29 @@ async def recon_commit(request: Request):
             g["meta"] = {k: b.get(k, "") for k in ("customer", "manufacturer", "country_of_origin", "fabric_content", "sku")}
     await db.wms_inventory.delete_many({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}})
     if groups:
-        await db.wms_inventory.insert_many([{
-            "inventory_id": gen_id("inv"), "style": st, "sku": g["meta"].get("sku") or st,
-            "color": co, "size": sz, "location": location,
-            "units_on_hand": g["units"], "units_allocated": 0, "total_boxes": g["boxes"],
-            "customer": g["meta"].get("customer", ""), "manufacturer": g["meta"].get("manufacturer", ""),
-            "country_of_origin": g["meta"].get("country_of_origin", ""),
-            "fabric_content": g["meta"].get("fabric_content", ""),
-            "recon_batch": commit_id, "updated_at": now_iso(),
-        } for (st, co, sz), g in groups.items()])
+        for (st, co, sz), g in groups.items():
+            dst_id = gen_id("inv")
+            await db.wms_inventory.insert_one({
+                "inventory_id": dst_id, "style": st, "sku": g["meta"].get("sku") or st,
+                "color": co, "size": sz, "location": location,
+                "units_on_hand": g["units"], "units_allocated": 0, "total_boxes": g["boxes"],
+                "customer": g["meta"].get("customer", ""), "manufacturer": g["meta"].get("manufacturer", ""),
+                "country_of_origin": g["meta"].get("country_of_origin", ""),
+                "fabric_content": g["meta"].get("fabric_content", ""),
+                "recon_batch": commit_id, "updated_at": now_iso(),
+            })
+            # Update matching boxes at this location to point to the new inventory_id
+            style_norm = _RECON_NORM(st)
+            color_norm = _RECON_NORM(co)
+            size_norm = _RECON_NORM(sz)
+            await db.wms_boxes.update_many({
+                "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"},
+                "status": "located",
+                "$or": [{"sku": {"$regex": f"^{style_norm}$", "$options": "i"}},
+                        {"style": {"$regex": f"^{style_norm}$", "$options": "i"}}],
+                "color": {"$regex": f"^{color_norm}$", "$options": "i"},
+                "size": {"$regex": f"^{size_norm}$", "$options": "i"},
+            }, {"$set": {"inventory_id": dst_id}})
 
     # Registrar/bloquear la ubicacion.
     lock_doc = {
