@@ -79,7 +79,11 @@ export const PickingModule = ({ currentUser } = {}) => {
       });
     }).catch(logLoadError('curated catalogs'));
   }, []);
-  const [activeTab, setActiveTab] = useState('pretickets'); // pretickets | tickets | completed | dashboard
+  // Default = 'tickets' porque al abrir el modulo el foco es surtir lo ya creado.
+  // Antes era 'pretickets' y provocaba reportes de "el ticket no aparece" cuando
+  // en realidad estaba creado pero en el tab equivocado (ej. ticket 2123 del 6-jul
+  // que ware house si tenia hecho pero el equipo veia solo Pretickets).
+  const [activeTab, setActiveTab] = useState('tickets'); // pretickets | tickets | completed | dashboard
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
