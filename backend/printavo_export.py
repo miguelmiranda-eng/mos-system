@@ -146,7 +146,12 @@ def _parse_goodie_page(page):
     cust = re.search(r"CUST\s+(.+?)\s*ISSUE ?DATE\s+([\dA-Z\-]+)", text)
     ship = re.search(r"\bSHIP\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     cancel = re.search(r"CANCEL\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
-    colorln = re.search(r"^([A-Z]+)\s+Category", text, re.M)
+    # Color multi-palabra: 'LIGHT PINK', 'SPORT GREY', 'HOT PINK', etc.
+    # Antes: r"^([A-Z]+)\s+Category" solo tomaba UNA palabra ("LIGHT" no matchea
+    # con " PINK Category" atras), asi que el fallback cae a la abreviacion de
+    # la tabla ("LPK", "SG"). Ahora acepta 1..N palabras alfabeticas separadas
+    # por espacios simples.
+    colorln = re.search(r"^([A-Z]+(?:\s+[A-Z]+)*)\s+Category", text, re.M)
     status = re.search(r"\n(ORIGINAL|REORDER|NEW|ROLLOUT[ /A-Z]*)\n", text)
 
     # Front print / division / approval / blanks come from the "** **" note blocks.
