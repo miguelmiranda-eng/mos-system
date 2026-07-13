@@ -53,16 +53,31 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
+  // Catalogo curado: fuente autoritativa para customer/color (globales) y styles
+  // (per-customer). Antes usabamos options.* que hace distinct de wms_inventory
+  // — traia basura historica. Ahora el select ya solo ofrece valores validos.
+  const [curated, setCurated] = useState({ customers: [], colors: [] });
+  const [customerStyles, setCustomerStyles] = useState([]);
   // Duplicate-ticket warning: holds the existing ticket returned by the 409 guard
   const [dupWarning, setDupWarning] = useState(null); // null | { pendingPayload, existing_ticket }
 
   const isAdmin = ['admin', 'supersu', 'ceo'].includes(currentUser?.role);
 
-  // Load all customers on mount
+  // Load customers + colores curados on mount (styles se cargan por customer abajo)
   useEffect(() => {
     fetcher('/inventory/options?').then(data => {
       setOptions(prev => ({ ...prev, customers: data.customers || [] }));
     }).catch(logLoadError('data'));
+    fetcher('/catalogs').then(data => {
+      const pick = (arr) => (Array.isArray(arr) ? arr : [])
+        .map(x => (x?.value || '').toString().trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      setCurated({
+        customers: pick(data.customers),
+        colors: pick(data.colors),
+      });
+    }).catch(logLoadError('curated catalogs'));
   }, []);
   const [activeTab, setActiveTab] = useState('pretickets'); // pretickets | tickets | completed | dashboard
 
@@ -80,6 +95,17 @@ export const PickingModule = ({ currentUser } = {}) => {
   const { adult: SIZES_ORDER, youth: YOUTH_SIZES, all: ALL_SIZES } = useWmsSizes();
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
+
+  // Cargar la lista curada de styles del customer activo. Sin cliente => vacia.
+  // Este catalogo es la unica fuente valida para el dropdown de style (antes
+  // usabamos options.styles del inventory distinct, que traia basura vieja).
+  useEffect(() => {
+    const c = (form.customer || '').trim();
+    if (!c) { setCustomerStyles([]); return; }
+    fetcher(`/catalogs/styles?customer=${encodeURIComponent(c)}`)
+      .then(d => setCustomerStyles(d?.styles || []))
+      .catch(() => setCustomerStyles([]));
+  }, [form.customer]);
 
   // Progressive ticket loading state
   const [ticketsTotal, setTicketsTotal] = useState(0);
@@ -803,7 +829,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
+              <SearchableSelect options={curated.customers.length ? curated.customers : (options.customers || [])} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_assign_op')}</label>
@@ -851,11 +877,11 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
-              <SearchableSelect options={options.styles || []} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
+              <SearchableSelect options={customerStyles} value={form.style} onChange={handleStyleChange} placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo curado' : t('wms_search_style')} testId="pick-style" allowCreate={false} disabled={!!form.customer && customerStyles.length === 0} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
+              <SearchableSelect options={curated.colors.length ? curated.colors : (options.colors || [])} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
               {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('select_color_to_see_locs')}</div>}
             </div>
           </div>
