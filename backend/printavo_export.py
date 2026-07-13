@@ -68,6 +68,50 @@ def _sizes_from_pack_text(text: str):
     return sizes, total, pack_lines
 
 
+def _color_from_position(page):
+    """Extrae el color usando COORDENADAS de las palabras del PDF, no el texto plano.
+    Motivo: pdfplumber junta la ultima linea de la DESCRIPTION con la primera del COLOR
+    cuando estan cerca en Y (ej: 'WHOLE MILK' + 'WHITE' -> 'WHOLE MILKWHITE'). Usando la
+    posicion X del header 'COLOR' evitamos concatenar palabras de la columna descripcion.
+
+    Approach:
+      1) localizar el header 'COLOR' → rango X de la columna.
+      2) localizar la palabra 'Category' → row inferior (justo debajo del color).
+      3) tomar palabras que caigan en el rango X entre header y Category.
+      4) devolver la row mas cercana a 'Category' (la de nombre COMPLETO, ej 'LIGHT PINK'),
+         no la de arriba (que es la abreviacion 'LPK').
+    """
+    try:
+        words = page.extract_words()
+    except Exception:
+        return None
+    color_hdr = next((w for w in words if w["text"].strip().upper() == "COLOR"), None)
+    cat = next((w for w in words if w["text"].strip() == "Category"), None)
+    if not color_hdr or not cat:
+        return None
+    # Tolerancia generosa a la derecha por si el color escrito es mas ancho que el header.
+    col_x0 = color_hdr["x0"] - 5
+    col_x1 = color_hdr["x1"] + 45
+    candidates = []
+    for w in words:
+        cx = (w["x0"] + w["x1"]) / 2
+        if not (col_x0 <= cx <= col_x1):
+            continue
+        if not (color_hdr["top"] < w["top"] < cat["top"]):
+            continue
+        # El color son solo letras (no numeros, no simbolos).
+        if not re.match(r"^[A-Z]+$", w["text"]):
+            continue
+        candidates.append(w)
+    if not candidates:
+        return None
+    # Row mas cercana a 'Category' (el nombre COMPLETO, no la abreviacion).
+    top_max = max(c["top"] for c in candidates)
+    row = [c for c in candidates if abs(c["top"] - top_max) < 3]
+    row.sort(key=lambda w: w["x0"])
+    return " ".join(w["text"] for w in row).strip() or None
+
+
 def _pack_raw_from_text(text: str) -> str:
     """Extract the PACK block VERBATIM from the PO PDF text so the Printavo quote
     preserves the original formatting (e.g. 'MD- 60', 'LG-60', 'XL-60' con espaciados
@@ -146,12 +190,12 @@ def _parse_goodie_page(page):
     cust = re.search(r"CUST\s+(.+?)\s*ISSUE ?DATE\s+([\dA-Z\-]+)", text)
     ship = re.search(r"\bSHIP\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     cancel = re.search(r"CANCEL\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
-    # Color multi-palabra: 'LIGHT PINK', 'SPORT GREY', 'HOT PINK', etc.
-    # El PDF puede llegar en DOS layouts distintos segun el estilo:
-    #  (a) 'BLACK Category'                (color y Category en la MISMA linea)
-    #  (b) 'LIGHT PINK\nCategory :'        (color arriba, Category abajo)
-    # Antes: r"^([A-Z]+)\s+Category" solo cubria (a) con UNA palabra.
-    # Ahora: 1..N palabras + acepta salto de linea antes de 'Category'.
+    # Color: preferimos POSICION (x-column) via _color_from_position porque
+    # pdfplumber junta la ultima linea de la DESCRIPTION con la del COLOR cuando
+    # estan cercanas en Y (bug reportado 2026-07-13: 'WHOLE MILKWHITE',
+    # 'STRAWBERRY MILKLIGHT PINK', 'EVERYTHING HURTSBLACK'). El regex sobre
+    # texto plano queda como fallback para PDFs donde extract_words no funciona.
+    color_from_pos = _color_from_position(page)
     colorln = re.search(
         r"^([A-Z]+(?:\s+[A-Z]+)*?)(?:\s+|\s*\n\s*)Category\b",
         text, re.M
@@ -204,7 +248,7 @@ def _parse_goodie_page(page):
         "cancel_date": cancel.group(1) if cancel else None,
         "design_num": m.group("design"),
         "blank": m.group("cloth"),
-        "color": colorln.group(1) if colorln else m.group("color"),
+        "color": color_from_pos or (colorln.group(1) if colorln else m.group("color")),
         "description": desc,
         "status": (status.group(1).strip() if status else "ORIGINAL"),
         "division": division,
