@@ -31,10 +31,14 @@ MOS_TO_PRINTAVO_SIZE = {
 PRODUCTION_DEPT = "PRODUCTION DEPARTMENT\n(DO NOT EDIT)"
 PACKING_DEPT = "PACKING DEPARTMENT\n(DO NOT EDIT)"
 NEW_BOXES = "NEW BOXES\nINCLUDE # ON QUANTITY COLUMN"
+NEW_BOXES_PRICE = 2.50  # master invoice 2406 lo trae con 2.50 (antes 0.00 en SPENCERS)
 ALLOWED_SHORTAGE_DEFAULT = "ALLOWED SHORTAGE:\n0%"
 SAMPLES_DEFAULT = "SAMPLES\nN/A"
 SPECIAL_NOTES_HEADER = "SPECIAL NOTES:"
 CUSTOMER_NOTE = "DIGITAL PACKING LIST."
+# APPROVAL METHOD estandarizado (master invoice 2406 usa este texto fijo en
+# lugar del que trae el PDF — Viviana normaliza al armar el quote).
+APPROVAL_METHOD_DEFAULT = "Please follow APPROVED SAMPLE and send picture for REFERENCE."
 PACK_REFERENCES = (
     "INCLUDES REFERENCES TO:\nPrice Ticket\nHang Tag\nBag/No Bag\n"
     "Bag Size (if specified)\nFolding Type\nFolding Size (if specified)\n"
@@ -62,6 +66,28 @@ def _sizes_from_pack_text(text: str):
             total += int(q)
             pack_lines.append(f"{sz.upper()} - {q}")
     return sizes, total, pack_lines
+
+
+def _pack_raw_from_text(text: str) -> str:
+    """Extract the PACK block VERBATIM from the PO PDF text so the Printavo quote
+    preserves the original formatting (e.g. 'MD- 60', 'LG-60', 'XL-60' con espaciados
+    inconsistentes tal como salen del PDF). Sin esta captura, `pack_lines` normaliza
+    a 'MD - 60' y el master invoice deja de coincidir. Devuelve solo las lineas de
+    talla (una por linea), no el 'PACK' header."""
+    m = re.search(r"\bPACK\b\s*\n(.+?)(?=\n\s*TOPS NEEDED\b|\n\s*\*\*|\n\s*INCLUDES REFERENCES\b|\Z)",
+                  text, re.S)
+    if not m:
+        return ""
+    raw = m.group(1).strip("\n")
+    # Filtrar solo lineas con formato de talla ("SM - 60", "MD- 60", "XXL 96", etc.)
+    out = []
+    for ln in raw.split("\n"):
+        s = ln.strip()
+        if not s:
+            continue
+        if re.match(r"^[A-Z0-9]{1,4}\s*[-]?\s*\d+\s*$", s):
+            out.append(s)
+    return "\n".join(out)
 
 
 def _extract_sizes_by_position(page):
@@ -147,6 +173,9 @@ def _parse_goodie_page(page):
     sizes, total, pack_lines = _sizes_from_pack_text(text)
     if not sizes or total != qty_declared:
         sizes, total, pack_lines = _extract_sizes_by_position(page)
+    # Bloque PACK LITERAL del PDF — para reproducir el formato del master invoice
+    # (que copia el pack tal cual, con sus 'MD- 60' 'LG-60' inconsistentes).
+    pack_raw = _pack_raw_from_text(text)
 
     # Branding for the nickname: retailer's first word, mapped (SPENCER -> SPENCERS).
     retailer = cust.group(1).strip() if cust else ""
@@ -183,6 +212,7 @@ def _parse_goodie_page(page):
         "qty_from_sizes": total,
         "sizes_match": qty_declared == total,
         "po_discrepancy": bool(store and store_notes and store.group(1) != store_notes.group(2)),
+        "pack_raw": pack_raw,  # bloque PACK verbatim del PDF (para preservar en el packing block del quote)
     }
 
 
@@ -341,9 +371,18 @@ def _status_disp(r):
 
 
 def _spencers_groups(r, sizes_input):
-    """2-group SPENCERS template (matches quote #2110)."""
-    pack_txt = "\n".join(r["pack_lines"])
-    packing_desc = f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n\n{pack_txt}\n\n{PACK_REFERENCES}"
+    """2-group SPENCERS template. Alineado con el master invoice #2406
+    (SPENCERS PO#21767 - 323354 - THT0109M1000 - ROLLOUT):
+      - Packing usa el PACK verbatim del PDF (pack_raw), no el reformateado.
+      - Separadores: 1 salto entre PACK y tallas, 4 saltos antes de INCLUDES.
+      - APPROVAL METHOD es texto estandarizado (Viviana lo normaliza asi).
+      - SPECIAL NOTES G1 sin blanks_trim (no aparece en el master).
+      - NEW BOXES price = 2.50."""
+    pack_txt = r.get("pack_raw") or "\n".join(r["pack_lines"])
+    packing_desc = (
+        f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n{pack_txt}"
+        f"\n\n\n\n{PACK_REFERENCES}"
+    )
     front = r["front_print"] if (r["front_print"] and "FRONT PRINT" in r["front_print"]) \
         else ("FRONT PRINT\n" + r["front_print"] if r["front_print"] else "FRONT PRINT\nNECK LABEL\nFINISHING")
     g1 = [
@@ -351,11 +390,11 @@ def _spencers_groups(r, sizes_input):
         _li(_garment_description(r), color=r["color"], sizes=sizes_input, price=r["unit_price"]),
         _li(SAMPLES_DEFAULT),
         _li(front),
-        _li("APPROVAL METHOD:\n" + (r["approval_method"] or "")),
+        _li("APPROVAL METHOD:\n" + APPROVAL_METHOD_DEFAULT),
         _li(ALLOWED_SHORTAGE_DEFAULT),
-        _li(SPECIAL_NOTES_HEADER + ("\n" + r["blanks_trim"] if r["blanks_trim"] else "")),
+        _li(SPECIAL_NOTES_HEADER),
     ]
-    g2 = [_li(PACKING_DEPT), _li(packing_desc), _li(NEW_BOXES), _li(SPECIAL_NOTES_HEADER)]
+    g2 = [_li(PACKING_DEPT), _li(packing_desc), _li(NEW_BOXES, price=NEW_BOXES_PRICE), _li(SPECIAL_NOTES_HEADER)]
     return [g1, g2]
 
 
@@ -440,7 +479,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     elif is_spektrum:
         nickname = f"{brand} PO#{r['po_number']} - {r.get('range_name') or ''} - {r['description']}".replace(" -  - ", " - ")
     else:
-        nickname = f"{brand} PO# {r['po_number']} - {r['store_po']} - {r['design_num']}"
+        # Nickname alineado con master invoice #2406: "PO#21767" (sin espacio).
+        nickname = f"{brand} PO#{r['po_number']} - {r['store_po']} - {r['design_num']}"
     if status and status.upper() != "ORIGINAL":
         nickname += f" - {status}"
 
