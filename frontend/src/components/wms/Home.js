@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock } from "lucide-react";
+import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, API } from "./lib";
 
@@ -57,6 +57,11 @@ export const HomeModule = () => {
   const [sourceSearch, setSourceSearch] = useState(byType(''));
   const [actioning, setActioning] = useState(null); // identifier for in-flight action
   const [renameModal, setRenameModal] = useState(null); // { type, oldValue, newValue }
+
+  // Detector de typos por similitud (Levenshtein) — panel expandible por type.
+  const [similar, setSimilar] = useState({});           // { [type]: { pairs, max_dist } }
+  const [similarLoading, setSimilarLoading] = useState({});
+  const [showSimilar, setShowSimilar] = useState({});
 
   const load = useCallback(async () => {
     try {
@@ -193,6 +198,45 @@ export const HomeModule = () => {
     } finally { setActioning(null); }
   };
 
+  // Cazar typos: distancia de edición ≤ 2 entre pares del catálogo.
+  const loadSimilar = useCallback(async (type) => {
+    setSimilarLoading(p => ({ ...p, [type]: true }));
+    try {
+      const data = await fetcher(`/catalogs/${type}/similar?max_dist=2&min_count=1`);
+      setSimilar(p => ({ ...p, [type]: data }));
+    } catch (err) {
+      logLoadError(`similar ${type}`)(err);
+      toast.error('No se pudieron detectar typos');
+    } finally { setSimilarLoading(p => ({ ...p, [type]: false })); }
+  }, []);
+
+  const toggleSimilar = (type) => {
+    const open = !!showSimilar[type];
+    setShowSimilar(p => ({ ...p, [type]: !open }));
+    if (!open && !similar[type]) loadSimilar(type);
+  };
+
+  // Fusiona `drop` → `keep` en una sola llamada al rename endpoint.
+  const mergePair = async (type, drop, keep) => {
+    if (!window.confirm(`¿Fusionar "${drop}" → "${keep}"?\nAfecta TODOS los registros con "${drop}" (inventario, cajas, tickets, UPCs, receiving).`)) return;
+    setActioning(`merge:${type}:${drop}`);
+    try {
+      const res = await poster(`/catalogs/${type}/rename`, { old: drop, new: keep });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`${data.modified} fila(s) fusionadas: "${drop}" → "${data.new}"`);
+        loadSimilar(type);
+        if (sources[type]) loadSources(type);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Error al fusionar');
+      }
+    } catch (err) {
+      logLoadError('merge')(err);
+      toast.error('Error de conexión');
+    } finally { setActioning(null); }
+  };
+
   const getFilteredSources = (type) => {
     const data = sources[type];
     if (!data) return [];
@@ -319,6 +363,118 @@ export const HomeModule = () => {
                   </ul>
                 )}
               </div>
+
+              {/* Detector de typos (solo manager) */}
+              {isManager && (() => {
+                const isOpen = !!showSimilar[section.type];
+                const simData = similar[section.type];
+                const simLoading = !!similarLoading[section.type];
+                const nPairs = simData?.pairs?.length || 0;
+                return (
+                  <>
+                    <button
+                      onClick={() => toggleSimilar(section.type)}
+                      className={`w-full px-4 py-2.5 border-t border-border/10 flex items-center justify-between text-[11px] font-black uppercase tracking-widest transition-colors ${
+                        nPairs > 0 ? 'text-amber-400 hover:bg-amber-500/10' : 'text-muted-foreground hover:bg-secondary/30'
+                      }`}
+                      data-testid={`similar-toggle-${section.type}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Wand2 className="w-3.5 h-3.5" />
+                        Detectar typos
+                        {simData && (
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] tabular-nums ${
+                            nPairs > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-secondary/50 text-muted-foreground'
+                          }`}>{nPairs}</span>
+                        )}
+                      </span>
+                      {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t border-border/10 bg-amber-500/[0.03] max-h-[360px] overflow-auto custom-scrollbar">
+                        {simLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+                          </div>
+                        ) : !simData ? (
+                          <div className="text-center py-6 text-[10px] text-muted-foreground/60 italic">
+                            Cargando…
+                          </div>
+                        ) : nPairs === 0 ? (
+                          <div className="text-center py-6 text-[10px] text-emerald-500 font-bold uppercase tracking-widest">
+                            Sin typos detectados
+                          </div>
+                        ) : (
+                          <>
+                            <div className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-amber-400/80 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3 h-3" />
+                              Distancia ≤ 2. Revisa: algunos pueden ser colores distintos.
+                            </div>
+                            <ul className="divide-y divide-border/5">
+                              {simData.pairs.map((p, i) => {
+                                const drop = p.recommend_drop;
+                                const keep = p.recommend_keep;
+                                const isBusy = actioning === `merge:${section.type}:${drop}`;
+                                const isDrop = (v) => v === drop;
+                                return (
+                                  <li key={`${p.a}-${p.b}-${i}`} className="px-3 py-2 hover:bg-secondary/20 transition-colors">
+                                    <div className="flex items-center gap-2 text-[11px]">
+                                      <span className={`font-mono font-bold ${isDrop(p.a) ? 'text-red-400 line-through decoration-red-500/40' : 'text-emerald-400'}`}>
+                                        {p.a}
+                                      </span>
+                                      <span className="text-[8px] text-muted-foreground bg-secondary/60 px-1 rounded tabular-nums">{p.count_a.toLocaleString()}</span>
+                                      <ArrowRight className="w-3 h-3 text-muted-foreground/60" />
+                                      <span className={`font-mono font-bold ${isDrop(p.b) ? 'text-red-400 line-through decoration-red-500/40' : 'text-emerald-400'}`}>
+                                        {p.b}
+                                      </span>
+                                      <span className="text-[8px] text-muted-foreground bg-secondary/60 px-1 rounded tabular-nums">{p.count_b.toLocaleString()}</span>
+                                      <span className="ml-auto text-[8px] bg-amber-500/15 text-amber-400 px-1 rounded">d={p.distance}</span>
+                                    </div>
+                                    <div className="mt-1.5 flex items-center gap-1.5">
+                                      <button
+                                        onClick={() => mergePair(section.type, drop, keep)}
+                                        disabled={!!actioning}
+                                        className="text-[10px] font-black uppercase tracking-widest bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 px-2 py-1 rounded flex items-center gap-1 disabled:opacity-40"
+                                      >
+                                        {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                        Fusionar "{drop}" → "{keep}"
+                                      </button>
+                                      <button
+                                        onClick={() => mergePair(section.type, keep, drop)}
+                                        disabled={!!actioning}
+                                        className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 hover:text-foreground px-2 py-1 rounded"
+                                        title="Invertir dirección de la fusión"
+                                      >
+                                        ⇄
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setSimilar(prev => ({
+                                            ...prev,
+                                            [section.type]: {
+                                              ...prev[section.type],
+                                              pairs: prev[section.type].pairs.filter((_, idx) => idx !== i),
+                                            },
+                                          }));
+                                        }}
+                                        className="ml-auto text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 hover:text-muted-foreground"
+                                        title="Ignorar este par (solo en esta sesión)"
+                                      >
+                                        Ignorar
+                                      </button>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Sources accordion */}
               <button

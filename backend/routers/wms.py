@@ -377,13 +377,15 @@ _CATALOG_FIELD_MAP = {
     "countries":    ("country_of_origin", ["wms_inventory", "wms_receiving"]),
     "descriptions": ("description",       ["wms_inventory", "wms_receiving"]),
     "fabrics":      ("fabric_content",    ["wms_inventory", "wms_receiving"]),
-    # Identity fields also live on the physical boxes, so a rename/clean here must
-    # sweep wms_boxes too or the box mirror drifts from inventory (picking matches
-    # boxes by style/color).
-    "customers":    ("customer", ["wms_inventory", "wms_receiving", "wms_boxes"]),
-    "colors":       ("color",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
-    "styles":       ("style",    ["wms_inventory", "wms_receiving", "wms_boxes"]),
-    "sizes":        ("size",     ["wms_inventory", "wms_receiving", "wms_boxes"]),
+    # Identity fields also live on the physical boxes, on UPCs and on pick tickets
+    # — un rename/clean debe barrer TODAS o los mirrors se drift. Ejemplo real
+    # (LIGH PINK, 2026-07-13): el color se colo en receiving, se propago a boxes
+    # e inventory, y despues los UPCs escaneados y 7 tickets historicos quedaron
+    # con el typo. Sweep de todas las colecciones cierra el hueco.
+    "customers":    ("customer", ["wms_inventory", "wms_receiving", "wms_boxes", "wms_pick_tickets"]),
+    "colors":       ("color",    ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
+    "styles":       ("style",    ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
+    "sizes":        ("size",     ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
 }
 
 
@@ -432,6 +434,97 @@ async def list_catalog_sources(ctype: str, request: Request, limit: int = 500):
         "total_distinct": len(items),
         "items": items[: max(1, min(limit, 5000))],
     }
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Distancia de edición: número mínimo de inserciones, borrados o sustituciones
+    de UN caracter para transformar `a` en `b`. Case-insensitive."""
+    a, b = (a or "").lower(), (b or "").lower()
+    if a == b: return 0
+    if not a: return len(b)
+    if not b: return len(a)
+    # Corta rápido si la diferencia de longitud ya excede el umbral común
+    if abs(len(a) - len(b)) > 3:
+        return abs(len(a) - len(b))
+    # Iterativo con dos filas — O(len(a) * len(b)) en tiempo, O(min) en memoria
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            insert = curr[j - 1] + 1
+            delete = prev[j] + 1
+            sub = prev[j - 1] + (0 if ca == cb else 1)
+            curr.append(min(insert, delete, sub))
+        prev = curr
+    return prev[-1]
+
+
+@router.get("/catalogs/{ctype}/similar")
+async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2, min_count: int = 1):
+    """Devuelve pares de valores del catálogo cuya distancia de edición es
+    ≤ `max_dist` (default 2). Sirve para cazar typos como LIGH PINK vs LIGHT PINK,
+    BANGLANDESH vs BANGLADESH, etc.
+
+    Response: {
+      "pairs": [
+        { "a": "LIGH PINK", "b": "LIGHT PINK", "distance": 1,
+          "count_a": 42, "count_b": 414, "recommend_keep": "LIGHT PINK" }
+      ]
+    }
+
+    Reglas:
+      - Ambos valores deben aparecer al menos `min_count` veces en las fuentes.
+      - Se sugiere conservar el que tenga MÁS apariciones (más raíz de datos).
+      - Se ignoran pares idénticos y valores vacíos.
+      - Solo admin nivel 3+ (mismo umbral que rename).
+    """
+    user = await require_auth(request)
+    _assert_catalog_manager(user)
+    if ctype not in _CATALOG_FIELD_MAP:
+        raise HTTPException(400, f"type debe ser uno de {sorted(_CATALOG_FIELD_MAP)}")
+    field, collections = _CATALOG_FIELD_MAP[ctype]
+
+    # Recuenta ocurrencias por valor
+    counts: dict[str, int] = {}
+    for coll_name in collections:
+        coll = getattr(db, coll_name)
+        async for doc in coll.aggregate([
+            {"$match": {field: {"$nin": [None, "", "."]}}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+        ]):
+            v = (doc.get("_id") or "").strip()
+            if not v: continue
+            counts[v] = counts.get(v, 0) + int(doc.get("count", 0))
+
+    # Filtra por min_count
+    values = sorted([v for v, c in counts.items() if c >= min_count])
+    if len(values) > 3000:
+        # protección: comparar 3k×3k = 9M pares es lento. Recorta al top por conteo.
+        values = sorted(counts.keys(), key=lambda v: -counts[v])[:3000]
+        values.sort()
+
+    # Compara pares
+    pairs = []
+    for i, a in enumerate(values):
+        for b in values[i + 1:]:
+            # cortoide barato antes del Levenshtein
+            if abs(len(a) - len(b)) > max_dist: continue
+            # No comparar si la primera letra es MUY distinta (rápido descarte)
+            d = _levenshtein(a, b)
+            if d == 0 or d > max_dist: continue
+            ca, cb = counts[a], counts[b]
+            keep = a if ca >= cb else b
+            drop = b if keep == a else a
+            pairs.append({
+                "a": a, "b": b,
+                "distance": d,
+                "count_a": ca, "count_b": cb,
+                "recommend_keep": keep,
+                "recommend_drop": drop,
+            })
+    # Los pares donde uno tiene MUCHO más uso que el otro son los typos más obvios
+    pairs.sort(key=lambda p: (p["distance"], -abs(p["count_a"] - p["count_b"])))
+    return {"type": ctype, "max_dist": max_dist, "pairs": pairs}
 
 
 @router.post("/catalogs/{ctype}/rename")
