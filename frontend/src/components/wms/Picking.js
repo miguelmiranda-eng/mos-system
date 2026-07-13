@@ -895,7 +895,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
-              <SearchableSelect options={customerStyles} value={form.style} onChange={handleStyleChange} placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo curado' : t('wms_search_style')} testId="pick-style" allowCreate={false} disabled={!!form.customer && customerStyles.length === 0} />
+              <SearchableSelect options={customerStyles.length > 0 ? customerStyles : (options.styles || [])} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
