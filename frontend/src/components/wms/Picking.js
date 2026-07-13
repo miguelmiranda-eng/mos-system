@@ -437,18 +437,28 @@ export const PickingModule = ({ currentUser } = {}) => {
     const totalPicked = ALL_SIZES.reduce((s, sz) => s + Math.min(pickedFor(sz), reqFor(sz)), 0);
     const totalPending = ALL_SIZES.reduce((s, sz) => s + pendingFor(sz), 0);
     const isPartial = totalPicked > 0 && totalPending > 0;
+    // Comodin 2% POR TALLA (redondeado hacia arriba en cada una para no dejar
+    // corto al equipo en tallas pequeñas). Total = suma real por talla, NO 2%
+    // del total (diferente por los redondeos).
+    const comodinPct = 0.02;
+    const comodinBySize = {};
+    ALL_SIZES.forEach(sz => {
+      const req = reqFor(sz);
+      comodinBySize[sz] = req > 0 ? Math.ceil(req * comodinPct) : 0;
+    });
     const gridRows = ALL_SIZES.filter(sz => reqFor(sz) > 0).map(sz => {
       const req = reqFor(sz), picked = pickedFor(sz), pend = pendingFor(sz);
       const done = pend === 0;             // size fully picked
       const started = picked > 0 && !done; // size partially picked
       const rowBg = done ? 'background:#dcfce7' : (started ? 'background:#fef9c3' : '');
+      const extra = comodinBySize[sz];
       let qtyCell;
       if (done) {
         qtyCell = `<span style="color:#15803d">&#10003; ${req}</span><div style="font-size:9px;color:#15803d;font-weight:normal">SURTIDO</div>`;
       } else if (started) {
         qtyCell = `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span><div style="font-size:9px;color:#b45309;font-weight:normal">surtido ${picked}</div>`;
       } else {
-        qtyCell = `${req}`;
+        qtyCell = `${req}<div style="font-size:10px;color:#92400e;font-weight:bold">+${extra} (2%)</div>`;
       }
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => {
@@ -467,10 +477,10 @@ export const PickingModule = ({ currentUser } = {}) => {
     // sigue en fuente chica abajo del recuadro derecho porque es el codigo que
     // se escanea desde el PDA.
     const orderNo = ticket.order_number || '—';
-    // Comodin: 2% extra del total para reponer defectos / cortes malos.
-    // Se redondea hacia arriba para no dejar al equipo corto.
-    const comodinPct = 0.02;
-    const comodinQty = Math.ceil(totalQty * comodinPct);
+    // Total del comodin = SUMA por talla (respeta los redondeos hacia arriba
+    // de cada talla, para que la fila del footer coincida con lo que ve el
+    // operador por talla).
+    const comodinQty = Object.values(comodinBySize).reduce((s, v) => s + v, 0);
     const comodinTotal = totalQty + comodinQty;
     pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:2px">${ticket.customer || ''}</div><div style="text-align:center;font-size:26px;font-weight:900;margin:8px 0 14px;letter-spacing:1px;line-height:1.1">ORDEN #${orderNo}</div><div style="text-align:center;margin:0 0 6px">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right;line-height:1.4"><div style="font-size:9px;color:#666">Style</div><div style="font-size:20px;font-weight:900;line-height:1.1">${ticket.style || ''}</div><div style="font-size:9px;color:#666;margin-top:3px">Total</div><div style="font-size:16px;font-weight:bold;line-height:1.1">${totalQty}</div><div style="font-size:7px;color:#888;font-family:monospace;margin-top:4px">${ticket.ticket_id}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">(faltan ${totalPending})</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr><tr style="background:#fef3c7"><td style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">COMODÍN 2%</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:16px;font-weight:900;color:#92400e">+${comodinQty}</td><td style="border:1px solid #000;padding:4px;font-size:9px;color:#92400e;font-weight:bold">Total a surtir: ${comodinTotal}</td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
