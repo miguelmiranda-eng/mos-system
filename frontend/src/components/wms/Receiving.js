@@ -185,9 +185,10 @@ export const ReceivingModule = () => {
   });
   // Cuando el operador edita un UPC, opcion de propagar cambios descriptivos
   // (description/country/fabric/brand) a las cajas/receivings/inventory que
-  // ya usan este UPC. Sin este flag, el catalogo queda actualizado pero las
-  // cajas fisicas se imprimieron con el valor viejo.
-  const [upcPropagate, setUpcPropagate] = useState(false);
+  // ya usan este UPC. Default: MARCADO — la mayoria de veces la edicion es
+  // una correccion y hay que sincronizar todo. El operador desmarca solo si
+  // el cambio es puramente para futuros receivings.
+  const [upcPropagate, setUpcPropagate] = useState(true);
   // Inline ASN creation — used when the operator wants to receive material
   // for an ASN that wasn't pre-imported via Excel.
   const [createAsnOpen, setCreateAsnOpen] = useState(false);
@@ -465,7 +466,7 @@ export const ReceivingModule = () => {
       brand: '',
     });
     setUpcEditMode(false);
-    setUpcPropagate(false);
+    setUpcPropagate(true);
     setCreateUpcOpen(true);
   };
 
@@ -485,7 +486,7 @@ export const ReceivingModule = () => {
       brand: upcDoc.brand || '',
     });
     setUpcEditMode(true);
-    setUpcPropagate(false);
+    setUpcPropagate(true);
     setCreateUpcOpen(true);
   };
 

@@ -2025,6 +2025,45 @@ async def create_receiving(request: Request):
         "countries": country_of_origin,
         "fabrics": fabric_content,
     })
+
+    # Guardia de UPC: si el receiving se hace contra un UPC que YA esta en el
+    # catalogo, los campos capturados deben coincidir con los del UPC. Sin
+    # esta guardia, el operador puede capturar un pais/desc/fabric distinto y
+    # las cajas se etiquetan con el valor equivocado (bug del receiving GILDAN
+    # 5000 BLACK L de GOODIE 2026-07-13: UPC decia NICARAGUA pero se recibio
+    # como REPUBLICA DOMINICANA). Solo bloqueamos si los valores difieren de
+    # forma no-vacia (evita bloquear cuando el UPC tiene el campo vacio).
+    upc_code = str(body.get("upc", "")).strip().upper()
+    if upc_code:
+        upc_doc = await db.wms_upc_catalog.find_one({"upc": upc_code}, {"_id": 0})
+        if upc_doc:
+            _upc_labels = {
+                "style": "Style", "color": "Color", "size": "Talla",
+                "description": "Descripcion", "country_of_origin": "Pais de origen",
+                "fabric_content": "Fabric",
+            }
+            captured = {
+                "style": style, "color": color, "size": size,
+                "description": description,
+                "country_of_origin": country_of_origin,
+                "fabric_content": fabric_content,
+            }
+            divergences = []
+            for k, cap in captured.items():
+                upc_val = (upc_doc.get(k) or "").strip()
+                if not upc_val or not cap:
+                    continue
+                # Normalize whitespace + upper for compare (mismo que el sweep)
+                a = re.sub(r"\s+", " ", str(cap)).strip().upper()
+                b = re.sub(r"\s+", " ", upc_val).strip().upper()
+                if a != b:
+                    divergences.append(f"{_upc_labels[k]}: capturaste '{cap}' pero el UPC dice '{upc_val}'")
+            if divergences:
+                raise HTTPException(400, (
+                    f"El UPC {upc_code} ya existe en el catalogo con datos distintos:\n"
+                    + "\n".join(f"  - {d}" for d in divergences)
+                    + "\n\nCorrige tu captura o edita primero el UPC (con la casilla 'Aplicar a cajas ya recibidas')."
+                ))
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
     if asn_ref:
