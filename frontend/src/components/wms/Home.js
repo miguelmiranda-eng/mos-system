@@ -177,8 +177,12 @@ export const HomeModule = () => {
       const res = await poster(`/catalogs/${type}/rename`, { old: oldValue, new: newClean });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`${data.modified} fila(s) renombradas de "${oldValue}" a "${data.new}"`);
+        const bits = [`${data.modified} fila(s) renombradas de "${oldValue}" a "${data.new}"`];
+        if (data.catalog_removed) bits.push(`${data.catalog_removed} quitado(s) del catálogo`);
+        if (data.catalog_added) bits.push(`${data.catalog_added} agregado(s) al catálogo`);
+        toast.success(bits.join(' · '));
         setRenameModal(null);
+        load();
         loadSources(type);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -243,7 +247,14 @@ export const HomeModule = () => {
       const res = await poster(`/catalogs/${type}/rename`, { old: drop, new: keep });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`${data.modified} fila(s) fusionadas: "${drop}" → "${data.new}"`);
+        // El backend ahora tambien sincroniza el catalogo curado: quita `drop`
+        // y agrega `keep` si no estaba. Reflejamos eso en el toast + recargamos
+        // load() para que la lista curada de la UI (arriba) se actualice.
+        const bits = [`${data.modified} fila(s) fusionadas: "${drop}" → "${data.new}"`];
+        if (data.catalog_removed) bits.push(`${data.catalog_removed} quitado(s) del catálogo`);
+        if (data.catalog_added) bits.push(`${data.catalog_added} agregado(s) al catálogo`);
+        toast.success(bits.join(' · '));
+        load();
         loadSimilar(type);
         if (sources[type]) loadSources(type);
       } else {

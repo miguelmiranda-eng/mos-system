@@ -606,9 +606,12 @@ async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2,
 
 @router.post("/catalogs/{ctype}/rename")
 async def rename_catalog_value(ctype: str, request: Request):
-    """Bulk-rename a value across all source collections for a catalog type.
-    Example: rename {old: 'BANGLANDESH', new: 'BANGLADESH'} sweeps every
-    inventory + receiving row with the typo and fixes it in place.
+    """Bulk-rename a value across all source collections AND sync the curated
+    catalog for `ctype`. Example: {old:'BLAK', new:'BLACK'} sweeps every
+    inventory/receiving/boxes/upc/tickets row and, ademas, quita 'BLAK' del
+    catalogo curado (si estaba) y agrega 'BLACK' (si no estaba). Sin el sync
+    del catalogo el rechazo duro de Receiving (create_receiving/create_upc)
+    rebota el nuevo valor porque no esta curado.
     Restricted to lead/supervisor (catalog manager)."""
     user = await require_auth(request)
     _assert_catalog_manager(user)
@@ -624,24 +627,90 @@ async def rename_catalog_value(ctype: str, request: Request):
     field, collections = _CATALOG_FIELD_MAP[ctype]
     new_upper = new.upper()
 
+    # --- 1) Sweep en las colecciones fuente ---
     total_matched = 0
     total_modified = 0
+    old_ci = {"$regex": f"^{re.escape(old)}$", "$options": "i"}
     for coll_name in collections:
         coll = getattr(db, coll_name)
         res = await coll.update_many(
-            {field: old},
+            {field: old_ci},
             {"$set": {field: new_upper}},
         )
         total_matched += res.matched_count
         total_modified += res.modified_count
 
+    # --- 2) Sync del catalogo curado ---
+    # Styles se scopea por customer (cada cliente tiene su lista curada); el
+    # resto es global. Trabajamos por scope: para styles, iteramos por customer;
+    # para el resto, un solo scope global.
+    removed_catalog: list[dict] = []
+    added_catalog: list[dict] = []
+
+    curated_old = await db.wms_catalog_options.find(
+        {"type": ctype, "value": old_ci}, {"_id": 0}
+    ).to_list(500)
+
+    if ctype == "styles":
+        # Sincronizamos por cada customer que tenia el `old` curado. Si el `old`
+        # no estaba curado en ningun customer, no agregamos `new` a ninguno —
+        # el rename actua solo como sweep (comportamiento previo).
+        scopes = sorted({(d.get("customer") or "").strip().upper()
+                         for d in curated_old if d.get("customer")})
+        for cust in scopes:
+            # Quitar todas las variantes case-insensitive del `old` para este customer.
+            for od in [d for d in curated_old if (d.get("customer") or "").strip().upper() == cust]:
+                await db.wms_catalog_options.delete_one({"catalog_id": od["catalog_id"]})
+                removed_catalog.append(od)
+            # Agregar `new` si no esta (dedupe case-insensitive).
+            exists = await db.wms_catalog_options.find_one({
+                "type": "styles", "customer": cust,
+                "value": {"$regex": f"^{re.escape(new_upper)}$", "$options": "i"},
+            })
+            if not exists:
+                nd = {
+                    "catalog_id": gen_id("cat"),
+                    "type": "styles",
+                    "value": new_upper,
+                    "customer": cust,
+                    "created_at": now_iso(),
+                    "created_by_name": user.get("name") or user.get("email", "") or "system-rename",
+                }
+                await db.wms_catalog_options.insert_one(nd)
+                nd.pop("_id", None)
+                added_catalog.append(nd)
+    else:
+        # Global: quitar todas las variantes del `old` y agregar `new` si no esta.
+        for od in curated_old:
+            await db.wms_catalog_options.delete_one({"catalog_id": od["catalog_id"]})
+            removed_catalog.append(od)
+        exists = await db.wms_catalog_options.find_one({
+            "type": ctype,
+            "value": {"$regex": f"^{re.escape(new_upper)}$", "$options": "i"},
+        })
+        if not exists:
+            nd = {
+                "catalog_id": gen_id("cat"),
+                "type": ctype,
+                "value": new_upper,
+                "created_at": now_iso(),
+                "created_by_name": user.get("name") or user.get("email", "") or "system-rename",
+            }
+            await db.wms_catalog_options.insert_one(nd)
+            nd.pop("_id", None)
+            added_catalog.append(nd)
+
     await log_movement(user, "catalog_rename", {
         "type": ctype, "field": field, "old": old, "new": new_upper,
         "modified": total_modified,
+        "catalog_removed": [c.get("catalog_id") for c in removed_catalog],
+        "catalog_added": [c.get("catalog_id") for c in added_catalog],
     })
     return {
         "type": ctype, "old": old, "new": new_upper,
         "matched": total_matched, "modified": total_modified,
+        "catalog_removed": len(removed_catalog),
+        "catalog_added": len(added_catalog),
     }
 
 
