@@ -75,11 +75,15 @@ def _color_from_position(page):
     posicion X del header 'COLOR' evitamos concatenar palabras de la columna descripcion.
 
     Approach:
-      1) localizar el header 'COLOR' → rango X de la columna.
-      2) localizar la palabra 'Category' → row inferior (justo debajo del color).
-      3) tomar palabras que caigan en el rango X entre header y Category.
-      4) devolver la row mas cercana a 'Category' (la de nombre COMPLETO, ej 'LIGHT PINK'),
-         no la de arriba (que es la abreviacion 'LPK').
+      1) localizar el header 'COLOR' → x0 = borde izquierdo de la columna.
+      2) localizar el siguiente header ('Ln' → 'WH' → 'REF' → 'CLOTH' → 'DESCRIPTION')
+         en la MISMA fila que COLOR pero con x mayor → borde derecho preciso (asi 'SA' de
+         la columna WH no se cuela). Fallback: +45 si no se encuentra otro header.
+      3) localizar 'Category' → row inferior justo debajo del color.
+      4) tomar palabras en ese rango [x0, x_next) entre header y Category, filtradas a
+         SOLO letras (excluye numeros y simbolos).
+      5) devolver la row mas cercana a 'Category' (el nombre COMPLETO 'LIGHT PINK', no
+         la abreviacion 'LPK' que va arriba en la misma columna).
     """
     try:
         words = page.extract_words()
@@ -89,17 +93,28 @@ def _color_from_position(page):
     cat = next((w for w in words if w["text"].strip() == "Category"), None)
     if not color_hdr or not cat:
         return None
-    # Tolerancia generosa a la derecha por si el color escrito es mas ancho que el header.
+    # Borde derecho = x0 del siguiente header en la misma fila que COLOR.
+    # Los headers estan en la misma row que 'COLOR' (misma top +/- 3px).
+    NEXT_HDRS = {"Ln", "WH", "REF", "CLOTH", "DESCRIPTION", "QTY", "PRICE"}
+    next_hdr = None
+    for w in words:
+        if abs(w["top"] - color_hdr["top"]) > 3:
+            continue
+        if w["x0"] <= color_hdr["x1"]:
+            continue
+        if w["text"].strip() not in NEXT_HDRS:
+            continue
+        if next_hdr is None or w["x0"] < next_hdr["x0"]:
+            next_hdr = w
     col_x0 = color_hdr["x0"] - 5
-    col_x1 = color_hdr["x1"] + 45
+    col_x1 = (next_hdr["x0"] - 3) if next_hdr else (color_hdr["x1"] + 45)
     candidates = []
     for w in words:
         cx = (w["x0"] + w["x1"]) / 2
-        if not (col_x0 <= cx <= col_x1):
+        if not (col_x0 <= cx < col_x1):
             continue
         if not (color_hdr["top"] < w["top"] < cat["top"]):
             continue
-        # El color son solo letras (no numeros, no simbolos).
         if not re.match(r"^[A-Z]+$", w["text"]):
             continue
         candidates.append(w)
