@@ -106,7 +106,11 @@ def _color_from_position(page):
     x0 = max(0, color_hdr["x0"] - 3)
     x1 = (next_hdr["x0"] - 3) if next_hdr else (color_hdr["x1"] + 45)
     top = color_hdr["bottom"] + 1
-    bottom = cat["top"] - 1
+    # OJO: 'Category :' vive en la MISMA linea que el nombre completo del color
+    # ('LIGHT PINK   Category :'), solo que en otra columna (REF). El borde
+    # inferior debe INCLUIR esa fila — cortar en cat.top dejaba fuera el nombre
+    # completo y solo quedaba la abreviacion 'LPK' de la fila del estilo.
+    bottom = cat["bottom"] + 2
     if x1 <= x0 or bottom <= top:
         return None
     try:
