@@ -241,7 +241,13 @@ export const HomeModule = () => {
 
   // Fusiona `drop` → `keep` en una sola llamada al rename endpoint.
   const mergePair = async (type, drop, keep) => {
-    if (!window.confirm(`¿Fusionar "${drop}" → "${keep}"?\nAfecta TODOS los registros con "${drop}" (inventario, cajas, tickets, UPCs, receiving).`)) return;
+    if (!window.confirm(
+      `¿Fusionar "${drop}" → "${keep}"?\n\n` +
+      `1) Renombra en TODAS las filas: inventario, cajas, tickets, UPCs, receiving.\n` +
+      `2) Quita "${drop}" del catálogo curado (si estaba).\n` +
+      `3) Agrega "${keep}" al catálogo curado (si no estaba).\n\n` +
+      `El sistema queda 100% alineado — nada quedará huérfano.`
+    )) return;
     setActioning(`merge:${type}:${drop}`);
     try {
       const res = await poster(`/catalogs/${type}/rename`, { old: drop, new: keep });
