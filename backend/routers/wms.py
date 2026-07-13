@@ -8563,9 +8563,12 @@ async def create_cycle_count(request: Request):
     location_filter = body.get("location_filter", "").strip()
     customer_filter = body.get("customer_filter", "").strip()
     style_filter = body.get("style_filter", "").strip()
+    color_filter = body.get("color_filter", "").strip()
     assigned_to = body.get("assigned_to", "").strip()
     assigned_to_name = body.get("assigned_to_name", "").strip()
-    is_general = body.get("is_general", False) or (not location_filter and not customer_filter and not style_filter)
+    is_general = body.get("is_general", False) or (
+        not location_filter and not customer_filter and not style_filter and not color_filter
+    )
 
     if not name:
         raise HTTPException(400, "Nombre del conteo requerido")
@@ -8580,6 +8583,8 @@ async def create_cycle_count(request: Request):
             query["customer"] = {"$regex": f"^{customer_filter}$", "$options": "i"}
         if style_filter:
             query["style"] = {"$regex": f"^{style_filter}$", "$options": "i"}
+        if color_filter:
+            query["color"] = {"$regex": f"^{re.escape(color_filter)}$", "$options": "i"}
 
     # Get inventory items matching filters - Increase limit to 50,000 for general counts
     items = await db.wms_inventory.find(query, {"_id": 0}).to_list(50000)
@@ -8619,6 +8624,7 @@ async def create_cycle_count(request: Request):
         "location_filter": location_filter if not is_general else "",
         "customer_filter": customer_filter if not is_general else "",
         "style_filter": style_filter if not is_general else "",
+        "color_filter": color_filter if not is_general else "",
         "assigned_to": assigned_to or None,
         "assigned_to_name": assigned_to_name or None,
         "total_lines": len(count_lines),

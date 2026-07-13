@@ -18,8 +18,8 @@ export const CycleCountModule = () => {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [options, setOptions] = useState({ customers: [], styles: [], locations: [] });
-  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
+  const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
+  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(logLoadError('data')); }, []);
@@ -29,6 +29,7 @@ export const CycleCountModule = () => {
     fetcher('/inventory/options?').then(d => setOptions({
       customers: d.customers || [],
       styles: d.styles || [],
+      colors: d.colors || [],
       locations: d.locations || []
     })).catch(logLoadError('data'));
   }, [load]);
@@ -44,7 +45,7 @@ export const CycleCountModule = () => {
         const data = await res.json();
         toast.success(t('wms_cc_created', { count: data.total_lines }));
         setShowForm(false);
-        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', assigned_to: '', assigned_to_name: '' });
+        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error('Error de conexion'); }
@@ -297,7 +298,7 @@ export const CycleCountModule = () => {
               type="checkbox"
               id="cc_is_general"
               checked={form.is_general}
-              onChange={e => setForm(p => ({ ...p, is_general: e.target.checked, location_filter: '', customer_filter: '', style_filter: '' }))}
+              onChange={e => setForm(p => ({ ...p, is_general: e.target.checked, location_filter: '', customer_filter: '', style_filter: '', color_filter: '' }))}
               className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 bg-background"
               data-testid="cc-is-general"
             />
@@ -308,7 +309,7 @@ export const CycleCountModule = () => {
 
           <div className={`space-y-2 transition-all duration-300 ${form.is_general ? 'opacity-40 pointer-events-none scale-[0.98]' : ''}`}>
             <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_cc_filters')}</div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">
                   {t('wms_cc_loc_filter')}
@@ -328,6 +329,13 @@ export const CycleCountModule = () => {
                 <label className="text-xs text-muted-foreground mb-1 block">{t('style')}</label>
                 <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder={t('all')} testId="cc-style" />
               </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Color</label>
+                <SearchableSelect options={options.colors} value={form.color_filter} onChange={val => setForm(p => ({ ...p, color_filter: val }))} placeholder={t('all')} testId="cc-color" />
+              </div>
+            </div>
+            <div className="text-[10px] text-muted-foreground/70 mt-1">
+              Puedes combinar filtros. Ej: solo <b>style 5000 + color BLACK</b> cuenta esas dos dimensiones donde existan.
             </div>
           </div>
 
@@ -401,13 +409,18 @@ export const CycleCountModule = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 border-t border-border/10 pt-3">
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 border-t border-border/10 pt-3 gap-2 flex-wrap">
                   <span className="flex items-center gap-1"><History className="w-3 h-3" /> {new Date(c.created_at).toLocaleDateString()}</span>
                   {c.is_general ? (
                     <span className="text-emerald-400 font-black bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg flex items-center gap-1">Conteo General</span>
-                  ) : c.location_filter ? (
-                    <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>
-                  ) : null}
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1 justify-end">
+                      {c.location_filter && <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>}
+                      {c.style_filter && <span className="opacity-80 bg-primary/10 border border-primary/20 text-primary px-1.5 py-0.5 rounded">STYLE {c.style_filter}</span>}
+                      {c.color_filter && <span className="opacity-80 bg-blue-500/10 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded">{c.color_filter}</span>}
+                      {c.customer_filter && <span className="opacity-70">{c.customer_filter}</span>}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
