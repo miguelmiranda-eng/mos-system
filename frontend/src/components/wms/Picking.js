@@ -472,13 +472,17 @@ export const PickingModule = ({ currentUser } = {}) => {
     if (showForm && editingTicket && t.ticket_id === editingTicket.ticket_id) {
       return false;
     }
-
-    const term = search.toLowerCase();
+    // Busqueda orientada a lo que el usuario conoce: numero de orden (2123),
+    // cliente (GOODIE...) o estilo (5000B). NO se matchea contra ticket_id
+    // (pick_f42881fea8ef) porque es un ID hex interno que nadie tipea; si el
+    // ticket_id impreso en la etiqueta se pega, el numero de orden basta.
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
     return (
-      t.ticket_id.toLowerCase().includes(term) ||
-      (t.order_number || '').toString().includes(term) ||
+      (t.order_number || '').toString().toLowerCase().includes(term) ||
       (t.customer || '').toLowerCase().includes(term) ||
-      (t.style || '').toLowerCase().includes(term)
+      (t.style || '').toLowerCase().includes(term) ||
+      (t.color || '').toLowerCase().includes(term)
     );
   });
 
@@ -787,7 +791,7 @@ export const PickingModule = ({ currentUser } = {}) => {
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground opacity-50" />
         <input
-          placeholder={t('wms_search_pick_hint') || "Buscar por ticket, orden o cliente..."}
+          placeholder={t('wms_search_pick_hint') || "Buscar por N° de orden, cliente, estilo o color…"}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="w-full pl-10 pr-4 py-2.5 bg-card/40 border border-border/20 rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/20 transition-all font-medium backdrop-blur-sm shadow-inner"
