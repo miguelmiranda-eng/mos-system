@@ -92,6 +92,17 @@ def _color_from_position(page):
     cat = next((w for w in words if w["text"].strip() == "Category"), None)
     if not color_hdr or not cat:
         return None
+    # El nombre COMPLETO del color ('LIGHT PINK') vive en la misma FILA que la
+    # palabra 'Category', a su IZQUIERDA (misma linea: 'LIGHT PINK   Category :').
+    # La fila de ARRIBA (fila del estilo) trae solo la abreviacion ('LPK LPK').
+    # Estrategia robusta: recolectar palabras-letra en la columna COLOR entre el
+    # header y la fila de Category (inclusive), agrupar por fila (top) y devolver
+    # la fila mas cercana a Category (el nombre completo, no la abreviacion).
+    #
+    # x0: NO usar color_hdr.x0 (el header 'COLOR' esta corrido a la derecha del
+    # inicio real del texto del color, truncaba 'BLACK'->'ACK'). Usar el borde
+    # derecho del header 'STYLE' — el color siempre empieza despues de esa columna.
+    style_hdr = next((w for w in words if w["text"].strip().upper() == "STYLE"), None)
     NEXT_HDRS = {"Ln", "WH", "REF", "CLOTH", "DESCRIPTION", "QTY", "PRICE"}
     next_hdr = None
     for w in words:
@@ -103,33 +114,31 @@ def _color_from_position(page):
             continue
         if next_hdr is None or w["x0"] < next_hdr["x0"]:
             next_hdr = w
-    x0 = max(0, color_hdr["x0"] - 3)
-    x1 = (next_hdr["x0"] - 3) if next_hdr else (color_hdr["x1"] + 45)
+    x0 = (style_hdr["x1"] + 2) if style_hdr else (color_hdr["x0"] - 30)
+    x1 = (next_hdr["x0"] - 2) if next_hdr else (color_hdr["x1"] + 45)
     top = color_hdr["bottom"] + 1
-    # OJO: 'Category :' vive en la MISMA linea que el nombre completo del color
-    # ('LIGHT PINK   Category :'), solo que en otra columna (REF). El borde
-    # inferior debe INCLUIR esa fila — cortar en cat.top dejaba fuera el nombre
-    # completo y solo quedaba la abreviacion 'LPK' de la fila del estilo.
     bottom = cat["bottom"] + 2
     if x1 <= x0 or bottom <= top:
         return None
-    try:
-        crop = page.crop((x0, top, x1, bottom))
-        raw = crop.extract_text() or ""
-    except Exception:
+    # Palabras-letra dentro del rectangulo de la columna COLOR. `VVL0009M1000`
+    # (columna STYLE, si se colara) queda excluido por tener digitos.
+    cand = []
+    for w in words:
+        cx = (w["x0"] + w["x1"]) / 2
+        if not (x0 <= cx < x1):
+            continue
+        if not (top <= w["top"] <= bottom):
+            continue
+        if not re.match(r"^[A-Z]+$", w["text"]):
+            continue
+        cand.append(w)
+    if not cand:
         return None
-    lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
-    if not lines:
-        return None
-    # La ULTIMA linea del crop = nombre completo (ej: 'LIGHT PINK'), lo de arriba
-    # es la abreviacion (LPK/BLK/WHT). Ademas: sanitizar a solo letras + espacios.
-    last = lines[-1]
-    # Si la ultima linea tiene solo mayusculas y espacios (esperado para un color),
-    # devolverla. Si contiene otra cosa (numeros, simbolos), intentar la anterior.
-    for candidate in reversed(lines):
-        if re.match(r"^[A-Z]+(?:\s+[A-Z]+)*$", candidate):
-            return candidate
-    return last if re.match(r"^[A-Z ]+$", last) else None
+    # Agrupar por fila (top) y quedarse con la fila mas abajo = nombre completo.
+    top_max = max(c["top"] for c in cand)
+    row = [c for c in cand if abs(c["top"] - top_max) < 3]
+    row.sort(key=lambda w: w["x0"])
+    return " ".join(w["text"] for w in row).strip() or None
 
 
 def _pack_raw_from_text(text: str) -> str:
