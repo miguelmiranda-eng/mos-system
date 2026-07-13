@@ -1187,7 +1187,7 @@ async def boxes_relocate(request: Request):
     # 2. Rebalance inventory: bucket by (source_location, sku, color, size) so
     #    moves spanning multiple source bins still decrement the right rows.
     from collections import defaultdict
-    bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
+    bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None, "box_ids": []})
     for b in boxes:
         src = (b.get("location") or "")
         # Short style first (matches how inventory rows are keyed); the composite
@@ -1197,6 +1197,7 @@ async def boxes_relocate(request: Request):
         bucket[key]["boxes"] += 1
         if bucket[key]["sample"] is None:
             bucket[key]["sample"] = b
+        bucket[key]["box_ids"].append(b["box_id"])
 
     units_moved = 0
     skus_moved = 0
@@ -1235,14 +1236,24 @@ async def boxes_relocate(request: Request):
             "sku": sku, "color": color, "size": size, "location": dst_name,
         })
         if dst_inv:
-            await db.wms_inventory.update_one(
-                {"_id": dst_inv["_id"]},
-                {"$inc": {"units_on_hand": units, "total_boxes": boxes_cnt},
-                 "$set": {"updated_at": now_iso()}},
-            )
+            dst_id = dst_inv.get("inventory_id")
+            if not dst_id:
+                dst_id = gen_id("inv")
+                await db.wms_inventory.update_one(
+                    {"_id": dst_inv["_id"]},
+                    {"$inc": {"units_on_hand": units, "total_boxes": boxes_cnt},
+                     "$set": {"inventory_id": dst_id, "updated_at": now_iso()}},
+                )
+            else:
+                await db.wms_inventory.update_one(
+                    {"_id": dst_inv["_id"]},
+                    {"$inc": {"units_on_hand": units, "total_boxes": boxes_cnt},
+                     "$set": {"updated_at": now_iso()}},
+                )
         else:
+            dst_id = gen_id("inv")
             await db.wms_inventory.insert_one({
-                "inventory_id": gen_id("inv"),
+                "inventory_id": dst_id,
                 "sku": sku,
                 "style": sample.get("style") or sku,
                 "color": color,
@@ -1258,6 +1269,14 @@ async def boxes_relocate(request: Request):
                 "units_allocated": 0,
                 "updated_at": now_iso(),
             })
+
+        # Link moved boxes to the destination inventory row
+        bucket_box_ids = agg.get("box_ids") or []
+        if bucket_box_ids:
+            await db.wms_boxes.update_many(
+                {"box_id": {"$in": bucket_box_ids}},
+                {"$set": {"inventory_id": dst_id}}
+            )
 
     # Use the transit movement type when EVERY source was a transit slot
     # (cart or legacy UBICACION TEMPORAL), so the Movements module surfaces it
@@ -1328,6 +1347,18 @@ async def move_units(request: Request):
     if units > avail:
         raise HTTPException(409, f"No hay suficiente en {src}: pides {units}, disponible {avail}")
 
+    # Pre-lookup or pre-generate destination inventory_id
+    dst_inv = await db.wms_inventory.find_one(
+        {"sku": sku, "color": color, "size": size, "location": dst_name}
+    )
+    if dst_inv:
+        dst_id = dst_inv.get("inventory_id")
+        if not dst_id:
+            dst_id = gen_id("inv")
+            await db.wms_inventory.update_one({"_id": dst_inv["_id"]}, {"$set": {"inventory_id": dst_id}})
+    else:
+        dst_id = gen_id("inv")
+
     # Consume source boxes FIFO.
     q = {
         "$or": [{"sku": sku}, {"style": sku}], "color": color, "size": size,
@@ -1353,7 +1384,7 @@ async def move_units(request: Request):
             # Whole box relocates to the destination.
             await db.wms_boxes.update_one(
                 {"_id": box["_id"]},
-                {"$set": {"location": dst_name, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
+                {"$set": {"location": dst_name, "status": "stored", "inventory_id": dst_id, "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
             )
             whole_count += 1
             moved_box_ids.append(box.get("box_id"))
@@ -1371,8 +1402,8 @@ async def move_units(request: Request):
                 "seq_num": next_seq, "location": dst_name,
                 "units": take, "qty": take, "status": "stored",
                 "split_from": box.get("box_id"), "created_at": now_iso(),
+                "inventory_id": dst_id,
             })
-            child.pop("inventory_id", None)
             await db.wms_boxes.insert_one(child)
             split_count += 1
             moved_box_ids.extend([box.get("box_id"), new_box_id])
@@ -1416,11 +1447,11 @@ async def move_units(request: Request):
         await db.wms_inventory.update_one(
             {"_id": dst_inv["_id"]},
             {"$inc": {"units_on_hand": units, "total_boxes": boxes_added},
-             "$set": {"updated_at": now_iso()}},
+             "$set": {"updated_at": now_iso(), "inventory_id": dst_id}},
         )
     else:
         await db.wms_inventory.insert_one({
-            "inventory_id": gen_id("inv"),
+            "inventory_id": dst_id,
             "sku": sku, "style": sample.get("style") or sku,
             "color": color, "size": size,
             "customer": sample.get("customer", ""),
@@ -2681,10 +2712,43 @@ async def _move_box_inventory(box, old_loc, new_loc):
                 await db.wms_inventory.update_one({"_id": old_inv["_id"]}, {"$set": {"units_on_hand": new_qty, "total_boxes": new_boxes, "updated_at": now_iso()}})
 
     # 2. Add to new location in wms_inventory (units AND the box that arrived).
-    await db.wms_inventory.update_one(
-        {"sku": sku, "color": color, "size": size, "location": new_loc},
-        {"$inc": {"units_on_hand": qty, "total_boxes": 1}, "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}},
-        upsert=True
+    dst_inv = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": new_loc})
+    if dst_inv:
+        dst_id = dst_inv.get("inventory_id")
+        if not dst_id:
+            dst_id = gen_id("inv")
+            await db.wms_inventory.update_one(
+                {"_id": dst_inv["_id"]},
+                {"$inc": {"units_on_hand": qty, "total_boxes": 1},
+                 "$set": {"inventory_id": dst_id, "updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}}
+            )
+        else:
+            await db.wms_inventory.update_one(
+                {"_id": dst_inv["_id"]},
+                {"$inc": {"units_on_hand": qty, "total_boxes": 1},
+                 "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}}
+            )
+    else:
+        dst_id = gen_id("inv")
+        await db.wms_inventory.insert_one({
+            "inventory_id": dst_id,
+            "sku": sku,
+            "style": sku,
+            "color": color,
+            "size": size,
+            "location": new_loc,
+            "units_on_hand": qty,
+            "total_boxes": 1,
+            "units_allocated": 0,
+            "customer": customer,
+            "is_bpo": is_bpo,
+            "updated_at": now_iso()
+        })
+
+    # 3. Update the moved box's inventory_id to link it correctly.
+    await db.wms_boxes.update_one(
+        {"box_id": box["box_id"]},
+        {"$set": {"inventory_id": dst_id}}
     )
 
 
