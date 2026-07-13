@@ -53,7 +53,6 @@ export const HomeModule = () => {
   // Sources panel state — distinct values from wms_inventory + wms_receiving.
   const [sources, setSources] = useState({}); // { [type]: { items: [{value,count,in_catalog}], total_distinct } }
   const [sourcesLoading, setSourcesLoading] = useState({}); // { [type]: bool }
-  const [expanded, setExpanded] = useState({}); // { [type]: bool }
   const [sourceSearch, setSourceSearch] = useState(byType(''));
   const [actioning, setActioning] = useState(null); // identifier for in-flight action
   const [renameModal, setRenameModal] = useState(null); // { type, oldValue, newValue }
@@ -89,17 +88,20 @@ export const HomeModule = () => {
     } finally { setSourcesLoading(p => ({ ...p, [type]: false })); }
   }, [styleCustomer]);
 
-  const toggleExpanded = (type) => {
-    const isOpen = !!expanded[type];
-    setExpanded(p => ({ ...p, [type]: !isOpen }));
-    if (!isOpen && !sources[type]) loadSources(type);
-  };
+  // Autoload one-shot para catalogos no-styles (styles necesita cliente antes).
+  useEffect(() => {
+    SECTIONS.forEach(s => {
+      if (s.type === 'styles') return;
+      loadSources(s.type);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Refresh styles' Fuentes + Typos when the client changes, so switching from
-  // SPEKTRUM to TRUMP swaps the panel instead of showing stale mixed data.
+  // Refresh styles' Fuentes + Typos cuando cambia el cliente. La lista siempre
+  // esta visible, asi que cargamos apenas se elige el cliente.
   useEffect(() => {
     if (!styleCustomer) return;
-    if (expanded.styles) loadSources('styles');
+    loadSources('styles');
     if (showSimilar.styles) loadSimilar('styles');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleCustomer]);
@@ -128,17 +130,18 @@ export const HomeModule = () => {
     } finally { setSaving(null); }
   };
 
-  const handleDelete = async (catalog_id, value) => {
-    if (!window.confirm(`¿Eliminar "${value}" del catálogo?\n(No afecta registros existentes)`)) return;
+  const handleDelete = async (catalog_id, value, type) => {
+    if (!window.confirm(`¿Quitar "${value}" del catálogo?\n(No afecta registros existentes en inventario)`)) return;
     setDeleting(catalog_id);
     try {
       await deleter(`/catalogs/${catalog_id}`);
-      toast.success('Eliminado');
+      toast.success('Quitado del catálogo');
       refreshWmsSizes();  // in case a size was removed
       load();
+      if (type && sources[type]) loadSources(type);
     } catch (err) {
       logLoadError('delete catalog')(err);
-      toast.error('Error al eliminar');
+      toast.error('Error al quitar');
     } finally { setDeleting(null); }
   };
 
@@ -274,9 +277,9 @@ export const HomeModule = () => {
       <div className="bg-card/40 border border-border/20 rounded-2xl p-5">
         <h2 className="text-sm font-black uppercase tracking-widest text-foreground mb-1">Catálogos maestros</h2>
         <p className="text-xs text-muted-foreground">
-          Los <b>valores curados</b> son la fuente autoritativa del dropdown. Si hay al menos uno,
-          solo esos aparecen en Receiving / Agregar Manual. Abre <b>Fuentes desde inventario</b> para
-          ver lo que está en la base ahora y limpiar typos, promover valores buenos o vaciar basura.
+          Una sola lista por catálogo: cada valor muestra su uso real en inventario y un badge
+          <b> En cat.</b> si ya está curado (los curados son los únicos que aparecen en Receiving / Agregar Manual).
+          Desde aquí puedes <b>promover</b>, <b>quitar del catálogo</b>, <b>renombrar</b> en todas las filas o <b>vaciar</b> basura.
         </p>
       </div>
 
@@ -284,14 +287,12 @@ export const HomeModule = () => {
         {SECTIONS.map(section => {
           const Icon = section.icon;
           const isStyles = section.type === 'styles';
-          // Styles are per-customer: show only the selected client's curated styles.
-          const items = isStyles
-            ? (catalogs.styles || []).filter(i => (i.customer || '').toUpperCase() === styleCustomer.toUpperCase())
-            : (catalogs[section.type] || []);
-          const isExpanded = !!expanded[section.type];
           const srcData = sources[section.type];
           const srcLoading = !!sourcesLoading[section.type];
           const filteredSources = getFilteredSources(section.type);
+          // Contador del header = tamaño de la lista unificada (curados + inventario).
+          // Antes eran dos: la lista de arriba mostraba "curados" y el acordeon "inventario".
+          const totalCount = srcData?.total_distinct ?? 0;
           return (
             <div key={section.type} className={`border ${section.border} rounded-3xl bg-card/60 backdrop-blur-sm shadow-xl flex flex-col`}>
               {/* Header */}
@@ -304,7 +305,7 @@ export const HomeModule = () => {
                   <p className="text-[10px] text-muted-foreground font-bold opacity-60 leading-tight">{section.desc}</p>
                 </div>
                 <span className="text-[10px] font-black tabular-nums bg-secondary/60 px-2 py-1 rounded-lg text-muted-foreground">
-                  {items.length}
+                  {srcLoading ? '…' : totalCount}
                 </span>
               </div>
 
@@ -352,33 +353,6 @@ export const HomeModule = () => {
                   <Lock className="w-3 h-3" /> Solo líder/supervisor puede editar
                 </div>
               )}
-
-              {/* Curated list */}
-              <div className="overflow-auto max-h-[200px] custom-scrollbar">
-                {items.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
-                    {isStyles && !styleCustomer ? 'Selecciona un cliente' : 'Sin valores curados'}
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-border/10">
-                    {items.map(item => (
-                      <li key={item.catalog_id} className="flex items-center justify-between px-4 py-2 hover:bg-secondary/30 transition-colors group">
-                        <span className="text-sm font-bold text-foreground truncate">{item.value}</span>
-                        {isManager && (
-                          <button
-                            onClick={() => handleDelete(item.catalog_id, item.value)}
-                            disabled={deleting === item.catalog_id}
-                            className="p-1.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
-                            data-testid={`cat-delete-${item.catalog_id}`}
-                          >
-                            {deleting === item.catalog_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
 
               {/* Detector de typos (solo manager) */}
               {isManager && (() => {
@@ -492,103 +466,106 @@ export const HomeModule = () => {
                 );
               })()}
 
-              {/* Sources accordion */}
-              <button
-                onClick={() => toggleExpanded(section.type)}
-                className="w-full px-4 py-2.5 border-t border-border/10 flex items-center justify-between text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary/30 transition-colors"
-                data-testid={`sources-toggle-${section.type}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Search className="w-3.5 h-3.5" />
-                  Fuentes desde inventario
-                  {srcData && (
-                    <span className="bg-secondary/50 px-1.5 py-0.5 rounded text-[9px] tabular-nums">{srcData.total_distinct}</span>
-                  )}
-                </span>
-                {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-
-              {isExpanded && (
-                <div className="border-t border-border/10 bg-secondary/10">
-                  <div className="p-3 border-b border-border/10">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
-                      <input
-                        type="text"
-                        value={sourceSearch[section.type]}
-                        onChange={e => setSourceSearch(p => ({ ...p, [section.type]: e.target.value }))}
-                        placeholder="Filtrar valores…"
-                        className="w-full pl-9 pr-3 py-1.5 bg-background border border-border rounded-lg text-xs focus:ring-2 focus:ring-primary/30"
-                        data-testid={`sources-search-${section.type}`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="overflow-auto max-h-[320px] custom-scrollbar">
-                    {srcLoading ? (
-                      <div className="flex items-center justify-center py-10">
-                        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : filteredSources.length === 0 ? (
-                      <div className="text-center py-6 text-[10px] text-muted-foreground/40 font-bold uppercase tracking-widest italic">
-                        Sin coincidencias
-                      </div>
-                    ) : (
-                      <ul className="divide-y divide-border/5">
-                        {filteredSources.map((it, i) => {
-                          const isPromoting = actioning === `promote:${section.type}:${it.value}`;
-                          const isClearing = actioning === `clear:${section.type}:${it.value}`;
-                          return (
-                            <li key={`${it.value}-${i}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-secondary/30 transition-colors group">
-                              <span className="text-[12px] font-mono font-bold text-foreground truncate flex-1" title={it.value}>
-                                {it.value}
-                              </span>
-                              <span className="text-[9px] font-black tabular-nums text-muted-foreground/70 bg-secondary/40 px-1.5 py-0.5 rounded" title={`Aparece en ${it.count} fila(s)`}>
-                                {it.count.toLocaleString()}
-                              </span>
-                              {it.in_catalog && (
-                                <span className={`text-[8px] font-black uppercase tracking-widest ${section.color} ${section.bg} px-1.5 py-0.5 rounded`}>
-                                  En cat.
-                                </span>
-                              )}
-                              {isManager && !it.in_catalog && (
-                                <button
-                                  onClick={() => promoteToCatalog(section.type, it.value)}
-                                  disabled={!!actioning}
-                                  className={`p-1 ${section.color} hover:${section.bg} rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30`}
-                                  title="Promover al catálogo"
-                                >
-                                  {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpToLine className="w-3 h-3" />}
-                                </button>
-                              )}
-                              {isManager && (
-                                <>
-                                  <button
-                                    onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
-                                    disabled={!!actioning}
-                                    className="p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                    title="Renombrar en todas las filas"
-                                  >
-                                    <Edit2 className="w-3 h-3" />
-                                  </button>
-                                  <button
-                                    onClick={() => bulkClearValue(section.type, it.value)}
-                                    disabled={!!actioning}
-                                    className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                    title="Vaciar valor (afecta inventario)"
-                                  >
-                                    {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                                  </button>
-                                </>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
+              {/* Lista unificada: curados + valores reales de inventario, con match y contadores. */}
+              <div className="border-t border-border/10 bg-secondary/10 flex-1 flex flex-col">
+                <div className="p-3 border-b border-border/10">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
+                    <input
+                      type="text"
+                      value={sourceSearch[section.type]}
+                      onChange={e => setSourceSearch(p => ({ ...p, [section.type]: e.target.value }))}
+                      placeholder="Filtrar valores…"
+                      className="w-full pl-9 pr-3 py-1.5 bg-background border border-border rounded-lg text-xs focus:ring-2 focus:ring-primary/30"
+                      data-testid={`sources-search-${section.type}`}
+                    />
                   </div>
                 </div>
-              )}
+
+                <div className="overflow-auto max-h-[420px] custom-scrollbar">
+                  {srcLoading ? (
+                    <div className="flex items-center justify-center py-10">
+                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : isStyles && !styleCustomer ? (
+                    <div className="text-center py-8 text-[10px] text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                      Selecciona un cliente
+                    </div>
+                  ) : filteredSources.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                      Sin valores
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-border/5">
+                      {filteredSources.map((it, i) => {
+                        const isPromoting = actioning === `promote:${section.type}:${it.value}`;
+                        const isClearing = actioning === `clear:${section.type}:${it.value}`;
+                        const isRemovingCat = deleting === it.catalog_id;
+                        return (
+                          <li key={`${it.value}-${i}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-secondary/30 transition-colors group">
+                            <span className="text-[12px] font-mono font-bold text-foreground truncate flex-1" title={it.value}>
+                              {it.value}
+                            </span>
+                            <span
+                              className={`text-[9px] font-black tabular-nums px-1.5 py-0.5 rounded ${
+                                it.count > 0 ? 'text-muted-foreground/70 bg-secondary/40' : 'text-muted-foreground/40 bg-transparent'
+                              }`}
+                              title={it.count > 0 ? `Aparece en ${it.count} fila(s)` : 'Curado sin uso en inventario'}
+                            >
+                              {it.count > 0 ? it.count.toLocaleString() : '—'}
+                            </span>
+                            {it.in_catalog && (
+                              <span className={`text-[8px] font-black uppercase tracking-widest ${section.color} ${section.bg} px-1.5 py-0.5 rounded`}>
+                                En cat.
+                              </span>
+                            )}
+                            {isManager && !it.in_catalog && (
+                              <button
+                                onClick={() => promoteToCatalog(section.type, it.value)}
+                                disabled={!!actioning}
+                                className={`p-1 ${section.color} hover:${section.bg} rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30`}
+                                title="Promover al catálogo"
+                              >
+                                {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpToLine className="w-3 h-3" />}
+                              </button>
+                            )}
+                            {isManager && it.in_catalog && it.catalog_id && (
+                              <button
+                                onClick={() => handleDelete(it.catalog_id, it.value, section.type)}
+                                disabled={!!actioning || isRemovingCat}
+                                className="p-1 text-muted-foreground hover:text-orange-500 hover:bg-orange-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                title="Quitar del catálogo (no afecta inventario)"
+                              >
+                                {isRemovingCat ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                              </button>
+                            )}
+                            {isManager && (
+                              <button
+                                onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
+                                disabled={!!actioning}
+                                className="p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                title="Renombrar en todas las filas"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                            )}
+                            {isManager && it.count > 0 && (
+                              <button
+                                onClick={() => bulkClearValue(section.type, it.value)}
+                                disabled={!!actioning}
+                                className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                title="Vaciar valor (afecta inventario)"
+                              >
+                                {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
           );
         })}

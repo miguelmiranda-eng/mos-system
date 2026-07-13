@@ -422,23 +422,35 @@ async def list_catalog_sources(ctype: str, request: Request, limit: int = 500, c
                 continue
             counts[v] = counts.get(v, 0) + int(doc.get("count", 0))
 
-    # Mark which ones are already in the curated catalog so the UI can show a badge.
+    # Traer los curados y FUSIONARLOS con los conteos de inventario. Curados que
+    # nunca se han usado en la base entran con count=0 (para que la UI muestre
+    # una sola lista unificada — sin panel duplicado arriba/abajo).
     curated_query = {"type": ctype}
     if cust and ctype == "styles":
         curated_query["customer"] = cust.upper()
     curated_docs = await db.wms_catalog_options.find(
-        curated_query, {"_id": 0, "value": 1}
-    ).to_list(2000)
-    curated_set = {(c.get("value") or "").strip().upper() for c in curated_docs}
+        curated_query, {"_id": 0, "catalog_id": 1, "value": 1}
+    ).to_list(5000)
+    # index por valor UPPER para el badge y para inyectar el catalog_id
+    curated_by_upper: dict[str, dict] = {}
+    for c in curated_docs:
+        v = (c.get("value") or "").strip()
+        if not v:
+            continue
+        curated_by_upper[v.upper()] = {"catalog_id": c.get("catalog_id"), "value": v}
+    counts_by_upper = {k.upper(): (k, v) for k, v in counts.items()}
+    all_uppers = set(counts_by_upper.keys()) | set(curated_by_upper.keys())
 
-    items = [
-        {
-            "value": v,
-            "count": c,
-            "in_catalog": v.strip().upper() in curated_set,
-        }
-        for v, c in counts.items()
-    ]
+    items = []
+    for up in all_uppers:
+        cur = curated_by_upper.get(up)
+        raw_value, cnt = counts_by_upper.get(up, (cur["value"] if cur else "", 0))
+        items.append({
+            "value": raw_value or (cur["value"] if cur else ""),
+            "count": cnt,
+            "in_catalog": cur is not None,
+            "catalog_id": cur["catalog_id"] if cur else None,
+        })
     items.sort(key=lambda x: (-x["count"], x["value"].lower()))
     return {
         "type": ctype,
