@@ -420,11 +420,15 @@ async def extract_spektrum(pdf_bytes: bytes) -> list:
 
 
 def _garment_description(r):
-    """Rebuild the multi-line garment description (matches the invoice template)."""
-    # "ORIGINAL" is not a meaningful status for the quote -> show it as n/a.
-    status = "n/a" if (r["status"] or "").upper() == "ORIGINAL" else r["status"]
-    # Body then a blank line then the pack lines — matches quote #2110 exactly.
-    body = "\n".join(p for p in [r["description"], r["design_num"], status, r["blank"], r["division"]] if p)
+    """Rebuild the multi-line garment description (matches the invoice template).
+
+    El STATUS (3ra linea) va VACIO: el PDF trae 'ORIGINAL' (Cut/Make) pero el
+    invoice real lo lleva a 'ROLLOUT'/'REORDER'/etc. que Viviana decide al armar
+    el quote. Dejamos la linea en blanco como placeholder para que la complete
+    en la revision editable, en vez de asumir un valor incorrecto."""
+    # Lista fija de 5 lineas: la 3ra (status) queda "" a proposito.
+    parts = [r["description"] or "", r["design_num"] or "", "", r["blank"] or "", r["division"] or ""]
+    body = "\n".join(parts)
     return f"{body}\n\n" + "\n".join(r["pack_lines"])
 
 
@@ -470,7 +474,9 @@ def _spencers_groups(r, sizes_input):
     g1 = [
         _li(PRODUCTION_DEPT),
         _li(_garment_description(r), color=r["color"], sizes=sizes_input, price=r["unit_price"]),
-        _li(SAMPLES_DEFAULT),
+        # Bloque de muestras: el detalle (1 MD, 1 LG, ECOM SAMPLE, M-1...) NO
+        # esta en el PDF; Viviana lo completa. Dejamos solo el header editable.
+        _li("TOPS NEEDED:"),
         _li(front),
         _li("APPROVAL METHOD:\n" + APPROVAL_METHOD_DEFAULT),
         _li(ALLOWED_SHORTAGE_DEFAULT),
@@ -563,7 +569,10 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     else:
         # Nickname alineado con master invoice #2406: "PO#21767" (sin espacio).
         nickname = f"{brand} PO#{r['po_number']} - {r['store_po']} - {r['design_num']}"
-    if status and status.upper() != "ORIGINAL":
+    # SPENCERS: el status ('ROLLOUT'/'REORDER') lo agrega Viviana al nickname en la
+    # revision (el PDF trae 'ORIGINAL' que no corresponde). No lo anexamos aqui.
+    # TRACTOR / SPEKTRUM conservan su comportamiento previo (status del PDF).
+    if (is_tractor or is_spektrum) and status and status.upper() != "ORIGINAL":
         nickname += f" - {status}"
 
     due_date = _iso(r["cancel_date"]) or _iso(r["ship_date"])
