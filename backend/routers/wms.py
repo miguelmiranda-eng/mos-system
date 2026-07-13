@@ -9422,10 +9422,15 @@ async def create_upc(request: Request):
 
 @router.put("/upc/{upc}")
 async def update_upc(upc: str, request: Request):
-    """Admin-only edit. Useful when a description or country was captured
-    wrong on first sight and needs correction (propagation to past receipts
-    is NOT automatic — only future ones inherit the new value)."""
-    user = await require_admin(request)
+    """Editar UPC del catalogo. Cualquier operador autenticado puede editar,
+    PERO los 6 campos de identidad (style/color/size/description/country/
+    fabric) DEBEN venir del catalogo curado — se valida con
+    `_assert_curated_identity` igual que create_upc/create_receiving. Solo
+    admin cambia el customer (mover el UPC a otro cliente cambia su scope
+    de styles y no debe ser un cambio casual del operador).
+    Propagacion a filas historicas NO es automatica — solo futuros lecturas
+    heredan el valor."""
+    user = await require_auth(request)
     code = _norm_upc(upc)
     body = await request.json()
     existing = await db.wms_upc_catalog.find_one({"upc": code})
@@ -9437,12 +9442,27 @@ async def update_upc(upc: str, request: Request):
     for k in allowed:
         if k in body:
             if k == "customer":
+                # Cambio de customer sigue siendo privilegio de admin (cambia
+                # el scope del catalogo de styles del UPC).
+                if get_admin_level(user) < 1 and user.get("role") not in {"admin", "supersu", "ceo"}:
+                    raise HTTPException(403, "Solo admin puede cambiar el customer de un UPC")
                 update[k] = await _canonical_customer(body[k])
             else:
                 update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
                               else str(body[k]).strip())
     if not update:
         raise HTTPException(400, "Nada que actualizar")
+    # Guard curated: valores de identidad deben estar en el catalogo curado.
+    # Merge del doc actual con el update para evaluar los 6 campos.
+    merged = {**existing, **update}
+    await _assert_curated_identity(merged.get("customer", ""), {
+        "styles": merged.get("style", ""),
+        "colors": merged.get("color", ""),
+        "sizes": merged.get("size", ""),
+        "descriptions": merged.get("description", ""),
+        "countries": merged.get("country_of_origin", ""),
+        "fabrics": merged.get("fabric_content", ""),
+    })
     update["updated_at"] = now_iso()
     update["updated_by"] = user.get("user_id")
     await db.wms_upc_catalog.update_one({"upc": code}, {"$set": update})

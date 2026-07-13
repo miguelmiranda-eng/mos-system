@@ -916,27 +916,27 @@ export const ReceivingModule = () => {
                     <Plus className="w-3.5 h-3.5" /> Crear UPC
                   </button>
                 )}
+                {upcDoc && (
+                  <button
+                    type="button"
+                    onClick={openEditUpc}
+                    className="px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
+                    title="Editar UPC del catálogo (solo desplegables curados)"
+                    data-testid="rcv-upc-edit"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {upcDoc && canManageUpc && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={openEditUpc}
-                      className="px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
-                      title="Editar UPC del catálogo"
-                      data-testid="rcv-upc-edit"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDeleteUpc}
-                      className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
-                      title="Eliminar UPC del catálogo"
-                      data-testid="rcv-upc-delete"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={handleDeleteUpc}
+                    className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-500 rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
+                    title="Eliminar UPC del catálogo"
+                    data-testid="rcv-upc-delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 )}
                 {upcDoc && (
                   <button
