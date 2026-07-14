@@ -176,6 +176,50 @@ export const CycleCountModule = () => {
     XLSX.writeFile(wb, `Reporte_Cicloconteo_${reportDetail.count_id.slice(-6)}.xlsx`);
   };
 
+  const exportGlobalExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    if (activeTab === 'reports' && reportsSummary) {
+      const sumData = reportsSummary.counts.map(c => ({
+        "ID": c.count_id,
+        "Nombre": c.name,
+        "Aprobación": new Date(c.approved_at).toLocaleString(),
+        "Líneas": c.total_lines,
+        "Exactitud %": c.accuracy_pct,
+        "Ajustes": c.adjustments
+      }));
+      if (sumData.length > 0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sumData), "Conteos Históricos");
+
+      if (reportsSummary.auditor_productivity && reportsSummary.auditor_productivity.length > 0) {
+        const prodData = reportsSummary.auditor_productivity.map((a, i) => ({
+          "Posición": i + 1,
+          "Auditor": a.name,
+          "Líneas Contadas": a.lines_counted,
+          "Unidades Totales": a.units_counted,
+          "Errores Detectados": a.discrepancies_found
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prodData), "Productividad");
+      }
+      XLSX.writeFile(wb, `Reportes_Global_Cicloconteo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } else if (activeTab === 'timeline' && timelineEvents.length > 0) {
+       const tData = timelineEvents.map(e => ({
+         "Fecha y Hora": new Date(e.timestamp).toLocaleString(),
+         "Auditor": e.user_name,
+         "ID Conteo": e.count_id,
+         "Ubicación": e.location,
+         "Style": e.style,
+         "Color": e.color,
+         "Talla": e.size,
+         "Cant. Contada": e.qty,
+         "Error Detectado": e.discrepancy
+       }));
+       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tData), "Cronograma Global");
+       XLSX.writeFile(wb, `Cronograma_Global_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } else {
+       toast.error("No hay datos para exportar en esta pestaña");
+    }
+  };
+
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(logLoadError('data')); }, []);
   useEffect(() => {
     load();
@@ -536,30 +580,45 @@ export const CycleCountModule = () => {
             <ClipboardList className="w-4 h-4" />
             ACTIVOS
           </button>
-          <button
-            onClick={() => { setActiveTab('reports'); if (!reportsSummary) loadReportsSummary(); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'reports' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            REPORTES
-          </button>
-          <button
-            onClick={() => { setActiveTab('timeline'); if (timelineEvents.length === 0) loadTimeline(); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'timeline' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
-          >
-            <Clock className="w-4 h-4" />
-            CRONOGRAMA
-          </button>
+          {(user?.access_level >= 5) && (
+            <>
+              <button
+                onClick={() => { setActiveTab('reports'); if (!reportsSummary) loadReportsSummary(); }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'reports' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                REPORTES
+              </button>
+              <button
+                onClick={() => { setActiveTab('timeline'); if (timelineEvents.length === 0) loadTimeline(); }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'timeline' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              >
+                <Clock className="w-4 h-4" />
+                CRONOGRAMA
+              </button>
+            </>
+          )}
         </div>
-        {activeTab === 'active' && (
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
-            data-testid="new-cc-btn"
-          >
-            <Plus className="w-5 h-5" /> {t('wms_new_cc')}
-          </button>
-        )}
+        
+        <div className="flex items-center gap-2">
+          {(activeTab === 'reports' || activeTab === 'timeline') && (
+            <button
+              onClick={exportGlobalExcel}
+              className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
+            >
+              <Download className="w-5 h-5" /> EXPORTAR EXCEL
+            </button>
+          )}
+          {activeTab === 'active' && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
+              data-testid="new-cc-btn"
+            >
+              <Plus className="w-5 h-5" /> {t('wms_new_cc')}
+            </button>
+          )}
+        </div>
       </div>
       
       {activeTab === 'active' && (
