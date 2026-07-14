@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
-  Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw,
+  Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw, Search, X,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -38,6 +38,7 @@ export const ReconciliationModule = () => {
   const [lpn, setLpn] = useState(null);
   const [adj, setAdj] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [locationSearch, setLocationSearch] = useState("");
 
   const loadPending = useCallback(async () => {
     setLoading(true);
@@ -209,6 +210,8 @@ export const ReconciliationModule = () => {
     } catch { toast.error("Error de conexión"); }
   };
 
+  const searchQ = locationSearch.trim().toUpperCase();
+
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
@@ -219,6 +222,28 @@ export const ReconciliationModule = () => {
           <h2 className="text-xl font-black uppercase tracking-wide">Conciliación</h2>
           <p className="text-[11px] text-muted-foreground">Cajas por resolver y registro de ubicaciones conciliadas</p>
         </div>
+
+        {/* Buscador de locaciones */}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            id="recon-location-search"
+            type="text"
+            value={locationSearch}
+            onChange={e => setLocationSearch(e.target.value)}
+            placeholder="Buscar locación…"
+            className="pl-8 pr-7 py-1.5 text-xs font-mono rounded-xl bg-secondary/30 border border-border/50 focus:outline-none focus:border-primary/50 focus:bg-secondary/50 transition-all w-44 placeholder:text-muted-foreground/50"
+          />
+          {locationSearch && (
+            <button
+              onClick={() => setLocationSearch("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
         <button onClick={exportExcel} disabled={exporting}
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
           {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
@@ -259,7 +284,9 @@ export const ReconciliationModule = () => {
         <div className="space-y-5">
           <section className="border border-red-500/30 rounded-xl overflow-hidden">
             <div className="px-3 py-2 bg-red-500/10 text-[11px] font-black uppercase tracking-widest text-red-300 flex items-center gap-2">
-              <PackageX className="w-4 h-4" /> Faltantes ({pending.faltantes_count}) — esperadas y no encontradas
+              <PackageX className="w-4 h-4" />
+              Faltantes ({searchQ ? pending.faltantes.filter(b => (b.recon_missing_from || "").toUpperCase().includes(searchQ)).length : pending.faltantes_count}) — esperadas y no encontradas
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="overflow-x-auto max-h-96 overflow-y-auto">
               <table className="w-full">
@@ -268,12 +295,18 @@ export const ReconciliationModule = () => {
                   <Th>Esperada en</Th><Th>Marcada por</Th><Th right>Acción</Th>
                 </tr></thead>
                 <tbody>
-                  {pending.faltantes.map((b, i) => (
+                  {pending.faltantes
+                    .filter(b => !searchQ || (b.recon_missing_from || "").toUpperCase().includes(searchQ))
+                    .map((b, i) => (
                     <tr key={i} className="border-t border-border/40 text-xs">
                       <td className="p-2 font-mono">{b.box_id}</td>
                       <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td><td className="p-2">{b.size}</td>
                       <td className="p-2 text-right">{b.units}</td>
-                      <td className="p-2 font-mono">{b.recon_missing_from}</td>
+                      <td className="p-2 font-mono">
+                        <span className={searchQ && (b.recon_missing_from || "").toUpperCase().includes(searchQ) ? "text-primary font-bold" : ""}>
+                          {b.recon_missing_from}
+                        </span>
+                      </td>
                       <td className="p-2">{b.recon_flagged_by}</td>
                       <td className="p-2 text-right whitespace-nowrap">
                         <button onClick={() => resolve(b.box_id, "assign")} title="Asignar a ubicación" className="p-1.5 rounded-lg text-sky-400 hover:bg-sky-500/10"><MapPin className="w-4 h-4" /></button>
@@ -281,7 +314,8 @@ export const ReconciliationModule = () => {
                       </td>
                     </tr>
                   ))}
-                  {pending.faltantes_count === 0 && <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">Sin faltantes.</td></tr>}
+                  {pending.faltantes.filter(b => !searchQ || (b.recon_missing_from || "").toUpperCase().includes(searchQ)).length === 0 &&
+                    <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin faltantes en locaciones que coincidan con "${locationSearch}".` : "Sin faltantes."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -289,7 +323,9 @@ export const ReconciliationModule = () => {
 
           <section className="border border-amber-500/30 rounded-xl overflow-hidden">
             <div className="px-3 py-2 bg-amber-500/10 text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
-              <PackagePlus className="w-4 h-4" /> Creadas en conciliación ({pending.creadas_count}) — escaneadas sin existir
+              <PackagePlus className="w-4 h-4" />
+              Creadas en conciliación ({searchQ ? pending.creadas.filter(b => (b.location || "").toUpperCase().includes(searchQ)).length : pending.creadas_count}) — escaneadas sin existir
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="overflow-x-auto max-h-80 overflow-y-auto">
               <table className="w-full">
@@ -297,10 +333,16 @@ export const ReconciliationModule = () => {
                   <Th>Caja</Th><Th>Ubicación</Th><Th right>Unid.</Th><Th>Creada por</Th><Th>Fecha</Th><Th right>Acción</Th>
                 </tr></thead>
                 <tbody>
-                  {pending.creadas.map((b, i) => (
+                  {pending.creadas
+                    .filter(b => !searchQ || (b.location || "").toUpperCase().includes(searchQ))
+                    .map((b, i) => (
                     <tr key={i} className="border-t border-border/40 text-xs">
                       <td className="p-2 font-mono">{b.box_id}</td>
-                      <td className="p-2 font-mono">{b.location}</td>
+                      <td className="p-2 font-mono">
+                        <span className={searchQ && (b.location || "").toUpperCase().includes(searchQ) ? "text-primary font-bold" : ""}>
+                          {b.location}
+                        </span>
+                      </td>
                       <td className="p-2 text-right">{b.units}</td>
                       <td className="p-2">{b.recon_counted_by}</td>
                       <td className="p-2">{fmt(b.recon_counted_at)}</td>
@@ -309,7 +351,8 @@ export const ReconciliationModule = () => {
                       </td>
                     </tr>
                   ))}
-                  {pending.creadas_count === 0 && <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">Sin cajas creadas.</td></tr>}
+                  {pending.creadas.filter(b => !searchQ || (b.location || "").toUpperCase().includes(searchQ)).length === 0 &&
+                    <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin creadas en locaciones que coincidan con "${locationSearch}".` : "Sin cajas creadas."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -320,11 +363,15 @@ export const ReconciliationModule = () => {
       {/* ── Segundo conteo ── */}
       {tab === "second_count" && (
         loading && !pending ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        : pending && (
+        : pending && (() => {
+          const filteredSC = secondCountLocations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
+          return (
           <div className="border border-fuchsia-500/30 rounded-xl overflow-hidden">
             <div className="px-3 py-2 bg-fuchsia-500/10 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-fuchsia-300 text-[11px] font-black uppercase tracking-widest">
-                <RotateCcw className="w-4 h-4" /> {secondCountLocations.length} ubicaciones con faltantes — {lockedCount} aún bloqueadas
+                <RotateCcw className="w-4 h-4" />
+                {filteredSC.length}{searchQ ? ` de ${secondCountLocations.length}` : ""} ubicaciones con faltantes — {filteredSC.filter(l => l.locked).length} aún bloqueadas
+                {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
               </div>
               <button onClick={startSecondCount} disabled={startingSecondCount || lockedCount === 0}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-fuchsia-500/20 text-fuchsia-200 hover:bg-fuchsia-500/30 border border-fuchsia-500/30 disabled:opacity-40 text-[11px] font-black uppercase tracking-wider">
@@ -343,9 +390,13 @@ export const ReconciliationModule = () => {
                   <Th right>Unidades</Th><Th>Estado</Th>
                 </tr></thead>
                 <tbody>
-                  {secondCountLocations.map((l, i) => (
+                  {filteredSC.map((l, i) => (
                     <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono font-bold">{l.location}</td>
+                      <td className="p-2 font-mono font-bold">
+                        <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
+                          {l.location}
+                        </span>
+                      </td>
                       <td className="p-2 text-right text-red-400">{l.anterior}</td>
                       <td className="p-2 text-right">
                         {l.nuevo === null ? <span className="text-muted-foreground">—</span> : l.nuevo}
@@ -366,19 +417,24 @@ export const ReconciliationModule = () => {
                       </td>
                     </tr>
                   ))}
-                  {secondCountLocations.length === 0 && <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">No hay ubicaciones con faltantes pendientes.</td></tr>}
+                  {filteredSC.length === 0 && <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin ubicaciones que coincidan con "${locationSearch}".` : "No hay ubicaciones con faltantes pendientes."}</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
-        )
+          );
+        })()
       )}
 
       {/* ── Registro ── */}
-      {tab === "log" && log && (
+      {tab === "log" && log && (() => {
+        const filteredLog = log.locations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
+        return (
         <div className="border border-border rounded-xl overflow-hidden">
           <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" /> {log.count} ubicaciones conciliadas
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            {filteredLog.length}{searchQ ? ` de ${log.count}` : ""} ubicaciones conciliadas
+            {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
           </div>
           <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
             <table className="w-full">
@@ -387,9 +443,13 @@ export const ReconciliationModule = () => {
                 <Th right>Confirm.</Th><Th right>Movidas</Th><Th right>Creadas</Th><Th right>Faltantes</Th><Th right>Acción</Th>
               </tr></thead>
               <tbody>
-                {log.locations.map((l, i) => (
+                {filteredLog.map((l, i) => (
                   <tr key={i} className="border-t border-border/40 text-xs">
-                    <td className="p-2 font-mono font-bold">{l.location}</td>
+                    <td className="p-2 font-mono font-bold">
+                      <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
+                        {l.location}
+                      </span>
+                    </td>
                     <td className="p-2">{l.reconciled_by_name}</td>
                     <td className="p-2">{fmt(l.reconciled_at)}</td>
                     <td className="p-2 text-right">{l.counts?.confirmadas ?? "-"}</td>
@@ -403,12 +463,13 @@ export const ReconciliationModule = () => {
                     </td>
                   </tr>
                 ))}
-                {log.count === 0 && <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">Aún no se ha conciliado ninguna ubicación.</td></tr>}
+                {filteredLog.length === 0 && <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Aún no se ha conciliado ninguna ubicación."}</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Ajustes de cajas ── */}
       {tab === "adjustments" && (
@@ -489,10 +550,14 @@ export const ReconciliationModule = () => {
       {/* ── Bloqueadas por LPN ── */}
       {tab === "lpn" && (
         loading && !lpn ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        : lpn && (
+        : lpn && (() => {
+          const filteredLpn = lpn.locations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
+          return (
           <div className="border border-amber-500/30 rounded-xl overflow-hidden">
             <div className="px-3 py-2 bg-amber-500/10 text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
-              <Ban className="w-4 h-4" /> {lpn.count.toLocaleString()} ubicaciones con cajas LPN — NO se pueden conciliar en el PDA
+              <Ban className="w-4 h-4" />
+              {filteredLpn.length}{searchQ ? ` de ${lpn.count}` : ""} ubicaciones con cajas LPN — NO se pueden conciliar en el PDA
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
               Estas ubicaciones tienen cajas con licencia física (LPN, sin prefijo BOX). Avísale a los contadores que las omitan.
@@ -501,19 +566,24 @@ export const ReconciliationModule = () => {
               <table className="w-full">
                 <thead className="sticky top-0 bg-card"><tr><Th>Ubicación</Th><Th right>Cajas LPN</Th><Th right>Unidades</Th></tr></thead>
                 <tbody>
-                  {lpn.locations.map((l, i) => (
+                  {filteredLpn.map((l, i) => (
                     <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono font-bold">{l.location}</td>
+                      <td className="p-2 font-mono font-bold">
+                        <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
+                          {l.location}
+                        </span>
+                      </td>
                       <td className="p-2 text-right">{l.cajas.toLocaleString()}</td>
                       <td className="p-2 text-right">{(l.unidades || 0).toLocaleString()}</td>
                     </tr>
                   ))}
-                  {lpn.count === 0 && <tr><td colSpan={3} className="p-3 text-xs text-muted-foreground">Ninguna ubicación tiene cajas LPN.</td></tr>}
+                  {filteredLpn.length === 0 && <tr><td colSpan={3} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Ninguna ubicación tiene cajas LPN."}</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
-        )
+          );
+        })()
       )}
     </div>
   );
