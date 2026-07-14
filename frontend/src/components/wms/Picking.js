@@ -9,6 +9,20 @@ import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
 const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
+// Fusiona varias listas de opciones (curadas + del sistema/inventario) en una
+// sola, sin duplicados (case-insensitive), preservando el orden: primero lo
+// curado, luego lo del sistema que falte. Evita que un valor real del inventario
+// (ej. "JET BLACK") quede oculto solo por no estar catalogado. El líder limpia
+// typos con el botón "Detectar typos" del catálogo.
+const mergeUnique = (...lists) => {
+  const seen = new Set(), out = [];
+  for (const l of lists) for (const c of (l || [])) {
+    const v = String(c || '').trim(), k = v.toUpperCase();
+    if (v && !seen.has(k)) { seen.add(k); out.push(v); }
+  }
+  return out;
+};
+
 // Deadline urgency color for a pre-ticket's cancel_date chip.
 function deadlineInfo(dateStr) {
   const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-secondary/60 text-muted-foreground border-border/30' };
@@ -208,18 +222,12 @@ export const PickingModule = ({ currentUser } = {}) => {
   const getSizeLocs = (sz) => sizeLocations[sz]?.locations || (Array.isArray(sizeLocations[sz]) ? sizeLocations[sz] : []);
   const getTotalAvail = (sz) => getSizeLocs(sz).reduce((sum, loc) => sum + (loc.available || 0), 0);
   const totalPick = Object.values(form.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
-  // Colores del dropdown = catálogo curado FUSIONADO con los del inventario de
-  // la orden (por customer/style). El or-exclusivo anterior mostraba SOLO los
-  // curados y ocultaba colores reales del inventario no catalogados (ej. "JET
-  // BLACK"). Curados primero, luego los del inventario que no estén, deduplicado.
-  const colorOptions = useMemo(() => {
-    const seen = new Set(), out = [];
-    for (const c of [...(curated.colors || []), ...(options.colors || [])]) {
-      const v = String(c || '').trim(), k = v.toUpperCase();
-      if (v && !seen.has(k)) { seen.add(k); out.push(v); }
-    }
-    return out;
-  }, [curated.colors, options.colors]);
+  // Dropdowns = catálogo curado FUSIONADO con lo del sistema/inventario, para no
+  // ocultar valores reales no catalogados (ej. "JET BLACK"). El líder limpia
+  // typos con "Detectar typos" del catálogo.
+  const colorOptions    = useMemo(() => mergeUnique(curated.colors, options.colors),       [curated.colors, options.colors]);
+  const customerOptions = useMemo(() => mergeUnique(curated.customers, options.customers), [curated.customers, options.customers]);
+  const styleOptions    = useMemo(() => mergeUnique(customerStyles, options.styles),       [customerStyles, options.styles]);
   // Show youth size rows only when the selected style's inventory is youth (its
   // location lookup returns Y-prefixed sizes). Adult styles keep the adult grid
   // unchanged so operators don't get confused.
@@ -879,7 +887,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
-              <SearchableSelect options={curated.customers.length ? curated.customers : (options.customers || [])} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
+              <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_assign_op')}</label>
@@ -927,7 +935,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
-              <SearchableSelect options={customerStyles.length > 0 ? customerStyles : (options.styles || [])} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
+              <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
