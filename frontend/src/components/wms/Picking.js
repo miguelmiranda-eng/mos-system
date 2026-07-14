@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar } from "lucide-react";
@@ -208,6 +208,18 @@ export const PickingModule = ({ currentUser } = {}) => {
   const getSizeLocs = (sz) => sizeLocations[sz]?.locations || (Array.isArray(sizeLocations[sz]) ? sizeLocations[sz] : []);
   const getTotalAvail = (sz) => getSizeLocs(sz).reduce((sum, loc) => sum + (loc.available || 0), 0);
   const totalPick = Object.values(form.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
+  // Colores del dropdown = catálogo curado FUSIONADO con los del inventario de
+  // la orden (por customer/style). El or-exclusivo anterior mostraba SOLO los
+  // curados y ocultaba colores reales del inventario no catalogados (ej. "JET
+  // BLACK"). Curados primero, luego los del inventario que no estén, deduplicado.
+  const colorOptions = useMemo(() => {
+    const seen = new Set(), out = [];
+    for (const c of [...(curated.colors || []), ...(options.colors || [])]) {
+      const v = String(c || '').trim(), k = v.toUpperCase();
+      if (v && !seen.has(k)) { seen.add(k); out.push(v); }
+    }
+    return out;
+  }, [curated.colors, options.colors]);
   // Show youth size rows only when the selected style's inventory is youth (its
   // location lookup returns Y-prefixed sizes). Adult styles keep the adult grid
   // unchanged so operators don't get confused.
@@ -919,7 +931,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
-              <SearchableSelect options={curated.colors.length ? curated.colors : (options.colors || [])} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
+              <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
               {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('select_color_to_see_locs')}</div>}
             </div>
           </div>
