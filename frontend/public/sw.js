@@ -1,6 +1,6 @@
 /* MOS PDA service worker — enables PWA install + a basic offline app shell.
    Network-first for navigations/static GETs; never caches API mutations. */
-const CACHE = "mos-pda-v3";
+const CACHE = "mos-pda-v4";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) =>
