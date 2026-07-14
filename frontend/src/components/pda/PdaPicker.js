@@ -806,32 +806,54 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             <ScanLine className="w-6 h-6" /> Escanear ubicación
           </button>
           <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-            Progreso por talla
+            Progreso por talla · ubicaciones a dónde ir
           </div>
           {activeSizes.map(sz => {
             const req = parseInt(sizes[sz]) || 0;
             const done = parseInt(pickedSizes[sz]?.total) || 0;
             const remain = req - done;
             const isDone = remain <= 0;
+            const locs = locsFor(sz);
             return (
               <div key={sz}
-                className={`w-full rounded-2xl border p-4 flex items-center gap-3 ${
+                className={`w-full rounded-2xl border p-4 ${
                   isDone ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-[#131a2b]"
                 }`}>
-                {isDone
-                  ? <CheckCircle2 className="w-7 h-7 text-emerald-400 shrink-0" />
-                  : <Package className="w-7 h-7 text-slate-400 shrink-0" />}
-                <div className="flex-1 text-left">
-                  <div className="text-2xl font-black">{sz}</div>
-                  <div className="text-[11px] text-slate-400">
-                    {isDone
-                      ? `Completo · ${done} descontado`
-                      : `Requerido ${req} · descontado ${done} · faltan ${remain}`}
+                <div className="flex items-center gap-3">
+                  {isDone
+                    ? <CheckCircle2 className="w-7 h-7 text-emerald-400 shrink-0" />
+                    : <Package className="w-7 h-7 text-slate-400 shrink-0" />}
+                  <div className="flex-1 text-left">
+                    <div className="text-2xl font-black">{sz}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {isDone
+                        ? `Completo · ${done} descontado`
+                        : `Requerido ${req} · descontado ${done} · faltan ${remain}`}
+                    </div>
                   </div>
+                  <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${
+                    isDone ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-200"
+                  }`}>{done}/{req}</div>
                 </div>
-                <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${
-                  isDone ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-200"
-                }`}>{done}/{req}</div>
+                {/* Ubicaciones donde está esta talla (toca para entrar directo) */}
+                {!isDone && (
+                  <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap gap-1.5">
+                    {locs.length === 0 ? (
+                      <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> Sin ubicación con stock
+                      </span>
+                    ) : locs.slice(0, 6).map((l, i) => (
+                      <button key={i}
+                        onClick={() => { const hit = allLocs().find(a => norm(a.location) === norm(l.location)); if (hit) enterLocation(hit); }}
+                        className="flex items-center gap-1 text-[11px] font-black bg-blue-500/10 border border-blue-500/25 text-blue-300 px-2 py-1 rounded-lg active:bg-blue-500/20">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="font-mono">{l.location}</span>
+                        <span className="text-emerald-300 tabular-nums">·{l.available}</span>
+                      </button>
+                    ))}
+                    {locs.length > 6 && <span className="text-[10px] text-slate-500 self-center">+{locs.length - 6}</span>}
+                  </div>
+                )}
               </div>
             );
           })}
