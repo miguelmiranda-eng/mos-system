@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, API } from "./lib";
+import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
@@ -122,6 +122,7 @@ export const HomeModule = () => {
         setDrafts(prev => ({ ...prev, [type]: '' }));
         if (type === 'sizes') refreshWmsSizes();    // live-refresh size selectors
         if (type === 'colors') refreshWmsColors();  // live-refresh color selectors
+        refreshWmsCatalogs();                       // refresca listas fusionadas (customer/desc/país/fabric/style) en otros módulos
         load();
         if (sources[type]) loadSources(type); // refresh in_catalog flags
       } else {

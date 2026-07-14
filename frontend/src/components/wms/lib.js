@@ -119,6 +119,52 @@ export const useWmsColors = () => {
   return colors;
 };
 
+// ─── Catálogo curado COMPLETO (todos los tipos) ─────────────────────────────
+// Un solo /catalogs expone customers/colors/styles/sizes/descriptions/countries/
+// fabrics curados. useWmsCatalogs() los entrega ya en arreglos de strings, para
+// FUSIONARLOS con las listas del sistema/inventario en cualquier módulo y no
+// ocultar valores reales no catalogados. El líder limpia typos en la config.
+let _catalogs = null;               // { type: [{value,...}] } crudo de /catalogs
+let _catalogsPromise = null;
+const _catSubs = new Set();
+const _loadCatalogs = () => {
+  if (_catalogsPromise) return _catalogsPromise;
+  _catalogsPromise = fetcher('/catalogs')
+    .then(d => { _catalogs = d || {}; })
+    .catch(() => { _catalogs = {}; })
+    .finally(() => { _catSubs.forEach(fn => fn()); });
+  return _catalogsPromise;
+};
+export const refreshWmsCatalogs = () => { _catalogs = null; _catalogsPromise = null; _loadCatalogs(); };
+
+export const useWmsCatalogs = () => {
+  const [cat, setCat] = useState(_catalogs || {});
+  useEffect(() => {
+    let alive = true;
+    const sync = () => { if (alive) setCat(_catalogs || {}); };
+    _catSubs.add(sync);
+    _loadCatalogs().then(sync);
+    return () => { alive = false; _catSubs.delete(sync); };
+  }, []);
+  const vals = (t) => (cat[t] || []).map(x => String(x?.value ?? x ?? '').trim()).filter(Boolean);
+  return {
+    customers: vals('customers'), colors: vals('colors'), styles: vals('styles'),
+    sizes: vals('sizes'), descriptions: vals('descriptions'),
+    countries: vals('countries'), fabrics: vals('fabrics'),
+  };
+};
+
+// Fusiona listas (curado + sistema) sin duplicados (case-insensitive). Curado
+// primero, luego lo del sistema que falte. Compartido por los módulos WMS.
+export const mergeUnique = (...lists) => {
+  const seen = new Set(), out = [];
+  for (const l of lists) for (const c of (l || [])) {
+    const v = String(c || '').trim(), k = v.toUpperCase();
+    if (v && !seen.has(k)) { seen.add(k); out.push(v); }
+  }
+  return out;
+};
+
 // ─── WMS Context (badges + cross-module actions) ────────────────────────────
 export const WmsContext = createContext({ badges: {}, refreshBadges: () => {} });
 export const useWms = () => useContext(WmsContext);

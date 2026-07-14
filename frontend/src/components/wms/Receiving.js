@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsColors, API, cleanScan } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsColors, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -164,14 +164,16 @@ export const ReceivingModule = () => {
   // ANCHORE, FLAX) aparezca en los selects de color, aunque no exista aún en
   // inventario. Curados primero; luego los de inventario que no estén ya.
   const wmsColors = useWmsColors();
-  const colorOptions = useMemo(() => {
-    const seen = new Set(), out = [];
-    for (const c of [...(wmsColors || []), ...(options.colors || [])]) {
-      const v = String(c || '').trim(), k = v.toUpperCase();
-      if (v && !seen.has(k)) { seen.add(k); out.push(v); }
-    }
-    return out;
-  }, [wmsColors, options.colors]);
+  const colorOptions = useMemo(() => mergeUnique(wmsColors, options.colors), [wmsColors, options.colors]);
+  // Resto de listas: catálogo curado FUSIONADO con lo del sistema/inventario,
+  // para que ningún valor real quede oculto por no estar catalogado. El líder
+  // limpia typos con "Detectar typos" en la config. (Manufacturer no es catálogo.)
+  const wmsCat = useWmsCatalogs();
+  const customerOptions = useMemo(() => mergeUnique(wmsCat.customers, options.customers), [wmsCat.customers, options.customers]);
+  const styleOptions    = useMemo(() => mergeUnique(customerStyles, options.styles), [customerStyles, options.styles]);
+  const descOptions     = useMemo(() => mergeUnique(wmsCat.descriptions, fieldOptions.descriptions), [wmsCat.descriptions, fieldOptions.descriptions]);
+  const countryOptions  = useMemo(() => mergeUnique(wmsCat.countries, fieldOptions.countries), [wmsCat.countries, fieldOptions.countries]);
+  const fabricOptions   = useMemo(() => mergeUnique(wmsCat.fabrics, fieldOptions.fabrics), [wmsCat.fabrics, fieldOptions.fabrics]);
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
@@ -882,7 +884,7 @@ export const ReceivingModule = () => {
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Exportar recibos:</span>
         <div className="w-64">
-          <SearchableSelect options={options.customers || []} value={exportCustomer} onChange={setExportCustomer} placeholder="Cliente (vacío = todos)…" testId="rcv-export-customer" />
+          <SearchableSelect options={customerOptions} value={exportCustomer} onChange={setExportCustomer} placeholder="Cliente (vacío = todos)…" testId="rcv-export-customer" />
         </div>
         <button
           onClick={() => window.open(`${API}/export/receiving${exportCustomer ? `?customer=${encodeURIComponent(exportCustomer)}` : ''}`, '_blank')}
@@ -995,7 +997,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('customer')} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.customers || []} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={canManageUpc} />
+              <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={canManageUpc} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1013,7 +1015,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('style')} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={customerStyles} value={form.style} onChange={handleStyleChange} placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && customerStyles.length === 0)} allowCreate={false} />
+              <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && styleOptions.length === 0)} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1036,14 +1038,14 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('description')} {!!upcDoc?.description && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={fieldOptions.descriptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc?.description} />
+              <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc?.description} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.countries} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
+                <SearchableSelect options={countryOptions} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
               </div>
             </div>
             <div>
@@ -1051,7 +1053,7 @@ export const ReceivingModule = () => {
                 {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.fabric_content && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fieldOptions.fabrics} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc?.fabric_content} />
+                <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc?.fabric_content} />
               </div>
             </div>
           </div>
@@ -1470,13 +1472,13 @@ export const ReceivingModule = () => {
                     Style <span className="text-red-400">*</span>
                   </label>
                   <SearchableSelect
-                    options={customerStyles}
+                    options={styleOptions}
                     value={upcDraft.style}
                     onChange={val => setUpcDraft(p => ({ ...p, style: val }))}
-                    placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo' : t('wms_search_style')}
+                    placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo' : t('wms_search_style')}
                     testId="upc-draft-style"
                     allowCreate={false}
-                    disabled={form.customer && customerStyles.length === 0}
+                    disabled={form.customer && styleOptions.length === 0}
                   />
                 </div>
                 <div>
@@ -1502,7 +1504,7 @@ export const ReceivingModule = () => {
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
                 <SearchableSelect
-                  options={fieldOptions.descriptions}
+                  options={descOptions}
                   value={upcDraft.description}
                   onChange={val => setUpcDraft(p => ({ ...p, description: val }))}
                   placeholder={t('wms_search_desc')}
@@ -1515,7 +1517,7 @@ export const ReceivingModule = () => {
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
                   <SearchableSelect
-                    options={fieldOptions.countries}
+                    options={countryOptions}
                     value={upcDraft.country_of_origin}
                     onChange={val => setUpcDraft(p => ({ ...p, country_of_origin: val }))}
                     placeholder={t('wms_search_country')}
@@ -1526,7 +1528,7 @@ export const ReceivingModule = () => {
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
                   <SearchableSelect
-                    options={fieldOptions.fabrics}
+                    options={fabricOptions}
                     value={upcDraft.fabric_content}
                     onChange={val => setUpcDraft(p => ({ ...p, fabric_content: val }))}
                     placeholder={t('wms_search_fabric')}
