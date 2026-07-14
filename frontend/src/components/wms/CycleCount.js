@@ -744,6 +744,47 @@ export const CycleCountModule = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* Auditor Productivity Leaderboard */}
+              {reportsSummary.auditor_productivity && reportsSummary.auditor_productivity.length > 0 && (
+                <div className="space-y-4 pt-6">
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" />
+                    Productividad por Auditor (Leaderboard)
+                  </h3>
+                  <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-secondary/50">
+                        <tr>
+                          <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Posición</th>
+                          <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Auditor</th>
+                          <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Líneas Contadas</th>
+                          <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Unidades Totales</th>
+                          <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Errores Detectados</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/50">
+                        {reportsSummary.auditor_productivity.map((auditor, idx) => (
+                          <tr key={auditor.user_id} className="hover:bg-secondary/20 transition-colors">
+                            <td className="p-4 font-mono text-xs text-muted-foreground">#{idx + 1}</td>
+                            <td className="p-4 font-bold text-foreground">
+                              {auditor.name}
+                              {idx === 0 && <span className="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[10px] rounded-full uppercase font-black">Top 1</span>}
+                            </td>
+                            <td className="p-4 text-center font-mono font-bold text-primary">{auditor.lines_counted}</td>
+                            <td className="p-4 text-center font-mono text-muted-foreground">{auditor.units_counted.toLocaleString()}</td>
+                            <td className="p-4 text-center">
+                              <span className="px-2 py-1 rounded bg-red-500/10 text-red-400 font-bold text-xs">
+                                {auditor.discrepancies_found}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

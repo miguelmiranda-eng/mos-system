@@ -9318,6 +9318,7 @@ async def cycle_counts_report_summary(request: Request):
     summary_list = []
     loc_discrepancy_map = {}   # location -> {count, total_delta}
     sku_discrepancy_map = {}   # "style|color" -> {count, total_delta}
+    auditor_stats = {}         # user_id -> {...stats...}
     total_adjustments_all = 0
     total_lines_all = 0
     total_exact_all = 0
@@ -9335,6 +9336,17 @@ async def cycle_counts_report_summary(request: Request):
         total_adjustments_all += adj_count
         total_lines_all += total
         total_exact_all += exact
+
+        # Auditor productivity tracking
+        for l in lines:
+            if l.get("counted"):
+                uid = l.get("counted_by") or c.get("assigned_to") or "Desconocido"
+                if uid not in auditor_stats:
+                    auditor_stats[uid] = {"user_id": uid, "lines_counted": 0, "units_counted": 0, "discrepancies_found": 0}
+                auditor_stats[uid]["lines_counted"] += 1
+                auditor_stats[uid]["units_counted"] += l.get("counted_qty", 0)
+                if l.get("discrepancy") and l["discrepancy"] != 0:
+                    auditor_stats[uid]["discrepancies_found"] += 1
 
         # Aggregate by location and SKU
         for l in discrepant:
@@ -9370,6 +9382,17 @@ async def cycle_counts_report_summary(request: Request):
             "customer_filter": c.get("customer_filter", ""),
         })
 
+    # Fetch users for productivity map
+    uids = list(auditor_stats.keys())
+    users = await db.users.find({"user_id": {"$in": uids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}).to_list(1000)
+    user_map = {u["user_id"]: u.get("name") or u.get("email") for u in users}
+
+    auditor_productivity = []
+    for uid, stats in auditor_stats.items():
+        stats["name"] = user_map.get(uid) or ("Desconocido" if uid == "Desconocido" else uid)
+        auditor_productivity.append(stats)
+    auditor_productivity.sort(key=lambda x: x["lines_counted"], reverse=True)
+
     overall_accuracy = round((total_exact_all / total_lines_all * 100), 1) if total_lines_all > 0 else 100.0
 
     top_locations = sorted(loc_discrepancy_map.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
@@ -9381,6 +9404,7 @@ async def cycle_counts_report_summary(request: Request):
         "overall_accuracy_pct": overall_accuracy,
         "total_adjustments": total_adjustments_all,
         "total_lines_ever": total_lines_all,
+        "auditor_productivity": auditor_productivity,
         "top_discrepant_locations": [
             {"location": loc, "discrepancy_count": v["count"], "total_delta": v["total_delta"]}
             for loc, v in top_locations
