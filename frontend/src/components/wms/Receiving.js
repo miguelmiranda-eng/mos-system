@@ -1451,7 +1451,7 @@ export const ReceivingModule = () => {
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
-                  <SearchableSelect options={wmsCat.customers} value={upcDraft.customer} onChange={val => setUpcDraft(p => ({ ...p, customer: val }))} placeholder={t('wms_search_customer')} testId="upc-draft-customer" allowCreate={false} />
+                  <SearchableSelect options={customerOptions} value={upcDraft.customer} onChange={val => setUpcDraft(p => ({ ...p, customer: val }))} placeholder={t('wms_search_customer')} testId="upc-draft-customer" allowCreate={false} />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
@@ -1472,19 +1472,19 @@ export const ReceivingModule = () => {
                     Style <span className="text-red-400">*</span>
                   </label>
                   <SearchableSelect
-                    options={customerStyles}
+                    options={styleOptions}
                     value={upcDraft.style}
                     onChange={val => setUpcDraft(p => ({ ...p, style: val }))}
-                    placeholder={form.customer && customerStyles.length === 0 ? 'Cliente sin catálogo' : t('wms_search_style')}
+                    placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo' : t('wms_search_style')}
                     testId="upc-draft-style"
                     allowCreate={false}
-                    disabled={form.customer && customerStyles.length === 0}
+                    disabled={form.customer && styleOptions.length === 0}
                   />
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
                   <SearchableSelect
-                    options={wmsColors}
+                    options={colorOptions}
                     value={upcDraft.color}
                     onChange={val => setUpcDraft(p => ({ ...p, color: val }))}
                     placeholder={t('wms_search_color')}
@@ -1504,7 +1504,7 @@ export const ReceivingModule = () => {
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
                 <SearchableSelect
-                  options={wmsCat.descriptions}
+                  options={descOptions}
                   value={upcDraft.description}
                   onChange={val => setUpcDraft(p => ({ ...p, description: val }))}
                   placeholder={t('wms_search_desc')}
@@ -1517,7 +1517,7 @@ export const ReceivingModule = () => {
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
                   <SearchableSelect
-                    options={wmsCat.countries}
+                    options={countryOptions}
                     value={upcDraft.country_of_origin}
                     onChange={val => setUpcDraft(p => ({ ...p, country_of_origin: val }))}
                     placeholder={t('wms_search_country')}
@@ -1528,7 +1528,7 @@ export const ReceivingModule = () => {
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
                   <SearchableSelect
-                    options={wmsCat.fabrics}
+                    options={fabricOptions}
                     value={upcDraft.fabric_content}
                     onChange={val => setUpcDraft(p => ({ ...p, fabric_content: val }))}
                     placeholder={t('wms_search_fabric')}

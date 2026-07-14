@@ -425,14 +425,27 @@ async def _assert_curated_identity(customer: str, values: dict):
         if not curated:
             continue  # bootstrap: cliente sin catalogo aun, deja capturar
         curated_set = {(c.get("value") or "").strip().upper() for c in curated}
-        if v.upper() not in curated_set:
-            label = _IDENTITY_LABELS.get(ctype, ctype)
-            scope = f" de {customer}" if ctype == "styles" and customer else ""
-            raise HTTPException(
-                400,
-                f"{label} '{v}' no esta en el catalogo curado{scope}. "
-                f"Pidele al lider que lo agregue en Config WMS antes de recibir.",
-            )
+        if v.upper() in curated_set:
+            continue  # curado ✓
+        # UNIFICADO (curado + sistema): igual que los dropdowns fusionan curado
+        # con inventario, aceptamos un valor que YA exista en inventario aunque
+        # no este catalogado (ej. un color real no promovido aun). El lider lo
+        # consolida con "Detectar typos". Solo se rechaza lo que no esta NI
+        # curado NI en inventario (basura nueva). Los dropdowns son select-only,
+        # asi que la UI ya no deja teclear valores libres.
+        field = (_CATALOG_FIELD_MAP.get(ctype) or (None,))[0]
+        if field:
+            in_inv = await db.wms_inventory.find_one(
+                {field: {"$regex": f"^{re.escape(v)}$", "$options": "i"}}, {"_id": 1})
+            if in_inv:
+                continue  # existe en inventario → válido
+        label = _IDENTITY_LABELS.get(ctype, ctype)
+        scope = f" de {customer}" if ctype == "styles" and customer else ""
+        raise HTTPException(
+            400,
+            f"{label} '{v}' no está ni en el catálogo curado ni en inventario{scope}. "
+            f"Pídele al líder que lo agregue en Config WMS.",
+        )
 
 
 @router.get("/catalogs/{ctype}/sources")
