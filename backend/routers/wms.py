@@ -9299,21 +9299,48 @@ async def delete_cycle_count(count_id: str, request: Request):
 # ==================== CYCLE COUNT REPORTS ====================
 
 @router.get("/cycle-counts/reports/summary")
-async def cycle_counts_report_summary(request: Request):
+async def cycle_counts_report_summary(
+    request: Request,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    created_by_name: Optional[str] = None,
+    approved_by_name: Optional[str] = None,
+):
     """
-    Historical summary of all approved cycle counts.
-    Returns aggregate accuracy trend, top discrepant locations and SKUs.
+    Historical summary of cycle counts, supports filters:
+    date_from, date_to (ISO), status, created_by_name, approved_by_name.
     """
     await require_auth(request)
 
+    query: dict = {}
+    # Status filter: default to approved only if no status given
+    if status and status != "all":
+        query["status"] = status
+    else:
+        query["status"] = {"$in": ["approved", "in_progress", "pending"]}
+
+    if date_from or date_to:
+        date_filter: dict = {}
+        if date_from:
+            date_filter["$gte"] = date_from
+        if date_to:
+            date_filter["$lte"] = date_to + "T23:59:59"
+        query["created_at"] = date_filter
+
+    if created_by_name:
+        query["created_by_name"] = {"$regex": created_by_name, "$options": "i"}
+    if approved_by_name:
+        query["approved_by_name"] = {"$regex": approved_by_name, "$options": "i"}
+
     counts = await db.wms_cycle_counts.find(
-        {"status": "approved"},
-        {"_id": 0, "count_id": 1, "name": 1, "created_at": 1, "approved_at": 1,
+        query,
+        {"_id": 0, "count_id": 1, "name": 1, "status": 1, "created_at": 1, "approved_at": 1,
          "approved_by_name": 1, "created_by_name": 1,
          "total_lines": 1, "counted_lines": 1, "adjustments": 1,
          "is_general": 1, "location_filter": 1, "style_filter": 1,
-         "color_filter": 1, "customer_filter": 1, "lines": 1}
-    ).sort("approved_at", -1).to_list(200)
+         "color_filter": 1, "customer_filter": 1, "lines": 1, "assigned_to_name": 1}
+    ).sort("created_at", -1).to_list(5000)
 
     summary_list = []
     loc_discrepancy_map = {}   # location -> {count, total_delta}
@@ -9364,10 +9391,12 @@ async def cycle_counts_report_summary(request: Request):
         summary_list.append({
             "count_id": c["count_id"],
             "name": c.get("name", ""),
+            "status": c.get("status", ""),
             "approved_at": c.get("approved_at"),
             "created_at": c.get("created_at"),
             "approved_by_name": c.get("approved_by_name", ""),
             "created_by_name": c.get("created_by_name", ""),
+            "assigned_to_name": c.get("assigned_to_name", ""),
             "total_lines": total,
             "discrepant_lines": len(discrepant),
             "exact_lines": exact,
@@ -9414,30 +9443,52 @@ async def cycle_counts_report_summary(request: Request):
 
 
 @router.get("/cycle-counts/reports/timeline")
-async def cycle_counts_report_timeline(request: Request):
+async def cycle_counts_report_timeline(
+    request: Request,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user_id: Optional[str] = None,
+    count_id: Optional[str] = None,
+):
     """
     Returns a chronological feed of cycle count activity.
+    Supports date_from, date_to (ISO date string), user_id, count_id filters.
     """
     await require_auth(request)
 
+    count_query: dict = {}
+    if count_id:
+        count_query["count_id"] = count_id
+
     counts = await db.wms_cycle_counts.find(
-        {},
-        {"_id": 0, "count_id": 1, "name": 1, "lines": 1}
-    ).to_list(200)
+        count_query,
+        {"_id": 0, "count_id": 1, "name": 1, "lines": 1, "status": 1}
+    ).to_list(5000)
 
     timeline = []
     user_ids = set()
 
+    date_from_dt = date_from or None
+    date_to_dt   = (date_to + "T23:59:59") if date_to else None
+
     for c in counts:
         for l in c.get("lines", []):
             if l.get("counted") and l.get("counted_at"):
+                ts = l["counted_at"]
+                if date_from_dt and ts < date_from_dt:
+                    continue
+                if date_to_dt and ts > date_to_dt:
+                    continue
                 uid = l.get("counted_by") or "Desconocido"
+                if user_id and uid != user_id:
+                    continue
                 user_ids.add(uid)
                 timeline.append({
                     "count_id": c["count_id"],
                     "count_name": c.get("name", ""),
+                    "count_status": c.get("status", ""),
                     "user_id": uid,
-                    "timestamp": l["counted_at"],
+                    "timestamp": ts,
                     "location": l.get("inv_location", ""),
                     "style": l.get("style", ""),
                     "color": l.get("color", ""),
@@ -9454,7 +9505,14 @@ async def cycle_counts_report_timeline(request: Request):
 
     timeline.sort(key=lambda x: x["timestamp"], reverse=True)
 
-    return {"timeline": timeline[:500]}
+    # Build list of unique auditors for filter dropdown
+    auditors = sorted(set((t["user_id"], t["user_name"]) for t in timeline), key=lambda x: x[1])
+
+    return {
+        "timeline": timeline,
+        "total": len(timeline),
+        "auditors": [{"user_id": a[0], "name": a[1]} for a in auditors],
+    }
 
 
 @router.get("/cycle-counts/{count_id}/report")

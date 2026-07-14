@@ -29,31 +29,67 @@ export const CycleCountModule = () => {
   const [reportDetail, setReportDetail] = useState(null);
   const [loadingReportDetail, setLoadingReportDetail] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState([]);
+  const [timelineAuditors, setTimelineAuditors] = useState([]);
+  const [timelineTotal, setTimelineTotal] = useState(0);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
 
-  const loadTimeline = useCallback(async () => {
+  // ── Filter state ────────────────────────────────────────────────────────────
+  const [reportFilters, setReportFilters] = useState({
+    date_from: '', date_to: '', status: 'all', created_by_name: '', approved_by_name: ''
+  });
+  const [timelineFilters, setTimelineFilters] = useState({
+    date_from: '', date_to: '', user_id: ''
+  });
+
+  const buildQS = (params) => {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v && v !== 'all' && v !== '')
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join('&');
+    return qs ? `?${qs}` : '';
+  };
+
+  const loadTimeline = useCallback(async (filters = timelineFilters) => {
     setLoadingTimeline(true);
     try {
-      const data = await fetcher('/cycle-counts/reports/timeline');
+      const data = await fetcher(`/cycle-counts/reports/timeline${buildQS(filters)}`);
       setTimelineEvents(data.timeline || []);
+      setTimelineAuditors(data.auditors || []);
+      setTimelineTotal(data.total || 0);
     } catch {
       toast.error('Error cargando cronograma');
     } finally {
       setLoadingTimeline(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadReportsSummary = useCallback(async () => {
+  const applyTimelineFilters = () => loadTimeline(timelineFilters);
+  const resetTimelineFilters = () => {
+    const empty = { date_from: '', date_to: '', user_id: '' };
+    setTimelineFilters(empty);
+    loadTimeline(empty);
+  };
+
+  const loadReportsSummary = useCallback(async (filters = reportFilters) => {
     setLoadingReports(true);
     try {
-      const data = await fetcher('/cycle-counts/reports/summary');
+      const data = await fetcher(`/cycle-counts/reports/summary${buildQS(filters)}`);
       setReportsSummary(data);
     } catch {
       toast.error('Error cargando historial de reportes');
     } finally {
       setLoadingReports(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const applyReportFilters = () => loadReportsSummary(reportFilters);
+  const resetReportFilters = () => {
+    const empty = { date_from: '', date_to: '', status: 'all', created_by_name: '', approved_by_name: '' };
+    setReportFilters(empty);
+    loadReportsSummary(empty);
+  };
 
   const openReportDetail = async (countId) => {
     setLoadingReportDetail(true);
@@ -1026,6 +1062,55 @@ export const CycleCountModule = () => {
 
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+
+          {/* ── Filter Bar ────────────────────────────────────────────── */}
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
+            <div className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <Search className="w-3.5 h-3.5" /> Filtros
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Desde</label>
+                <input type="date" value={reportFilters.date_from}
+                  onChange={e => setReportFilters(p => ({ ...p, date_from: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Hasta</label>
+                <input type="date" value={reportFilters.date_to}
+                  onChange={e => setReportFilters(p => ({ ...p, date_to: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Estado</label>
+                <select value={reportFilters.status}
+                  onChange={e => setReportFilters(p => ({ ...p, status: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground">
+                  <option value="all">Todos</option>
+                  <option value="approved">Aprobados</option>
+                  <option value="in_progress">En Progreso</option>
+                  <option value="pending">Pendientes</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Creado por</label>
+                <input placeholder="Nombre..." value={reportFilters.created_by_name}
+                  onChange={e => setReportFilters(p => ({ ...p, created_by_name: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Aprobado por</label>
+                <input placeholder="Nombre..." value={reportFilters.approved_by_name}
+                  onChange={e => setReportFilters(p => ({ ...p, approved_by_name: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={applyReportFilters} className="px-4 py-1.5 bg-primary text-black rounded-lg font-bold uppercase tracking-wider text-xs hover:scale-105 transition-all">Aplicar</button>
+              <button onClick={resetReportFilters} className="px-4 py-1.5 bg-secondary text-muted-foreground rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-secondary/80 transition-all">Limpiar</button>
+            </div>
+          </div>
+
           {loadingReports ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
@@ -1034,8 +1119,8 @@ export const CycleCountModule = () => {
           ) : !reportsSummary || reportsSummary.counts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
               <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">No hay reportes de conteos</p>
-              <p className="text-xs mt-1">Completa y aprueba conteos cíclicos para verlos aquí.</p>
+              <p className="font-bold uppercase tracking-widest text-sm italic">No hay conteos con esos filtros</p>
+              <p className="text-xs mt-1">Prueba ajustar los filtros o limpiando la búsqueda.</p>
             </div>
           ) : (
             <>
@@ -1061,29 +1146,42 @@ export const CycleCountModule = () => {
                 </div>
               </div>
 
-              {/* List of Approved Counts */}
+              {/* List of Counts */}
               <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-secondary/50">
                     <tr>
                       <th className="p-4 font-bold text-xs uppercase text-muted-foreground">ID / Nombre</th>
-                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Fecha Aprobación</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Estado</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Asignado a</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Creación</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Aprobación</th>
                       <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Líneas</th>
                       <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Exactitud</th>
-                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Ajustes</th>
                       <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-right">Acción</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
-                    {reportsSummary.counts.map(c => (
+                    {reportsSummary.counts.map(c => {
+                      const statusLabel = c.status === 'approved' ? 'Aprobado' : c.status === 'in_progress' ? 'En progreso' : c.status === 'pending' ? 'Pendiente' : c.status;
+                      const statusCls = c.status === 'approved' ? 'bg-emerald-500/15 text-emerald-400' : c.status === 'in_progress' ? 'bg-yellow-500/15 text-yellow-400' : 'bg-secondary text-muted-foreground';
+                      return (
                       <tr key={c.count_id} className="hover:bg-secondary/20 transition-colors group">
                         <td className="p-4">
-                          <div className="font-bold text-foreground truncate max-w-[200px]">{c.name}</div>
+                          <div className="font-bold text-foreground truncate max-w-[180px]">{c.name}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">#{c.count_id.slice(-6)}</div>
                         </td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${statusCls}`}>{statusLabel}</span>
+                        </td>
+                        <td className="p-4 text-xs text-muted-foreground">{c.assigned_to_name || '—'}</td>
                         <td className="p-4 text-muted-foreground text-xs">
-                          {new Date(c.approved_at).toLocaleDateString()}
-                          <div className="text-[10px] opacity-70">por {c.approved_by_name}</div>
+                          {new Date(c.created_at).toLocaleDateString()}
+                          <div className="text-[10px] opacity-70">{new Date(c.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · {c.created_by_name}</div>
+                        </td>
+                        <td className="p-4 text-muted-foreground text-xs">
+                          {c.approved_at ? new Date(c.approved_at).toLocaleDateString() : '—'}
+                          {c.approved_by_name && <div className="text-[10px] opacity-70">{c.approved_by_name}</div>}
                         </td>
                         <td className="p-4 text-center font-mono text-xs">{c.total_lines}</td>
                         <td className="p-4 text-center">
@@ -1091,17 +1189,18 @@ export const CycleCountModule = () => {
                             {c.accuracy_pct}%
                           </span>
                         </td>
-                        <td className="p-4 text-center text-blue-400 font-bold font-mono">{c.adjustments}</td>
                         <td className="p-4 text-right">
-                          <button
-                            onClick={() => openReportDetail(c.count_id)}
-                            className="px-3 py-1.5 bg-secondary text-foreground rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 ml-auto opacity-50 group-hover:opacity-100"
-                          >
-                            <Eye className="w-3.5 h-3.5" /> Ver
-                          </button>
+                          {c.status === 'approved' ? (
+                            <button
+                              onClick={() => openReportDetail(c.count_id)}
+                              className="px-3 py-1.5 bg-secondary text-foreground rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 ml-auto opacity-50 group-hover:opacity-100"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> Ver
+                            </button>
+                          ) : <span className="text-[10px] text-muted-foreground">—</span>}
                         </td>
                       </tr>
-                    ))}
+                    );})}
                   </tbody>
                 </table>
               </div>
@@ -1153,12 +1252,54 @@ export const CycleCountModule = () => {
 
       {activeTab === 'timeline' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+
+          {/* ── Filter Bar ─────────────────────────────────────────────── */}
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
+            <div className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <Search className="w-3.5 h-3.5" /> Filtros de Cronograma
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Desde</label>
+                <input type="date" value={timelineFilters.date_from}
+                  onChange={e => setTimelineFilters(p => ({ ...p, date_from: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Hasta</label>
+                <input type="date" value={timelineFilters.date_to}
+                  onChange={e => setTimelineFilters(p => ({ ...p, date_to: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Auditor</label>
+                <select value={timelineFilters.user_id}
+                  onChange={e => setTimelineFilters(p => ({ ...p, user_id: e.target.value }))}
+                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground">
+                  <option value="">Todos los auditores</option>
+                  {timelineAuditors.map(a => (
+                    <option key={a.user_id} value={a.user_id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col justify-end gap-2">
+                <button onClick={applyTimelineFilters} className="px-4 py-1.5 bg-primary text-black rounded-lg font-bold uppercase tracking-wider text-xs hover:scale-105 transition-all">Aplicar</button>
+                <button onClick={resetTimelineFilters} className="px-4 py-1.5 bg-secondary text-muted-foreground rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-secondary/80 transition-all">Limpiar</button>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-            <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-primary" />
-              Línea de Tiempo de Auditorías
+            <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                Línea de Tiempo de Auditorías
+              </span>
+              {timelineTotal > 0 && (
+                <span className="text-xs bg-primary/10 text-primary px-3 py-1 rounded-full font-black">{timelineTotal} eventos</span>
+              )}
             </h3>
-            
+
             {loadingTimeline ? (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                 <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
