@@ -580,7 +580,7 @@ export const CycleCountModule = () => {
             <ClipboardList className="w-4 h-4" />
             ACTIVOS
           </button>
-          {(user?.access_level >= 5) && (
+          {(user?.access_level >= 5 || user?.role === 'supersu' || user?.role === 'admin') && (
             <>
               <button
                 onClick={() => { setActiveTab('reports'); if (!reportsSummary) loadReportsSummary(); }}
