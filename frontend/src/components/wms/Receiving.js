@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, API, cleanScan } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsColors, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -159,6 +159,19 @@ export const ReceivingModule = () => {
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   // Full size list (standard + admin-configured extras), single source of truth.
   const { all: sizeOptions } = useWmsSizes();
+  // Curated colors from "Configuración WMS → Colores". Se fusionan con los
+  // colores derivados del inventario para que TODO color de la config (ej.
+  // ANCHORE, FLAX) aparezca en los selects de color, aunque no exista aún en
+  // inventario. Curados primero; luego los de inventario que no estén ya.
+  const wmsColors = useWmsColors();
+  const colorOptions = useMemo(() => {
+    const seen = new Set(), out = [];
+    for (const c of [...(wmsColors || []), ...(options.colors || [])]) {
+      const v = String(c || '').trim(), k = v.toUpperCase();
+      if (v && !seen.has(k)) { seen.add(k); out.push(v); }
+    }
+    return out;
+  }, [wmsColors, options.colors]);
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
@@ -1006,7 +1019,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('color')} {!!upcDoc?.color && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.colors || []} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} allowCreate={false} />
+              <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1469,7 +1482,7 @@ export const ReceivingModule = () => {
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
                   <SearchableSelect
-                    options={options.colors || []}
+                    options={colorOptions}
                     value={upcDraft.color}
                     onChange={val => setUpcDraft(p => ({ ...p, color: val }))}
                     placeholder={t('wms_search_color')}

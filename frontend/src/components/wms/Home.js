@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, API } from "./lib";
+import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, API } from "./lib";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
@@ -27,14 +27,17 @@ export const HomeModule = () => {
   const [deleting, setDeleting] = useState(null);
 
   // Styles are managed PER CLIENT. This dropdown scopes the Estilos panel
-  // (list + add) to one customer; the list of customers is fetched once.
+  // (list + add) to one customer. La lista de clientes se alimenta del catálogo
+  // CURADO de "Clientes" (pestaña Clientes de este mismo módulo, cargado en
+  // catalogs.customers via /catalogs) — NO de los valores crudos del inventario.
+  // Así, lo que exista en la pestaña Clientes es exactamente lo que aparece aquí.
   const [styleCustomer, setStyleCustomer] = useState('');
-  const [customers, setCustomers] = useState([]);
-  useEffect(() => {
-    fetcher('/inventory/options')
-      .then(d => setCustomers((d?.customers || []).filter(Boolean)))
-      .catch(() => {});
-  }, []);
+  const customers = useMemo(
+    () => Array.from(
+      new Set((catalogs.customers || []).map(c => c.value).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b)),
+    [catalogs.customers]
+  );
 
   // Solo admin nivel 3+ (supersu = max) puede agregar/renombrar/limpiar los
   // catálogos de identidad. Refleja el guard del backend; aquí solo oculta los
@@ -117,7 +120,8 @@ export const HomeModule = () => {
       if (res.ok) {
         toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
         setDrafts(prev => ({ ...prev, [type]: '' }));
-        if (type === 'sizes') refreshWmsSizes();  // live-refresh size selectors
+        if (type === 'sizes') refreshWmsSizes();    // live-refresh size selectors
+        if (type === 'colors') refreshWmsColors();  // live-refresh color selectors
         load();
         if (sources[type]) loadSources(type); // refresh in_catalog flags
       } else {

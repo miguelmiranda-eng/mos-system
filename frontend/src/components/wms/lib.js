@@ -88,6 +88,37 @@ export const useWmsSizes = () => {
   return { adult, youth, all, extras };
 };
 
+// ─── Configurable colors (curated catalog) ──────────────────────────────────
+// Los colores viven en "Configuración WMS → Colores" (catalog type "colors").
+// useWmsColors() los expone para que TODO selector de color (Receiving, UPC,
+// etc.) muestre los colores curados aunque todavía no existan en inventario
+// (ej. "ANCHORE", "FLAX" recién dados de alta). Mismo patrón que useWmsSizes.
+let _colorCatalog = null;          // cached across components
+let _colorCatalogPromise = null;
+const _colorSubs = new Set();
+const _loadColorCatalog = () => {
+  if (_colorCatalogPromise) return _colorCatalogPromise;
+  _colorCatalogPromise = fetcher('/catalogs')
+    .then(d => { _colorCatalog = (d?.colors || []).map(c => String(c.value || '').trim()).filter(Boolean); })
+    .catch(() => { _colorCatalog = []; })
+    .finally(() => { _colorSubs.forEach(fn => fn()); });
+  return _colorCatalogPromise;
+};
+// Call after adding/removing a color in the catalog UI so open screens refresh.
+export const refreshWmsColors = () => { _colorCatalog = null; _colorCatalogPromise = null; _loadColorCatalog(); };
+
+export const useWmsColors = () => {
+  const [colors, setColors] = useState(_colorCatalog || []);
+  useEffect(() => {
+    let alive = true;
+    const sync = () => { if (alive) setColors(_colorCatalog || []); };
+    _colorSubs.add(sync);
+    _loadColorCatalog().then(sync);
+    return () => { alive = false; _colorSubs.delete(sync); };
+  }, []);
+  return colors;
+};
+
 // ─── WMS Context (badges + cross-module actions) ────────────────────────────
 export const WmsContext = createContext({ badges: {}, refreshBadges: () => {} });
 export const useWms = () => useContext(WmsContext);
