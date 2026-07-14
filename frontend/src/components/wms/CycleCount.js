@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, Search } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, Search, BarChart3, FileSpreadsheet, Eye } from "lucide-react";
+import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { useAuth } from "../../App";
@@ -21,6 +22,105 @@ export const CycleCountModule = () => {
   const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
   const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
+
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail'
+  const [reportsSummary, setReportsSummary] = useState(null);
+  const [loadingReports, setLoadingReports] = useState(false);
+  const [reportDetail, setReportDetail] = useState(null);
+  const [loadingReportDetail, setLoadingReportDetail] = useState(false);
+
+  const loadReportsSummary = useCallback(async () => {
+    setLoadingReports(true);
+    try {
+      const data = await fetcher('/cycle-counts/reports/summary');
+      setReportsSummary(data);
+    } catch {
+      toast.error('Error cargando historial de reportes');
+    } finally {
+      setLoadingReports(false);
+    }
+  }, []);
+
+  const openReportDetail = async (countId) => {
+    setLoadingReportDetail(true);
+    try {
+      const data = await fetcher(`/cycle-counts/${countId}/report`);
+      setReportDetail(data);
+      setActiveTab('report_detail');
+    } catch {
+      toast.error('Error cargando reporte detallado');
+    } finally {
+      setLoadingReportDetail(false);
+    }
+  };
+
+  const exportExcel = () => {
+    if (!reportDetail) return;
+    const wb = XLSX.utils.book_new();
+
+    const summaryData = [
+      ["ID Conteo", reportDetail.count_id],
+      ["Nombre", reportDetail.name],
+      ["Status", reportDetail.status],
+      ["Creado", new Date(reportDetail.created_at).toLocaleString()],
+      ["Aprobado", reportDetail.approved_at ? new Date(reportDetail.approved_at).toLocaleString() : 'N/A'],
+      ["Creado por", reportDetail.created_by_name],
+      ["Aprobado por", reportDetail.approved_by_name],
+      ["Total Líneas", reportDetail.kpis.total_lines],
+      ["Líneas Contadas", reportDetail.kpis.counted_lines],
+      ["Líneas con Discrepancia", reportDetail.kpis.discrepant_lines],
+      ["Líneas Exactas", reportDetail.kpis.exact_lines],
+      ["Exactitud %", `${reportDetail.kpis.accuracy_pct}%`],
+      ["Unidades Faltantes", reportDetail.kpis.units_short],
+      ["Unidades Sobrantes", reportDetail.kpis.units_over],
+      ["Total Ajustes Inventario", reportDetail.kpis.adjusted_count]
+    ];
+    if (reportDetail.kpis.duration_mins !== null) {
+      summaryData.push(["Duración (min)", reportDetail.kpis.duration_mins]);
+    }
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Resumen");
+
+    const allLinesData = reportDetail.all_lines.map(l => ({
+      "Ubicación": l.location,
+      "Style": l.style,
+      "Color": l.color,
+      "Talla": l.size,
+      "Cliente": l.customer,
+      "Sistema": l.system_qty,
+      "Contado": l.counted_qty ?? '',
+      "Diferencia": l.discrepancy ?? 0,
+      "Ajustado": l.adjusted ? 'SI' : 'NO'
+    }));
+    const wsAll = XLSX.utils.json_to_sheet(allLinesData);
+    XLSX.utils.book_append_sheet(wb, wsAll, "Todas las líneas");
+
+    const discData = reportDetail.discrepancy_table.map(l => ({
+      "Ubicación": l.location,
+      "Style": l.style,
+      "Color": l.color,
+      "Talla": l.size,
+      "Cliente": l.customer,
+      "Sistema": l.system_qty,
+      "Contado": l.counted_qty,
+      "Diferencia": l.discrepancy,
+      "Ajustado": l.adjusted ? 'SI' : 'NO'
+    }));
+    const wsDisc = XLSX.utils.json_to_sheet(discData);
+    XLSX.utils.book_append_sheet(wb, wsDisc, "Discrepancias");
+
+    const locData = reportDetail.location_breakdown.map(l => ({
+      "Ubicación": l.location,
+      "Líneas Totales": l.total,
+      "Contadas": l.counted,
+      "Con Discrepancia": l.discrepant,
+      "Diferencia Unidades (Abs)": l.units_delta
+    }));
+    const wsLoc = XLSX.utils.json_to_sheet(locData);
+    XLSX.utils.book_append_sheet(wb, wsLoc, "Por Ubicación");
+
+    XLSX.writeFile(wb, `Reporte_Cicloconteo_${reportDetail.count_id.slice(-6)}.xlsx`);
+  };
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(logLoadError('data')); }, []);
   useEffect(() => {
@@ -262,22 +362,148 @@ export const CycleCountModule = () => {
     );
   }
 
+  if (activeTab === 'report_detail' && reportDetail) {
+    const kpis = reportDetail.kpis;
+    return (
+      <div className="space-y-6" data-testid="cycle-count-report">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setActiveTab('reports')} className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-secondary"><ArrowLeft className="w-4 h-4" /></button>
+            <div>
+              <h2 className="text-lg font-bold text-foreground">Reporte: {reportDetail.name}</h2>
+              <span className="text-xs text-muted-foreground">{reportDetail.count_id}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={exportExcel} className="px-4 py-2.5 bg-primary text-black rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-lg hover:scale-105 transition-all">
+              <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-card border border-border p-4 rounded-2xl shadow-sm text-center">
+            <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Exactitud</div>
+            <div className={`text-3xl font-black ${kpis.accuracy_pct >= 95 ? 'text-emerald-400' : kpis.accuracy_pct >= 85 ? 'text-yellow-400' : 'text-red-400'}`}>{kpis.accuracy_pct}%</div>
+            <div className="text-[10px] text-muted-foreground mt-1">{kpis.exact_lines} de {kpis.total_lines} líneas exactas</div>
+          </div>
+          <div className="bg-card border border-border p-4 rounded-2xl shadow-sm text-center">
+            <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Ajustes</div>
+            <div className="text-3xl font-black text-blue-400">{kpis.adjusted_count}</div>
+            <div className="text-[10px] text-muted-foreground mt-1">Filas de inventario</div>
+          </div>
+          <div className="bg-card border border-border p-4 rounded-2xl shadow-sm text-center">
+            <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Faltantes</div>
+            <div className="text-3xl font-black text-red-400">{kpis.units_short}</div>
+            <div className="text-[10px] text-muted-foreground mt-1">Unidades perdidas</div>
+          </div>
+          <div className="bg-card border border-border p-4 rounded-2xl shadow-sm text-center">
+            <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Sobrantes</div>
+            <div className="text-3xl font-black text-orange-400">+{kpis.units_over}</div>
+            <div className="text-[10px] text-muted-foreground mt-1">Unidades extra</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Discrepancias Principales</h3>
+            <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+              <div className="max-h-[500px] overflow-y-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-secondary/50 sticky top-0 backdrop-blur-md">
+                    <tr>
+                      <th className="p-3 font-bold text-xs uppercase text-muted-foreground">Ubicación</th>
+                      <th className="p-3 font-bold text-xs uppercase text-muted-foreground">Item</th>
+                      <th className="p-3 font-bold text-xs uppercase text-muted-foreground text-center">Sistema</th>
+                      <th className="p-3 font-bold text-xs uppercase text-muted-foreground text-center">Contado</th>
+                      <th className="p-3 font-bold text-xs uppercase text-muted-foreground text-center">Diff</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {reportDetail.discrepancy_table.length === 0 ? (
+                      <tr><td colSpan="5" className="p-6 text-center text-muted-foreground italic">No hubo discrepancias en este conteo</td></tr>
+                    ) : (
+                      reportDetail.discrepancy_table.map((row) => (
+                        <tr key={row.line_id} className="hover:bg-secondary/20 transition-colors">
+                          <td className="p-3 font-mono text-xs">{row.location}</td>
+                          <td className="p-3">
+                            <div className="font-bold text-primary text-xs">{row.style}</div>
+                            <div className="text-[10px] text-muted-foreground">{row.color} / {row.size}</div>
+                          </td>
+                          <td className="p-3 text-center text-muted-foreground font-mono">{row.system_qty}</td>
+                          <td className="p-3 text-center font-bold font-mono">{row.counted_qty}</td>
+                          <td className="p-3 text-center">
+                            <span className={`px-2 py-1 rounded font-black text-xs ${row.discrepancy > 0 ? 'bg-blue-500/15 text-blue-400' : 'bg-red-500/15 text-red-400'}`}>
+                              {row.discrepancy > 0 ? '+' : ''}{row.discrepancy}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Impacto por Ubicación</h3>
+            <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-3">
+              {reportDetail.location_breakdown.filter(l => l.discrepant > 0).length === 0 ? (
+                <div className="text-center text-muted-foreground italic py-4">Sin discrepancias</div>
+              ) : (
+                reportDetail.location_breakdown.filter(l => l.discrepant > 0).slice(0, 10).map(loc => (
+                  <div key={loc.location} className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono font-bold truncate max-w-[150px]">{loc.location}</span>
+                      <span className="text-red-400 font-bold">{loc.discrepant} err</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div className="h-full bg-red-400" style={{ width: `${Math.min(100, (loc.discrepant / loc.total) * 100)}%` }} />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-          {t('wms_cycle_count')}
+        <div className="flex items-center gap-2 bg-secondary/30 p-1 rounded-2xl border border-border/20">
+          <button
+            onClick={() => setActiveTab('active')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'active' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+          >
+            <ClipboardList className="w-4 h-4" />
+            ACTIVOS
+          </button>
+          <button
+            onClick={() => { setActiveTab('reports'); if (!reportsSummary) loadReportsSummary(); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'reports' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            REPORTES
+          </button>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
-          data-testid="new-cc-btn"
-        >
-          <Plus className="w-5 h-5" /> {t('wms_new_cc')}
-        </button>
+        {activeTab === 'active' && (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="px-5 py-2.5 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,193,7,0.3)] flex items-center gap-2"
+            data-testid="new-cc-btn"
+          >
+            <Plus className="w-5 h-5" /> {t('wms_new_cc')}
+          </button>
+        )}
       </div>
-      {showForm && (
+      
+      {activeTab === 'active' && (
+        <>
+          {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-4 animate-in fade-in slide-in-from-top-4 duration-300" data-testid="cc-form">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -427,11 +653,99 @@ export const CycleCountModule = () => {
           );
         })}
       </div>
-      {counts.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-          <Search className="w-16 h-16 mb-4 stroke-[1px]" />
-          <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_cc')}</p>
-          <p className="text-xs mt-1">{t('wms_cc_hint')}</p>
+        {counts.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+            <Search className="w-16 h-16 mb-4 stroke-[1px]" />
+            <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_cc')}</p>
+            <p className="text-xs mt-1">{t('wms_cc_hint')}</p>
+          </div>
+        )}
+        </>
+      )}
+
+      {activeTab === 'reports' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          {loadingReports ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
+              <p className="text-sm font-bold uppercase tracking-widest">Cargando reportes...</p>
+            </div>
+          ) : !reportsSummary || reportsSummary.counts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+              <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
+              <p className="font-bold uppercase tracking-widest text-sm italic">No hay reportes de conteos</p>
+              <p className="text-xs mt-1">Completa y aprueba conteos cíclicos para verlos aquí.</p>
+            </div>
+          ) : (
+            <>
+              {/* Aggregated KPIs */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-card border border-border p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Conteos Históricos</div>
+                  <div className="text-3xl font-black text-primary">{reportsSummary.total_counts}</div>
+                </div>
+                <div className="bg-card border border-border p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Exactitud Global</div>
+                  <div className={`text-3xl font-black ${reportsSummary.overall_accuracy_pct >= 95 ? 'text-emerald-400' : reportsSummary.overall_accuracy_pct >= 85 ? 'text-yellow-400' : 'text-red-400'}`}>
+                    {reportsSummary.overall_accuracy_pct}%
+                  </div>
+                </div>
+                <div className="bg-card border border-border p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Total Ajustes</div>
+                  <div className="text-3xl font-black text-blue-400">{reportsSummary.total_adjustments}</div>
+                </div>
+                <div className="bg-card border border-border p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs font-black uppercase text-muted-foreground tracking-widest mb-1">Líneas Auditadas</div>
+                  <div className="text-3xl font-black text-foreground">{reportsSummary.total_lines_ever}</div>
+                </div>
+              </div>
+
+              {/* List of Approved Counts */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-secondary/50">
+                    <tr>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">ID / Nombre</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground">Fecha Aprobación</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Líneas</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Exactitud</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-center">Ajustes</th>
+                      <th className="p-4 font-bold text-xs uppercase text-muted-foreground text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {reportsSummary.counts.map(c => (
+                      <tr key={c.count_id} className="hover:bg-secondary/20 transition-colors group">
+                        <td className="p-4">
+                          <div className="font-bold text-foreground truncate max-w-[200px]">{c.name}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">#{c.count_id.slice(-6)}</div>
+                        </td>
+                        <td className="p-4 text-muted-foreground text-xs">
+                          {new Date(c.approved_at).toLocaleDateString()}
+                          <div className="text-[10px] opacity-70">por {c.approved_by_name}</div>
+                        </td>
+                        <td className="p-4 text-center font-mono text-xs">{c.total_lines}</td>
+                        <td className="p-4 text-center">
+                          <span className={`px-2 py-1 rounded font-black text-xs ${c.accuracy_pct >= 95 ? 'bg-emerald-500/15 text-emerald-400' : c.accuracy_pct >= 85 ? 'bg-yellow-500/15 text-yellow-400' : 'bg-red-500/15 text-red-400'}`}>
+                            {c.accuracy_pct}%
+                          </span>
+                        </td>
+                        <td className="p-4 text-center text-blue-400 font-bold font-mono">{c.adjustments}</td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={() => openReportDetail(c.count_id)}
+                            className="px-3 py-1.5 bg-secondary text-foreground rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 ml-auto opacity-50 group-hover:opacity-100"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> Ver
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

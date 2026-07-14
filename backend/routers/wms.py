@@ -9296,6 +9296,219 @@ async def delete_cycle_count(count_id: str, request: Request):
     await notify_badge_change("cycle_count")
     return {"message": "Conteo ciclico eliminado correctamente"}
 
+# ==================== CYCLE COUNT REPORTS ====================
+
+@router.get("/cycle-counts/reports/summary")
+async def cycle_counts_report_summary(request: Request):
+    """
+    Historical summary of all approved cycle counts.
+    Returns aggregate accuracy trend, top discrepant locations and SKUs.
+    """
+    await require_auth(request)
+
+    counts = await db.wms_cycle_counts.find(
+        {"status": "approved"},
+        {"_id": 0, "count_id": 1, "name": 1, "created_at": 1, "approved_at": 1,
+         "approved_by_name": 1, "created_by_name": 1,
+         "total_lines": 1, "counted_lines": 1, "adjustments": 1,
+         "is_general": 1, "location_filter": 1, "style_filter": 1,
+         "color_filter": 1, "customer_filter": 1, "lines": 1}
+    ).sort("approved_at", -1).to_list(200)
+
+    summary_list = []
+    loc_discrepancy_map = {}   # location -> {count, total_delta}
+    sku_discrepancy_map = {}   # "style|color" -> {count, total_delta}
+    total_adjustments_all = 0
+    total_lines_all = 0
+    total_exact_all = 0
+
+    for c in counts:
+        lines = c.get("lines") or []
+        total = len(lines)
+        discrepant = [l for l in lines if l.get("counted") and l.get("discrepancy") and l["discrepancy"] != 0]
+        exact = total - len(discrepant)
+        accuracy = round((exact / total * 100), 1) if total > 0 else 100.0
+        units_over = sum(l["discrepancy"] for l in discrepant if l["discrepancy"] > 0)
+        units_short = sum(abs(l["discrepancy"]) for l in discrepant if l["discrepancy"] < 0)
+        adj_count = c.get("adjustments") or len([l for l in lines if l.get("adjusted")])
+
+        total_adjustments_all += adj_count
+        total_lines_all += total
+        total_exact_all += exact
+
+        # Aggregate by location and SKU
+        for l in discrepant:
+            loc = l.get("inv_location") or "Sin ubicación"
+            delta = abs(l.get("discrepancy") or 0)
+            loc_discrepancy_map.setdefault(loc, {"count": 0, "total_delta": 0})
+            loc_discrepancy_map[loc]["count"] += 1
+            loc_discrepancy_map[loc]["total_delta"] += delta
+
+            sku_key = f"{l.get('style', '')}|{l.get('color', '')}"
+            sku_discrepancy_map.setdefault(sku_key, {"count": 0, "total_delta": 0, "style": l.get("style",""), "color": l.get("color","")})
+            sku_discrepancy_map[sku_key]["count"] += 1
+            sku_discrepancy_map[sku_key]["total_delta"] += delta
+
+        summary_list.append({
+            "count_id": c["count_id"],
+            "name": c.get("name", ""),
+            "approved_at": c.get("approved_at"),
+            "created_at": c.get("created_at"),
+            "approved_by_name": c.get("approved_by_name", ""),
+            "created_by_name": c.get("created_by_name", ""),
+            "total_lines": total,
+            "discrepant_lines": len(discrepant),
+            "exact_lines": exact,
+            "accuracy_pct": accuracy,
+            "units_over": units_over,
+            "units_short": units_short,
+            "adjustments": adj_count,
+            "is_general": c.get("is_general", False),
+            "location_filter": c.get("location_filter", ""),
+            "style_filter": c.get("style_filter", ""),
+            "color_filter": c.get("color_filter", ""),
+            "customer_filter": c.get("customer_filter", ""),
+        })
+
+    overall_accuracy = round((total_exact_all / total_lines_all * 100), 1) if total_lines_all > 0 else 100.0
+
+    top_locations = sorted(loc_discrepancy_map.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
+    top_skus = sorted(sku_discrepancy_map.values(), key=lambda x: x["count"], reverse=True)[:10]
+
+    return {
+        "counts": summary_list,
+        "total_counts": len(summary_list),
+        "overall_accuracy_pct": overall_accuracy,
+        "total_adjustments": total_adjustments_all,
+        "total_lines_ever": total_lines_all,
+        "top_discrepant_locations": [
+            {"location": loc, "discrepancy_count": v["count"], "total_delta": v["total_delta"]}
+            for loc, v in top_locations
+        ],
+        "top_discrepant_skus": top_skus,
+    }
+
+
+@router.get("/cycle-counts/{count_id}/report")
+async def get_cycle_count_report(count_id: str, request: Request):
+    """
+    Detailed report for a single cycle count (any status, best for approved).
+    Returns KPIs, discrepancy table sorted by magnitude, and per-location breakdown.
+    """
+    await require_auth(request)
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+
+    lines = count.get("lines") or []
+    total = len(lines)
+    counted_lines = [l for l in lines if l.get("counted")]
+    discrepant_lines = [l for l in counted_lines if l.get("discrepancy") and l["discrepancy"] != 0]
+    exact_lines = [l for l in counted_lines if not l.get("discrepancy") or l["discrepancy"] == 0]
+
+    # KPIs
+    accuracy_pct = round((len(exact_lines) / total * 100), 1) if total > 0 else 100.0
+    units_over = sum(l["discrepancy"] for l in discrepant_lines if l["discrepancy"] > 0)
+    units_short = sum(abs(l["discrepancy"]) for l in discrepant_lines if l["discrepancy"] < 0)
+    adjusted_count = len([l for l in lines if l.get("adjusted")])
+
+    # Duration
+    duration_mins = None
+    try:
+        from datetime import datetime
+        ca = count.get("approved_at") or count.get("last_updated_at")
+        cb = count.get("created_at")
+        if ca and cb:
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            d1 = datetime.fromisoformat(ca[:19])
+            d2 = datetime.fromisoformat(cb[:19])
+            duration_mins = int(abs((d1 - d2).total_seconds()) / 60)
+    except Exception:
+        pass
+
+    # Discrepancy table — sorted by abs(discrepancy) descending
+    discrepancy_table = sorted([
+        {
+            "line_id": l.get("line_id"),
+            "location": l.get("inv_location", ""),
+            "style": l.get("style", ""),
+            "color": l.get("color", ""),
+            "size": l.get("size", ""),
+            "customer": l.get("customer", ""),
+            "system_qty": l.get("system_qty", 0),
+            "counted_qty": l.get("counted_qty", 0),
+            "discrepancy": l.get("discrepancy", 0),
+            "adjusted": l.get("adjusted", False),
+            "adjust_failed": l.get("adjust_failed", False),
+        }
+        for l in discrepant_lines
+    ], key=lambda x: abs(x["discrepancy"] or 0), reverse=True)
+
+    # All counted lines (for full export)
+    all_lines_table = [
+        {
+            "location": l.get("inv_location", ""),
+            "style": l.get("style", ""),
+            "color": l.get("color", ""),
+            "size": l.get("size", ""),
+            "customer": l.get("customer", ""),
+            "system_qty": l.get("system_qty", 0),
+            "counted_qty": l.get("counted_qty"),
+            "discrepancy": l.get("discrepancy"),
+            "adjusted": l.get("adjusted", False),
+            "counted": l.get("counted", False),
+        }
+        for l in lines
+    ]
+
+    # Per-location breakdown
+    loc_map = {}
+    for l in lines:
+        loc = l.get("inv_location") or "Sin ubicación"
+        if loc not in loc_map:
+            loc_map[loc] = {"location": loc, "total": 0, "counted": 0, "discrepant": 0, "units_delta": 0}
+        loc_map[loc]["total"] += 1
+        if l.get("counted"):
+            loc_map[loc]["counted"] += 1
+            d = l.get("discrepancy") or 0
+            if d != 0:
+                loc_map[loc]["discrepant"] += 1
+                loc_map[loc]["units_delta"] += abs(d)
+
+    location_breakdown = sorted(loc_map.values(), key=lambda x: x["discrepant"], reverse=True)
+
+    return {
+        "count_id": count["count_id"],
+        "name": count.get("name", ""),
+        "status": count.get("status"),
+        "is_general": count.get("is_general", False),
+        "location_filter": count.get("location_filter", ""),
+        "style_filter": count.get("style_filter", ""),
+        "color_filter": count.get("color_filter", ""),
+        "customer_filter": count.get("customer_filter", ""),
+        "created_at": count.get("created_at"),
+        "approved_at": count.get("approved_at"),
+        "created_by_name": count.get("created_by_name", ""),
+        "approved_by_name": count.get("approved_by_name", ""),
+        "assigned_to_name": count.get("assigned_to_name", ""),
+        # KPIs
+        "kpis": {
+            "total_lines": total,
+            "counted_lines": len(counted_lines),
+            "exact_lines": len(exact_lines),
+            "discrepant_lines": len(discrepant_lines),
+            "accuracy_pct": accuracy_pct,
+            "units_over": units_over,
+            "units_short": units_short,
+            "adjusted_count": adjusted_count,
+            "duration_mins": duration_mins,
+        },
+        "discrepancy_table": discrepancy_table,
+        "all_lines": all_lines_table,
+        "location_breakdown": location_breakdown,
+    }
+
+
 # ==================== QUICK INLINE UPDATES ====================
 
 @router.put("/pick-tickets/{ticket_id}/status")
