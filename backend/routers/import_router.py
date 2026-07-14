@@ -10,13 +10,17 @@ from deps import require_auth, db, logger
 
 router = APIRouter(prefix="/api/import")
 
+# Normaliza CUALQUIER variante de talla a la notación canónica del sistema.
+# Canónico = 2X/3X/4X/5X (NO 2XL). Es la forma que se guarda en Mongo y se muestra
+# en todos los grids (ver SIZES_ORDER en frontend/src/components/wms/lib.js). Aquí
+# se "casan" las variantes que llegan de Printavo/imports (2XL, XXL, "2 XL") -> 2X.
 SIZES_MAP = {
     'XS': 'XS', 'S': 'S', 'M': 'M', 'L': 'L', 'XL': 'XL',
     'SM': 'S', 'MD': 'M', 'LG': 'L',
     '2X': '2X', 'XXL': '2X', '2XL': '2X', '2 XL': '2X',
     '3X': '3X', 'XXXL': '3X', '3XL': '3X', '3 XL': '3X',
-    '4X': '4X', '4XL': '4X', '4 XL': '4X',
-    '5X': '5X', '5XL': '5X', '5 XL': '5X',
+    '4X': '4X', 'XXXXL': '4X', '4XL': '4X', '4 XL': '4X',
+    '5X': '5X', 'XXXXXL': '5X', '5XL': '5X', '5 XL': '5X',
     'YXS': 'YXS', 'YS': 'YS', 'YM': 'YM', 'YL': 'YL', 'YXL': 'YXL',
     '2T': '2T', '3T': '3T', '4T': '4T', '5T': '5T'
 }

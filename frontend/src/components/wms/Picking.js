@@ -4,7 +4,7 @@ import JsBarcode from "jsbarcode";
 import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, putter, logLoadError, useWmsSizes } from "./lib";
+import { API, fetcher, poster, putter, logLoadError, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 
 const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -110,7 +110,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [completedLoaded, setCompletedLoaded] = useState(false);
   const [loadingCompleted, setLoadingCompleted] = useState(false);
   // Full size system (standard + admin-configured extras), single source of truth.
-  const { adult: SIZES_ORDER, youth: YOUTH_SIZES, all: ALL_SIZES } = useWmsSizes();
+  const { adult: SIZES_ORDER, youth: YOUTH_SIZES, toddler: TODDLER_SIZES, all: ALL_SIZES } = useWmsSizes();
   const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', include_comodin: false, sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
@@ -235,10 +235,18 @@ export const PickingModule = ({ currentUser } = {}) => {
   // YXS..YXL). Show adult-only or youth-only when the inventory is purely one,
   // but the UNION (ALL_SIZES) when both are present — otherwise the youth check
   // would flip the grid to youth-only and hide the adult sizes (L/XL/etc.).
+  // El estilo puede traer adult, youth y/o toddler. Muestra el grupo puro cuando
+  // el inventario es de uno solo; la UNIÓN (ALL_SIZES) cuando mezcla grupos, para
+  // no ocultar filas (ej. adult L/XL + toddler 2T/3T en el mismo ticket).
   const _sizeKeys = Object.keys(sizeLocations);
-  const _hasYouth = _sizeKeys.some(s => String(s).toUpperCase().startsWith('Y'));
-  const _hasAdult = _sizeKeys.some(s => s && !String(s).toUpperCase().startsWith('Y'));
-  const gridSizes = (_hasYouth && _hasAdult) ? ALL_SIZES : (_hasYouth ? YOUTH_SIZES : SIZES_ORDER);
+  const _hasYouth = _sizeKeys.some(isYouthSize);
+  const _hasToddler = _sizeKeys.some(isToddlerSize);
+  const _hasAdult = _sizeKeys.some(isAdultSize);
+  const _groups = [_hasAdult, _hasYouth, _hasToddler].filter(Boolean).length;
+  const gridSizes = _groups > 1 ? ALL_SIZES
+    : _hasYouth ? YOUTH_SIZES
+    : _hasToddler ? TODDLER_SIZES
+    : SIZES_ORDER;
 
   const openEdit = (t) => {
     setEditingTicket(t);
@@ -248,7 +256,11 @@ export const PickingModule = ({ currentUser } = {}) => {
       order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
       style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
       assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '',
-      destination: t.destination || PickDestination.PRODUCTION, board_category: t.board_category || 'UNSET', strategy: t.strategy || 'default', sizes: sizesObj
+      destination: t.destination || PickDestination.PRODUCTION, board_category: t.board_category || 'UNSET', strategy: t.strategy || 'default',
+      // Los pre-tickets (is_virtual) se CREAN al confirmar aquí → deben poder
+      // elegir el comodín 2%. Los tickets reales ya lo traen aplicado (o no) y no
+      // se re-infla al editar. Default OFF: el usuario decide.
+      include_comodin: false, sizes: sizesObj
     });
     setSizeLocations(t.size_locations || {});
     if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
@@ -979,8 +991,11 @@ export const PickingModule = ({ currentUser } = {}) => {
           </div>
           <div className="text-right font-bold text-sm">{t('wms_total_pick', { count: totalPick })}</div>
           {/* Comodín 2%: opcional. Al activarlo, se REPARTE en las tallas
-              (base + 2% por talla) para que el sistema lo descuente. */}
-          {!editingTicket && (() => {
+              (base + 2% por talla) para que el sistema lo descuente. Se ofrece en
+              TODA creación: form manual (!editingTicket) Y al generar un ticket
+              desde un pre-ticket (editingTicket.is_virtual). En edición de un
+              ticket real NO aparece (ya nació con/ sin el 2%). */}
+          {(!editingTicket || editingTicket.is_virtual) && (() => {
             const comodinExtra = Object.values(form.sizes).reduce((s, v) => {
               const b = parseInt(v) || 0; return s + (b > 0 ? Math.ceil(b * 0.02) : 0);
             }, 0);

@@ -334,7 +334,7 @@ class TestSizesGridFormat:
     def test_01_all_sizes_in_order(self):
         """Verify all 9 sizes are supported in correct order"""
         EXPECTED_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X']
-        
+
         unique_id = str(uuid.uuid4())[:8]
         sizes_full = {size: i * 10 for i, size in enumerate(EXPECTED_SIZES)}
         # {XS: 0, S: 10, M: 20, L: 30, XL: 40, 2X: 50, 3X: 60, 4X: 70, 5X: 80}

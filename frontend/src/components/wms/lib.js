@@ -41,19 +41,31 @@ export const logLoadError = (what) => (err) => console.error(`[WMS] Failed to lo
 export const toastActionError = (what) => (err) => { console.error(`[WMS] ${what} failed:`, err); toast.error(`No se pudo ${what}`); };
 
 // ─── Shared constants ───────────────────────────────────────────────────────
+// Notación canónica ÚNICA del sistema: tallas grandes como 2X/3X/4X/5X (NO 2XL).
+// Es la forma que se guarda en Mongo Y la que se muestra en todo selector. Los
+// importadores (SIZES_MAP en import_router.py) normalizan cualquier variante
+// (2XL, XXL, "2 XL") a esta forma.
 export const SIZES_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X'];
 // Youth sizes. Kept separate so adult pick tickets are never shown youth rows
 // (operators would get confused). The picking grid only switches to these when
 // the selected style's inventory is actually youth.
 export const YOUTH_SIZES = ['YXS', 'YS', 'YM', 'YL', 'YXL'];
-export const ALL_SIZES = [...SIZES_ORDER, ...YOUTH_SIZES];
+// Toddler sizes (2T–5T). Llegan de Printavo/imports; se muestran como fila
+// propia en los grids cuando el ticket/estilo las trae (igual que youth).
+export const TODDLER_SIZES = ['2T', '3T', '4T', '5T'];
+export const ALL_SIZES = [...SIZES_ORDER, ...YOUTH_SIZES, ...TODDLER_SIZES];
+
+// Clasificadores de grupo compartidos (una sola definición para todo el WMS).
+export const isYouthSize = (s) => String(s || '').toUpperCase().startsWith('Y');
+export const isToddlerSize = (s) => /^[2-5]T$/.test(String(s || '').toUpperCase());
+export const isAdultSize = (s) => !!s && !isYouthSize(s) && !isToddlerSize(s);
 
 // ─── Configurable sizes (single source of truth) ────────────────────────────
 // Admins add extra sizes in "Configuración WMS → Tallas" (catalog type "sizes").
 // useWmsSizes() merges those into the standard sets so EVERY size selector in the
 // system (Receiving, Picking, PDA, Operator, New Order, Movements) grows without
-// a deploy. Extras starting with 'Y' join the youth list; the rest join adult.
-// The standard arrays above stay as the fallback shown before the fetch resolves.
+// a deploy. Extras starting with 'Y' join youth, los NT (2T–5T) van a toddler,
+// el resto a adult. Los arreglos estándar son el fallback antes del fetch.
 const _dedupeSizes = (arr) => {
   const seen = new Set(), out = [];
   for (const s of arr) { const v = String(s || '').trim().toUpperCase(); if (v && !seen.has(v)) { seen.add(v); out.push(v); } }
@@ -82,10 +94,11 @@ export const useWmsSizes = () => {
     _loadSizeExtras().then(sync);
     return () => { alive = false; _sizeSubs.delete(sync); };
   }, []);
-  const adult = _dedupeSizes([...SIZES_ORDER, ...extras.filter(s => !s.startsWith('Y'))]);
-  const youth = _dedupeSizes([...YOUTH_SIZES, ...extras.filter(s => s.startsWith('Y'))]);
-  const all = _dedupeSizes([...adult, ...youth]);
-  return { adult, youth, all, extras };
+  const adult = _dedupeSizes([...SIZES_ORDER, ...extras.filter(isAdultSize)]);
+  const youth = _dedupeSizes([...YOUTH_SIZES, ...extras.filter(isYouthSize)]);
+  const toddler = _dedupeSizes([...TODDLER_SIZES, ...extras.filter(isToddlerSize)]);
+  const all = _dedupeSizes([...adult, ...youth, ...toddler]);
+  return { adult, youth, toddler, all, extras };
 };
 
 // ─── Configurable colors (curated catalog) ──────────────────────────────────

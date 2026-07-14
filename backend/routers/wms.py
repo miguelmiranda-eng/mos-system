@@ -220,12 +220,14 @@ async def get_sku_movement_history(style: str, color: str = "", size: str = "", 
         {"details.sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
     ]
 
-    # Indirect match: find boxes with this SKU, then look up movements by their box_id
-    box_query = {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}}
+    # Indirect match: find boxes with this SKU, then look up movements by their
+    # box_id. _ci_eq (match exacto en MAYÚSCULAS) para usar el índice de wms_boxes
+    # en vez de escanear 78k docs con regex 'i' en cada apertura de historial.
+    box_query = {"style": _ci_eq(style)}
     if color:
-        box_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+        box_query["color"] = _ci_eq(color)
     if size:
-        box_query["size"] = size
+        box_query["size"] = _ci_eq(size)
     matching_box_ids = await db.wms_boxes.distinct("box_id", box_query)
     if matching_box_ids:
         or_clauses.append({"details.box_id": {"$in": matching_box_ids}})
@@ -3770,7 +3772,8 @@ async def inventory_style_info(request: Request, style: str = ""):
 
     agg = docs[0]
     colors = sorted(c for c in agg.get("colors", []) if c)
-    SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', '6X']
+    SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', '6X',
+                  'YXS', 'YS', 'YM', 'YL', 'YXL', '2T', '3T', '4T', '5T']
     raw_sizes = {s for s in agg.get("sizes", []) if s}
     ordered = [s for s in SIZE_ORDER if s in raw_sizes]
     sizes = ordered + sorted(raw_sizes - set(ordered))
@@ -4291,18 +4294,26 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             qn = 0
         if qn <= 0:
             continue
+        # Match EXACTO en MAYÚSCULAS (_ci_eq) en vez de regex case-insensitive:
+        # los campos de identidad están normalizados a UPPERCASE system-wide, así
+        # que es equivalente al regex viejo PERO usa los índices
+        # (style_1_color_1_size_1_location_1 / sku_1_…). El regex "i" forzaba
+        # COLLECTION SCAN de wms_inventory (22k) por cada talla → my-tickets lento.
         base = {
             "$or": [
-                {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
-                {"sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+                {"style": _ci_eq(style)},
+                {"sku": _ci_eq(style)},
             ],
-            "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"},
+            "size": _ci_eq(sz),
             "units_on_hand": {"$gt": 0},
         }
         if color:
-            exact = dict(base); exact["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+            exact = dict(base); exact["color"] = _ci_eq(color)
             locs = await _run(exact)
             if not locs:
+                # Fallback tolerante a variantes de nombre ('OLIVE' vs 'OLIVE
+                # GREEN'). Regex NO indexado, pero SOLO corre cuando el match exacto
+                # no encontró nada (raro) → no golpea la ruta caliente.
                 loose = dict(base); loose["color"] = {"$regex": re.escape(color), "$options": "i"}
                 locs = await _run(loose)
         else:
@@ -4330,17 +4341,19 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
         # Shelves already covered by wms_inventory keep the inventory figure; we
         # don't double-count those. Picking from such a location deducts the cart
         # boxes directly (see _deduct_pick_boxes), which is exactly what we want.
+        # Igual que arriba: _ci_eq exacto para usar el índice
+        # sku_1_color_1_size_1_location_1_units_1 en vez de escanear wms_boxes (78k).
         box_q = {
             "$or": [
-                {"sku": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
-                {"style": {"$regex": f"^{re.escape(style)}$", "$options": "i"}},
+                {"sku": _ci_eq(style)},
+                {"style": _ci_eq(style)},
             ],
-            "size": {"$regex": f"^{re.escape(sz)}$", "$options": "i"},
+            "size": _ci_eq(sz),
             "units": {"$gt": 0},
             "location": {"$exists": True, "$ne": ""},
         }
         if color:
-            box_q["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+            box_q["color"] = _ci_eq(color)
         for b in await db.wms_boxes.find(
             box_q, {"_id": 0, "location": 1, "units": 1, "qty": 1, "country_of_origin": 1}
         ).to_list(2000):
@@ -4446,12 +4459,12 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
             qty = int(qty) if qty else 0
             if qty > 0:
                 inv_query = {
-                    "$or": [{"style": {"$regex": f"^{style}$", "$options": "i"}}, {"sku": {"$regex": f"^{style}$", "$options": "i"}}],
-                    "size": {"$regex": f"^{sz}$", "$options": "i"},
+                    "$or": [{"style": _ci_eq(style)}, {"sku": _ci_eq(style)}],
+                    "size": _ci_eq(sz),
                     "units_on_hand": {"$gt": 0}
                 }
                 if color:
-                    inv_query["color"] = {"$regex": f"^{re.escape(color)}$", "$options": "i"}
+                    inv_query["color"] = _ci_eq(color)
                 inv_records = await db.wms_inventory.find(inv_query, {"_id": 0, "location": 1, "units_on_hand": 1, "units_allocated": 1, "total_boxes": 1, "customer": 1, "country_of_origin": 1}).sort("units_on_hand", -1).to_list(500)  # ver nota en _compute_size_locations: no ocultar stock de SKUs muy repartidos
                 locs = [{"location": r.get("location", ""), "available": r.get("units_on_hand", 0) - r.get("units_allocated", 0), "boxes": r.get("total_boxes", 0), "country_of_origin": r.get("country_of_origin", "")} for r in inv_records if r.get("location")]
                 locs = [l for l in locs if l["available"] > 0]

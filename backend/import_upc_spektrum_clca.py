@@ -43,6 +43,13 @@ CUSTOMER = "SPEKTRUM"
 BRAND = "CLCA"
 
 SIZE_COLUMNS = ["XS", "S", "M", "L", "XL", "2XL", "3XL"]
+# Las cabeceras del XLSX vienen como 2XL/3XL, pero la notación canónica del sistema
+# es 2X/3X (ver SIZES_ORDER en frontend/src/components/wms/lib.js). Se casan aquí al
+# escribir para no divergir del resto del WMS.
+SIZE_CANON = {"2XL": "2X", "3XL": "3X", "4XL": "4X", "5XL": "5X",
+              "XXL": "2X", "XXXL": "3X"}
+def canon_size(sz: str) -> str:
+    return SIZE_CANON.get((sz or "").upper(), (sz or "").upper())
 
 
 def now_iso() -> str:
@@ -122,7 +129,7 @@ def read_xlsx() -> list[dict]:
                 "style": style,
                 "description": desc,
                 "color": color,
-                "size": sz,
+                "size": canon_size(sz),
             })
     return out
 

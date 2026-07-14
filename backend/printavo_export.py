@@ -20,6 +20,7 @@ import pdfplumber
 from routers.import_router import SIZES_MAP
 
 # MOS size -> Printavo LineItemSize enum (reverse of the forward size mapping).
+# Canónico MOS = 2X/3X/…; Printavo usa el enum size_2xl/size_3xl/…
 MOS_TO_PRINTAVO_SIZE = {
     "YXS": "size_yxs", "YS": "size_ys", "YM": "size_ym", "YL": "size_yl", "YXL": "size_yxl",
     "XS": "size_xs", "S": "size_s", "M": "size_m", "L": "size_l", "XL": "size_xl",

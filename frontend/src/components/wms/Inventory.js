@@ -3,14 +3,15 @@ import { toast } from "sonner";
 import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter, ChevronRight } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, logLoadError } from "./lib";
+import { API, fetcher, logLoadError, ALL_SIZES } from "./lib";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
 const EMPTY = [];
 // Standard apparel sizes — always offered as suggestions so a brand-new style
-// (not yet in inventory) still shows the usual sizes to choose from.
-const STD_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
+// (not yet in inventory) still shows the usual sizes to choose from. Fuente única
+// en lib.js (notación canónica 2X/3X/…, incluye youth y toddler).
+const STD_SIZES = ALL_SIZES;
 
 /**
  * Header con filtro tipo Dashboard: el label + un icono ListFilter que abre un
