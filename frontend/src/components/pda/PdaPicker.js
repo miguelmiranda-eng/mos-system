@@ -69,22 +69,28 @@ export default function PdaPicker() {
   // picker sale del ticket y vuelve, vea el picked_sizes actualizado (el bug
   // del REMPLAZO: backend correcto pero UI mostraba "faltan 10" porque el
   // ticket prop tenia data stale).
-  const handlePickSize = async (ticketId, size, details) => {
+  // Refresca la lista de tickets desde el servidor para reflejar lo descontado.
+  // En el flujo de acumular cajas se llama UNA sola vez al confirmar el lote —
+  // NO por cada caja — para que el operador no "salga" a tallas en cada escaneo.
+  const refreshTickets = useCallback(async () => {
+    try {
+      const fresh = await fetcher("/operator/my-tickets");
+      if (Array.isArray(fresh)) {
+        setTickets(fresh);
+        setSelected(prev => prev ? (fresh.find(x => x.ticket_id === prev.ticket_id) || prev) : null);
+      }
+    } catch { /* best-effort: el descuento ya se aplicó, el refresh es secundario */ }
+  }, []);
+
+  const handlePickSize = async (ticketId, size, details, opts = {}) => {
     try {
       const res = await putter(`/pick-tickets/${ticketId}/pick-size`, { size, details });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `Talla ${size} descontada`);
-        if (navigator.vibrate) navigator.vibrate(60);
-        // Refresh silencioso (sin setLoading) para actualizar el ticket local
-        // con lo que ya se descontó. No bloquea la UI del picker.
-        try {
-          const fresh = await fetcher("/operator/my-tickets");
-          if (Array.isArray(fresh)) {
-            setTickets(fresh);
-            setSelected(prev => prev ? (fresh.find(x => x.ticket_id === prev.ticket_id) || prev) : null);
-          }
-        } catch { /* silencioso: el descuento ya se aplicó, el refresh es best-effort */ }
+        if (!opts.silent) toast.success(data.message || `Talla ${size} descontada`);
+        if (navigator.vibrate && !opts.silent) navigator.vibrate(60);
+        // skipRefresh: en un lote refrescamos una sola vez al final (el caller).
+        if (!opts.skipRefresh) await refreshTickets();
         return true;
       }
       const err = await res.json().catch(() => ({}));
@@ -207,7 +213,7 @@ export default function PdaPicker() {
           <span className="text-xs font-bold uppercase tracking-widest">Cargando…</span>
         </div>
       ) : selected ? (
-        <PickScreen ticket={selected} onSave={handleSave} onPickSize={handlePickSize} saving={saving} />
+        <PickScreen ticket={selected} onSave={handleSave} onPickSize={handlePickSize} onRefresh={refreshTickets} saving={saving} />
       ) : (
         <TicketList tickets={pending} onSelect={setSelected} onComments={openComments} />
       )}
@@ -381,7 +387,7 @@ function TicketList({ tickets, onSelect, onComments }) {
 //   boxes     → escanea la caja física en la ubicación confirmada
 //   binding   → cuestionario (solo si LPN externo desconocido)
 //   quantity  → captura cuántas piezas de la caja identificada
-function PickScreen({ ticket, onSave, onPickSize, saving }) {
+function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const [pickedSizes, setPickedSizes] = useState({});
   const [committed, setCommitted] = useState(() => new Set());
   const [committing, setCommitting] = useState(false);
@@ -393,6 +399,14 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
   const [activeBox, setActiveBox] = useState(null);        // {box_id, units, lpn}
   const [bindingInfo, setBindingInfo] = useState(null);    // {lpn, ticket_context, sizes_needed}
   const [takeQty, setTakeQty] = useState(0);
+  // Carrito de cajas escaneadas EN LA UBICACIÓN ACTIVA, aún sin descontar.
+  // Cada item: { box_id, lpn, boxUnits, qty, size }. Se acumula multi-talla y
+  // se confirma todo junto (descuenta por talla en el commit).
+  const [cart, setCart] = useState([]);
+  // Cajas que el sistema tiene FÍSICAMENTE en la ubicación activa (guía visual;
+  // el operador igual debe escanear cada una). Fuente para seleccionar LPN a mano.
+  const [locBoxes, setLocBoxes] = useState([]);
+  const [locBoxesLoading, setLocBoxesLoading] = useState(false);
 
   // Inputs de scan por stage
   const locScanRef = useRef(null);
@@ -415,7 +429,7 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     ));
     setStage('sizes');
     setActiveSize(null); setActiveLocation(null); setActiveBox(null);
-    setBindingInfo(null); setTakeQty(0);
+    setBindingInfo(null); setTakeQty(0); setCart([]); setLocBoxes([]);
     setLocScan(""); setBoxScan("");
   }, [ticket]);
 
@@ -473,6 +487,34 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     const done = parseInt(pickedSizes[sz]?.total ?? pickedSizes[sz]) || 0;
     return Math.max(0, req - done);
   };
+  // ── Carrito (multi-talla): cada item lleva su propia talla ────────────────
+  const cartQty = cart.reduce((s, it) => s + (parseInt(it.qty) || 0), 0);
+  const cartQtyForSize = (sz) => cart.filter(it => it.size === sz)
+    .reduce((s, it) => s + (parseInt(it.qty) || 0), 0);
+  // Lo que aún falta de una talla, descontando lo ya acumulado de ESA talla.
+  const remainingForSize = (sz) => Math.max(0, remainingOf(sz) - cartQtyForSize(sz));
+  // Cupo para la SIGUIENTE caja de talla sz: min(lo que falta de esa talla,
+  // el total disponible del ticket en esta ubicación menos lo ya acumulado).
+  const roomForBox = (sz) => activeLocation
+    ? Math.max(0, Math.min(remainingForSize(sz), (activeLocation.available || 0) - cartQty))
+    : 0;
+
+  // Unión de TODAS las ubicaciones del ticket (todas las tallas), con total de
+  // piezas por ubicación y desglose por talla. Es la base del flujo ubic-primero.
+  const allLocs = () => {
+    const byLoc = {};
+    activeSizes.forEach(sz => {
+      locsFor(sz).forEach(l => {
+        const key = norm(l.location);
+        if (!key) return;
+        if (!byLoc[key]) byLoc[key] = { location: l.location, available: 0, sizes: {} };
+        const av = parseInt(l.available) || 0;
+        byLoc[key].available += av;
+        byLoc[key].sizes[sz] = (byLoc[key].sizes[sz] || 0) + av;
+      });
+    });
+    return Object.values(byLoc).sort((a, b) => b.available - a.available);
+  };
   const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
   const totalCommitted = activeSizes.reduce(
     (s, sz) => s + (parseInt(pickedSizes[sz]?.total) || 0), 0);
@@ -483,10 +525,10 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     return out;
   };
 
-  // ── Navegación entre stages ──────────────────────────────────────────────
-  const goToLocations = (sz) => {
-    setActiveSize(sz); setActiveLocation(null); setActiveBox(null);
-    setLocScan(""); setBoxScan(""); setBindingInfo(null);
+  // ── Navegación entre stages (UBICACIÓN-PRIMERO) ───────────────────────────
+  const goToLocations = () => {
+    setActiveSize(null); setActiveLocation(null); setActiveBox(null);
+    setLocScan(""); setBoxScan(""); setBindingInfo(null); setCart([]); setLocBoxes([]);
     setStage('locations');
   };
   const backToSizes = () => {
@@ -495,7 +537,7 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
   };
   const backToLocations = () => {
     setActiveLocation(null); setActiveBox(null);
-    setBindingInfo(null); setBoxScan("");
+    setBindingInfo(null); setBoxScan(""); setCart([]); setLocBoxes([]);
     setStage('locations');
   };
   const backToBoxes = () => {
@@ -503,21 +545,44 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
     setStage('boxes');
   };
 
-  // ── Scan de UBICACIÓN ─────────────────────────────────────────────────────
+  // Trae las cajas físicas del ticket (style+color) en una ubicación — guía
+  // visual y fuente para seleccionar un LPN a mano.
+  const loadLocationBoxes = async (location) => {
+    setLocBoxesLoading(true); setLocBoxes([]);
+    try {
+      const params = new URLSearchParams({
+        location, sku: ticket.style || "", color: ticket.color || "",
+      });
+      const data = await fetcher(`/boxes?${params.toString()}`);
+      const rows = Array.isArray(data) ? data : (data?.boxes || data?.items || []);
+      setLocBoxes(rows.filter(b => (parseInt(b.units) || 0) > 0));
+    } catch { /* la guía es best-effort; el escaneo funciona igual */ }
+    finally { setLocBoxesLoading(false); }
+  };
+
+  // Entra a una ubicación (por scan o tap en la lista): carrito limpio + cajas.
+  const enterLocation = (hit) => {
+    setActiveLocation(hit);
+    setActiveSize(null); setActiveBox(null); setBindingInfo(null);
+    setCart([]); setBoxScan("");
+    setStage('boxes');
+    loadLocationBoxes(hit.location);
+    toast.success(`✓ Ubicación ${hit.location} · ${hit.available} pz del ticket aquí`);
+    if (navigator.vibrate) navigator.vibrate(60);
+  };
+
+  // ── Scan de UBICACIÓN (cualquiera con material del ticket) ────────────────
   const handleLocationScan = (raw) => {
     const code = norm(raw).replace(/^[^A-Z0-9]+/, "");
     setLocScan("");
     if (!code) return;
-    const hit = locsFor(activeSize).find(l => norm(l.location) === code);
+    const hit = allLocs().find(l => norm(l.location) === code);
     if (!hit) {
-      toast.error(`Ubicación "${code}" no es válida para la talla ${activeSize}`);
+      toast.error(`Ubicación "${code}" no tiene material de este ticket`);
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
-    setActiveLocation(hit);
-    setStage('boxes');
-    toast.success(`✓ Ubicación ${hit.location} · ${hit.available} pz aquí`);
-    if (navigator.vibrate) navigator.vibrate(60);
+    enterLocation(hit);
   };
 
   // ── Scan de CAJA ─────────────────────────────────────────────────────────
@@ -534,100 +599,159 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
       const data = await r.json();
       if (!r.ok) { toast.error(data.detail || "Error al escanear"); return; }
       if (data.status === "matched") {
-        setActiveBox({ box_id: data.box.box_id, units: data.box.units, lpn });
-        // Default = min(caja, restante)
-        const remain = remainingOf(activeSize);
-        setTakeQty(Math.min(data.box.units, remain));
-        setStage('quantity');
-        toast.success(`✓ Caja ${data.box.box_id} · ${data.box.units} pz`);
-        if (navigator.vibrate) navigator.vibrate(60);
+        openBoxForQty(data.box, lpn);
       } else if (data.status === "wrong_ticket") {
         toast.error(data.message || "La caja no es de este ticket");
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       } else if (data.status === "needs_binding") {
+        // LPN externo / código no-BOX → deja seleccionar la caja de la lista
+        // de esta ubicación para ligarla y descontarla manualmente.
         setBindingInfo(data);
         setStage('binding');
       }
     } catch (e) { toast.error("Error de conexión al escanear"); }
   };
 
-  // ── Bind inline (LPN externo no registrado) ──────────────────────────────
-  const submitBinding = async ({ size, actual_units }) => {
+  // Abre una caja (ya identificada) para capturar cantidad. La TALLA sale de la
+  // propia caja — así el flujo es ubicación-primero y un solo campo recibe
+  // cajas de cualquier talla. Valida que la talla la pida el ticket y no exceda.
+  const openBoxForQty = (box, lpn) => {
+    const bsize = String(box.size || "").toUpperCase();
+    if (!bsize || !activeSizes.includes(bsize)) {
+      toast.error(`La caja es talla ${bsize || "?"}, que no pide este ticket`);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return;
+    }
+    if (remainingForSize(bsize) <= 0) {
+      toast.error(`La talla ${bsize} ya está completa`);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return;
+    }
+    if (cart.some(it => it.box_id === box.box_id)) {
+      toast.error("Esa caja ya está en la lista");
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return;
+    }
+    setActiveBox({
+      box_id: box.box_id, units: box.units, size: bsize,
+      lpn: lpn || box.physical_lpn || box.box_id,
+    });
+    setTakeQty(Math.min(box.units, roomForBox(bsize)));
+    setStage('quantity');
+    toast.success(`✓ Caja ${box.box_id} · talla ${bsize} · ${box.units} pz`);
+    if (navigator.vibrate) navigator.vibrate(60);
+  };
+
+  // ── LPN externo / no-BOX → seleccionar la caja de la lista a mano ─────────
+  // Liga el LPN escaneado a la caja elegida (talla+units de esa caja) y la abre
+  // para descontarla de ubicación e inventario como cualquier otra.
+  const selectBindCandidate = async (candidate) => {
+    const lpn = bindingInfo?.lpn;
     try {
       const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/bind-box`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lpn: bindingInfo.lpn, location: activeLocation.location,
-          size, actual_units,
+          lpn, location: activeLocation.location,
+          size: candidate.size, actual_units: candidate.units,
         }),
       });
       const data = await r.json();
       if (!r.ok) { toast.error(data.detail || "Error al ligar caja"); return; }
-      setActiveBox({ box_id: data.box.box_id, units: data.box.units, lpn: bindingInfo.lpn });
-      const remain = remainingOf(activeSize);
-      setTakeQty(Math.min(data.box.units, remain));
       setBindingInfo(null);
-      setStage('quantity');
       toast.success(data.reconciled
-        ? `Caja ligada + ajuste (${data.delta > 0 ? '+' : ''}${data.delta})`
-        : `Caja ${data.box.box_id} ligada`);
+        ? `LPN ligado a ${data.box.box_id} + ajuste (${data.delta > 0 ? '+' : ''}${data.delta})`
+        : `LPN ligado a ${data.box.box_id}`);
       if (navigator.vibrate) navigator.vibrate(80);
-    } catch (e) { toast.error("Error de conexión al ligar"); }
+      openBoxForQty(data.box, lpn);
+    } catch { toast.error("Error de conexión al ligar"); }
   };
 
-  // ── Descuento final ──────────────────────────────────────────────────────
-  const confirmQuantity = async () => {
+  // ── Acumular caja (NO descuenta; solo agrega al carrito local) ─────────────
+  const addToCart = () => {
     const qty = parseInt(takeQty) || 0;
+    const sz = activeBox.size;
     if (qty <= 0) { toast.error("Ingresa una cantidad"); return; }
     if (qty > activeBox.units) { toast.error(`La caja solo tiene ${activeBox.units} pz`); return; }
-    const remain = remainingOf(activeSize);
-    if (qty > remain) { toast.error(`Máximo ${remain} pz para talla ${activeSize}`); return; }
+    const room = roomForBox(sz);
+    if (qty > room) { toast.error(`Máximo ${room} pz más (talla ${sz} / ubic ${activeLocation.location})`); return; }
+    setCart(prev => [...prev, {
+      box_id: activeBox.box_id, lpn: activeBox.lpn, boxUnits: activeBox.units, qty, size: sz,
+    }]);
+    setActiveBox(null); setBindingInfo(null); setBoxScan(""); setTakeQty(0);
+    setStage("boxes");
+    if (navigator.vibrate) navigator.vibrate(40);
+    const faltaSz = Math.max(0, remainingOf(sz) - (cartQtyForSize(sz) + qty));
+    toast.success(faltaSz > 0
+      ? `Caja agregada (talla ${sz}, ${qty} pz). Faltan ${faltaSz} de ${sz}.`
+      : `Caja agregada. Talla ${sz} completa ✓`);
+  };
+  const removeFromCart = (idx) => setCart(prev => prev.filter((_, i) => i !== idx));
 
-    // Estructura para pick-size: incluye todas las locs ya deducted + la nueva
-    const prev = pickedSizes[activeSize]?.details || {};
-    const nextDetails = { ...prev, [activeLocation.location]: (prev[activeLocation.location] || 0) + qty };
-    const detailsWithBoxes = Object.fromEntries(
-      Object.entries(nextDetails).map(([loc, q]) => [loc, {
-        qty: q,
-        box_id: loc === activeLocation.location ? activeBox.box_id : null,
-      }])
-    );
+  // ── Descuento en LOTE (multi-talla) ────────────────────────────────────────
+  // Descuenta todas las cajas acumuladas de la ubicación de una. Como el backend
+  // es 1 caja/ubic por llamada Y por talla, iteramos caja por caja usando la
+  // talla de CADA caja, con acumulados por talla. Totales ACUMULATIVOS: el
+  // servidor descuenta solo el delta vs. su deducted_map (robusto). Un solo
+  // refresh al final. Snapshot para no depender de estados que cambian a mitad.
+  const commitCart = async () => {
+    if (!cart.length) { toast.error("No hay cajas escaneadas"); return; }
+    const items = [...cart];
+    const loc = activeLocation.location;
     setCommitting(true);
-    const ok = await onPickSize(ticket.ticket_id, activeSize, detailsWithBoxes);
-    setCommitting(false);
-    if (ok) {
-      // Actualiza el estado local para reflejar el descuento sin re-fetch
-      setPickedSizes(p => ({
-        ...p,
-        [activeSize]: {
-          total: (parseInt(p[activeSize]?.total) || 0) + qty,
-          details: nextDetails,
-        },
-      }));
-
-      // Post-descuento: no siempre hay que volver al selector de tallas. Si
-      // aun faltan piezas de esta talla Y la ubicacion actual sigue teniendo
-      // stock, quedar en `boxes` esperando otra caja de la MISMA locacion
-      // (evita re-escanear la ubicacion cada vez). Solo volvemos a `sizes`
-      // cuando la talla ya se completo; a `locations` si la ubic se agoto.
-      const stillNeed = Math.max(0, remainingOf(activeSize) - qty);
-      const remainHere = Math.max(0, (activeLocation.available || 0) - qty);
-      if (stillNeed <= 0) {
-        setCommitted(prev => new Set(prev).add(activeSize));
-        backToSizes();
-      } else if (remainHere > 0) {
-        // Restamos localmente el available de la ubic para que la UI muestre el nuevo saldo.
-        setActiveLocation(prev => prev ? { ...prev, available: remainHere } : prev);
-        setActiveBox(null); setBindingInfo(null); setBoxScan(""); setTakeQty("");
-        setStage("boxes");
-        toast.info(`Faltan ${stillNeed} pz de talla ${activeSize}. Escanea otra caja en ${activeLocation.location}.`);
-      } else {
-        // La ubic se agoto — al selector de ubicaciones para elegir la siguiente.
-        backToLocations();
-        toast.info(`Ubic ${activeLocation.location} agotada. Faltan ${stillNeed} pz de talla ${activeSize} — elige otra ubicacion.`);
-      }
+    const running = {};   // { size: acumulado en ESTA ubic } sembrado del server
+    const doneBySize = {}; // { size: piezas descontadas ahora }
+    const done = [];
+    let failed = null;
+    for (const it of items) {
+      const sz = it.size;
+      if (running[sz] == null) running[sz] = parseInt(pickedSizes[sz]?.details?.[loc] || 0) || 0;
+      running[sz] += parseInt(it.qty) || 0;
+      const base = { ...(pickedSizes[sz]?.details || {}) };
+      const nextDetails = { ...base, [loc]: running[sz] };
+      const detailsWithBoxes = Object.fromEntries(
+        Object.entries(nextDetails).map(([l, q]) => [l, {
+          qty: q,
+          box_id: l === loc ? it.box_id : null,   // solo la ubic activa lleva caja
+        }])
+      );
+      const ok = await onPickSize(ticket.ticket_id, sz, detailsWithBoxes, { skipRefresh: true, silent: true });
+      if (!ok) { failed = it; break; }            // onPickSize ya mostró el modal bloqueante
+      done.push(it);
+      doneBySize[sz] = (doneBySize[sz] || 0) + (parseInt(it.qty) || 0);
     }
+    const pickedNow = done.reduce((s, it) => s + (parseInt(it.qty) || 0), 0);
+    // Update OPTIMISTA por talla (protege reintentos si el refresh de red falla).
+    if (pickedNow > 0) {
+      setPickedSizes(p => {
+        const next = { ...p };
+        Object.entries(doneBySize).forEach(([sz, add]) => {
+          const prevDetails = { ...(next[sz]?.details || {}) };
+          next[sz] = {
+            total: (parseInt(next[sz]?.total) || 0) + add,
+            details: { ...prevDetails, [loc]: (parseInt(prevDetails[loc]) || 0) + add },
+          };
+        });
+        return next;
+      });
+    }
+    if (onRefresh) await onRefresh();   // sincroniza con el servidor (una sola vez)
+    setCart([]);
+    setCommitting(false);
+    if (failed) {
+      toast.error(`Se descontaron ${done.length} caja(s) (${pickedNow} pz). La caja ${failed.box_id} (talla ${failed.size}) falló — revisa el aviso y re-escanea las que faltaron.`);
+    } else if (pickedNow > 0) {
+      const resumen = Object.entries(doneBySize).map(([sz, q]) => `${sz}:${q}`).join(" · ");
+      toast.success(`✓ ${done.length} caja(s) · ${pickedNow} pz (${resumen})`);
+      if (navigator.vibrate) navigator.vibrate(60);
+      Object.keys(doneBySize).forEach(sz => {
+        const doneTotal = (parseInt(pickedSizes[sz]?.total) || 0) + doneBySize[sz];
+        if ((parseInt(sizes[sz]) || 0) && doneTotal >= (parseInt(sizes[sz]) || 0)) {
+          setCommitted(prev => new Set(prev).add(sz));
+        }
+      });
+    }
+    backToSizes();   // vuelve al resumen (el refresh trajo el progreso real)
   };
 
   // ══════════════════ RENDER ═══════════════════════════════════════════════
@@ -675,8 +799,14 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
       {/* ══════ STAGE 1: SIZES ══════ */}
       {stage === 'sizes' && (
         <div className="px-3 space-y-2">
+          {/* Entrada principal: UBICACIÓN-PRIMERO. Escaneas la ubicación y de ahí
+              surtes todas las tallas que estén ahí en un solo lote. */}
+          <button onClick={goToLocations}
+            className="w-full h-16 rounded-2xl bg-blue-600 active:bg-blue-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 mb-1">
+            <ScanLine className="w-6 h-6" /> Escanear ubicación
+          </button>
           <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-            Tallas por surtir · toca para escanear
+            Progreso por talla
           </div>
           {activeSizes.map(sz => {
             const req = parseInt(sizes[sz]) || 0;
@@ -684,8 +814,8 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
             const remain = req - done;
             const isDone = remain <= 0;
             return (
-              <button key={sz} onClick={() => !isDone && goToLocations(sz)} disabled={isDone}
-                className={`w-full rounded-2xl border p-4 flex items-center gap-3 active:bg-white/5 disabled:opacity-50 ${
+              <div key={sz}
+                className={`w-full rounded-2xl border p-4 flex items-center gap-3 ${
                   isDone ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-[#131a2b]"
                 }`}>
                 {isDone
@@ -702,23 +832,22 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
                 <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${
                   isDone ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-200"
                 }`}>{done}/{req}</div>
-              </button>
+              </div>
             );
           })}
         </div>
       )}
 
-      {/* ══════ STAGE 2: LOCATIONS ══════ */}
-      {stage === 'locations' && activeSize && (
+      {/* ══════ STAGE 2: LOCATIONS (todas las del ticket) ══════ */}
+      {stage === 'locations' && (
         <div className="px-3 space-y-3">
           <button onClick={backToSizes}
             className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
-            <ChevronLeft className="w-4 h-4" /> Volver a tallas
+            <ChevronLeft className="w-4 h-4" /> Volver
           </button>
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-3">
-            <div className="text-[10px] font-black uppercase tracking-widest text-blue-300">Talla activa</div>
-            <div className="text-3xl font-black text-white">{activeSize}</div>
-            <div className="text-xs text-slate-300 mt-1">Faltan <b className="text-amber-300">{remainingOf(activeSize)} pz</b></div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-blue-300">Escanea la ubicación del material</div>
+            <div className="text-xs text-slate-300 mt-1">Faltan <b className="text-amber-300">{Math.max(0, totalRequired - totalCommitted)} pz</b> del ticket en total</div>
           </div>
 
           <div className="relative">
@@ -728,8 +857,6 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  // Toma el valor DIRECTO del input para no depender del state
-                  // (evita closure stale cuando DataWedge dispara Enter rapido).
                   handleLocationScan(e.currentTarget.value);
                 }
               }}
@@ -744,26 +871,29 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-              Ubicaciones disponibles
+              Ubicaciones con material del ticket · toca para entrar
             </div>
             <div className="space-y-1.5">
-              {locsFor(activeSize).length === 0 ? (
+              {allLocs().length === 0 ? (
                 <div className="flex items-center gap-2 text-amber-400 py-4 justify-center">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
-                  <span className="text-xs font-bold">Sin stock para esta talla/color</span>
+                  <span className="text-xs font-bold">Sin stock para este ticket</span>
                 </div>
-              ) : locsFor(activeSize).map((l, i) => (
-                <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3">
+              ) : allLocs().map((l, i) => (
+                <button key={i} onClick={() => enterLocation(l)}
+                  className="w-full rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3 active:bg-white/5 text-left">
                   <MapPin className="w-5 h-5 text-blue-300 shrink-0" />
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="font-mono font-black text-blue-300 text-lg">{l.location}</div>
-                    {l.country_of_origin && <div className="text-[10px] text-slate-500">{l.country_of_origin}</div>}
+                    <div className="text-[10px] text-slate-500 truncate">
+                      {Object.entries(l.sizes).map(([sz, q]) => `${sz}:${q}`).join(" · ")}
+                    </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <div className="text-xl font-mono font-black text-emerald-400">{l.available}</div>
                     <div className="text-[9px] uppercase text-slate-500 font-black tracking-widest">pz</div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -771,7 +901,7 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
       )}
 
       {/* ══════ STAGE 3: BOXES ══════ */}
-      {stage === 'boxes' && activeSize && activeLocation && (
+      {stage === 'boxes' && activeLocation && (
         <div className="px-3 space-y-3">
           <button onClick={backToLocations}
             className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
@@ -780,15 +910,54 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3">
             <div className="flex items-center gap-3">
               <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
-              <div className="flex-1">
-                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Ubicación confirmada</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Ubicación</div>
                 <div className="font-mono font-black text-emerald-100 text-xl">{activeLocation.location}</div>
               </div>
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <div className="text-lg font-mono font-black text-emerald-300">{activeLocation.available}</div>
-                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz aquí</div>
+                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz del ticket</div>
               </div>
             </div>
+            {/* Progreso por talla presente en esta ubicación */}
+            <div className="flex flex-wrap gap-1.5 pt-2 mt-2 border-t border-emerald-500/20">
+              {Object.keys(activeLocation.sizes || {}).map(sz => {
+                const falta = remainingForSize(sz);
+                return (
+                  <span key={sz} className={`px-2 py-0.5 rounded-lg text-[10px] font-black tabular-nums ${
+                    falta > 0 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+                    {sz}: {falta > 0 ? `faltan ${falta}` : "✓"}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Cajas que el sistema tiene AQUÍ (guía). Escanea cada una; si es un
+              LPN de proveedor, tócala en la lista para ligarla y descontarla. */}
+          <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+            <div className="px-3 py-2 border-b border-white/10 text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
+              <Boxes className="w-3.5 h-3.5" /> Cajas en esta ubicación {locBoxesLoading ? "…" : `(${locBoxes.length})`}
+            </div>
+            {locBoxes.length === 0 ? (
+              <div className="px-3 py-3 text-center text-[11px] text-slate-500">
+                {locBoxesLoading ? "Cargando…" : "Sin cajas registradas — escanea igual"}
+              </div>
+            ) : (
+              <div className="max-h-44 overflow-auto divide-y divide-white/5">
+                {locBoxes.map((b, i) => {
+                  const inCart = cart.some(it => it.box_id === b.box_id);
+                  return (
+                    <div key={b.box_id || i} className="flex items-center gap-2 px-3 py-1.5">
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white/5 text-slate-300 shrink-0">{b.size}</span>
+                      <div className="flex-1 min-w-0 font-mono text-xs text-slate-200 truncate">{b.box_id}</div>
+                      <span className="text-emerald-300 font-mono text-xs tabular-nums shrink-0">{b.units}</span>
+                      {inCart && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div>
@@ -817,18 +986,96 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
               Si es BOX- registrada se identifica al instante. Si es LPN de proveedor, te pediremos ligar la caja.
             </div>
           </div>
+
+          {/* Lista ACUMULADA de cajas escaneadas (aún sin descontar) */}
+          <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
+                <Boxes className="w-3.5 h-3.5" /> Cajas escaneadas ({cart.length})
+              </div>
+              <div className="text-[11px] font-black">
+                <span className="text-emerald-300 tabular-nums">{cartQty}</span>
+                <span className="text-slate-500"> · faltan </span>
+                <span className="text-amber-300 tabular-nums">{Math.max(0, totalRequired - totalCommitted - cartQty)}</span>
+              </div>
+            </div>
+            {cart.length === 0 ? (
+              <div className="px-3 py-4 text-center text-[11px] text-slate-500">
+                Aún no escaneas cajas. Escanea una arriba…
+              </div>
+            ) : (
+              <div className="divide-y divide-white/5">
+                {cart.map((it, i) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-slate-500 text-[10px] font-black w-4">{i + 1}</span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white/5 text-slate-300 shrink-0">{it.size}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono font-black text-emerald-100 text-sm truncate">{it.box_id}</div>
+                      {it.lpn && it.lpn !== it.box_id && (
+                        <div className="text-[9px] text-slate-500 font-mono truncate">LPN: {it.lpn}</div>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-emerald-300 font-mono font-black tabular-nums">{it.qty}</span>
+                      <span className="text-[9px] text-slate-500"> /{it.boxUnits}</span>
+                    </div>
+                    <button onClick={() => removeFromCart(i)}
+                      className="w-8 h-8 rounded-lg bg-white/5 active:bg-rose-500/20 text-slate-400 active:text-rose-300 flex items-center justify-center shrink-0">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Confirmar el LOTE completo — descuenta todas las cajas de una vez */}
+          <button onClick={commitCart} disabled={committing || cart.length === 0}
+            className="w-full h-16 rounded-2xl bg-emerald-600 active:bg-emerald-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
+            {committing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
+            {committing ? "Guardando…" : `Guardar / Descontar (${cart.length} · ${cartQty} pz)`}
+          </button>
         </div>
       )}
 
-      {/* ══════ STAGE 4a: BINDING (LPN externo) ══════ */}
+      {/* ══════ STAGE 4a: LPN externo / no-BOX → selecciona la caja ══════ */}
       {stage === 'binding' && bindingInfo && (
-        <BindingStage
-          info={bindingInfo}
-          location={activeLocation.location}
-          onBack={backToBoxes}
-          onSubmit={submitBinding}
-          defaultSize={activeSize}
-        />
+        <div className="px-3 space-y-3">
+          <button onClick={backToBoxes}
+            className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+            <ChevronLeft className="w-4 h-4" /> Volver a cajas
+          </button>
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3">
+            <div className="text-[10px] font-black uppercase tracking-widest text-amber-300">Código no reconocido</div>
+            <div className="font-mono font-black text-amber-100 text-base break-all">{bindingInfo.lpn}</div>
+            <div className="text-[11px] text-slate-300 mt-1">
+              Selecciona a qué caja de <b className="text-blue-300 font-mono">{activeLocation.location}</b> corresponde,
+              para ligarla y descontarla de la ubicación e inventario.
+            </div>
+          </div>
+          {(bindingInfo.candidates || []).length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-center text-[12px] text-slate-400">
+              No hay cajas sin ligar en esta ubicación para este ticket.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {(bindingInfo.candidates || []).map((c, i) => (
+                <button key={c.box_id || i} onClick={() => selectBindCandidate(c)}
+                  className="w-full rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3 active:bg-white/5 text-left">
+                  <span className="text-[11px] font-black px-2 py-0.5 rounded bg-white/5 text-slate-200 shrink-0">{c.size}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono font-black text-blue-200 text-sm truncate">{c.box_id}</div>
+                    <div className="text-[10px] text-slate-500 font-mono truncate">{c.location}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-lg font-mono font-black text-emerald-300">{c.units}</div>
+                    <div className="text-[9px] uppercase text-slate-500 font-black">pz</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ══════ STAGE 4b: QUANTITY ══════ */}
@@ -854,34 +1101,34 @@ function PickScreen({ ticket, onSave, onPickSize, saving }) {
               </div>
             </div>
             <div className="text-[10px] text-slate-400 pt-2 border-t border-emerald-500/20">
-              Talla <b className="text-emerald-300">{activeSize}</b> · Ubic. <b className="text-blue-300 font-mono">{activeLocation.location}</b> · Faltan <b className="text-amber-300">{remainingOf(activeSize)} pz</b>
+              Talla <b className="text-emerald-300">{activeBox.size}</b> · Ubic. <b className="text-blue-300 font-mono">{activeLocation.location}</b> · Faltan <b className="text-amber-300">{remainingForSize(activeBox.size)} pz</b> de {activeBox.size}
             </div>
           </div>
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-              ¿Cuántas piezas vas a tomar?
+              ¿Cuántas piezas vas a tomar de esta caja?
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setTakeQty(Math.max(0, (parseInt(takeQty) || 0) - 1))}
                 className="w-16 h-16 rounded-2xl bg-white/5 active:bg-white/10 text-3xl font-black">−</button>
               <input type="number" inputMode="numeric" min="0"
-                max={Math.min(activeBox.units, remainingOf(activeSize))}
+                max={Math.min(activeBox.units, roomForBox(activeBox.size))}
                 value={takeQty} onChange={(e) => setTakeQty(e.target.value)}
                 onFocus={(e) => e.target.select()}
                 className="flex-1 h-16 bg-black/40 border-2 border-blue-500/40 rounded-2xl text-center text-4xl font-mono font-black focus:outline-none focus:border-blue-400" />
-              <button onClick={() => setTakeQty(Math.min(Math.min(activeBox.units, remainingOf(activeSize)), (parseInt(takeQty) || 0) + 1))}
+              <button onClick={() => setTakeQty(Math.min(Math.min(activeBox.units, roomForBox(activeBox.size)), (parseInt(takeQty) || 0) + 1))}
                 className="w-16 h-16 rounded-2xl bg-white/5 active:bg-white/10 text-3xl font-black">＋</button>
             </div>
             <div className="mt-2 text-[10px] text-slate-500 px-1">
-              Default = mínimo entre {activeBox.units} (caja) y {remainingOf(activeSize)} (restante)
+              Máximo = mínimo entre {activeBox.units} (caja) y {roomForBox(activeBox.size)} (falta / disponible)
             </div>
           </div>
 
-          <button onClick={confirmQuantity} disabled={committing || (parseInt(takeQty) || 0) <= 0}
-            className="w-full h-16 rounded-2xl bg-emerald-600 active:bg-emerald-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
-            {committing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
-            Descontar {parseInt(takeQty) || 0} pz
+          <button onClick={addToCart} disabled={(parseInt(takeQty) || 0) <= 0}
+            className="w-full h-16 rounded-2xl bg-blue-600 active:bg-blue-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
+            <Boxes className="w-6 h-6" />
+            Agregar a la lista ({parseInt(takeQty) || 0} pz)
           </button>
         </div>
       )}
