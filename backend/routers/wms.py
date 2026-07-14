@@ -9513,6 +9513,10 @@ async def get_cycle_count_report(count_id: str, request: Request):
     ], key=lambda x: abs(x["discrepancy"] or 0), reverse=True)
 
     # All counted lines (for full export)
+    user_ids = {l.get("counted_by") for l in lines if l.get("counted_by")}
+    users_db = await db.users.find({"user_id": {"$in": list(user_ids)}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}).to_list(1000)
+    user_map_details = {u["user_id"]: u.get("name") or u.get("email") for u in users_db}
+
     all_lines_table = [
         {
             "location": l.get("inv_location", ""),
@@ -9525,6 +9529,9 @@ async def get_cycle_count_report(count_id: str, request: Request):
             "discrepancy": l.get("discrepancy"),
             "adjusted": l.get("adjusted", False),
             "counted": l.get("counted", False),
+            "counted_at": l.get("counted_at"),
+            "counted_by": l.get("counted_by"),
+            "counted_by_name": user_map_details.get(l.get("counted_by")) if l.get("counted_by") else None
         }
         for l in lines
     ]

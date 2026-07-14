@@ -133,6 +133,46 @@ export const CycleCountModule = () => {
     const wsLoc = XLSX.utils.json_to_sheet(locData);
     XLSX.utils.book_append_sheet(wb, wsLoc, "Por Ubicación");
 
+    const timelineData = reportDetail.all_lines
+      .filter(l => l.counted && l.counted_at)
+      .sort((a, b) => new Date(a.counted_at) - new Date(b.counted_at))
+      .map(l => ({
+        "Fecha y Hora": new Date(l.counted_at).toLocaleString(),
+        "Auditor": l.counted_by_name || l.counted_by || 'Desconocido',
+        "Ubicación": l.location,
+        "Style": l.style,
+        "Color": l.color,
+        "Talla": l.size,
+        "Cant. Contada": l.counted_qty,
+        "Diferencia": l.discrepancy || 0
+      }));
+    if (timelineData.length > 0) {
+      const wsTimeline = XLSX.utils.json_to_sheet(timelineData);
+      XLSX.utils.book_append_sheet(wb, wsTimeline, "Cronograma");
+    }
+
+    const auditorStats = {};
+    reportDetail.all_lines.filter(l => l.counted).forEach(l => {
+      const uid = l.counted_by_name || l.counted_by || 'Desconocido';
+      if (!auditorStats[uid]) auditorStats[uid] = { lines: 0, units: 0, diffs: 0 };
+      auditorStats[uid].lines += 1;
+      auditorStats[uid].units += (l.counted_qty || 0);
+      if (l.discrepancy !== 0) auditorStats[uid].diffs += 1;
+    });
+    const prodData = Object.entries(auditorStats)
+      .map(([name, stats]) => ({
+        "Auditor": name,
+        "Líneas Contadas": stats.lines,
+        "Unidades Físicas": stats.units,
+        "Errores Detectados": stats.diffs
+      }))
+      .sort((a, b) => b["Líneas Contadas"] - a["Líneas Contadas"]);
+    
+    if (prodData.length > 0) {
+      const wsProd = XLSX.utils.json_to_sheet(prodData);
+      XLSX.utils.book_append_sheet(wb, wsProd, "Productividad");
+    }
+
     XLSX.writeFile(wb, `Reporte_Cicloconteo_${reportDetail.count_id.slice(-6)}.xlsx`);
   };
 
