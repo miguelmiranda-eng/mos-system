@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, Search, BarChart3, FileSpreadsheet, Eye } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, Search, BarChart3, FileSpreadsheet, Eye, Clock } from "lucide-react";
 import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
@@ -23,11 +23,25 @@ export const CycleCountModule = () => {
   const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
 
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail'
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail' | 'timeline'
   const [reportsSummary, setReportsSummary] = useState(null);
   const [loadingReports, setLoadingReports] = useState(false);
   const [reportDetail, setReportDetail] = useState(null);
   const [loadingReportDetail, setLoadingReportDetail] = useState(false);
+  const [timelineEvents, setTimelineEvents] = useState([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+
+  const loadTimeline = useCallback(async () => {
+    setLoadingTimeline(true);
+    try {
+      const data = await fetcher('/cycle-counts/reports/timeline');
+      setTimelineEvents(data.timeline || []);
+    } catch {
+      toast.error('Error cargando cronograma');
+    } finally {
+      setLoadingTimeline(false);
+    }
+  }, []);
 
   const loadReportsSummary = useCallback(async () => {
     setLoadingReports(true);
@@ -489,6 +503,13 @@ export const CycleCountModule = () => {
             <BarChart3 className="w-4 h-4" />
             REPORTES
           </button>
+          <button
+            onClick={() => { setActiveTab('timeline'); if (timelineEvents.length === 0) loadTimeline(); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'timeline' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+          >
+            <Clock className="w-4 h-4" />
+            CRONOGRAMA
+          </button>
         </div>
         {activeTab === 'active' && (
           <button
@@ -787,6 +808,69 @@ export const CycleCountModule = () => {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {activeTab === 'timeline' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-primary" />
+              Línea de Tiempo de Auditorías
+            </h3>
+            
+            {loadingTimeline ? (
+              <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+                <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
+                <p className="text-sm font-bold uppercase tracking-widest">Cargando eventos...</p>
+              </div>
+            ) : timelineEvents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
+                <Clock className="w-16 h-16 mb-4 stroke-[1px]" />
+                <p className="font-bold uppercase tracking-widest text-sm italic">No hay actividad reciente</p>
+              </div>
+            ) : (
+              <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
+                {timelineEvents.map((evt, idx) => {
+                  const d = new Date(evt.timestamp);
+                  const isError = evt.discrepancy !== 0;
+                  return (
+                    <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                      <div className={`flex items-center justify-center w-10 h-10 rounded-full border-4 border-background shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-sm ${isError ? 'bg-red-500' : 'bg-primary'} text-black`}>
+                        {isError ? <Search className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                      </div>
+                      
+                      <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-card border border-border p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-foreground text-sm flex items-center gap-1.5">
+                            <span className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[10px] text-muted-foreground">
+                              {evt.user_name.charAt(0).toUpperCase()}
+                            </span>
+                            {evt.user_name}
+                          </span>
+                          <span className="text-xs text-muted-foreground font-mono bg-secondary/50 px-2 py-0.5 rounded">
+                            {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mb-2">
+                          {d.toLocaleDateString()} • Conteo: <span className="font-mono">#{evt.count_id.slice(-6)}</span>
+                        </div>
+                        <div className="bg-secondary/30 p-3 rounded-lg border border-border/50 text-sm">
+                          Contó <span className="font-bold text-foreground">{evt.qty} uds</span> de <span className="font-bold text-primary">{evt.style}</span> en <span className="font-mono font-bold">{evt.location}</span>.
+                          {isError && (
+                            <div className="mt-2 text-red-400 font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                              Discrepancia detectada ({evt.discrepancy > 0 ? '+' : ''}{evt.discrepancy})
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

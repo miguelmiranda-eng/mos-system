@@ -9413,6 +9413,50 @@ async def cycle_counts_report_summary(request: Request):
     }
 
 
+@router.get("/cycle-counts/reports/timeline")
+async def cycle_counts_report_timeline(request: Request):
+    """
+    Returns a chronological feed of cycle count activity.
+    """
+    await require_auth(request)
+
+    counts = await db.wms_cycle_counts.find(
+        {},
+        {"_id": 0, "count_id": 1, "name": 1, "lines": 1}
+    ).to_list(200)
+
+    timeline = []
+    user_ids = set()
+
+    for c in counts:
+        for l in c.get("lines", []):
+            if l.get("counted") and l.get("counted_at"):
+                uid = l.get("counted_by") or "Desconocido"
+                user_ids.add(uid)
+                timeline.append({
+                    "count_id": c["count_id"],
+                    "count_name": c.get("name", ""),
+                    "user_id": uid,
+                    "timestamp": l["counted_at"],
+                    "location": l.get("inv_location", ""),
+                    "style": l.get("style", ""),
+                    "color": l.get("color", ""),
+                    "size": l.get("size", ""),
+                    "qty": l.get("counted_qty", 0),
+                    "discrepancy": l.get("discrepancy", 0)
+                })
+
+    users = await db.users.find({"user_id": {"$in": list(user_ids)}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}).to_list(1000)
+    user_map = {u["user_id"]: u.get("name") or u.get("email") for u in users}
+
+    for t in timeline:
+        t["user_name"] = user_map.get(t["user_id"]) or t["user_id"]
+
+    timeline.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    return {"timeline": timeline[:500]}
+
+
 @router.get("/cycle-counts/{count_id}/report")
 async def get_cycle_count_report(count_id: str, request: Request):
     """
