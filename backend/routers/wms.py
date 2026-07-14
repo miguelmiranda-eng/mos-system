@@ -9493,10 +9493,8 @@ async def update_upc(upc: str, request: Request):
     for k in allowed:
         if k in body:
             if k == "customer":
-                # Cambio de customer sigue siendo privilegio de admin (cambia
-                # el scope del catalogo de styles del UPC).
-                if get_admin_level(user) < 1 and user.get("role") not in {"admin", "supersu", "ceo"}:
-                    raise HTTPException(403, "Solo admin puede cambiar el customer de un UPC")
+                # Cualquier usuario autenticado puede cambiar el customer del UPC
+                # (incluye mover a otro cliente). El valor se canonicaliza igual.
                 update[k] = await _canonical_customer(body[k])
             else:
                 update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
