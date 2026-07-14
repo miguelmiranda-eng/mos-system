@@ -71,152 +71,393 @@ export const CycleCountModule = () => {
   const exportExcel = () => {
     if (!reportDetail) return;
     const wb = XLSX.utils.book_new();
+    const now = new Date().toLocaleString();
 
+    // ── HOJA 1: Portada / Resumen Ejecutivo ──────────────────────────────
+    const dur = reportDetail.kpis.duration_mins != null
+      ? `${Math.floor(reportDetail.kpis.duration_mins / 60)}h ${reportDetail.kpis.duration_mins % 60}min`
+      : 'N/A';
     const summaryData = [
-      ["ID Conteo", reportDetail.count_id],
-      ["Nombre", reportDetail.name],
-      ["Status", reportDetail.status],
-      ["Creado", new Date(reportDetail.created_at).toLocaleString()],
-      ["Aprobado", reportDetail.approved_at ? new Date(reportDetail.approved_at).toLocaleString() : 'N/A'],
-      ["Creado por", reportDetail.created_by_name],
-      ["Aprobado por", reportDetail.approved_by_name],
-      ["Total Líneas", reportDetail.kpis.total_lines],
-      ["Líneas Contadas", reportDetail.kpis.counted_lines],
-      ["Líneas con Discrepancia", reportDetail.kpis.discrepant_lines],
-      ["Líneas Exactas", reportDetail.kpis.exact_lines],
-      ["Exactitud %", `${reportDetail.kpis.accuracy_pct}%`],
-      ["Unidades Faltantes", reportDetail.kpis.units_short],
-      ["Unidades Sobrantes", reportDetail.kpis.units_over],
-      ["Total Ajustes Inventario", reportDetail.kpis.adjusted_count]
+      ["REPORTE DE CICLOCONTEO", ""],
+      ["Generado el", now],
+      ["", ""],
+      ["=== INFORMACIÓN DEL CONTEO ===", ""],
+      ["ID Conteo",          reportDetail.count_id],
+      ["Nombre",             reportDetail.name],
+      ["Estado",             reportDetail.status === 'approved' ? 'APROBADO' : reportDetail.status.toUpperCase()],
+      ["Tipo",               reportDetail.is_general ? 'General (Inventario Completo)' : 'Filtrado'],
+      ["Filtro Ubicación",   reportDetail.location_filter || '—'],
+      ["Filtro Style",       reportDetail.style_filter    || '—'],
+      ["Filtro Color",       reportDetail.color_filter    || '—'],
+      ["Filtro Cliente",     reportDetail.customer_filter || '—'],
+      ["", ""],
+      ["=== CRONOLOGÍA ===", ""],
+      ["Fecha Creación",     new Date(reportDetail.created_at).toLocaleString()],
+      ["Creado por",         reportDetail.created_by_name || '—'],
+      ["Fecha Aprobación",   reportDetail.approved_at ? new Date(reportDetail.approved_at).toLocaleString() : 'N/A'],
+      ["Aprobado por",       reportDetail.approved_by_name || '—'],
+      ["Duración Total",     dur],
+      ["", ""],
+      ["=== KPIs DE PRECISIÓN ===", ""],
+      ["Total Líneas en Sistema",    reportDetail.kpis.total_lines],
+      ["Líneas Contadas",            reportDetail.kpis.counted_lines],
+      ["Líneas Pendientes",          reportDetail.kpis.total_lines - reportDetail.kpis.counted_lines],
+      ["Líneas con Discrepancia",    reportDetail.kpis.discrepant_lines],
+      ["Líneas Exactas",             reportDetail.kpis.exact_lines],
+      ["Exactitud General",          `${reportDetail.kpis.accuracy_pct}%`],
+      ["", ""],
+      ["=== KPIs DE INVENTARIO ===", ""],
+      ["Unidades Faltantes",         reportDetail.kpis.units_short],
+      ["Unidades Sobrantes",         reportDetail.kpis.units_over],
+      ["Total Ajustes Aplicados",    reportDetail.kpis.adjusted_count],
     ];
-    if (reportDetail.kpis.duration_mins !== null) {
-      summaryData.push(["Duración (min)", reportDetail.kpis.duration_mins]);
-    }
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, "Resumen");
+    wsSummary['!cols'] = [{ wch: 32 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Resumen Ejecutivo");
 
+    // ── HOJA 2: Todas las Líneas (con auditor y horario) ─────────────────
     const allLinesData = reportDetail.all_lines.map(l => ({
-      "Ubicación": l.location,
-      "Style": l.style,
-      "Color": l.color,
-      "Talla": l.size,
-      "Cliente": l.customer,
-      "Sistema": l.system_qty,
-      "Contado": l.counted_qty ?? '',
-      "Diferencia": l.discrepancy ?? 0,
-      "Ajustado": l.adjusted ? 'SI' : 'NO'
+      "Ubicación":          l.location,
+      "Style":              l.style,
+      "Color":              l.color,
+      "Talla":              l.size,
+      "Cliente":            l.customer,
+      "Cant. Sistema":      l.system_qty,
+      "Cant. Contada":      l.counted_qty ?? '',
+      "Diferencia":         l.discrepancy ?? '',
+      "¿Ajustado?":         l.adjusted ? 'SÍ' : 'NO',
+      "¿Contada?":          l.counted ? 'SÍ' : 'PENDIENTE',
+      "Auditor":            l.counted_by_name || l.counted_by || '—',
+      "Fecha Conteo":       l.counted_at ? new Date(l.counted_at).toLocaleDateString() : '—',
+      "Hora Conteo":        l.counted_at ? new Date(l.counted_at).toLocaleTimeString() : '—',
     }));
     const wsAll = XLSX.utils.json_to_sheet(allLinesData);
-    XLSX.utils.book_append_sheet(wb, wsAll, "Todas las líneas");
+    wsAll['!cols'] = [14,12,12,8,16,14,14,10,10,10,22,14,12].map(wch => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, wsAll, "Todas las Líneas");
 
+    // ── HOJA 3: Discrepancias (con auditor, hora, y tipo) ────────────────
     const discData = reportDetail.discrepancy_table.map(l => ({
-      "Ubicación": l.location,
-      "Style": l.style,
-      "Color": l.color,
-      "Talla": l.size,
-      "Cliente": l.customer,
-      "Sistema": l.system_qty,
-      "Contado": l.counted_qty,
-      "Diferencia": l.discrepancy,
-      "Ajustado": l.adjusted ? 'SI' : 'NO'
+      "Ubicación":          l.location,
+      "Style":              l.style,
+      "Color":              l.color,
+      "Talla":              l.size,
+      "Cliente":            l.customer,
+      "Cant. Sistema":      l.system_qty,
+      "Cant. Contada":      l.counted_qty,
+      "Diferencia":         l.discrepancy,
+      "Tipo Error":         l.discrepancy > 0 ? 'SOBRANTE' : 'FALTANTE',
+      "Impacto (Abs)": Math.abs(l.discrepancy),
+      "¿Ajustado?":         l.adjusted ? 'SÍ' : 'NO',
     }));
     const wsDisc = XLSX.utils.json_to_sheet(discData);
+    wsDisc['!cols'] = [14,12,12,8,16,14,14,10,10,12,10].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, wsDisc, "Discrepancias");
 
-    const locData = reportDetail.location_breakdown.map(l => ({
-      "Ubicación": l.location,
-      "Líneas Totales": l.total,
-      "Contadas": l.counted,
-      "Con Discrepancia": l.discrepant,
-      "Diferencia Unidades (Abs)": l.units_delta
-    }));
-    const wsLoc = XLSX.utils.json_to_sheet(locData);
-    XLSX.utils.book_append_sheet(wb, wsLoc, "Por Ubicación");
-
+    // ── HOJA 4: Cronograma (feed cronológico detallado) ──────────────────
     const timelineData = reportDetail.all_lines
       .filter(l => l.counted && l.counted_at)
       .sort((a, b) => new Date(a.counted_at) - new Date(b.counted_at))
-      .map(l => ({
-        "Fecha y Hora": new Date(l.counted_at).toLocaleString(),
-        "Auditor": l.counted_by_name || l.counted_by || 'Desconocido',
-        "Ubicación": l.location,
-        "Style": l.style,
-        "Color": l.color,
-        "Talla": l.size,
-        "Cant. Contada": l.counted_qty,
-        "Diferencia": l.discrepancy || 0
+      .map((l, i) => ({
+        "#":                  i + 1,
+        "Fecha":              new Date(l.counted_at).toLocaleDateString(),
+        "Hora":               new Date(l.counted_at).toLocaleTimeString(),
+        "Fecha y Hora Completa": new Date(l.counted_at).toLocaleString(),
+        "Auditor":            l.counted_by_name || l.counted_by || 'Desconocido',
+        "Ubicación":          l.location,
+        "Style":              l.style,
+        "Color":              l.color,
+        "Talla":              l.size,
+        "Cant. Sistema":      l.system_qty,
+        "Cant. Contada":      l.counted_qty,
+        "Diferencia":         l.discrepancy || 0,
+        "¿Discrepancia?":     (l.discrepancy && l.discrepancy !== 0) ? 'SÍ' : 'NO',
       }));
     if (timelineData.length > 0) {
       const wsTimeline = XLSX.utils.json_to_sheet(timelineData);
+      wsTimeline['!cols'] = [5,12,12,22,22,14,12,12,8,14,14,10,12].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, wsTimeline, "Cronograma");
     }
 
+    // ── HOJA 5: Cronograma por Auditor ───────────────────────────────────
+    const countedLines = reportDetail.all_lines
+      .filter(l => l.counted && l.counted_at)
+      .sort((a, b) => new Date(a.counted_at) - new Date(b.counted_at));
+    const auditorGroups = {};
+    countedLines.forEach(l => {
+      const name = l.counted_by_name || l.counted_by || 'Desconocido';
+      if (!auditorGroups[name]) auditorGroups[name] = [];
+      auditorGroups[name].push(l);
+    });
+    const perAuditorRows = [];
+    Object.entries(auditorGroups).forEach(([name, lines]) => {
+      const times = lines.map(l => new Date(l.counted_at));
+      const start = new Date(Math.min(...times));
+      const end   = new Date(Math.max(...times));
+      const totalMins = Math.round((end - start) / 60000);
+      const diffs = lines.filter(l => l.discrepancy && l.discrepancy !== 0).length;
+      const units = lines.reduce((s, l) => s + (l.counted_qty || 0), 0);
+      perAuditorRows.push({ AUDITOR: `>>> ${name}`, INICIO: '', FIN: '', DURACION_SESION: '',
+        UBICACION: '', STYLE: '', COLOR: '', TALLA: '', SISTEMA: '', CONTADO: '', DIFERENCIA: '', DISCREPANCIA: '',
+        '__blank': '' });
+      perAuditorRows.push({
+        AUDITOR: 'RESUMEN',
+        INICIO: start.toLocaleString(), FIN: end.toLocaleString(),
+        DURACION_SESION: `${Math.floor(totalMins/60)}h ${totalMins%60}min`,
+        UBICACION: `${lines.length} líneas`,
+        STYLE: `${units} uds contadas`,
+        COLOR: `${diffs} discrepancias`,
+        TALLA: '', SISTEMA: '', CONTADO: '', DIFERENCIA: '', DISCREPANCIA: '', '__blank': ''
+      });
+      lines.forEach((l, i) => {
+        const prevTime = i > 0 ? new Date(lines[i-1].counted_at) : null;
+        const gap = prevTime ? Math.round((new Date(l.counted_at) - prevTime) / 60000) : null;
+        perAuditorRows.push({
+          AUDITOR: name,
+          INICIO: new Date(l.counted_at).toLocaleTimeString(),
+          FIN: '',
+          DURACION_SESION: gap != null ? `+${gap} min` : '—',
+          UBICACION: l.location,
+          STYLE: l.style,
+          COLOR: l.color,
+          TALLA: l.size,
+          SISTEMA: l.system_qty,
+          CONTADO: l.counted_qty,
+          DIFERENCIA: l.discrepancy || 0,
+          DISCREPANCIA: (l.discrepancy && l.discrepancy !== 0) ? 'SÍ' : 'NO',
+        });
+      });
+      perAuditorRows.push({ AUDITOR: '', INICIO: '', FIN: '', DURACION_SESION: '',
+        UBICACION: '', STYLE: '', COLOR: '', TALLA: '', SISTEMA: '', CONTADO: '', DIFERENCIA: '', DISCREPANCIA: '' });
+    });
+    if (perAuditorRows.length > 0) {
+      const wsPerAuditor = XLSX.utils.json_to_sheet(perAuditorRows);
+      wsPerAuditor['!cols'] = [22,14,14,16,16,14,12,8,12,12,10,12].map(wch => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, wsPerAuditor, "Cronograma x Auditor");
+    }
+
+    // ── HOJA 6: Productividad ────────────────────────────────────────────
     const auditorStats = {};
     reportDetail.all_lines.filter(l => l.counted).forEach(l => {
-      const uid = l.counted_by_name || l.counted_by || 'Desconocido';
-      if (!auditorStats[uid]) auditorStats[uid] = { lines: 0, units: 0, diffs: 0 };
-      auditorStats[uid].lines += 1;
-      auditorStats[uid].units += (l.counted_qty || 0);
-      if (l.discrepancy !== 0) auditorStats[uid].diffs += 1;
+      const name = l.counted_by_name || l.counted_by || 'Desconocido';
+      if (!auditorStats[name]) auditorStats[name] = { lines: 0, units: 0, diffs: 0, first: null, last: null };
+      auditorStats[name].lines += 1;
+      auditorStats[name].units += (l.counted_qty || 0);
+      if (l.discrepancy && l.discrepancy !== 0) auditorStats[name].diffs += 1;
+      if (l.counted_at) {
+        const t = new Date(l.counted_at);
+        if (!auditorStats[name].first || t < auditorStats[name].first) auditorStats[name].first = t;
+        if (!auditorStats[name].last  || t > auditorStats[name].last)  auditorStats[name].last  = t;
+      }
     });
     const prodData = Object.entries(auditorStats)
-      .map(([name, stats]) => ({
-        "Auditor": name,
-        "Líneas Contadas": stats.lines,
-        "Unidades Físicas": stats.units,
-        "Errores Detectados": stats.diffs
-      }))
+      .map(([name, s], i) => {
+        const mins = s.first && s.last ? Math.round((s.last - s.first) / 60000) : null;
+        return {
+          "#":                    i + 1,
+          "Auditor":              name,
+          "Hora Inicio":          s.first ? s.first.toLocaleTimeString() : '—',
+          "Hora Fin":             s.last  ? s.last.toLocaleTimeString()  : '—',
+          "Duración Sesión":      mins != null ? `${Math.floor(mins/60)}h ${mins%60}min` : '—',
+          "Líneas Contadas":      s.lines,
+          "Unidades Físicas":     s.units,
+          "Errores Detectados":   s.diffs,
+          "% Precisión":          s.lines > 0 ? `${((s.lines - s.diffs) / s.lines * 100).toFixed(1)}%` : '—',
+          "Ritmo (líneas/hora)":  mins > 0 ? (s.lines / (mins / 60)).toFixed(1) : '—',
+        };
+      })
       .sort((a, b) => b["Líneas Contadas"] - a["Líneas Contadas"]);
-    
     if (prodData.length > 0) {
       const wsProd = XLSX.utils.json_to_sheet(prodData);
+      wsProd['!cols'] = [5,22,12,12,16,16,16,16,12,16].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, wsProd, "Productividad");
     }
 
-    XLSX.writeFile(wb, `Reporte_Cicloconteo_${reportDetail.count_id.slice(-6)}.xlsx`);
+    // ── HOJA 7: Por Ubicación ────────────────────────────────────────────
+    const locData = reportDetail.location_breakdown.map(l => ({
+      "Ubicación":          l.location,
+      "Líneas Totales":     l.total,
+      "Contadas":           l.counted,
+      "Con Discrepancia":   l.discrepant,
+      "Sin Discrepancia":   l.counted - l.discrepant,
+      "Precisión Ubic. %":  l.counted > 0 ? `${((l.counted - l.discrepant) / l.counted * 100).toFixed(1)}%` : '—',
+      "Diferencia Uds Abs": l.units_delta,
+    }));
+    const wsLoc = XLSX.utils.json_to_sheet(locData);
+    wsLoc['!cols'] = [16,14,12,16,16,16,16].map(wch => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, wsLoc, "Por Ubicación");
+
+    const fname = `CC_${reportDetail.name.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
   };
 
   const exportGlobalExcel = () => {
     const wb = XLSX.utils.book_new();
+    const now = new Date().toLocaleString();
 
     if (activeTab === 'reports' && reportsSummary) {
-      const sumData = reportsSummary.counts.map(c => ({
-        "ID": c.count_id,
-        "Nombre": c.name,
-        "Aprobación": new Date(c.approved_at).toLocaleString(),
-        "Líneas": c.total_lines,
-        "Exactitud %": c.accuracy_pct,
-        "Ajustes": c.adjustments
-      }));
-      if (sumData.length > 0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sumData), "Conteos Históricos");
+      // ── HOJA 1: Portada Global ──────────────────────────────────────────
+      const coverData = [
+        ["REPORTE GLOBAL — CICLOCONTEO", ""],
+        ["Generado el", now],
+        ["", ""],
+        ["=== MÉTRICAS GLOBALES ===", ""],
+        ["Total Conteos Aprobados",     reportsSummary.total_counts],
+        ["Exactitud Global",            `${reportsSummary.overall_accuracy_pct}%`],
+        ["Total Ajustes de Inventario", reportsSummary.total_adjustments],
+        ["Total Líneas Auditadas",      reportsSummary.total_lines_ever],
+      ];
+      const wsCover = XLSX.utils.aoa_to_sheet(coverData);
+      wsCover['!cols'] = [{ wch: 32 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, wsCover, "Resumen Global");
 
-      if (reportsSummary.auditor_productivity && reportsSummary.auditor_productivity.length > 0) {
-        const prodData = reportsSummary.auditor_productivity.map((a, i) => ({
-          "Posición": i + 1,
-          "Auditor": a.name,
-          "Líneas Contadas": a.lines_counted,
-          "Unidades Totales": a.units_counted,
-          "Errores Detectados": a.discrepancies_found
-        }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prodData), "Productividad");
+      // ── HOJA 2: Historial de Conteos ────────────────────────────────────
+      const sumData = reportsSummary.counts.map((c, i) => ({
+        "#":                    i + 1,
+        "ID":                   c.count_id,
+        "Nombre":               c.name,
+        "Tipo":                 c.is_general ? 'General' : 'Filtrado',
+        "Creado por":           c.created_by_name,
+        "Fecha Creación":       c.created_at ? new Date(c.created_at).toLocaleDateString() : '—',
+        "Hora Creación":        c.created_at ? new Date(c.created_at).toLocaleTimeString() : '—',
+        "Aprobado por":         c.approved_by_name,
+        "Fecha Aprobación":     c.approved_at ? new Date(c.approved_at).toLocaleDateString() : '—',
+        "Hora Aprobación":      c.approved_at ? new Date(c.approved_at).toLocaleTimeString() : '—',
+        "Total Líneas":         c.total_lines,
+        "Con Discrepancia":     c.discrepant_lines,
+        "Exactas":              c.exact_lines,
+        "Exactitud %":          `${c.accuracy_pct}%`,
+        "Sobrantes":            c.units_over,
+        "Faltantes":            c.units_short,
+        "Ajustes":              c.adjustments,
+        "Filtro Ubic.": c.location_filter || '—',
+        "Filtro Style": c.style_filter    || '—',
+        "Filtro Color": c.color_filter    || '—',
+        "Filtro Cliente": c.customer_filter || '—',
+      }));
+      if (sumData.length > 0) {
+        const wsHist = XLSX.utils.json_to_sheet(sumData);
+        wsHist['!cols'] = [5,12,24,10,20,14,12,20,14,12,12,14,12,12,12,12,10,14,14,14,14].map(wch => ({ wch }));
+        XLSX.utils.book_append_sheet(wb, wsHist, "Historial Conteos");
       }
-      XLSX.writeFile(wb, `Reportes_Global_Cicloconteo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+      // ── HOJA 3: Productividad Global ────────────────────────────────────
+      if (reportsSummary.auditor_productivity?.length > 0) {
+        const prodData = reportsSummary.auditor_productivity.map((a, i) => ({
+          "#":                    i + 1,
+          "Auditor":              a.name,
+          "Líneas Contadas":      a.lines_counted,
+          "Unidades Físicas":     a.units_counted,
+          "Errores Detectados":   a.discrepancies_found,
+          "% Precisión":          a.lines_counted > 0
+            ? `${((a.lines_counted - a.discrepancies_found) / a.lines_counted * 100).toFixed(1)}%`
+            : '—',
+        }));
+        const wsProd = XLSX.utils.json_to_sheet(prodData);
+        wsProd['!cols'] = [5,24,16,16,18,12].map(wch => ({ wch }));
+        XLSX.utils.book_append_sheet(wb, wsProd, "Productividad Global");
+      }
+
+      // ── HOJA 4: Ubicaciones Más Problemáticas ───────────────────────────
+      if (reportsSummary.top_discrepant_locations?.length > 0) {
+        const locData = reportsSummary.top_discrepant_locations.map((l, i) => ({
+          "#":                    i + 1,
+          "Ubicación":            l.location,
+          "Veces con Discrepancia": l.discrepancy_count,
+          "Unidades Afectadas":   l.total_delta,
+        }));
+        const wsLoc = XLSX.utils.json_to_sheet(locData);
+        wsLoc['!cols'] = [5,18,22,20].map(wch => ({ wch }));
+        XLSX.utils.book_append_sheet(wb, wsLoc, "Ubicaciones Problemas");
+      }
+
+      // ── HOJA 5: SKUs Más Problemáticos ──────────────────────────────────
+      if (reportsSummary.top_discrepant_skus?.length > 0) {
+        const skuData = reportsSummary.top_discrepant_skus.map((s, i) => ({
+          "#":                    i + 1,
+          "Style":                s.style,
+          "Color":                s.color,
+          "Veces con Discrepancia": s.count,
+          "Unidades Afectadas":   s.total_delta,
+        }));
+        const wsSkus = XLSX.utils.json_to_sheet(skuData);
+        wsSkus['!cols'] = [5,16,16,22,20].map(wch => ({ wch }));
+        XLSX.utils.book_append_sheet(wb, wsSkus, "SKUs Problemas");
+      }
+
+      XLSX.writeFile(wb, `Reporte_Global_CC_${new Date().toISOString().slice(0,10)}.xlsx`);
+
     } else if (activeTab === 'timeline' && timelineEvents.length > 0) {
-       const tData = timelineEvents.map(e => ({
-         "Fecha y Hora": new Date(e.timestamp).toLocaleString(),
-         "Auditor": e.user_name,
-         "ID Conteo": e.count_id,
-         "Ubicación": e.location,
-         "Style": e.style,
-         "Color": e.color,
-         "Talla": e.size,
-         "Cant. Contada": e.qty,
-         "Error Detectado": e.discrepancy
-       }));
-       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tData), "Cronograma Global");
-       XLSX.writeFile(wb, `Cronograma_Global_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      // ── HOJA 1: Portada Cronograma ──────────────────────────────────────
+      const coverData = [
+        ["CRONOGRAMA GLOBAL DE AUDITORÍAS", ""],
+        ["Generado el", now],
+        ["Total eventos", timelineEvents.length],
+      ];
+      const wsCover = XLSX.utils.aoa_to_sheet(coverData);
+      wsCover['!cols'] = [{ wch: 32 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, wsCover, "Portada");
+
+      // ── HOJA 2: Feed Cronológico Completo ───────────────────────────────
+      const tData = timelineEvents.map((e, i) => ({
+        "#":                    i + 1,
+        "Fecha":                new Date(e.timestamp).toLocaleDateString(),
+        "Hora":                 new Date(e.timestamp).toLocaleTimeString(),
+        "Fecha y Hora":         new Date(e.timestamp).toLocaleString(),
+        "Auditor":              e.user_name,
+        "Conteo":               e.count_name,
+        "ID Conteo":            e.count_id,
+        "Ubicación":            e.location,
+        "Style":                e.style,
+        "Color":                e.color,
+        "Talla":                e.size,
+        "Cant. Contada":        e.qty,
+        "Diferencia":           e.discrepancy,
+        "¿Discrepancia?":       e.discrepancy !== 0 ? 'SÍ' : 'NO',
+      }));
+      const wsFeed = XLSX.utils.json_to_sheet(tData);
+      wsFeed['!cols'] = [5,12,12,22,22,24,12,14,14,12,8,14,10,12].map(wch => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, wsFeed, "Cronograma Global");
+
+      // ── HOJA 3: Cronograma por Auditor (Global) ──────────────────────────
+      const auditorGroups = {};
+      [...timelineEvents].reverse().forEach(e => {
+        if (!auditorGroups[e.user_name]) auditorGroups[e.user_name] = [];
+        auditorGroups[e.user_name].push(e);
+      });
+      const perAuditorRows = [];
+      Object.entries(auditorGroups).forEach(([name, evts]) => {
+        const times = evts.map(e => new Date(e.timestamp));
+        const start = new Date(Math.min(...times));
+        const end   = new Date(Math.max(...times));
+        const totalMins = Math.round((end - start) / 60000);
+        perAuditorRows.push({ AUDITOR: `>>> ${name}`, FECHA: '', HORA: '', GAP: '', CONTEO: '', UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
+        perAuditorRows.push({ AUDITOR: 'RESUMEN', FECHA: `Inicio: ${start.toLocaleString()}`, HORA: `Fin: ${end.toLocaleString()}`, GAP: `Duración: ${Math.floor(totalMins/60)}h ${totalMins%60}min`, CONTEO: `${evts.length} líneas`, UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
+        const sorted = [...evts].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        sorted.forEach((e, i) => {
+          const gap = i > 0 ? Math.round((new Date(e.timestamp) - new Date(sorted[i-1].timestamp)) / 60000) : null;
+          perAuditorRows.push({
+            AUDITOR: name,
+            FECHA: new Date(e.timestamp).toLocaleDateString(),
+            HORA: new Date(e.timestamp).toLocaleTimeString(),
+            GAP: gap != null ? `+${gap} min` : '—',
+            CONTEO: e.count_name,
+            UBICACION: e.location,
+            STYLE: `${e.style} ${e.color}`,
+            QTY: e.qty,
+            DIFERENCIA: e.discrepancy,
+          });
+        });
+        perAuditorRows.push({ AUDITOR: '', FECHA: '', HORA: '', GAP: '', CONTEO: '', UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
+      });
+      if (perAuditorRows.length > 0) {
+        const wsPerAud = XLSX.utils.json_to_sheet(perAuditorRows);
+        wsPerAud['!cols'] = [22,12,12,12,24,14,18,10,10].map(wch => ({ wch }));
+        XLSX.utils.book_append_sheet(wb, wsPerAud, "Cronograma x Auditor");
+      }
+
+      XLSX.writeFile(wb, `Cronograma_Global_${new Date().toISOString().slice(0,10)}.xlsx`);
     } else {
-       toast.error("No hay datos para exportar en esta pestaña");
+      toast.error("No hay datos para exportar en esta pestaña");
     }
   };
 
