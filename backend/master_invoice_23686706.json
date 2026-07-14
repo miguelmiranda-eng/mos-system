@@ -1,0 +1,559 @@
+{
+  "id": "23686706",
+  "visualId": "2406",
+  "nickname": "SPENCERS PO#21767 - 323354 - THT0109M1000 - ROLLOUT",
+  "createdAt": "2026-07-13",
+  "customerDueAt": "2026-07-30",
+  "dueAt": "2026-07-30T17:15:00-05:00",
+  "startAt": "2026-07-30T16:15:00-05:00",
+  "invoiceAt": "2026-07-13",
+  "productionNote": "<div><strong>ART LINKS ONLY.  FOR ART  DEPARTAMENT ONLY.<br>NO ADDITIONAL NOTES. DON'T OVERCROWD WITH INFORMATION.<br><br>ART LINK:<br><br><br>SEPS:</strong></div>",
+  "salesTaxAmount": 0.0,
+  "subtotal": 220.5,
+  "discount": 0.0,
+  "discountAsPercentage": false,
+  "total": 220.5,
+  "amountOutstanding": 220.5,
+  "amountPaid": 0.0,
+  "tags": [],
+  "url": "https://www.printavo.com/invoices/23686706",
+  "publicUrl": "https://prosper-mfg.printavo.com/invoice/af4cc06056216d593834bedd9ef7df0d",
+  "workorderUrl": "https://prosper-mfg.printavo.com/work_orders/39cbf0990cdfc2a478682deaf9aa3772",
+  "packingSlipUrl": "https://www.printavo.com/invoices/23686706/packing_slip",
+  "customerNote": "<div><strong>DIGITAL PACKING LIST.<br><br>https://docs.google.com/spreadsheets/d/1BDA2wbjbKON-Q2oh1h49mIT43VqyfnG9BhGBgX6VtX0/edit?usp=sharing </strong></div>",
+  "status": {
+    "id": "523155"
+  },
+  "owner": {
+    "email": "viviana.perez@prosper-mfg.com"
+  },
+  "contact": {
+    "id": "10359173",
+    "fullName": "Cesar Oliveros",
+    "firstName": "Cesar",
+    "lastName": "Oliveros",
+    "email": "ap@goodietwosleeves.com",
+    "phone": "8188832234",
+    "customer": {
+      "id": "10359173",
+      "companyName": "GOODIE TWO SLEEVES LLC",
+      "orderCount": 1814
+    }
+  },
+  "paymentTerm": {
+    "name": "Net 7"
+  },
+  "deliveryMethod": null,
+  "shippingAddress": {
+    "companyName": "GOODIE TWO SLEEVES LLC",
+    "customerName": "Cesar Oliveros",
+    "address1": "8140 Saint Andrews Avenue",
+    "address2": "TSC Broker, Suite 100",
+    "city": "San Diego",
+    "stateIso": "CA",
+    "zipCode": "92154",
+    "countryIso": "US"
+  },
+  "billingAddress": {
+    "companyName": "GOODIE TWO SLEEVES LLC",
+    "customerName": "Cesar Oliveros",
+    "address1": "9400 Lurline Avenue",
+    "address2": "Suite F",
+    "city": "Los Angeles",
+    "stateIso": "CA",
+    "zipCode": "91311",
+    "countryIso": "US"
+  },
+  "lineItemGroups": {
+    "nodes": [
+      {
+        "id": "51241114",
+        "position": 0,
+        "lineItems": {
+          "nodes": [
+            {
+              "id": "104757618",
+              "description": "PRODUCTION DEPARTMENT\r\n(DO NOT EDIT)",
+              "color": null,
+              "category": null,
+              "itemNumber": null,
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757619",
+              "description": "TEEN HEARTS TEE - LEZZING OUT\r\nTHT0109M1000\r\nROLLOUT\r\nGI5000\r\nMEN SS\r\n\r\nSM - 61\r\nMD- 62\r\nLG-61\r\nXL-61\r\n",
+              "color": "WHITE",
+              "category": null,
+              "itemNumber": "",
+              "product": null,
+              "items": 245,
+              "price": 0.9,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": 61,
+                  "size": "size_s"
+                },
+                {
+                  "count": 62,
+                  "size": "size_m"
+                },
+                {
+                  "count": 61,
+                  "size": "size_l"
+                },
+                {
+                  "count": 61,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757620",
+              "description": "TOPS NEEDED\r\n1 MD\r\n1 LG\r\n1 XL\r\n1 XXL\r\nECOM SAMPLE\r\nM - 1",
+              "color": "",
+              "category": {
+                "name": "Screen Printing"
+              },
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757621",
+              "description": "FRONT PRINT\r\nNECK LABEL\r\nFINISHING",
+              "color": "",
+              "category": {
+                "name": "Screen Printing"
+              },
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757622",
+              "description": "APPROVAL METHOD:\r\nPlease follow APPROVED SAMPLE and send picture for REFERENCE.\r\n",
+              "color": "",
+              "category": null,
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757623",
+              "description": "ALLOWED SHORTAGE:\r\n0%",
+              "color": null,
+              "category": null,
+              "itemNumber": null,
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757624",
+              "description": "SPECIAL NOTES:\r\n ",
+              "color": "",
+              "category": null,
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            }
+          ]
+        },
+        "imprints": {
+          "nodes": []
+        }
+      },
+      {
+        "id": "51241115",
+        "position": 1,
+        "lineItems": {
+          "nodes": [
+            {
+              "id": "104757625",
+              "description": "PACKING DEPARTMENT\r\n(DO NOT EDIT)",
+              "color": "",
+              "category": null,
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757626",
+              "description": "SPENCER PO 323354\r\nPACK\r\nSM - 60\r\nMD- 60\r\nLG-60\r\nXL-60\r\n\r\n\r\n\r\nINCLUDES REFERENCES TO:\r\nPrice Ticket\r\nHang Tag\r\nBag/No Bag\r\nBag Size (if specified)\r\nFolding Type\r\nFolding Size (if specified)\r\nBox Type\r\nBox Size (if specified)",
+              "color": "",
+              "category": null,
+              "itemNumber": "",
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757627",
+              "description": "NEW BOXES\r\nINCLUDE # ON QUANTITY COLUMN",
+              "color": null,
+              "category": null,
+              "itemNumber": null,
+              "product": null,
+              "items": 0,
+              "price": 2.5,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            },
+            {
+              "id": "104757628",
+              "description": "SPECIAL NOTES:",
+              "color": null,
+              "category": null,
+              "itemNumber": null,
+              "product": null,
+              "items": 0,
+              "price": 0.0,
+              "markupPercentage": null,
+              "merch": false,
+              "sizes": [
+                {
+                  "count": null,
+                  "size": "size_xs"
+                },
+                {
+                  "count": null,
+                  "size": "size_s"
+                },
+                {
+                  "count": null,
+                  "size": "size_m"
+                },
+                {
+                  "count": null,
+                  "size": "size_l"
+                },
+                {
+                  "count": null,
+                  "size": "size_xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_2xl"
+                },
+                {
+                  "count": null,
+                  "size": "size_other"
+                }
+              ]
+            }
+          ]
+        },
+        "imprints": {
+          "nodes": []
+        }
+      }
+    ]
+  }
+}
