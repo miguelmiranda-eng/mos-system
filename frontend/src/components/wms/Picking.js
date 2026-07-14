@@ -97,7 +97,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [loadingCompleted, setLoadingCompleted] = useState(false);
   // Full size system (standard + admin-configured extras), single source of truth.
   const { adult: SIZES_ORDER, youth: YOUTH_SIZES, all: ALL_SIZES } = useWmsSizes();
-  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
+  const emptyForm = { order_number: '', customer: '', manufacturer: '', style: '', color: '', quantity: 0, assigned_to: '', assigned_to_name: '', destination: PickDestination.PRODUCTION, board_category: 'UNSET', strategy: 'default', include_comodin: false, sizes: ALL_SIZES.reduce((acc, s) => ({ ...acc, [s]: '' }), {}) };
   const [form, setForm] = useState(emptyForm);
 
   // Cargar la lista curada de styles del customer activo. Sin cliente => vacia.
@@ -441,10 +441,13 @@ export const PickingModule = ({ currentUser } = {}) => {
     // corto al equipo en tallas pequeñas). Total = suma real por talla, NO 2%
     // del total (diferente por los redondeos).
     const comodinPct = 0.02;
+    // Si el ticket ya nació con el 2% repartido en las tallas (comodin_applied),
+    // reqFor(sz) YA lo incluye → no volver a sumarlo en la etiqueta.
+    const comodinApplied = !!ticket.comodin_applied;
     const comodinBySize = {};
     ALL_SIZES.forEach(sz => {
       const req = reqFor(sz);
-      comodinBySize[sz] = req > 0 ? Math.ceil(req * comodinPct) : 0;
+      comodinBySize[sz] = (!comodinApplied && req > 0) ? Math.ceil(req * comodinPct) : 0;
     });
     const gridRows = ALL_SIZES.filter(sz => reqFor(sz) > 0).map(sz => {
       const req = reqFor(sz), picked = pickedFor(sz), pend = pendingFor(sz);
@@ -458,7 +461,9 @@ export const PickingModule = ({ currentUser } = {}) => {
       } else if (started) {
         qtyCell = `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span><div style="font-size:9px;color:#b45309;font-weight:normal">surtido ${picked}</div>`;
       } else {
-        qtyCell = `${req}<div style="font-size:10px;color:#92400e;font-weight:bold">+${extra} (2%)</div>`;
+        qtyCell = extra > 0
+          ? `${req}<div style="font-size:10px;color:#92400e;font-weight:bold">+${extra} (2%)</div>`
+          : `${req}`;
       }
       const locs = (sizeLocs[sz]?.locations || sizeLocs[sz] || []).slice(0, 3);
       const locStr = locs.map(l => {
@@ -482,7 +487,12 @@ export const PickingModule = ({ currentUser } = {}) => {
     // operador por talla).
     const comodinQty = Object.values(comodinBySize).reduce((s, v) => s + v, 0);
     const comodinTotal = totalQty + comodinQty;
-    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:2px">${ticket.customer || ''}</div><div style="text-align:center;font-size:26px;font-weight:900;margin:8px 0 14px;letter-spacing:1px;line-height:1.1">ORDEN #${orderNo}</div><div style="text-align:center;margin:0 0 6px">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right;line-height:1.4"><div style="font-size:9px;color:#666">Style</div><div style="font-size:20px;font-weight:900;line-height:1.1">${ticket.style || ''}</div><div style="font-size:9px;color:#666;margin-top:3px">Total</div><div style="font-size:16px;font-weight:bold;line-height:1.1">${totalQty}</div><div style="font-size:7px;color:#888;font-family:monospace;margin-top:4px">${ticket.ticket_id}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">(faltan ${totalPending})</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr><tr style="background:#fef3c7"><td style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">COMODÍN 2%</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:16px;font-weight:900;color:#92400e">+${comodinQty}</td><td style="border:1px solid #000;padding:4px;font-size:9px;color:#92400e;font-weight:bold">Total a surtir: ${comodinTotal}</td></tr></tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
+    // Fila del comodín: si ya está aplicado en las tallas, solo se informa (el
+    // total YA lo incluye); si no, se muestra el +2% informativo como antes.
+    const comodinRow = comodinApplied
+      ? `<tr style="background:#fef3c7"><td colspan="3" style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">&#10003; INCLUYE COMOD&Iacute;N 2% &middot; Total a surtir: ${totalQty}</td></tr>`
+      : `<tr style="background:#fef3c7"><td style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">COMOD&Iacute;N 2%</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:16px;font-weight:900;color:#92400e">+${comodinQty}</td><td style="border:1px solid #000;padding:4px;font-size:9px;color:#92400e;font-weight:bold">Total a surtir: ${comodinTotal}</td></tr>`;
+    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:2px">${ticket.customer || ''}</div><div style="text-align:center;font-size:26px;font-weight:900;margin:8px 0 14px;letter-spacing:1px;line-height:1.1">ORDEN #${orderNo}</div><div style="text-align:center;margin:0 0 6px">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right;line-height:1.4"><div style="font-size:9px;color:#666">Style</div><div style="font-size:20px;font-weight:900;line-height:1.1">${ticket.style || ''}</div><div style="font-size:9px;color:#666;margin-top:3px">Total</div><div style="font-size:16px;font-weight:bold;line-height:1.1">${totalQty}</div><div style="font-size:7px;color:#888;font-family:monospace;margin-top:4px">${ticket.ticket_id}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">(faltan ${totalPending})</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr>${comodinRow}</tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
   };
 
@@ -948,6 +958,32 @@ export const PickingModule = ({ currentUser } = {}) => {
             </table>
           </div>
           <div className="text-right font-bold text-sm">{t('wms_total_pick', { count: totalPick })}</div>
+          {/* Comodín 2%: opcional. Al activarlo, se REPARTE en las tallas
+              (base + 2% por talla) para que el sistema lo descuente. */}
+          {!editingTicket && (() => {
+            const comodinExtra = Object.values(form.sizes).reduce((s, v) => {
+              const b = parseInt(v) || 0; return s + (b > 0 ? Math.ceil(b * 0.02) : 0);
+            }, 0);
+            return (
+              <label className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 cursor-pointer select-none">
+                <input type="checkbox" checked={!!form.include_comodin}
+                  onChange={e => setForm(p => ({ ...p, include_comodin: e.target.checked }))}
+                  className="w-4 h-4 accent-amber-500" data-testid="pick-comodin" />
+                <div className="flex-1">
+                  <div className="text-xs font-black uppercase tracking-wider text-amber-500">Incluir comodín 2%</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Reparte el 2% en las tallas (redondeo hacia arriba por talla) para descontarlo del sistema.
+                  </div>
+                </div>
+                {form.include_comodin && comodinExtra > 0 && (
+                  <div className="text-right">
+                    <div className="text-amber-500 font-black tabular-nums">+{comodinExtra}</div>
+                    <div className="text-[9px] text-muted-foreground uppercase">→ {totalPick + comodinExtra} total</div>
+                  </div>
+                )}
+              </label>
+            );
+          })()}
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="pick-submit">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingTicket ? t('save_view') : t('wms_new_pick')}

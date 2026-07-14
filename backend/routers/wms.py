@@ -4405,6 +4405,20 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     # -------------------------------------------------------------------------------
 
     sizes = data.get("sizes", {})
+    # Comodín 2% OPCIONAL: si el creador lo activa (include_comodin), se REPARTE
+    # dentro de las tallas — base + ceil(2%) por talla (mismo redondeo hacia
+    # arriba que la etiqueta) — para que el sistema lo descuente de verdad. Se
+    # marca `comodin_applied` para que la etiqueta NO vuelva a sumar el 2%.
+    include_comodin = bool(data.get("include_comodin", False))
+    comodin_pct = 0.02
+    if include_comodin and sizes:
+        inflated = {}
+        for sz, q in sizes.items():
+            base = int(q or 0)
+            # ceil(base * 0.02) con enteros: (base*2 + 99)//100
+            inflated[sz] = base + ((base * 2 + 99) // 100) if base > 0 else base
+        sizes = inflated
+
     total_qty = sum(int(v) for v in sizes.values() if v)
     if total_qty == 0 and data.get("quantity"):
          total_qty = int(data.get("quantity"))
@@ -4454,6 +4468,8 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
         "sizes": sizes,
         "size_locations": size_locations,
         "strategy": strategy,
+        "comodin_applied": include_comodin,      # tallas ya incluyen el 2%
+        "comodin_pct": comodin_pct if include_comodin else 0,
         "total_pick_qty": total_qty,
         "status": "pending",
         "board_category": data.get("board_category", "UNSET"),
