@@ -2126,7 +2126,7 @@ async def create_receiving(request: Request):
                     "box_id": box_id, "barcode": box_id, "receiving_id": receiving_id,
                     "customer": customer, "manufacturer": manufacturer, "style": style,
                     "sku": sku or style, "color": color, "size": item_size,
-                    "units": units_per_box, "seq_num": seq, "location": inv_location,
+                    "units": units_per_box, "qty": units_per_box, "seq_num": seq, "location": inv_location,
                     "status": "putaway_pending", "state": "raw", "is_bpo": is_bpo,
                     "lpn_id": box_id, "coo": country_of_origin,
                     "country_of_origin": country_of_origin,
@@ -2154,7 +2154,16 @@ async def create_receiving(request: Request):
             "asn_reference": body.get("asn_reference", "").strip(),
             "created_at": now_iso(),
         })
-    
+
+    # Authoritative received total = sum of the boxes actually created. The
+    # single-item path already equaled this, but the multi-size items[] path left
+    # total_units at 0 (only derived from top-level units/dozens/pieces), so
+    # wms_receiving.total_units and the "receiving" ledger movement under-reported
+    # multi-size receipts. Inventory was always correct (updated per item), so
+    # this only fixes the receiving record + movement — no double count.
+    if items:
+        total_units = sum(int(b.get("units", 0) or 0) for b in box_docs)
+
     if box_docs:
         await db.wms_boxes.insert_many(box_docs)
         
