@@ -223,6 +223,26 @@ const UserManagementCenter = () => {
     }
   };
 
+  // Persist a WMS inventory level (1-3). Any admin may set it; we re-send the
+  // role so the PUT shape stays the same. Level 3 also grants admin level 3.
+  const handleInventoryLevelChange = async (userId, currentRole, newLevel) => {
+    try {
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: currentRole, inventory_level: Number(newLevel) }),
+      });
+      if (res.ok) {
+        toast.success(`Nivel de inventario actualizado a ${newLevel}`);
+        setTimeout(fetchUsers, 300);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo actualizar el nivel de inventario');
+      }
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
+
   // Persist an admin's tiered level (1-5). Supersu only; we re-send the role so
   // the PUT shape stays the same. Backend ignores admin_level for non-supersu.
   const handleAdminLevelChange = async (userId, currentRole, newLevel) => {
@@ -550,6 +570,7 @@ const UserManagementCenter = () => {
                           <SelectItem value="general">General</SelectItem>
                           <SelectItem value="admin">Administrador</SelectItem>
                           {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
+                          <SelectItem value="inventory">Inventario</SelectItem>
                           <SelectItem value="picker">Picker</SelectItem>
                           <SelectItem value="operator">Operador</SelectItem>
                           <SelectItem value="inspector_qc">Inspector QC</SelectItem>
@@ -585,6 +606,27 @@ const UserManagementCenter = () => {
                       <span className="h-9 flex items-center px-3 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500">
                         {u.assigned_board}
                       </span>
+                    )}
+
+                    {/* WMS inventory level (1-3). Cumulative. Any admin may set
+                        it. Level 3 also grants admin level 3 (see backend).
+                          1 = conteos cíclicos
+                          2 = + ajustes manuales de inventario
+                          3 = + reportes de conteo (y permisos de admin nivel 3) */}
+                    {u.role === 'inventory' && (isSupersu || isAdmin) && (
+                      <Select
+                        value={String(u.inventory_level || 1)}
+                        onValueChange={(v) => handleInventoryLevelChange(u.user_id, u.role, v)}
+                      >
+                        <SelectTrigger className="w-32 h-9 bg-lime-500/10 border border-lime-500/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-lime-500 hover:bg-lime-500/15">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover border-border z-[300]">
+                          {[1, 2, 3].map(n => (
+                            <SelectItem key={n} value={String(n)}>Inv. Nivel {n}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     )}
 
                     {/* Admin tier (1-5). Cumulative: a higher level can do

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -2681,7 +2681,7 @@ async def adjust_box_count(box_id: str, request: Request):
       • If the new count is 0 the box is deleted (no zero-unit ghosts).
       • An empty inventory row (no units, no other boxes) is dropped.
     """
-    user = await require_auth(request)
+    user = await require_inventory_level(request, 2)
     body = await request.json()
 
     # Resolve by internal key first, then by the physical label (barcode/lpn_id)
@@ -8331,7 +8331,7 @@ async def add_inventory_manual(request: Request):
     cases added by this call. Mirrors POST /import/inventory semantics for one
     line so the data shape stays consistent.
     """
-    user = await require_auth(request)
+    user = await require_inventory_level(request, 2)
     body = await request.json()
 
     def s(field, default=""):
@@ -8609,7 +8609,7 @@ async def bulk_adjust_inventory(request: Request):
     subtracts). dry_run=true returns the plan only (preview); dry_run=false
     applies it. Boxes (LPNs) are reconciled so the per-box sum tracks the new
     line on-hand. A reason is mandatory to apply (audited per row)."""
-    user = await require_admin_level(request, 3)
+    user = await require_inventory_level(request, 2)
     body = await request.json()
     rows = body.get("rows") or []
     dry_run = bool(body.get("dry_run", True))
@@ -8978,7 +8978,7 @@ async def generate_sku(request: Request, style: str = "", color: str = "", size:
 @router.post("/cycle-counts")
 async def create_cycle_count(request: Request):
     """Create a new cycle count task."""
-    user = await require_admin(request)
+    user = await require_inventory_level(request, 1)
     body = await request.json()
     name = body.get("name", "").strip()
     location_filter = body.get("location_filter", "").strip()
@@ -9073,7 +9073,7 @@ async def create_cycle_count(request: Request):
 @router.get("/cycle-counts")
 async def list_cycle_counts(request: Request):
     """List all cycle counts."""
-    await require_auth(request)
+    await require_inventory_level(request, 1)
     counts = await db.wms_cycle_counts.find({}, {"_id": 0, "lines": 0}).sort("created_at", -1).to_list(200)
     return counts
 
@@ -9083,7 +9083,7 @@ async def get_cycle_count(count_id: str, request: Request):
     snapshotting description/customer/country/fabric/manufacturer onto each
     line, enrich on the fly by joining against current wms_inventory so the
     counter always sees the full context."""
-    await require_auth(request)
+    await require_inventory_level(request, 1)
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -9136,10 +9136,28 @@ async def get_cycle_count(count_id: str, request: Request):
             count["lines"] = lines
     return count
 
+# ─── Cycle-count variance guardrail ──────────────────────────────────────────
+# A single line count should never be able to inflate stock by an absurd amount
+# without review. This guards against fat-fingered counts (the classic 96 -> 996
+# typo that dumped a phantom 900-unit box into inventory). Only *positive* jumps
+# are guarded — counting LESS than expected (shrink/found-none) is normal and
+# applies immediately. A jump trips the guard only when it is large in BOTH
+# absolute (> ABS units) and relative (> MULT x current on-hand) terms, so
+# ordinary restocks pass through. Tunable if the warehouse needs different bands.
+CYCLE_COUNT_VARIANCE_ABS = 200   # min absolute unit increase to consider "large"
+CYCLE_COUNT_VARIANCE_MULT = 3    # counted must exceed this multiple of on-hand
+
+def _is_extreme_variance(cur: int, qty: int) -> bool:
+    delta = qty - cur
+    if delta <= CYCLE_COUNT_VARIANCE_ABS:
+        return False
+    return qty > CYCLE_COUNT_VARIANCE_MULT * max(cur, 1)
+
+
 @router.put("/cycle-counts/{count_id}/count")
 async def save_count_progress(count_id: str, request: Request):
     """Save counting progress - operator submits counted quantities."""
-    user = await require_auth(request)
+    user = await require_inventory_level(request, 1)
     body = await request.json()
     counted_items = body.get("counted_items", {})  # { line_id: counted_qty }
 
@@ -9152,6 +9170,7 @@ async def save_count_progress(count_id: str, request: Request):
     lines = count.get("lines", [])
     counted_count = 0
     adjustments = 0
+    held = 0
     for line in lines:
         lid = line["line_id"]
         if lid in counted_items:
@@ -9162,35 +9181,52 @@ async def save_count_progress(count_id: str, request: Request):
             line["counted_by"] = user.get("user_id")
             line["counted_at"] = now_iso()
             # IMMEDIATE ADJUSTMENT (requirement): apply the variance to inventory
-            # the moment the auditor saves this line — no longer wait for the admin
-            # to approve the finished count. It's an absolute SET (units_on_hand =
-            # counted_qty), so it's idempotent: re-saving the same number is a
-            # no-op and a recount cleanly overwrites the previous adjustment.
-            if line["discrepancy"]:
-                # Match the inventory row the SAME way the rest of the module
-                # does ($or sku/style, case-insensitive). The old exact {"style":..}
-                # filter silently missed rows keyed by composite sku (matched_count
-                # 0 → discrepancy quietly lost).
-                st = (line.get("style") or line.get("sku") or "").strip()
-                inv_row = await db.wms_inventory.find_one({
-                    "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
-                    "color": _ci_eq(line.get("color", "")),
-                    "size": _ci_eq(line.get("size", "")),
-                    "location": _ci_eq(line.get("inv_location", "")),
-                })
-                if inv_row:
-                    cur = int(inv_row.get("units_on_hand", 0) or 0)
+            # the moment the auditor saves this line. The variance is measured
+            # against the LIVE on-hand — NOT the frozen `system_qty` snapshot.
+            # Gating on `discrepancy = qty - system_qty` was a bug: recounting a
+            # line back to its original snapshot yielded discrepancy 0, skipped the
+            # whole block, and left a previously-applied WRONG adjustment in place
+            # (the 96->996 typo whose correction to 96 never rolled back the 900).
+            # Comparing to live on-hand makes every save self-correcting.
+            # Match the inventory row the SAME way the rest of the module does
+            # ($or sku/style, case-insensitive). The old exact {"style":..} filter
+            # silently missed rows keyed by composite sku.
+            st = (line.get("style") or line.get("sku") or "").strip()
+            inv_row = await db.wms_inventory.find_one({
+                "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
+                "color": _ci_eq(line.get("color", "")),
+                "size": _ci_eq(line.get("size", "")),
+                "location": _ci_eq(line.get("inv_location", "")),
+            })
+            if inv_row:
+                cur = int(inv_row.get("units_on_hand", 0) or 0)
+                delta = qty - cur
+                if delta == 0:
+                    # Live inventory already matches — clear any stale review flag.
+                    line["held_for_review"] = False
+                elif _is_extreme_variance(cur, qty):
+                    # GUARDRAIL: an absurd positive jump (large in both absolute and
+                    # relative terms) is almost always a typo. Do NOT touch stock;
+                    # hold the line for an admin to apply (or reject) at approval.
+                    line["held_for_review"] = True
+                    line["adjusted"] = False
+                    held += 1
+                    await log_movement(user, "cycle_count_variance_held", {
+                        "count_id": count_id, "line_id": lid,
+                        "sku": line.get("sku") or line.get("style"),
+                        "location": line.get("inv_location"),
+                        "from": cur, "to": qty, "delta": delta,
+                    })
+                else:
                     await db.wms_inventory.update_one(
                         {"_id": inv_row["_id"]},
                         {"$set": {"units_on_hand": qty, "updated_at": now_iso()}},
                     )
                     # Reconcile the backing boxes to the new on-hand so the box
                     # mirror agrees — otherwise _available_units' max(box,inv)
-                    # silently undoes a count-down. Idempotent: re-saving the same
-                    # number yields delta 0.
-                    delta = qty - cur
-                    if delta != 0:
-                        await _reconcile_line_boxes(inv_row, delta)
+                    # silently undoes a count-down.
+                    await _reconcile_line_boxes(inv_row, delta)
+                    line["held_for_review"] = False
                     line["adjusted"] = True
                     line["adjusted_at"] = now_iso()
                     line["adjusted_by"] = user.get("user_id")
@@ -9202,15 +9238,15 @@ async def save_count_progress(count_id: str, request: Request):
                         "from": cur, "to": qty,
                         "discrepancy": line["discrepancy"],
                     })
-                else:
-                    # A key mismatch must not swallow a real discrepancy silently.
-                    line["adjust_failed"] = True
-                    await log_movement(user, "cycle_count_adjust_failed", {
-                        "count_id": count_id, "line_id": lid,
-                        "sku": line.get("sku") or line.get("style"),
-                        "location": line.get("inv_location"),
-                        "reason": "no se encontró fila de inventario para aplicar el conteo",
-                    })
+            elif line["discrepancy"]:
+                # A key mismatch must not swallow a real discrepancy silently.
+                line["adjust_failed"] = True
+                await log_movement(user, "cycle_count_adjust_failed", {
+                    "count_id": count_id, "line_id": lid,
+                    "sku": line.get("sku") or line.get("style"),
+                    "location": line.get("inv_location"),
+                    "reason": "no se encontró fila de inventario para aplicar el conteo",
+                })
         if line.get("counted"):
             counted_count += 1
 
@@ -9222,18 +9258,20 @@ async def save_count_progress(count_id: str, request: Request):
         "last_updated_by": user.get("user_id"),
         "last_updated_at": now_iso()
     }})
-    await log_movement(user, "cycle_count_progress", {"count_id": count_id, "counted": counted_count, "total": len(lines), "adjustments": adjustments})
-    if adjustments:
+    await log_movement(user, "cycle_count_progress", {"count_id": count_id, "counted": counted_count, "total": len(lines), "adjustments": adjustments, "held": held})
+    if adjustments or held:
         await notify_badge_change("cycle_count")
     msg = f"Progreso guardado ({counted_count}/{len(lines)})"
     if adjustments:
         msg += f" · {adjustments} ajuste(s) aplicado(s) al inventario"
-    return {"message": msg, "status": status, "adjustments": adjustments}
+    if held:
+        msg += f" · {held} variación(es) grande(s) retenida(s) para revisión del admin"
+    return {"message": msg, "status": status, "adjustments": adjustments, "held": held}
 
 @router.put("/cycle-counts/{count_id}/approve")
 async def approve_cycle_count(count_id: str, request: Request):
     """Admin approves cycle count and adjusts inventory."""
-    user = await require_admin(request)
+    user = await require_inventory_level(request, 2)
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -9243,34 +9281,39 @@ async def approve_cycle_count(count_id: str, request: Request):
     adjustments = 0
     already = 0
     for line in count.get("lines", []):
-        if line.get("discrepancy") and line["discrepancy"] != 0:
-            # Variances are now applied the instant the auditor saves the line
-            # (see save_count_progress). Skip lines already adjusted so approval
-            # is just a sign-off and never clobbers stock that legitimately
-            # changed between the count and the approval.
-            if line.get("adjusted"):
-                already += 1
+        if not line.get("counted"):
+            continue
+        # Skip lines already applied during counting so approval is just a sign-off
+        # and never clobbers stock that legitimately changed between the count and
+        # the approval. Lines HELD for review (large-variance guard) are the
+        # exception: the admin's approval IS the review, so they get applied here.
+        if line.get("adjusted") and not line.get("held_for_review"):
+            already += 1
+            continue
+        st = (line.get("style") or line.get("sku") or "").strip()
+        inv_row = await db.wms_inventory.find_one({
+            "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
+            "color": _ci_eq(line.get("color", "")),
+            "size": _ci_eq(line.get("size", "")),
+            "location": _ci_eq(line.get("inv_location", "")),
+        })
+        if inv_row:
+            cur = int(inv_row.get("units_on_hand", 0) or 0)
+            tgt = int(line.get("counted_qty") or 0)
+            # Reconcile against LIVE on-hand (same fix as save_count_progress): a
+            # zero delta means live already matches, so there is nothing to apply.
+            delta = tgt - cur
+            if delta == 0:
                 continue
-            st = (line.get("style") or line.get("sku") or "").strip()
-            inv_row = await db.wms_inventory.find_one({
-                "$or": [{"sku": _ci_eq(st)}, {"style": _ci_eq(st)}],
-                "color": _ci_eq(line.get("color", "")),
-                "size": _ci_eq(line.get("size", "")),
-                "location": _ci_eq(line.get("inv_location", "")),
-            })
-            if inv_row:
-                cur = int(inv_row.get("units_on_hand", 0) or 0)
-                tgt = int(line["counted_qty"])
-                await db.wms_inventory.update_one(
-                    {"_id": inv_row["_id"]},
-                    {"$set": {"units_on_hand": tgt, "updated_at": now_iso()}}
-                )
-                delta = tgt - cur
-                if delta != 0:
-                    await _reconcile_line_boxes(inv_row, delta)
-                line["adjusted"] = True
-                line["adjusted_at"] = now_iso()
-                adjustments += 1
+            await db.wms_inventory.update_one(
+                {"_id": inv_row["_id"]},
+                {"$set": {"units_on_hand": tgt, "updated_at": now_iso()}}
+            )
+            await _reconcile_line_boxes(inv_row, delta)
+            line["adjusted"] = True
+            line["held_for_review"] = False
+            line["adjusted_at"] = now_iso()
+            adjustments += 1
 
     await db.wms_cycle_counts.update_one({"count_id": count_id}, {"$set": {
         "status": "approved",
@@ -9287,7 +9330,7 @@ async def approve_cycle_count(count_id: str, request: Request):
 @router.delete("/cycle-counts/{count_id}")
 async def delete_cycle_count(count_id: str, request: Request):
     """Admin deletes a cycle count."""
-    user = await require_admin(request)
+    user = await require_inventory_level(request, 2)
     count = await db.wms_cycle_counts.find_one({"count_id": count_id})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -9311,7 +9354,7 @@ async def cycle_counts_report_summary(
     Historical summary of cycle counts, supports filters:
     date_from, date_to (ISO), status, created_by_name, approved_by_name.
     """
-    await require_auth(request)
+    await require_inventory_level(request, 3)
 
     query: dict = {}
     # Status filter: default to approved only if no status given
@@ -9454,7 +9497,7 @@ async def cycle_counts_report_timeline(
     Returns a chronological feed of cycle count activity.
     Supports date_from, date_to (ISO date string), user_id, count_id filters.
     """
-    await require_auth(request)
+    await require_inventory_level(request, 3)
 
     count_query: dict = {}
     if count_id:
@@ -9521,7 +9564,7 @@ async def get_cycle_count_report(count_id: str, request: Request):
     Detailed report for a single cycle count (any status, best for approved).
     Returns KPIs, discrepancy table sorted by magnitude, and per-location breakdown.
     """
-    await require_auth(request)
+    await require_inventory_level(request, 3)
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")

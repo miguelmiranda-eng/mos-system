@@ -123,6 +123,15 @@ async def update_user_role(user_id: str, request: Request):
         except (TypeError, ValueError):
             lvl = 1
         update_data["admin_level"] = max(1, min(5, lvl))
+    # WMS inventory level (0-3). Any admin may set it. Level 3 also confers admin
+    # level 3 by default (enforced in deps.get_admin_level), so it is a real
+    # privilege grant — but scoped to the inventory area.
+    if "inventory_level" in body:
+        try:
+            ilvl = int(body.get("inventory_level") or 0)
+        except (TypeError, ValueError):
+            ilvl = 0
+        update_data["inventory_level"] = max(0, min(3, ilvl))
 
     result = await db.users.update_one(
         {"$or": [{"user_id": user_id}, {"email": user_id}]},

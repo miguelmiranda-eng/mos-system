@@ -98,6 +98,14 @@ export default function WMS() {
 
   const associatedCustomer = currentUser?.associated_customer || '';
 
+  // Inventory-role users don't have the config/home module; land them on the
+  // cycle-count module (their guaranteed level-1 landing spot) on first load.
+  useEffect(() => {
+    if (currentUser?.role === 'inventory') {
+      setActiveModule(prev => (prev === 'home' ? 'cycle_count' : prev));
+    }
+  }, [currentUser?.role]);
+
   // Show "switching…" spinner for 200ms whenever the active module changes
   useEffect(() => {
     if (isFirstModuleRender.current) { isFirstModuleRender.current = false; return; }
@@ -391,6 +399,16 @@ export default function WMS() {
             if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
             if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
+            // WMS inventory role: scoped to the inventory area by level.
+            //   nivel 1 → solo conteo cíclico
+            //   nivel 2+ → además inventario y ajustes (MOVER)
+            // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
+            if (currentUser?.role === 'inventory') {
+              const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
+              const allowed = ['cycle_count'];
+              if (lvl >= 2) allowed.push('inventory', 'mover');
+              return allowed.includes(m.id);
+            }
             return true;
           }).map(m => {
             const Icon = m.icon;

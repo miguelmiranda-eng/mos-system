@@ -460,7 +460,9 @@ async def require_supersu(request: Request) -> Dict:
 
 async def require_admin(request: Request) -> Dict:
     user = await require_auth(request)
-    if user.get("role") not in SUPER_ROLES:
+    # Admins/supersu pass, and so does anyone the tiered ladder places at admin
+    # level 3+ (which includes inventory level 3 — see get_admin_level).
+    if user.get("role") not in SUPER_ROLES and get_admin_level(user) < 3:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
@@ -478,17 +480,27 @@ MAX_ADMIN_LEVEL = 5
 
 def get_admin_level(user: Dict) -> int:
     """Effective admin level for a user. supersu = MAX; admin = its admin_level
-    (default 1, clamped 1..MAX); any other role = 0."""
+    (default 1, clamped 1..MAX); any other role = 0. Additionally, an explicit
+    inventory_level of 3 confers admin level 3 by default (see WMS inventory
+    roles below) — we read the raw field here (not get_inventory_level) to avoid
+    bumping every ordinary admin."""
     role = (user or {}).get("role")
     if role == "supersu":
         return MAX_ADMIN_LEVEL
+    lvl = 0
     if role == "admin":
         try:
             lvl = int(user.get("admin_level") or 1)
         except (TypeError, ValueError):
             lvl = 1
-        return max(1, min(MAX_ADMIN_LEVEL, lvl))
-    return 0
+        lvl = max(1, min(MAX_ADMIN_LEVEL, lvl))
+    try:
+        inv = int((user or {}).get("inventory_level") or 0)
+    except (TypeError, ValueError):
+        inv = 0
+    if inv >= 3:
+        lvl = max(lvl, 3)
+    return lvl
 
 async def require_admin_level(request: Request, min_level: int) -> Dict:
     """Require an admin of at least `min_level` (supersu always passes)."""
@@ -501,6 +513,35 @@ async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
     user = await require_auth(request)
     if user.get("role") not in allowed_roles and user.get("role") not in SUPER_ROLES:
         raise HTTPException(status_code=403, detail=f"Access denied for role: {user.get('role')}")
+    return user
+
+# ── WMS inventory role levels (1-3) ──────────────────────────────────────────
+# A capability ladder scoped to the WMS inventory area, independent from the
+# generic admin ladder. Cumulative: level N includes every lower level.
+#   1 = cycle counts (enter the module + create/save counts)
+#   2 = + manual inventory adjustments (add line, adjust a box, bulk Excel adjust)
+#   3 = + cycle-count reports; ALSO confers admin level 3 by default
+#       (see get_admin_level), so a level-3 inventory user has admin-3 powers.
+# supersu/admin always count as the max so they never lose inventory access.
+MAX_INVENTORY_LEVEL = 3
+
+def get_inventory_level(user: Dict) -> int:
+    """Effective inventory level. supersu/admin = MAX; otherwise the numeric
+    inventory_level on the user doc (0 if unset), clamped 1..MAX."""
+    role = (user or {}).get("role")
+    if role in ("supersu", "admin"):
+        return MAX_INVENTORY_LEVEL
+    try:
+        lvl = int((user or {}).get("inventory_level") or 0)
+    except (TypeError, ValueError):
+        lvl = 0
+    return max(0, min(MAX_INVENTORY_LEVEL, lvl))
+
+async def require_inventory_level(request: Request, min_level: int) -> Dict:
+    """Require an inventory level of at least `min_level` (admins/supersu pass)."""
+    user = await require_auth(request)
+    if get_inventory_level(user) < min_level:
+        raise HTTPException(status_code=403, detail=f"Requiere inventario nivel {min_level} o superior")
     return user
 
 async def log_activity(user: Dict, action: str, details: Dict = None, previous_data: Dict = None):

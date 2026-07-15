@@ -84,11 +84,15 @@ export function MoverModule({ currentUser }) {
   // Top-level mode: the classic origin→destination move, a box-first inventory
   // adjustment (Case# 002), or the bulk Excel inventory adjustment (admin L3+).
   const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust' | 'bulk'
-  // Bulk inventory adjustment is gated to admin level 3+ (supersu = max level).
-  const adminLevel = currentUser?.role === 'supersu'
-    ? 5
-    : (currentUser?.role === 'admin' ? (parseInt(currentUser?.admin_level, 10) || 1) : 0);
-  const canBulk = adminLevel >= 3;
+  // Manual inventory adjustments (box-level "Ajustar caja" and the bulk Excel
+  // adjust) are gated to WMS inventory level 2+. Admins/supersu count as max.
+  const invLevel = ['admin', 'supersu'].includes(currentUser?.role)
+    ? 3
+    : (parseInt(currentUser?.inventory_level, 10) || 0);
+  const canAdjust = invLevel >= 2;
+  const canBulk = invLevel >= 2;
+  const _visibleTopTabs = 2 + (canAdjust ? 1 : 0) + (canBulk ? 1 : 0);
+  const topTabsGridClass = _visibleTopTabs >= 4 ? 'grid-cols-4' : (_visibleTopTabs === 3 ? 'grid-cols-3' : 'grid-cols-2');
 
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
@@ -368,19 +372,21 @@ export function MoverModule({ currentUser }) {
         </div>
 
         {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
-        <div className={`grid ${canBulk ? "grid-cols-4" : "grid-cols-3"} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
+        <div className={`grid ${topTabsGridClass} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
           <button
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
             data-testid="mover-top-move"
             className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "move" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
             <Move className="w-4 h-4" /> Mover
           </button>
+          {canAdjust && (
           <button
             onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
             data-testid="mover-top-adjust"
             className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "adjust" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
             <Scale className="w-4 h-4" /> Ajustar caja
           </button>
+          )}
           <button
             onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
             data-testid="mover-top-generate"
