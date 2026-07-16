@@ -171,12 +171,6 @@ export const ReceivingModule = () => {
     upc: '', customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '', brand: '',
   });
-  // Cuando el operador edita un UPC, opcion de propagar cambios descriptivos
-  // (description/country/fabric/brand) a las cajas/receivings/inventory que
-  // ya usan este UPC. Default: MARCADO — la mayoria de veces la edicion es
-  // una correccion y hay que sincronizar todo. El operador desmarca solo si
-  // el cambio es puramente para futuros receivings.
-  const [upcPropagate, setUpcPropagate] = useState(true);
   // Inline ASN creation — used when the operator wants to receive material
   // for an ASN that wasn't pre-imported via Excel.
   const [createAsnOpen, setCreateAsnOpen] = useState(false);
@@ -468,7 +462,6 @@ export const ReceivingModule = () => {
       brand: '',
     });
     setUpcEditMode(false);
-    setUpcPropagate(true);
     setCreateUpcOpen(true);
   };
 
@@ -488,7 +481,6 @@ export const ReceivingModule = () => {
       brand: upcDoc.brand || '',
     });
     setUpcEditMode(true);
-    setUpcPropagate(true);
     setCreateUpcOpen(true);
   };
 
@@ -512,7 +504,9 @@ export const ReceivingModule = () => {
     setCreatingUpc(true);
     try {
       const payload = upcEditMode
-        ? { ...upcDraft, upc: code, propagate_to_boxes: upcPropagate }
+        // La edicion siempre propaga description/pais/fabric/brand a lo ya
+        // recibido con este UPC; sin eso el catalogo y las cajas divergen.
+        ? { ...upcDraft, upc: code, propagate_to_boxes: true }
         : { ...upcDraft, upc: code };
       const res = upcEditMode
         ? await putter(`/upc/${encodeURIComponent(code)}`, payload)
@@ -1501,31 +1495,6 @@ export const ReceivingModule = () => {
                 </div>
               </div>
 
-              {/* Propagacion: solo modo edicion. Aplica cambios descriptivos
-                  (description/country/fabric/brand) a cajas + receivings + inv
-                  que ya usan este UPC. Necesario cuando el UPC se corrigio
-                  DESPUES del receiving (ej: pais cambiado en catalogo pero las
-                  cajas se etiquetaron con el valor viejo). */}
-              {upcEditMode && (
-                <label className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/40 rounded-xl cursor-pointer hover:bg-amber-500/15 transition-colors" data-testid="upc-propagate-wrap">
-                  <input
-                    type="checkbox"
-                    checked={upcPropagate}
-                    onChange={e => setUpcPropagate(e.target.checked)}
-                    className="mt-0.5 accent-amber-500"
-                    data-testid="upc-propagate"
-                  />
-                  <div className="flex-1">
-                    <div className="text-[11px] font-black uppercase tracking-widest text-amber-500">
-                      Aplicar también a las cajas ya recibidas con este UPC
-                    </div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
-                      Propaga <b>description / país / fabric / brand</b> a boxes, receivings e inventory que usen este UPC.
-                      Cambios de <b>style / color / talla</b> requieren el flujo de corrección (admin).
-                    </div>
-                  </div>
-                </label>
-              )}
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">

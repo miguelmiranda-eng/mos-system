@@ -2299,7 +2299,7 @@ async def create_receiving(request: Request):
                 raise HTTPException(400, (
                     f"El UPC {upc_code} ya existe en el catalogo con datos distintos:\n"
                     + "\n".join(f"  - {d}" for d in divergences)
-                    + "\n\nCorrige tu captura o edita primero el UPC (con la casilla 'Aplicar a cajas ya recibidas')."
+                    + "\n\nCorrige tu captura o edita primero el UPC en el catalogo."
                 ))
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
