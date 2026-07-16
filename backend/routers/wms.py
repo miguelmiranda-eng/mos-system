@@ -571,6 +571,59 @@ async def _assert_curated_identity(customer: str, values: dict):
         )
 
 
+async def _build_identity_checker():
+    """Checker EN MEMORIA para validaciones masivas (imports de Excel).
+
+    `_assert_curated_identity` hace 1 query por campo por fila: en un archivo de
+    5k filas x 6 campos serian 30k round-trips a Mongo. Esto carga el catalogo
+    curado y los valores vivos de inventario UNA sola vez y devuelve un
+    `check(customer, values) -> [errores]` que NO lanza — asi un import puede
+    rechazar la fila mala y seguir con las buenas, en vez de morir entero.
+
+    Misma semantica que _assert_curated_identity: curado del cliente + globales,
+    bootstrap si el scope no tiene catalogo, y se acepta lo que ya exista en
+    inventario (ese escape es carga estructural hoy: el catalogo cubre una
+    fraccion de la realidad y cerrarlo pararia la operacion).
+    """
+    from collections import defaultdict as _dd
+    cat = _dd(lambda: _dd(set))          # ctype -> customer|'' -> {valores}
+    for d in await db.wms_catalog_options.find(
+            {}, {"_id": 0, "type": 1, "value": 1, "customer": 1}).to_list(20000):
+        ct, v = d.get("type"), (d.get("value") or "").strip().upper()
+        if ct and v:
+            cat[ct][(d.get("customer") or "").strip().upper()].add(v)
+
+    inv = {}
+    for ctype, (field, _colls) in _CATALOG_FIELD_MAP.items():
+        vals = await db.wms_inventory.distinct(field)
+        inv[ctype] = {str(x).strip().upper() for x in vals if x}
+
+    def check(customer, values):
+        errs = []
+        cu = (customer or "").strip().upper()
+        for ctype, raw in values.items():
+            v = (raw or "").strip()
+            if not v:
+                continue
+            byc = cat.get(ctype) or {}
+            ok = set(byc.get("", set()))
+            if ctype in CUSTOMER_SCOPED:
+                ok |= byc.get(cu, set())
+            else:
+                for s in byc.values():
+                    ok |= s
+            if not ok:
+                continue                      # bootstrap: sin catalogo aun
+            if v.upper() in ok:
+                continue                      # curado
+            if v.upper() in (inv.get(ctype) or set()):
+                continue                      # ya existe en inventario
+            errs.append("%s '%s'" % (_IDENTITY_LABELS.get(ctype, ctype), v))
+        return errs
+
+    return check
+
+
 @router.get("/catalogs/{ctype}/sources")
 async def list_catalog_sources(ctype: str, request: Request, limit: int = 500, customer: str = ""):
     """List the distinct values currently present in inventory/receiving for
@@ -3510,12 +3563,25 @@ async def generate_box(request: Request):
     if not known:
         raise HTTPException(400, f"El estilo '{style}' no existe. Agrégalo primero en Configuración.")
 
-    seq = await _reserve_box_seqs(1)
-    box_id = f"BOX-{seq:06d}"
     sku = (body.get("sku") or style).strip().upper()
     coo = re.sub(r"\s+", " ", str(body.get("country_of_origin") or "")).strip().upper()
     fabric = re.sub(r"\s+", " ", str(body.get("fabric_content") or "")).strip().upper()
     is_bpo = bool(body.get("is_bpo", False))
+
+    # El style ya se valido arriba, pero los OTROS 5 campos de identidad entraban
+    # sin revisar: se podia generar una caja con un color/descripcion inventados y,
+    # una vez en inventario, el escape "ya existe en inventario" de
+    # _assert_curated_identity los legitimaba en el resto de las puertas.
+    await _assert_curated_identity(customer, {
+        "colors": color,
+        "sizes": size,
+        "descriptions": re.sub(r"\s+", " ", str(body.get("description") or "")).strip().upper(),
+        "countries": coo,
+        "fabrics": fabric,
+    })
+
+    seq = await _reserve_box_seqs(1)
+    box_id = f"BOX-{seq:06d}"
 
     inv_id = await _update_inventory_enhanced(
         style, color, size, units, "add", customer, location, is_bpo,
@@ -8567,6 +8633,22 @@ async def add_inventory_manual(request: Request):
     # Operation: "add" (default, entrada) or "remove" (salida / ajuste a la baja).
     operation = str(body.get("operation", "add")).strip().lower()
 
+    # Guardia de catalogo — misma que create_receiving/create_upc. Esta puerta
+    # estaba ABIERTA: "Agregar Manual" escribia identidad sin validar nada, asi
+    # que cualquier valor nuevo entraba y, una vez en inventario, el escape
+    # "ya existe en inventario" de _assert_curated_identity lo legitimaba en
+    # TODAS las demas puertas. Solo se valida al AGREGAR: una salida ("remove")
+    # opera sobre material que ya esta, y bloquearla dejaria stock atorado.
+    if operation != "remove":
+        await _assert_curated_identity(s("customer"), {
+            "styles": style,
+            "colors": color,
+            "sizes": size,
+            "descriptions": s("description"),
+            "countries": s("country_of_origin"),
+            "fabrics": s("fabric_content"),
+        })
+
     # Wider key so two batches of the same SKU with different fabric/COO
     # stay as separate inventory rows (mirrors the import + receiving keys).
     fabric_key = s("fabric_content")
@@ -8822,6 +8904,14 @@ async def bulk_adjust_inventory(request: Request):
     if not dry_run and not reason:
         raise HTTPException(400, "El motivo del ajuste es obligatorio")
 
+    # Guardia de catalogo. Solo aplica a la rama "new": una fila que CASA con una
+    # linea existente unicamente mueve cantidades (no escribe identidad), pero una
+    # fila nueva crea style/color/size/coo/fabric a voluntad — esta puerta estaba
+    # abierta y lo que cayera aqui quedaba legitimado en todas las demas por el
+    # escape "ya existe en inventario". Una fila invalida se marca `error` y sale
+    # en el dry-run, que es justo donde el usuario ya la ve antes de aplicar.
+    identity_ok = await _build_identity_checker()
+
     plan = []
     for idx, r in enumerate(rows):
         style = str(r.get("style", "") or "").strip().upper()
@@ -8857,10 +8947,23 @@ async def bulk_adjust_inventory(request: Request):
             if delta < 0:
                 plan.append({"row": idx + 1, "label": label, "status": "error", "current": 0, "delta": delta, "message": "No existe la línea; no se puede restar"})
             else:
+                _cust = str(r.get("customer", "") or "").strip()
+                _coo = str(r.get("country_of_origin", "") or "").strip()
+                _fab = str(r.get("fabric_content", "") or "").strip()
+                _errs = identity_ok(_cust, {
+                    "styles": style, "colors": color, "sizes": size,
+                    "countries": _coo, "fabrics": _fab,
+                })
+                if _errs:
+                    plan.append({"row": idx + 1, "label": label, "status": "error",
+                                 "current": 0, "delta": delta,
+                                 "message": "Identidad no curada: " + "; ".join(_errs) +
+                                            ". Pídele al líder que la agregue en Config WMS."})
+                    continue
                 plan.append({"row": idx + 1, "label": label, "status": "new", "current": 0, "delta": delta, "new": delta,
-                             "customer": str(r.get("customer", "") or "").strip(),
-                             "country_of_origin": str(r.get("country_of_origin", "") or "").strip(),
-                             "fabric_content": str(r.get("fabric_content", "") or "").strip(),
+                             "customer": _cust,
+                             "country_of_origin": _coo,
+                             "fabric_content": _fab,
                              "style": style, "color": color, "size": size, "location": location})
 
     summary = {
@@ -8995,9 +9098,16 @@ async def import_inventory(request: Request, file: UploadFile = File(...), force
     box_docs = []
     locations_set = set()
     skipped = 0
+    # Guardia de catalogo. Esta puerta estaba ABIERTA: el import de Excel escribia
+    # identidad sin validar nada, y una vez el valor caia en inventario el escape
+    # "ya existe en inventario" lo legitimaba en TODAS las demas puertas. Es la via
+    # mas probable por la que entro la basura historica.
+    # Un archivo de 5k filas no debe morir por una fila mala: se rechaza la fila,
+    # se reporta, y las buenas entran.
+    identity_ok = await _build_identity_checker()
+    rejected = []
 
-
-    for row in rows[1:]:
+    for row_no, row in enumerate(rows[1:], start=2):
         style = get(row, 'Style', '').strip().upper()
         if not style:
             skipped += 1
@@ -9011,6 +9121,18 @@ async def import_inventory(request: Request, file: UploadFile = File(...), force
         description = get(row, 'Description', '').strip().upper()
         coo = get(row, 'CountryofOrigin', '').strip().upper()
         fabric = get(row, 'FabricContent', '').strip().upper()
+        customer_row = get(row, 'CustomerID', '').strip().upper()
+
+        errs = identity_ok(customer_row, {
+            "styles": style, "colors": color, "sizes": size,
+            "descriptions": description, "countries": coo, "fabrics": fabric,
+        })
+        if errs:
+            rejected.append({"row": row_no, "style": style, "color": color,
+                             "size": size, "location": inv_loc,
+                             "errors": errs})
+            skipped += 1
+            continue
 
         if inv_loc:
             locations_set.add(inv_loc)
@@ -9149,15 +9271,25 @@ async def import_inventory(request: Request, file: UploadFile = File(...), force
         "type": "import",
         "description": f"Imported {len(inventory_docs)} inventory records from {file.filename}",
         "user": user.get("name", user.get("email", "")),
+        "rejected_rows": len(rejected),
+        "rejected_sample": rejected[:50],
         "timestamp": now
     })
+    if rejected:
+        logger.warning(
+            "import/inventory %s: %d fila(s) rechazadas por identidad no curada. Muestra: %s",
+            file.filename, len(rejected), rejected[:5])
 
     wb.close()
     return {
         "imported": len(inventory_docs),
         "skipped": skipped,
         "locations_created": locations_created,
-        "total_locations": len(locations_set)
+        "total_locations": len(locations_set),
+        # Un rechazo SILENCIOSO seria peor que no validar: el usuario creeria que
+        # importo todo. Se devuelve el detalle para que la UI lo muestre.
+        "rejected": len(rejected),
+        "rejected_rows": rejected[:200],
     }
 
 
@@ -10415,6 +10547,20 @@ async def correct_upc(upc: str, request: Request):
                 changes[k] = v
     if not changes:
         raise HTTPException(400, "No hay cambios para aplicar")
+
+    # Guardia de catalogo — faltaba justo aqui, y es la puerta MAS cara: este
+    # endpoint no solo escribe el UPC, ademas CASCADEA el valor a las cajas,
+    # recibos e inventario ya recibidos con ese codigo. Un valor inventado aqui
+    # se replicaba a todo el stock de un golpe. Solo se validan los campos que
+    # cambian (los que no vienen en `changes` ya estaban).
+    _CT = {"style": "styles", "color": "colors", "size": "sizes",
+           "description": "descriptions", "country_of_origin": "countries",
+           "fabric_content": "fabrics", "manufacturer": "manufacturers"}
+    to_check = {_CT[k]: v for k, v in changes.items() if k in _CT}
+    if to_check:
+        await _assert_curated_identity(
+            changes.get("customer") or cat.get("customer") or "", to_check)
+
     # Inventory keys on sku; keep it in lockstep with style.
     if "style" in changes and "sku" not in changes:
         changes["sku"] = changes["style"]
