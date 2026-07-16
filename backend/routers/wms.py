@@ -10373,6 +10373,20 @@ def _norm_upc(raw) -> str:
     return str(raw or "").strip().upper()
 
 
+def _valid_gtin(code: str) -> bool:
+    """True si `code` es un GTIN estructuralmente valido (UPC-A/EAN-8/13/GTIN-14):
+    solo digitos, longitud 8/12/13/14, y el digito verificador CUADRA (se calcula
+    de los anteriores — pesos 3/1 de derecha a izquierda). Un codigo que no cuadra
+    no puede venir de un escaner de UPC/EAN: fue tecleado mal o inventado."""
+    c = str(code or "").strip()
+    if not c.isdigit() or len(c) not in (8, 12, 13, 14):
+        return False
+    digits = [int(x) for x in c]
+    body = digits[:-1][::-1]
+    s = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(body))
+    return (10 - s % 10) % 10 == digits[-1]
+
+
 @router.get("/upc/{upc}")
 async def get_upc(upc: str, request: Request):
     """Lookup a UPC. Returns 404 if not in the catalog so the frontend can
@@ -10423,6 +10437,21 @@ async def create_upc(request: Request):
     existing = await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0})
     if existing:
         return existing  # idempotent return
+
+    # Guardia estructural: la creacion MANUAL exige un codigo de barras real.
+    # El catalogo acumulo 345 "UPC" inventados a mano (ICEBLUE2X, CHILI1..6,
+    # KHAKI1..5: color+talla tecleados en la casilla del codigo) y 321 con el
+    # digito verificador mal (tecleados con un digito cambiado). Un escaner de
+    # UPC/EAN no puede producir ninguno de los dos. Los codigos internos
+    # no-GS1 de un cliente (p.ej. Culture Kings) entran por IMPORT de su
+    # archivo, no por este endpoint — esos no pasan por aqui.
+    if not _valid_gtin(code):
+        raise HTTPException(400, (
+            f"'{code}' no es un codigo de barras valido (UPC-A/EAN: solo digitos "
+            f"y el verificador debe cuadrar). Escanea la etiqueta en vez de "
+            f"teclearla; si el cliente usa codigos internos, se cargan por "
+            f"import de su archivo, no a mano."
+        ))
 
     doc = {
         "upc": code,
