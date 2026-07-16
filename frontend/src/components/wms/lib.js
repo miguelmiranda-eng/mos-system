@@ -164,6 +164,7 @@ export const useWmsCatalogs = () => {
     customers: vals('customers'), colors: vals('colors'), styles: vals('styles'),
     sizes: vals('sizes'), descriptions: vals('descriptions'),
     countries: vals('countries'), fabrics: vals('fabrics'),
+    manufacturers: vals('manufacturers'),
   };
 };
 

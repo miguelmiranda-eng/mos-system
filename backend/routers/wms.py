@@ -272,7 +272,13 @@ async def notify_badge_change(badge: str = "all"):
 # Receiving identity catalogs (customers/colors/styles) join the original
 # descriptive ones. These drive the locked dropdowns in Receiving: operators can
 # only pick existing values; only a lead/supervisor may add/rename/clean them.
-CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", "styles", "sizes"}
+CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", "styles", "sizes", "manufacturers"}
+# Tipos cuyo catálogo curado se scopea por CLIENTE (cada cliente tiene su lista).
+# Modelo "global + por-cliente": un valor SIN customer es global (vale para todos);
+# uno CON customer solo aplica a ese cliente. En Receiving nunca se muestran los
+# valores específicos de OTRO cliente. El resto de tipos (sizes/countries/fabrics/
+# descriptions) son globales — no dependen del cliente.
+CUSTOMER_SCOPED = {"styles", "colors", "manufacturers"}
 
 # Roles allowed to MUTATE catalogs (add / rename / delete / clean). Maps the
 # business notion of "líder o supervisor" onto the existing elevated roles —
@@ -326,10 +332,11 @@ async def add_catalog_option(request: Request):
         value = await _canonical_customer(value)
     if ctype == "styles" and not customer:
         raise HTTPException(400, "customer es obligatorio para estilos")
-    # Case-insensitive dedupe — scoped by customer for styles.
+    # Case-insensitive dedupe — scoped by customer for los tipos por-cliente.
+    # Con customer -> dedupe contra ese cliente; sin customer -> contra los globales.
     dedupe = {"type": ctype, "value": {"$regex": f"^{re.escape(value)}$", "$options": "i"}}
-    if ctype == "styles":
-        dedupe["customer"] = customer
+    if ctype in CUSTOMER_SCOPED:
+        dedupe["customer"] = customer if customer else {"$in": [None, ""]}
     existing = await db.wms_catalog_options.find_one(dedupe)
     if existing:
         where = f"{ctype} de {customer}" if customer else ctype
@@ -362,6 +369,26 @@ async def list_customer_styles(request: Request, customer: str = ""):
     return {"customer": cust, "styles": [d.get("value") for d in docs if d.get("value")]}
 
 
+@router.get("/catalogs/{ctype}/for-customer")
+async def list_catalog_for_customer(ctype: str, request: Request, customer: str = ""):
+    """Valores curados visibles para un cliente en un tipo por-cliente:
+    los del cliente + los globales (sin customer). Sin cliente -> solo globales
+    (nunca se filtran valores específicos de otro cliente). Para tipos NO
+    por-cliente devuelve todos. Alimenta los desplegables de Color/Fabricante en
+    Receiving scopeados por cliente."""
+    await require_auth(request)
+    if ctype not in CATALOG_TYPES:
+        raise HTTPException(400, f"type debe ser uno de {sorted(CATALOG_TYPES)}")
+    cust = (customer or "").strip().upper()
+    if ctype in CUSTOMER_SCOPED:
+        globals_or = [{"customer": {"$in": [None, ""]}}, {"customer": {"$exists": False}}]
+        q = {"type": ctype, "$or": ([{"customer": cust}] + globals_or) if cust else globals_or}
+    else:
+        q = {"type": ctype}
+    docs = await db.wms_catalog_options.find(q, {"_id": 0, "value": 1}).sort("value", 1).to_list(2000)
+    return {"customer": cust, "values": [d.get("value") for d in docs if d.get("value")]}
+
+
 @router.delete("/catalogs/{catalog_id}")
 async def delete_catalog_option(catalog_id: str, request: Request):
     """Remove a value from a catalog. Does NOT alter existing inventory/receiving rows.
@@ -385,6 +412,7 @@ _CATALOG_FIELD_MAP = {
     # e inventory, y despues los UPCs escaneados y 7 tickets historicos quedaron
     # con el typo. Sweep de todas las colecciones cierra el hueco.
     "customers":    ("customer", ["wms_inventory", "wms_receiving", "wms_boxes", "wms_pick_tickets"]),
+    "manufacturers": ("manufacturer", ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
     "colors":       ("color",    ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
     "styles":       ("style",    ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
     "sizes":        ("size",     ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog", "wms_pick_tickets"]),
@@ -407,6 +435,7 @@ _IDENTITY_LABELS = {
     "descriptions": "Descripcion",
     "countries": "Pais de origen",
     "fabrics": "Contenido/fabric",
+    "manufacturers": "Fabricante",
 }
 
 
@@ -419,8 +448,14 @@ async def _assert_curated_identity(customer: str, values: dict):
         if not v:
             continue
         query = {"type": ctype}
-        if ctype == "styles":
-            query["customer"] = (customer or "").strip().upper()
+        if ctype in CUSTOMER_SCOPED:
+            # Válido si es del cliente O global (sin customer). Modelo fallback.
+            cu = (customer or "").strip().upper()
+            query["$or"] = [
+                {"customer": cu},
+                {"customer": {"$in": [None, ""]}},
+                {"customer": {"$exists": False}},
+            ]
         curated = await db.wms_catalog_options.find(
             query, {"_id": 0, "value": 1}
         ).to_list(5000)
@@ -442,7 +477,7 @@ async def _assert_curated_identity(customer: str, values: dict):
             if in_inv:
                 continue  # existe en inventario → válido
         label = _IDENTITY_LABELS.get(ctype, ctype)
-        scope = f" de {customer}" if ctype == "styles" and customer else ""
+        scope = f" de {customer}" if ctype in CUSTOMER_SCOPED and customer else ""
         raise HTTPException(
             400,
             f"{label} '{v}' no está ni en el catálogo curado ni en inventario{scope}. "
@@ -487,8 +522,13 @@ async def list_catalog_sources(ctype: str, request: Request, limit: int = 500, c
     # nunca se han usado en la base entran con count=0 (para que la UI muestre
     # una sola lista unificada — sin panel duplicado arriba/abajo).
     curated_query = {"type": ctype}
-    if cust and ctype == "styles":
-        curated_query["customer"] = cust.upper()
+    if cust and ctype in CUSTOMER_SCOPED:
+        cu = cust.upper()
+        curated_query["$or"] = [
+            {"customer": cu},
+            {"customer": {"$in": [None, ""]}},
+            {"customer": {"$exists": False}},
+        ]
     curated_docs = await db.wms_catalog_options.find(
         curated_query, {"_id": 0, "catalog_id": 1, "value": 1}
     ).to_list(5000)
@@ -666,31 +706,29 @@ async def rename_catalog_value(ctype: str, request: Request):
         {"type": ctype, "value": old_ci}, {"_id": 0}
     ).to_list(500)
 
-    if ctype == "styles":
-        # Sincronizamos por cada customer que tenia el `old` curado. Si el `old`
-        # no estaba curado en ningun customer, no agregamos `new` a ninguno —
-        # el rename actua solo como sweep (comportamiento previo).
-        scopes = sorted({(d.get("customer") or "").strip().upper()
-                         for d in curated_old if d.get("customer")})
+    if ctype in CUSTOMER_SCOPED:
+        # Sincronizamos preservando el SCOPE de cada doc curado del `old`: por cada
+        # customer que lo tenía, y también el scope global (customer vacío) si algún
+        # doc del `old` era global. cust == "" representa el scope global.
+        scopes = sorted({(d.get("customer") or "").strip().upper() for d in curated_old})
         for cust in scopes:
-            # Quitar todas las variantes case-insensitive del `old` para este customer.
             for od in [d for d in curated_old if (d.get("customer") or "").strip().upper() == cust]:
                 await db.wms_catalog_options.delete_one({"catalog_id": od["catalog_id"]})
                 removed_catalog.append(od)
-            # Agregar `new` si no esta (dedupe case-insensitive).
-            exists = await db.wms_catalog_options.find_one({
-                "type": "styles", "customer": cust,
-                "value": {"$regex": f"^{re.escape(new_upper)}$", "$options": "i"},
-            })
+            # Dedupe del `new` dentro del mismo scope.
+            dq = {"type": ctype, "value": {"$regex": f"^{re.escape(new_upper)}$", "$options": "i"}}
+            dq["customer"] = cust if cust else {"$in": [None, ""]}
+            exists = await db.wms_catalog_options.find_one(dq)
             if not exists:
                 nd = {
                     "catalog_id": gen_id("cat"),
-                    "type": "styles",
+                    "type": ctype,
                     "value": new_upper,
-                    "customer": cust,
                     "created_at": now_iso(),
                     "created_by_name": user.get("name") or user.get("email", "") or "system-rename",
                 }
+                if cust:
+                    nd["customer"] = cust
                 await db.wms_catalog_options.insert_one(nd)
                 nd.pop("_id", None)
                 added_catalog.append(nd)
@@ -9045,11 +9083,60 @@ async def create_cycle_count(request: Request):
             "counted": False
         })
 
+    # ── Modo BOX_SCAN (nuevo, default): el conteo es POR UBICACIÓN escaneando el
+    # LPN de cada caja. Se compara el set de LPN escaneados vs el que el sistema
+    # tiene en esa ubicación. 3 pases escalonados: la ubicación que no cuadra sube
+    # de pase; tras el pase 3 queda para revisión de supervisor. No ajusta unidades.
+    # Los conteos viejos (sin `mode`) siguen usando `lines[]` por piezas.
+    mode = (body.get("mode") or "box_scan").strip()
+    scan_locations = []
+    if mode == "box_scan":
+        box_query = {"units": {"$gt": 0}}
+        if not is_general:
+            if location_filter:
+                box_query["location"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
+            if customer_filter:
+                box_query["customer"] = {"$regex": f"^{customer_filter}$", "$options": "i"}
+            if style_filter:
+                box_query["$or"] = [
+                    {"style": {"$regex": f"^{style_filter}$", "$options": "i"}},
+                    {"sku": {"$regex": f"^{style_filter}$", "$options": "i"}},
+                ]
+            if color_filter:
+                box_query["color"] = {"$regex": f"^{re.escape(color_filter)}$", "$options": "i"}
+        boxes = await db.wms_boxes.find(
+            box_query, {"_id": 0, "box_id": 1, "location": 1}
+        ).to_list(100000)
+        by_loc: dict[str, list] = {}
+        for b in boxes:
+            loc = (b.get("location") or "").strip()
+            if not loc:
+                continue
+            by_loc.setdefault(loc, []).append(b.get("box_id"))
+        for loc in sorted(by_loc):
+            scan_locations.append({
+                "loc_id": gen_id("ccl"),
+                "location": loc,
+                "pass": 1,                       # pase actual (1/2/3)
+                "status": "pending",             # pending | ok | escalated | supervisor
+                "expected_boxes": sorted(by_loc[loc]),   # LPN que el sistema tiene aquí (snapshot)
+                "scanned_boxes": [],             # LPN escaneados en el pase actual
+                "missing": [],                   # esperados no escaneados
+                "extra": [],                     # escaneados no esperados (ajenos)
+                "counted_by": None,
+                "counted_by_name": None,
+                "counted_at": None,
+                "history": [],                   # auditoría por pase
+            })
+        if not scan_locations:
+            raise HTTPException(400, "No se encontraron cajas con los filtros proporcionados")
+
     count_id = gen_id("cc")
     count_doc = {
         "count_id": count_id,
         "name": name,
         "status": "pending",
+        "mode": mode,
         "is_general": is_general,
         "location_filter": location_filter if not is_general else "",
         "customer_filter": customer_filter if not is_general else "",
@@ -9060,6 +9147,9 @@ async def create_cycle_count(request: Request):
         "total_lines": len(count_lines),
         "counted_lines": 0,
         "lines": count_lines,
+        # box_scan
+        "scan_locations": scan_locations,
+        "total_scan_locations": len(scan_locations),
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name", ""),
         "created_at": now_iso(),
@@ -9078,6 +9168,136 @@ async def create_cycle_count(request: Request):
 
     await notify_badge_change("cycle_count")
     return count_doc
+
+
+# ══════════════════ BOX-SCAN CYCLE COUNT (por caja · por ubicación) ══════════════════
+CYCLE_COUNT_MAX_PASS = 3  # tras el pase 3 sin cuadrar → revisión de supervisor
+
+def _cc_find_loc(count: dict, location: str) -> Optional[dict]:
+    loc = (location or "").strip().upper()
+    for L in count.get("scan_locations", []):
+        if (L.get("location") or "").strip().upper() == loc:
+            return L
+    return None
+
+
+@router.post("/cycle-counts/{count_id}/scan-location")
+async def cc_scan_location(count_id: str, request: Request):
+    """Escanea el LPN de una caja para una ubicación del conteo. Agrega el box_id
+    al set escaneado del pase actual (dedupe). Reporta si es esperado, ajeno o
+    duplicado, sin cerrar todavía la ubicación."""
+    user = await require_inventory_level(request, 1)
+    body = await request.json()
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+    if count.get("mode") != "box_scan":
+        raise HTTPException(400, "Este conteo no es por caja (box_scan)")
+    if count.get("status") == "approved":
+        raise HTTPException(400, "Este conteo ya fue aprobado")
+    location = (body.get("location") or "").strip()
+    box_id = (body.get("box_id") or body.get("lpn") or "").strip().upper()
+    if not location or not box_id:
+        raise HTTPException(400, "location y box_id (LPN) son requeridos")
+    L = _cc_find_loc(count, location)
+    if not L:
+        raise HTTPException(404, f"La ubicación {location} no está en este conteo")
+    if L.get("status") in ("ok", "supervisor"):
+        raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
+    scanned = L.get("scanned_boxes", [])
+    dup = box_id in scanned
+    if not dup:
+        scanned.append(box_id)
+        L["scanned_boxes"] = scanned
+        await db.wms_cycle_counts.update_one(
+            {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
+            {"$set": {"scan_locations.$.scanned_boxes": scanned, "last_updated_at": now_iso()}},
+        )
+    expected = set(L.get("expected_boxes", []))
+    return {
+        "box_id": box_id,
+        "duplicate": dup,
+        "expected_here": box_id in expected,   # False => caja AJENA a esta ubicación
+        "scanned_count": len(scanned),
+        "expected_count": len(expected),
+        "pass": L.get("pass"),
+    }
+
+
+@router.post("/cycle-counts/{count_id}/close-location")
+async def cc_close_location(count_id: str, request: Request):
+    """Cierra una ubicación: compara el set de LPN escaneados vs los esperados.
+    Cuadra (sin faltantes ni ajenas) → status ok. No cuadra → sube de pase
+    (1→2→3); tras el pase 3 queda 'supervisor' (revisión/ajuste manual). Nunca
+    ajusta unidades — solo audita cajas y escala."""
+    user = await require_inventory_level(request, 1)
+    body = await request.json()
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+    if count.get("mode") != "box_scan":
+        raise HTTPException(400, "Este conteo no es por caja (box_scan)")
+    location = (body.get("location") or "").strip()
+    L = _cc_find_loc(count, location)
+    if not L:
+        raise HTTPException(404, f"La ubicación {location} no está en este conteo")
+    if L.get("status") in ("ok", "supervisor"):
+        raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
+
+    expected = set(L.get("expected_boxes", []))
+    scanned = set(L.get("scanned_boxes", []))
+    missing = sorted(expected - scanned)   # esperadas que no aparecieron
+    extra = sorted(scanned - expected)     # escaneadas que no van aquí (ajenas)
+    matched = (not missing and not extra)
+    cur_pass = int(L.get("pass", 1))
+
+    hist = L.get("history", [])
+    hist.append({
+        "pass": cur_pass, "scanned": sorted(scanned),
+        "missing": missing, "extra": extra, "matched": matched,
+        "by": user.get("user_id"), "by_name": user.get("name", ""), "at": now_iso(),
+    })
+
+    set_fields = {
+        "scan_locations.$.history": hist,
+        "scan_locations.$.missing": missing,
+        "scan_locations.$.extra": extra,
+        "scan_locations.$.counted_by": user.get("user_id"),
+        "scan_locations.$.counted_by_name": user.get("name", ""),
+        "scan_locations.$.counted_at": now_iso(),
+        "last_updated_at": now_iso(),
+    }
+    if matched:
+        set_fields["scan_locations.$.status"] = "ok"
+        new_status, new_pass = "ok", cur_pass
+    elif cur_pass < CYCLE_COUNT_MAX_PASS:
+        new_pass = cur_pass + 1
+        set_fields["scan_locations.$.status"] = "escalated"
+        set_fields["scan_locations.$.pass"] = new_pass
+        set_fields["scan_locations.$.scanned_boxes"] = []   # nuevo pase arranca limpio
+        new_status = "escalated"
+    else:
+        set_fields["scan_locations.$.status"] = "supervisor"
+        new_status, new_pass = "supervisor", cur_pass
+
+    await db.wms_cycle_counts.update_one(
+        {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
+        {"$set": set_fields},
+    )
+    await log_movement(user, "cycle_count_location_closed", {
+        "count_id": count_id, "location": L.get("location"), "pass": cur_pass,
+        "matched": matched, "missing": len(missing), "extra": len(extra),
+        "result": new_status, "next_pass": new_pass,
+    })
+    await notify_badge_change("cycle_count")
+    return {
+        "location": L.get("location"), "matched": matched,
+        "missing": missing, "extra": extra,
+        "result": new_status, "pass": new_pass,
+        "escalated": new_status == "escalated",
+        "needs_supervisor": new_status == "supervisor",
+    }
+
 
 @router.get("/cycle-counts")
 async def list_cycle_counts(request: Request):

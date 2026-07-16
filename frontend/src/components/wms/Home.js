@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight } from "lucide-react";
+import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight, Factory } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
   { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
+  { type: 'manufacturers', label: 'Fabricantes', desc: 'Valores para "manufacturer" en Receiving', icon: Factory, color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20' },
   { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
   { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
   { type: 'sizes', label: 'Tallas', desc: 'Tallas adicionales para el desplegable de "size" en Receiving', icon: Ruler, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
@@ -14,6 +15,11 @@ const SECTIONS = [
   { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
   { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
 ];
+
+// Tipos por-cliente: el selector de cliente aparece en su tarjeta y los valores
+// se scopean (cliente + globales). Estilos EXIGE cliente; colores/fabricantes lo
+// permiten opcional (sin cliente = valor global compartido).
+const SCOPED_TYPES = ['styles', 'colors', 'manufacturers'];
 
 // Initial per-type state derived from SECTIONS, so adding a catalog above is enough.
 const byType = (val) => SECTIONS.reduce((acc, s) => ({ ...acc, [s.type]: val }), {});
@@ -82,7 +88,7 @@ export const HomeModule = () => {
     setSourcesLoading(p => ({ ...p, [type]: true }));
     try {
       const params = new URLSearchParams({ limit: '2000' });
-      if (type === 'styles' && styleCustomer) params.set('customer', styleCustomer);
+      if (SCOPED_TYPES.includes(type) && styleCustomer) params.set('customer', styleCustomer);
       const data = await fetcher(`/catalogs/${type}/sources?${params.toString()}`);
       setSources(p => ({ ...p, [type]: data }));
     } catch (err) {
@@ -91,7 +97,8 @@ export const HomeModule = () => {
     } finally { setSourcesLoading(p => ({ ...p, [type]: false })); }
   }, [styleCustomer]);
 
-  // Autoload one-shot para catalogos no-styles (styles necesita cliente antes).
+  // Autoload one-shot. Styles necesita cliente antes; colores/fabricantes cargan
+  // su vista global de una vez (y se re-scopean al elegir cliente).
   useEffect(() => {
     SECTIONS.forEach(s => {
       if (s.type === 'styles') return;
@@ -100,12 +107,14 @@ export const HomeModule = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh styles' Fuentes + Typos cuando cambia el cliente. La lista siempre
-  // esta visible, asi que cargamos apenas se elige el cliente.
+  // Al cambiar el cliente, recarga Fuentes + Typos de TODOS los tipos por-cliente
+  // (estilos, colores, fabricantes) para que se scopeen a ese cliente + globales.
   useEffect(() => {
     if (!styleCustomer) return;
-    loadSources('styles');
-    if (showSimilar.styles) loadSimilar('styles');
+    SCOPED_TYPES.forEach(t => {
+      loadSources(t);
+      if (showSimilar[t]) loadSimilar(t);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleCustomer]);
 
@@ -115,7 +124,9 @@ export const HomeModule = () => {
     if (type === 'styles' && !styleCustomer) { toast.error('Selecciona un cliente primero'); return; }
     setSaving(type);
     try {
-      const body = type === 'styles' ? { type, value, customer: styleCustomer } : { type, value };
+      // Tipos por-cliente adjuntan el cliente seleccionado; si está vacío (permitido
+      // en colores/fabricantes) el valor se guarda como global compartido.
+      const body = SCOPED_TYPES.includes(type) ? { type, value, customer: styleCustomer } : { type, value };
       const res = await poster('/catalogs', body);
       if (res.ok) {
         toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
@@ -229,7 +240,7 @@ export const HomeModule = () => {
     setSimilarLoading(p => ({ ...p, [type]: true }));
     try {
       const params = new URLSearchParams({ max_dist: '2', min_count: '1' });
-      if (type === 'styles' && styleCustomer) params.set('customer', styleCustomer);
+      if (SCOPED_TYPES.includes(type) && styleCustomer) params.set('customer', styleCustomer);
       const data = await fetcher(`/catalogs/${type}/similar?${params.toString()}`);
       setSimilar(p => ({ ...p, [type]: data }));
     } catch (err) {
@@ -309,6 +320,7 @@ export const HomeModule = () => {
         {SECTIONS.map(section => {
           const Icon = section.icon;
           const isStyles = section.type === 'styles';
+          const isScoped = SCOPED_TYPES.includes(section.type);
           const srcData = sources[section.type];
           const srcLoading = !!sourcesLoading[section.type];
           const filteredSources = getFilteredSources(section.type);
@@ -331,17 +343,21 @@ export const HomeModule = () => {
                 </span>
               </div>
 
-              {/* Styles are per-customer: pick the client this list belongs to. */}
-              {isStyles && (
+              {/* Tipos por-cliente: elige el cliente al que pertenece esta lista.
+                  Estilos EXIGE cliente; colores/fabricantes lo permiten vacío
+                  (= valor global compartido para todos los clientes). */}
+              {isScoped && (
                 <div className="p-3 border-b border-border/10">
-                  <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/70 block mb-1">Cliente</label>
+                  <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/70 block mb-1">
+                    Cliente{isStyles ? '' : ' (opcional — vacío = global)'}
+                  </label>
                   <select
                     value={styleCustomer}
                     onChange={e => setStyleCustomer(e.target.value)}
                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-bold text-foreground focus:ring-2 focus:ring-primary/30"
                     data-testid="style-customer-select"
                   >
-                    <option value="">— Selecciona cliente —</option>
+                    <option value="">{isStyles ? '— Selecciona cliente —' : '— Global (todos los clientes) —'}</option>
                     {customers.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>

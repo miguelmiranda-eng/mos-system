@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsColors, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -110,46 +110,18 @@ export const ReceivingModule = () => {
   const [form, setForm] = useState({
     customer: '', manufacturer: '', style: '', color: '', size: '',
     description: '', country_of_origin: '', fabric_content: '',
-    boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '',
+    boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '',
     is_bpo: false, asn_reference: '',
   });
-  const [printMode, setPrintMode] = useState('cajas'); // 'cajas' o 'piezas'
-  // boxMode: 'standard' = 72 fijos. 'custom' = unitsPerBox configurable.
-  const [boxMode, setBoxMode] = useState('standard');
+  // Piezas por caja: default 72, editable directo (si la caja trae 60, lo cambias).
   const [unitsPerBox, setUnitsPerBox] = useState(STANDARD_UNITS_PER_BOX);
+  const effectiveUpb = Math.max(1, parseInt(unitsPerBox) || 1);
 
-  const effectiveUpb = boxMode === 'standard' ? STANDARD_UNITS_PER_BOX : Math.max(1, parseInt(unitsPerBox) || 1);
+  // Antipendejos: cantidades SIEMPRE enteras y >= 0 (nada de 1.5 cajas). El total
+  // se calcula solo: (N° de cajas × piezas por caja) + piezas sueltas.
+  const toIntStr = (val) => (val === '' || val === null || val === undefined)
+    ? '' : String(Math.max(0, Math.floor(Number(val) || 0)));
 
-  const handlePiecesChange = (val) => {
-    const p = parseFloat(val) || 0;
-    const b = p / effectiveUpb;
-    setForm(prev => ({
-      ...prev,
-      pieces: val,
-      boxes: val === '' ? '' : (Number.isInteger(b) ? b.toString() : b.toFixed(2)),
-      units: ''
-    }));
-  };
-
-  const handleBoxesChange = (val) => {
-    const b = parseFloat(val) || 0;
-    const p = b * effectiveUpb;
-    setForm(prev => ({
-      ...prev,
-      boxes: val,
-      pieces: val === '' ? '' : (Number.isInteger(p) ? p.toString() : p.toFixed(2)),
-      units: ''
-    }));
-  };
-
-  // When units_per_box changes (custom mode), recompute pieces from current boxes
-  useEffect(() => {
-    if (boxMode === 'custom' && form.boxes !== '') {
-      const b = parseFloat(form.boxes) || 0;
-      const p = b * effectiveUpb;
-      setForm(prev => ({ ...prev, pieces: Number.isInteger(p) ? p.toString() : p.toFixed(2) }));
-    }
-  }, [effectiveUpb, boxMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState({ customers: [], manufacturers: [], styles: [], colors: [] });
@@ -159,18 +131,19 @@ export const ReceivingModule = () => {
   const [fieldOptions, setFieldOptions] = useState({ descriptions: [], countries: [], fabrics: [] });
   // Full size list (standard + admin-configured extras), single source of truth.
   const { all: sizeOptions } = useWmsSizes();
-  // Curated colors from "Configuración WMS → Colores". Se fusionan con los
-  // colores derivados del inventario para que TODO color de la config (ej.
-  // ANCHORE, FLAX) aparezca en los selects de color, aunque no exista aún en
-  // inventario. Curados primero; luego los de inventario que no estén ya.
-  const wmsColors = useWmsColors();
-  const colorOptions = useMemo(() => mergeUnique(wmsColors, options.colors), [wmsColors, options.colors]);
+  // Colores y fabricantes curados POR CLIENTE (cliente seleccionado + globales),
+  // fusionados con lo del inventario del mismo cliente. Nunca se muestran valores
+  // específicos de OTRO cliente (igual que estilos con customerStyles).
+  const [customerColors, setCustomerColors] = useState([]);
+  const [customerManufacturers, setCustomerManufacturers] = useState([]);
+  const colorOptions = useMemo(() => mergeUnique(customerColors, options.colors), [customerColors, options.colors]);
   // Resto de listas: catálogo curado FUSIONADO con lo del sistema/inventario,
   // para que ningún valor real quede oculto por no estar catalogado. El líder
   // limpia typos con "Detectar typos" en la config. (Manufacturer no es catálogo.)
   const wmsCat = useWmsCatalogs();
   const customerOptions = useMemo(() => mergeUnique(wmsCat.customers, options.customers), [wmsCat.customers, options.customers]);
   const styleOptions    = useMemo(() => mergeUnique(customerStyles, options.styles), [customerStyles, options.styles]);
+  const manufacturerOptions = useMemo(() => mergeUnique(customerManufacturers, options.manufacturers), [customerManufacturers, options.manufacturers]);
   const descOptions     = useMemo(() => mergeUnique(wmsCat.descriptions, fieldOptions.descriptions), [wmsCat.descriptions, fieldOptions.descriptions]);
   const countryOptions  = useMemo(() => mergeUnique(wmsCat.countries, fieldOptions.countries), [wmsCat.countries, fieldOptions.countries]);
   const fabricOptions   = useMemo(() => mergeUnique(wmsCat.fabrics, fieldOptions.fabrics), [wmsCat.fabrics, fieldOptions.fabrics]);
@@ -264,7 +237,7 @@ export const ReceivingModule = () => {
     else if (selectedAsnDoc?.customer) skipped.push('Cliente');
 
     const effectiveCustomer = customer || form.customer;
-    let manufacturerHaystack = options.manufacturers || [];
+    let manufacturerHaystack = manufacturerOptions;
     let stylesHaystack = options.styles || [];
     if (effectiveCustomer) {
       try {
@@ -389,6 +362,19 @@ export const ReceivingModule = () => {
       .catch(() => setCustomerStyles([]));
   }, [form.customer]);
 
+  // Colores y fabricantes curados del cliente (+ globales). Sin cliente: solo
+  // globales — nunca los específicos de otro cliente. Usa el endpoint genérico
+  // /catalogs/{type}/for-customer que ya devuelve "cliente + globales".
+  useEffect(() => {
+    const c = (form.customer || '').trim();
+    fetcher(`/catalogs/colors/for-customer?customer=${encodeURIComponent(c)}`)
+      .then(d => setCustomerColors(d?.values || []))
+      .catch(() => setCustomerColors([]));
+    fetcher(`/catalogs/manufacturers/for-customer?customer=${encodeURIComponent(c)}`)
+      .then(d => setCustomerManufacturers(d?.values || []))
+      .catch(() => setCustomerManufacturers([]));
+  }, [form.customer]);
+
   // Auto-generate SKU when style/color/size change
   useEffect(() => {
     if (form.style) {
@@ -399,7 +385,8 @@ export const ReceivingModule = () => {
     }
   }, [form.style, form.color, form.size]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const totalUnits = parseInt(form.pieces) || parseInt(form.units) || 0;
+  // Total = (N° de cajas × piezas por caja) + piezas sueltas de la caja incompleta.
+  const totalUnits = (parseInt(form.boxes) || 0) * effectiveUpb + (parseInt(form.loose) || 0);
 
   // Canonical transit location name. Mirrors backend TRANSIT_LOCATION_NAME.
   const TRANSIT_LOCATION = "UBICACION TEMPORAL";
@@ -573,7 +560,7 @@ export const ReceivingModule = () => {
       items: [{
         part_number: form.style || '',
         description: form.description || '',
-        qty_expected: form.pieces || form.units || '',
+        qty_expected: totalUnits || '',
         country: form.country_of_origin || '',
         brand: form.manufacturer || '',
       }],
@@ -658,8 +645,24 @@ export const ReceivingModule = () => {
       } else if (!upcDoc) {
         toast.warning(`UPC ${upc.trim().toUpperCase()} no está en catálogo — el recibo se guardará de todas formas`, { duration: 4000 });
       }
-      if (!form.country_of_origin?.trim()) { toast.error('País de origen es obligatorio'); return; }
-      if (!form.fabric_content?.trim()) { toast.error('Contenido / Fabric es obligatorio'); return; }
+      // Todos los campos de identidad son OBLIGATORIOS (única excepción: Lot Number).
+      const requeridos = [
+        ['customer', 'Customer'],
+        ['manufacturer', 'Fabricante'],
+        ['style', 'Style'],
+        ['color', 'Color'],
+        ['size', 'Talla (Size)'],
+        ['description', 'Descripción'],
+        ['country_of_origin', 'País de origen'],
+        ['fabric_content', 'Contenido de tela'],
+      ];
+      const falta = requeridos.find(([k]) => !String(form[k] || '').trim());
+      if (falta) { toast.error(`${falta[1]} es obligatorio`); return; }
+      // Cantidad obligatoria > 0 (antes se podía recibir un registro de 0 unidades).
+      if (totalUnits <= 0) {
+        toast.error('Ingresa una cantidad mayor a 0 (N° de cajas o piezas sueltas)');
+        return;
+      }
       // ASN obligatorio: no se puede recibir material sin un ASN cargado.
       if (!form.asn_reference?.trim()) {
         toast.error('ASN obligatorio — captura el número de packing list o créalo primero');
@@ -683,25 +686,21 @@ export const ReceivingModule = () => {
         toast.success(res?.message || 'Registro actualizado exitosamente');
         setShowForm(false);
         setEditingId(null);
-        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
-        setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
+        setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
+        setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
         load();
       } else {
-        // Create Mode
-        const totalPieces = parseInt(form.pieces) || 0;
-
-        // Split into full boxes of `effectiveUpb` (72 standard, or the custom
-        // per-box count) plus a single partial box for the remainder. Applies to
-        // BOTH modes: custom used to skip the split, mislabeling the last partial
-        // box with the full per-box count (e.g. 72) and inflating the box total.
-        const items = [];
+        // Create Mode. Modelo simple: N cajas completas de `upb` piezas + (opcional)
+        // 1 caja incompleta con `loose` piezas sueltas. Es exactamente lo que el
+        // operador capturó — sin adivinar splits.
         const upb = effectiveUpb;
-        if (totalPieces > 0 && upb > 0) {
-          const fullBoxes = Math.floor(totalPieces / upb);
-          const remainder = totalPieces % upb;
-          if (fullBoxes > 0) items.push({ size: form.size, boxes: fullBoxes, units_per_box: upb });
-          if (remainder > 0) items.push({ size: form.size, boxes: 1, units_per_box: remainder });
-        }
+        const nBoxes = parseInt(form.boxes) || 0;
+        const loose = parseInt(form.loose) || 0;
+        const totalPieces = nBoxes * upb + loose;
+
+        const items = [];
+        if (nBoxes > 0) items.push({ size: form.size, boxes: nBoxes, units_per_box: upb });
+        if (loose > 0) items.push({ size: form.size, boxes: 1, units_per_box: loose });
 
         const payload = {
           ...form,
@@ -729,12 +728,13 @@ export const ReceivingModule = () => {
             });
             toast.warning(`ASN ${form.asn_reference}: ${reasons.join(', ')}`, { duration: 6000 });
           }
-          if (payload.is_bpo) {
-            handlePrintLabel(data);
-          }
+          // Imprime etiquetas en TODO recibo (antes solo si estaba marcado "back
+          // order"). Una caja sin etiqueta es un problema de bodega; que no
+          // dependa de que el operador se acuerde de marcar una casilla.
+          handlePrintLabel(data);
           setShowForm(false);
-          setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
-          setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
+          setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
+          setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
           setUpc(''); setUpcDoc(null);
           fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
           load();
@@ -873,7 +873,7 @@ export const ReceivingModule = () => {
           )}
         </div>
         <button
-          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setBoxMode('standard'); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setUpc(''); setUpcDoc(null); setShowForm(!showForm); }}
+          onClick={() => { setEditingId(null); setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' }); setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null); setUpc(''); setUpcDoc(null); setShowForm(!showForm); }}
           className="px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] flex items-center gap-2 flex-shrink-0"
           data-testid="new-receiving-btn"
         >
@@ -995,15 +995,15 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('customer')} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('customer')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={canManageUpc} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('manufacturer')} {!!upcDoc?.manufacturer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('manufacturer')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.manufacturer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc?.manufacturer} allowCreate={false} />
+              <SearchableSelect options={manufacturerOptions} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc?.manufacturer} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
@@ -1013,19 +1013,19 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('style')} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('style')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && styleOptions.length === 0)} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('color')} {!!upcDoc?.color && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('color')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.color && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('size')} {!!upcDoc?.size && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('size')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.size && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc?.size}>
                 <option value="">{t('select_placeholder')}</option>
@@ -1036,7 +1036,7 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('description')} {!!upcDoc?.description && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('description')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.description && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc?.description} />
             </div>
@@ -1057,91 +1057,65 @@ export const ReceivingModule = () => {
               </div>
             </div>
           </div>
-          {/* Box capacity mode (standard 72 vs custom) */}
+          {/* Cantidad — modelo simple antipendejos: piezas por caja + N° de cajas
+              + piezas sueltas (caja incompleta). El total se calcula solo. */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="md:col-span-2">
-              <label className="text-xs text-muted-foreground mb-1 block">Tipo de Caja</label>
-              <div className="flex gap-2 bg-background border border-border rounded p-1">
-                <button
-                  type="button"
-                  onClick={() => !editingId && setBoxMode('standard')}
-                  disabled={!!editingId}
-                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${boxMode === 'standard' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  data-testid="rcv-box-std"
-                >
-                  Estándar ({STANDARD_UNITS_PER_BOX} pcs)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => !editingId && setBoxMode('custom')}
-                  disabled={!!editingId}
-                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${boxMode === 'custom' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  data-testid="rcv-box-custom"
-                >
-                  Personalizado
-                </button>
-              </div>
-            </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Piezas por caja</label>
               <input
-                type="number"
-                min="1"
-                value={boxMode === 'standard' ? STANDARD_UNITS_PER_BOX : unitsPerBox}
-                onChange={e => setUnitsPerBox(e.target.value)}
-                disabled={!!editingId || boxMode === 'standard'}
+                type="number" min="1" step="1" placeholder="72"
+                value={unitsPerBox}
+                onChange={e => setUnitsPerBox(toIntStr(e.target.value))}
+                disabled={!!editingId}
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-units-per-box"
               />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Entrada</label>
-              <div className="flex gap-2 bg-background border border-border rounded p-1">
-                <button
-                  type="button"
-                  onClick={() => !editingId && setPrintMode('cajas')}
-                  disabled={!!editingId}
-                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'cajas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  Por Cajas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => !editingId && setPrintMode('piezas')}
-                  disabled={!!editingId}
-                  className={`flex-1 text-xs font-bold rounded py-1 transition-all ${printMode === 'piezas' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:bg-secondary'} ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  Por Piezas
-                </button>
-              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">Default 72. Cámbialo si la caja trae otra cantidad (ej. 60).</p>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Cajas (1 = {effectiveUpb} Pcs)</label>
-              <input type="number" placeholder="0" value={form.boxes} onChange={e => handleBoxesChange(e.target.value)} disabled={!!editingId || printMode === 'piezas'} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed" />
+              <label className="text-xs text-muted-foreground mb-1 block">N° de cajas</label>
+              <input
+                type="number" min="0" step="1" placeholder="0"
+                value={form.boxes}
+                onChange={e => setForm(p => ({ ...p, boxes: toIntStr(e.target.value) }))}
+                disabled={!!editingId}
+                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="rcv-boxes"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Cajas completas de {effectiveUpb} pzs c/u.</p>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Total Piezas</label>
-              <input type="number" placeholder="0" value={form.pieces} onChange={e => handlePiecesChange(e.target.value)} disabled={!!editingId || printMode === 'cajas'} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed" />
+              <label className="text-xs text-muted-foreground mb-1 block">Piezas sueltas <span className="normal-case text-muted-foreground/70">(opcional)</span></label>
+              <input
+                type="number" min="0" step="1" placeholder="0"
+                value={form.loose}
+                onChange={e => setForm(p => ({ ...p, loose: toIntStr(e.target.value) }))}
+                disabled={!!editingId}
+                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="rcv-loose"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Caja incompleta (menos de {effectiveUpb}).</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_qty_auto')}</label>
-              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-bold" />
+              <label className="text-xs text-muted-foreground mb-1 block">Total a recibir (auto)</label>
+              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-primary/5 border border-primary/40 rounded text-base text-foreground font-black" data-testid="rcv-total" />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {(parseInt(form.boxes) || 0)} caja(s) × {effectiveUpb}{(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''} = <span className="font-bold text-foreground">{totalUnits} pzs</span>
+              </p>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{t('sku')} (auto)</label>
               <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Ubicación de recibo eliminada a propósito: el destino se decide con
+              "Recibir a Carro" (abajo). "Recibir" normal deja el material en
+              UBICACION TEMPORAL (default del backend), evitando bins fantasma por
+              texto libre. */}
+          <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_location') || 'Ubicación'}</label>
-              <input placeholder={t('wms_location_placeholder')} value={form.inv_location} onChange={e => setForm(p => ({ ...p, inv_location: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="rcv-location" />
-            </div>
-            <div className="md:col-span-2">
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 ASN (Packing List) <span className="text-red-400">*</span>
               </label>
@@ -1251,21 +1225,9 @@ export const ReceivingModule = () => {
               )}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex items-center gap-2 cursor-pointer p-2 bg-background/50 border border-border rounded-lg group hover:border-primary/50 transition-all">
-              <input
-                type="checkbox"
-                checked={form.is_bpo}
-                onChange={e => setForm(p => ({ ...p, is_bpo: e.target.checked }))}
-                className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
-                data-testid="rcv-is-bpo"
-              />
-              <div className="flex flex-col">
-                <span className="text-xs font-black uppercase tracking-widest text-foreground group-hover:text-primary transition-colors">BACK ORDER (B.O.)</span>
-                <span className="text-[9px] font-bold text-muted-foreground uppercase">{t('wms_bpo_hint') || 'Activar impresión automática'}</span>
-              </div>
-            </label>
-          </div>
+          {/* Casilla "BACK ORDER (B.O.)" eliminada: mezclaba un tag confuso con la
+              impresión de etiquetas. Ahora TODO recibo imprime etiqueta automática
+              (ver handlePrintLabel en el submit). */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
           </div>

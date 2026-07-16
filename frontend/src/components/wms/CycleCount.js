@@ -22,6 +22,9 @@ export const CycleCountModule = () => {
   const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
   const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
+  // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
+  const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
+  const [scanDraft, setScanDraft] = useState({}); // { [location]: textoLPN }
 
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail' | 'timeline'
   const [reportsSummary, setReportsSummary] = useState(null);
@@ -610,6 +613,132 @@ export const CycleCountModule = () => {
       });
       saveProgress(counted);
     };
+
+    // ── BOX-SCAN: conteo por caja (escaneo LPN) por ubicación, 3 pases ──
+    const scanBox = async (loc) => {
+      const boxId = (scanDraft[loc] || '').trim().toUpperCase();
+      if (!boxId) return;
+      setScanDraft(d => ({ ...d, [loc]: '' }));
+      try {
+        const res = await poster(`/cycle-counts/${selectedCount.count_id}/scan-location`, { location: loc, box_id: boxId });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al escanear'); return; }
+        const data = await res.json();
+        setSelectedCount(prev => ({
+          ...prev,
+          scan_locations: prev.scan_locations.map(L => L.location === loc
+            ? { ...L, scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), boxId] }
+            : L)
+        }));
+        if (data.duplicate) toast.warning(`${boxId} ya estaba escaneada`);
+        else if (!data.expected_here) toast.warning(`⚠️ ${boxId} NO pertenece a ${loc} (ajena)`);
+      } catch { toast.error('Error de conexión'); }
+    };
+
+    const closeLocation = async (loc) => {
+      try {
+        const res = await poster(`/cycle-counts/${selectedCount.count_id}/close-location`, { location: loc });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
+        const data = await res.json();
+        if (data.matched) toast.success(`${loc}: ✅ cuadra`);
+        else if (data.needs_supervisor) toast.error(`${loc}: no cuadra tras 3 pases → revisión de supervisor`);
+        else toast.warning(`${loc}: no cuadra → pasa al ${data.pass}° cicloconteo`);
+        const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
+        setSelectedCount(updated);
+      } catch { toast.error('Error de conexión'); }
+    };
+
+    if (selectedCount.mode === 'box_scan') {
+      const SL = selectedCount.scan_locations || [];
+      const needs = (L, n) => L.pass === n && (L.status === 'pending' || L.status === 'escalated');
+      const buckets = {
+        '1': SL.filter(L => needs(L, 1)),
+        '2': SL.filter(L => needs(L, 2)),
+        '3': SL.filter(L => needs(L, 3)),
+        'supervisor': SL.filter(L => L.status === 'supervisor'),
+        'ok': SL.filter(L => L.status === 'ok'),
+      };
+      const TABS = [
+        { k: '1', label: '1er Conteo' }, { k: '2', label: '2do Cicloconteo' },
+        { k: '3', label: '3er Cicloconteo' }, { k: 'supervisor', label: 'Rev. Supervisor' },
+        { k: 'ok', label: 'Cuadradas' },
+      ];
+      const active = buckets[scanPass] || [];
+      return (
+        <div className="space-y-4" data-testid="cycle-count-boxscan">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSelectedCount(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-secondary"><ArrowLeft className="w-4 h-4" /></button>
+            <div>
+              <h2 className="text-lg font-bold text-foreground">{selectedCount.name}</h2>
+              <span className="text-xs text-muted-foreground">Conteo por caja (escaneo LPN) · {SL.length} ubicaciones</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {TABS.map(tb => (
+              <button key={tb.k} onClick={() => setScanPass(tb.k)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${scanPass === tb.k ? 'bg-primary text-primary-foreground shadow' : 'bg-secondary/40 text-muted-foreground hover:text-foreground'}`}>
+                {tb.label} <span className="ml-1 opacity-70">({buckets[tb.k].length})</span>
+              </button>
+            ))}
+          </div>
+          <div className="space-y-3 max-h-[560px] overflow-y-auto">
+            {active.length === 0 && (
+              <div className="text-center text-muted-foreground text-sm py-10">Sin ubicaciones en esta pestaña.</div>
+            )}
+            {active.map(L => {
+              const exp = new Set(L.expected_boxes || []);
+              const scanned = L.scanned_boxes || [];
+              const isTerminal = L.status === 'ok' || L.status === 'supervisor';
+              return (
+                <div key={L.loc_id} className={`border rounded-lg overflow-hidden ${L.status === 'supervisor' ? 'border-red-500/40' : L.status === 'ok' ? 'border-green-500/40' : 'border-border'}`}>
+                  <div className="bg-secondary px-3 py-2 flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-bold">{L.location}</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">Pase {L.pass}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">Escaneadas {scanned.length} / Sistema {exp.size}</span>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    {!isTerminal && (
+                      <div className="flex gap-2">
+                        <input
+                          value={scanDraft[L.location] || ''}
+                          onChange={e => setScanDraft(d => ({ ...d, [L.location]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); scanBox(L.location); } }}
+                          placeholder="Escanea el LPN de la caja…"
+                          className="flex-1 px-3 py-2 bg-background border border-border rounded text-sm font-mono"
+                          data-testid={`cc-scan-${L.location}`} />
+                        <button onClick={() => scanBox(L.location)} className="px-3 py-2 bg-secondary rounded text-xs font-bold uppercase tracking-widest">Escanear</button>
+                      </div>
+                    )}
+                    {scanned.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {scanned.map(b => (
+                          <span key={b} className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${exp.has(b) ? 'bg-green-500/15 text-green-500' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'}`} title={exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}>
+                            {b}{exp.has(b) ? '' : ' ⚠'}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {(L.missing?.length > 0 || L.extra?.length > 0) && (
+                      <div className="text-[11px] space-y-0.5">
+                        {L.missing?.length > 0 && <div className="text-red-400">Faltan: <span className="font-mono">{L.missing.join(', ')}</span></div>}
+                        {L.extra?.length > 0 && <div className="text-amber-400">Ajenas: <span className="font-mono">{L.extra.join(', ')}</span></div>}
+                      </div>
+                    )}
+                    {!isTerminal && (
+                      <button onClick={() => closeLocation(L.location)} className="w-full mt-1 px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-bold" data-testid={`cc-close-${L.location}`}>
+                        Cerrar ubicación
+                      </button>
+                    )}
+                    {L.status === 'supervisor' && <div className="text-[11px] text-red-400 font-bold uppercase tracking-widest">⚑ No cuadró tras 3 pases — requiere ajuste manual del supervisor</div>}
+                    {L.status === 'ok' && <div className="text-[11px] text-green-500 font-bold uppercase tracking-widest">✅ Cuadró</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="space-y-4" data-testid="cycle-count-detail">
