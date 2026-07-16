@@ -902,6 +902,118 @@ export const ReceivingModule = () => {
       )}
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="receiving-form">
+          {/* ASN (Packing List) — al principio: se recibe contra un packing list */}
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
+                ASN (Packing List) <span className="text-red-400">*</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  list="rcv-asn-list"
+                  placeholder="N° de ASN (obligatorio)"
+                  value={form.asn_reference}
+                  onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
+                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm text-foreground font-mono ${form.asn_reference && !selectedAsnDoc && !editingId ? 'border-red-500/60' : selectedAsnDoc ? 'border-emerald-500/40' : 'border-border'}`}
+                  data-testid="rcv-asn"
+                  disabled={!!editingId}
+                />
+                {!editingId && form.asn_reference && !selectedAsnDoc && (
+                  <button
+                    type="button"
+                    onClick={openCreateAsn}
+                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-black uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-all"
+                    title={`Crear ASN ${form.asn_reference} si aún no existe`}
+                    data-testid="rcv-asn-create"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Crear ASN
+                  </button>
+                )}
+              </div>
+              {!editingId && form.asn_reference && !selectedAsnDoc && (
+                <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+                  El ASN <span className="font-mono font-bold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
+                </p>
+              )}
+              <datalist id="rcv-asn-list">
+                {openAsns.map(a => (
+                  <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
+                ))}
+              </datalist>
+              {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
+              {selectedAsnDoc && !editingId && (
+                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30 border-b border-border/20">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                        Líneas del ASN ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
+                      </span>
+                    </div>
+                    {selectedAsnLine != null && (
+                      <button
+                        type="button"
+                        onClick={clearAsnLine}
+                        className="flex items-center gap-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="w-3 h-3" /> Limpiar
+                      </button>
+                    )}
+                  </div>
+                  {pendingAsnLines.length === 0 ? (
+                    <div className="px-3 py-3 text-[11px] text-muted-foreground italic">
+                      Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.
+                    </div>
+                  ) : (
+                    <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border/10">
+                      {pendingAsnLines.map(line => {
+                        const expected = line.qty_expected || 0;
+                        const received = line.qty_received || 0;
+                        const remaining = expected - received;
+                        const isSel = selectedAsnLine === line.line_no;
+                        // remaining > 0 → faltante (pendiente); < 0 → sobrante; 0 → completo
+                        const badge = remaining > 0
+                          ? { value: remaining.toLocaleString(), label: 'pendientes', cls: 'text-foreground' }
+                          : remaining < 0
+                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-500' }
+                            : { value: '0', label: 'completo', cls: 'text-emerald-500' };
+                        return (
+                          <button
+                            key={line.line_no}
+                            type="button"
+                            onClick={() => pickAsnLine(line)}
+                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-all ${isSel ? 'bg-primary/10' : 'hover:bg-secondary/30'}`}
+                          >
+                            <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSel ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
+                              {isSel && <CheckCircle2 className="w-3 h-3" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="font-mono font-black text-primary">{line.part_number}</span>
+                                {line.country && <span className="text-[10px] font-bold uppercase text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">{line.country}</span>}
+                                {line.brand && <span className="text-[10px] font-bold uppercase text-muted-foreground">{line.brand}</span>}
+                              </div>
+                              {line.description && (
+                                <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={line.description}>
+                                  {line.description}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className={`text-xs font-black tabular-nums ${badge.cls}`}>{badge.value}</div>
+                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">{badge.label}</div>
+                              <div className="text-[9px] tabular-nums text-muted-foreground mt-0.5">{received.toLocaleString()} / {expected.toLocaleString()}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
           {/* UPC — captura primero. Master del catálogo de producto */}
           {!editingId && (
             <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
@@ -997,7 +1109,7 @@ export const ReceivingModule = () => {
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
                 {t('customer')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
-              <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={canManageUpc} />
+              <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1114,117 +1226,6 @@ export const ReceivingModule = () => {
               "Recibir a Carro" (abajo). "Recibir" normal deja el material en
               UBICACION TEMPORAL (default del backend), evitando bins fantasma por
               texto libre. */}
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                ASN (Packing List) <span className="text-red-400">*</span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  list="rcv-asn-list"
-                  placeholder="N° de ASN (obligatorio)"
-                  value={form.asn_reference}
-                  onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
-                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm text-foreground font-mono ${form.asn_reference && !selectedAsnDoc && !editingId ? 'border-red-500/60' : selectedAsnDoc ? 'border-emerald-500/40' : 'border-border'}`}
-                  data-testid="rcv-asn"
-                  disabled={!!editingId}
-                />
-                {!editingId && form.asn_reference && !selectedAsnDoc && (
-                  <button
-                    type="button"
-                    onClick={openCreateAsn}
-                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-black uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-all"
-                    title={`Crear ASN ${form.asn_reference} si aún no existe`}
-                    data-testid="rcv-asn-create"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Crear ASN
-                  </button>
-                )}
-              </div>
-              {!editingId && form.asn_reference && !selectedAsnDoc && (
-                <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
-                  El ASN <span className="font-mono font-bold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
-                </p>
-              )}
-              <datalist id="rcv-asn-list">
-                {openAsns.map(a => (
-                  <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
-                ))}
-              </datalist>
-              {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
-              {selectedAsnDoc && !editingId && (
-                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden">
-                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30 border-b border-border/20">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                        Líneas del ASN ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
-                      </span>
-                    </div>
-                    {selectedAsnLine != null && (
-                      <button
-                        type="button"
-                        onClick={clearAsnLine}
-                        className="flex items-center gap-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="w-3 h-3" /> Limpiar
-                      </button>
-                    )}
-                  </div>
-                  {pendingAsnLines.length === 0 ? (
-                    <div className="px-3 py-3 text-[11px] text-muted-foreground italic">
-                      Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.
-                    </div>
-                  ) : (
-                    <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border/10">
-                      {pendingAsnLines.map(line => {
-                        const expected = line.qty_expected || 0;
-                        const received = line.qty_received || 0;
-                        const remaining = expected - received;
-                        const isSel = selectedAsnLine === line.line_no;
-                        // remaining > 0 → faltante (pendiente); < 0 → sobrante; 0 → completo
-                        const badge = remaining > 0
-                          ? { value: remaining.toLocaleString(), label: 'pendientes', cls: 'text-foreground' }
-                          : remaining < 0
-                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-500' }
-                            : { value: '0', label: 'completo', cls: 'text-emerald-500' };
-                        return (
-                          <button
-                            key={line.line_no}
-                            type="button"
-                            onClick={() => pickAsnLine(line)}
-                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-all ${isSel ? 'bg-primary/10' : 'hover:bg-secondary/30'}`}
-                          >
-                            <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSel ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
-                              {isSel && <CheckCircle2 className="w-3 h-3" />}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 text-xs">
-                                <span className="font-mono font-black text-primary">{line.part_number}</span>
-                                {line.country && <span className="text-[10px] font-bold uppercase text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">{line.country}</span>}
-                                {line.brand && <span className="text-[10px] font-bold uppercase text-muted-foreground">{line.brand}</span>}
-                              </div>
-                              {line.description && (
-                                <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={line.description}>
-                                  {line.description}
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className={`text-xs font-black tabular-nums ${badge.cls}`}>{badge.value}</div>
-                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">{badge.label}</div>
-                              <div className="text-[9px] tabular-nums text-muted-foreground mt-0.5">{received.toLocaleString()} / {expected.toLocaleString()}</div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
           {/* Casilla "BACK ORDER (B.O.)" eliminada: mezclaba un tag confuso con la
               impresión de etiquetas. Ahora TODO recibo imprime etiqueta automática
               (ver handlePrintLabel en el submit). */}

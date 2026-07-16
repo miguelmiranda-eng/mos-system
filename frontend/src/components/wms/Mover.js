@@ -4,7 +4,7 @@ import {
   ScanLine, MapPin, Boxes, Package, Layers, ArrowRight, Loader2,
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
-import { fetcher, poster, cleanScan, logLoadError, API } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
 
@@ -104,12 +104,16 @@ export function MoverModule({ currentUser }) {
   const [genLastBox, setGenLastBox] = useState('');
   // Style/color options for the generate-box form — solo-catálogo (los valores
   // nuevos se agregan únicamente desde el módulo de configuración).
-  const [genOptions, setGenOptions] = useState({ styles: [], colors: [] });
+  const [genOptions, setGenOptions] = useState({ styles: [], colors: [], customers: [] });
   useEffect(() => {
     fetcher('/inventory/options?')
-      .then(d => setGenOptions({ styles: d.styles || [], colors: d.colors || [] }))
+      .then(d => setGenOptions({ styles: d.styles || [], colors: d.colors || [], customers: d.customers || [] }))
       .catch(() => {});
   }, []);
+  // Tallas y clientes curados para "Generar caja" — select-only, igual que Receiving.
+  const { all: genSizeOptions } = useWmsSizes();
+  const genCat = useWmsCatalogs();
+  const genCustomerOptions = mergeUnique(genCat.customers, genOptions.customers);
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -421,19 +425,18 @@ export function MoverModule({ currentUser }) {
               <SearchableSelect options={genOptions.colors} value={genForm.color}
                 onChange={v => setGenForm(f => ({ ...f, color: v }))}
                 placeholder="Color (solo catálogo)" testId="gen-color" allowCreate={false} />
-              <input value={genForm.size} onChange={e => setGenForm(f => ({ ...f, size: e.target.value.toUpperCase() }))}
-                placeholder="Talla"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
+              <SearchableSelect options={genSizeOptions} value={genForm.size}
+                onChange={v => setGenForm(f => ({ ...f, size: v }))}
+                placeholder="Talla (solo catálogo)" testId="gen-size" allowCreate={false} />
               <input type="number" min="1" value={genForm.units} onChange={e => setGenForm(f => ({ ...f, units: e.target.value }))}
                 placeholder="Unidades *" data-testid="gen-units"
                 className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-black text-lg focus:outline-none focus:border-primary" />
-              <input value={genForm.customer} onChange={e => setGenForm(f => ({ ...f, customer: e.target.value }))}
-                placeholder="Cliente"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-bold focus:outline-none focus:border-primary" />
-              <input list="gen-locs" value={genForm.location} onChange={e => setGenForm(f => ({ ...f, location: e.target.value.toUpperCase() }))}
-                placeholder="Ubicación *" data-testid="gen-location"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
-              <datalist id="gen-locs">{locNames.map(n => <option key={n} value={n} />)}</datalist>
+              <SearchableSelect options={genCustomerOptions} value={genForm.customer}
+                onChange={v => setGenForm(f => ({ ...f, customer: v }))}
+                placeholder="Cliente (solo catálogo)" testId="gen-customer" allowCreate={false} />
+              <SearchableSelect options={locNames} value={genForm.location}
+                onChange={v => setGenForm(f => ({ ...f, location: v }))}
+                placeholder="Ubicación * (existente)" testId="gen-location" allowCreate={false} />
             </div>
             <button onClick={handleGenerateBox} disabled={genSubmitting} data-testid="gen-submit"
               className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm flex items-center justify-center gap-2 disabled:opacity-40 active:scale-95 transition-transform">

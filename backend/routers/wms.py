@@ -3943,11 +3943,12 @@ async def inventory_options(request: Request, customer: str = "", manufacturer: 
     """Return unique dropdown values from inventory, case-insensitive dedup, filtered by customer and cascading."""
     await require_auth(request)
     base = {}
-    # The user requested to see ALL items from the WMS excel (wms_inventory), 
-    # so we must NOT filter by customer, as it hides options if the order client name
-    # doesn't match the wms_inventory customer name exactly.
-    # if customer:
-    #     base["customer"] = {"$regex": f"^{customer}$", "$options": "i"}
+    # Scope styles/colors/manufacturers al cliente seleccionado (Receiving pide que
+    # al elegir cliente solo se vean SUS valores). Solo aplica cuando se pasa
+    # `customer`; los callers que no lo pasan siguen viendo todo. Los nombres de
+    # cliente ya están canonicalizados, así que el match exacto no oculta nada.
+    if customer:
+        base["customer"] = {"$regex": f"^{re.escape(customer)}$", "$options": "i"}
 
     # Manufacturers: filter by customer only
     mfr_match = {k: v for k, v in base.items()}
