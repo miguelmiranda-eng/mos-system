@@ -518,8 +518,14 @@ async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
 # ── WMS inventory role levels (1-3) ──────────────────────────────────────────
 # A capability ladder scoped to the WMS inventory area, independent from the
 # generic admin ladder. Cumulative: level N includes every lower level.
-#   1 = cycle counts (enter the module + create/save counts)
-#   2 = + manual inventory adjustments (add line, adjust a box, bulk Excel adjust)
+#   1 = read-only-ish inventory floor work: locaciones, mover (SIN ajustes),
+#       conteo cíclico (crear/guardar), inventario (SIN "agregar manual") y
+#       movimientos. Los módulos de solo-lectura corren con require_auth; lo que
+#       define el nivel 1 es el sidebar (frontend/src/components/WMS.js) + los
+#       endpoints de cycle-count.
+#   2 = + ajustes manuales de inventario (agregar línea, ajustar caja, ajuste
+#       masivo por Excel), aprobar/borrar conteos y el módulo de Conciliación
+#       (/recon/*, antes admin-only).
 #   3 = + cycle-count reports; ALSO confers admin level 3 by default
 #       (see get_admin_level), so a level-3 inventory user has admin-3 powers.
 # supersu/admin always count as the max so they never lose inventory access.

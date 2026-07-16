@@ -140,8 +140,14 @@ const Typeahead = memo(function Typeahead({ value, onChange, options, placeholde
   );
 });
 
-export const InventoryModule = ({ initialCustomer = '' }) => {
+export const InventoryModule = ({ initialCustomer = '', currentUser = null }) => {
   const { t } = useLang();
+  // "Agregar Manual" es un ajuste de inventario: solo nivel 2+. El backend ya
+  // exige require_inventory_level(2) en POST /inventory — esto solo evita
+  // ofrecer un botón que terminaría en 403.
+  const canAddManual = ['admin', 'supersu'].includes(currentUser?.role)
+    ? true
+    : (parseInt(currentUser?.inventory_level, 10) || 0) >= 2;
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [], fabrics: [] });
@@ -692,14 +698,16 @@ export const InventoryModule = ({ initialCustomer = '' }) => {
           {t('wms_stock_monitor')}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={openAddManual}
-            className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:scale-105 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-            data-testid="add-manual-inv-btn"
-          >
-            <Plus className="w-4 h-4" />
-            Agregar Manual
-          </button>
+          {canAddManual && (
+            <button
+              onClick={openAddManual}
+              className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:scale-105 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+              data-testid="add-manual-inv-btn"
+            >
+              <Plus className="w-4 h-4" />
+              Agregar Manual
+            </button>
+          )}
           <label className={`px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 cursor-pointer transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] ${importing ? 'opacity-50' : ''}`} data-testid="import-inv-btn">
             {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
             {importing ? t('wms_importing') : t('wms_import_excel')}

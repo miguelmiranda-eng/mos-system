@@ -45,7 +45,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'transit':      return <TransitModule />;
     case 'mover':        return <MoverModule currentUser={ctx.currentUser} />;
     case 'putaway':      return <PutawayModule />;
-    case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} />;
+    case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} currentUser={ctx.currentUser} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
     case 'picking':      return <PickingModule currentUser={ctx.currentUser} />;
     case 'neck_cutting': return <NeckCuttingModule />;
@@ -395,20 +395,25 @@ export default function WMS() {
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
           {MODULES.filter(m => {
+            // WMS inventory role: scoped to the inventory area by level. This is
+            // an explicit allowlist, so it runs BEFORE the adminOnly/supersuOnly
+            // gates — Conciliación is adminOnly but nivel 2 gets it on purpose.
+            //   nivel 1 → locaciones, mover (sin ajustes), conteo cíclico,
+            //             inventario (sin "agregar manual") y movimientos
+            //   nivel 2 → además conciliación (+ ajustes en Mover y "agregar
+            //             manual" en Inventario, gateados dentro de cada módulo)
+            // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
+            if (currentUser?.role === 'inventory') {
+              const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
+              if (lvl < 1) return false;
+              const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'movements'];
+              if (lvl >= 2) allowed.push('reconciliation');
+              return allowed.includes(m.id);
+            }
             if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
             if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
             if (currentUser?.role === 'customer') return m.id === 'dashboard';
             if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
-            // WMS inventory role: scoped to the inventory area by level.
-            //   nivel 1 → solo conteo cíclico
-            //   nivel 2+ → además inventario y ajustes (MOVER)
-            // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
-            if (currentUser?.role === 'inventory') {
-              const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
-              const allowed = ['cycle_count'];
-              if (lvl >= 2) allowed.push('inventory', 'mover');
-              return allowed.includes(m.id);
-            }
             return true;
           }).map(m => {
             const Icon = m.icon;
