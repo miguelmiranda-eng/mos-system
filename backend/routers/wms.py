@@ -10,7 +10,7 @@ from wms_constants import (
 )
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
-import uuid, io, json, logging, re, asyncio, difflib, time
+import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata
 
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
@@ -280,6 +280,54 @@ CATALOG_TYPES = {"descriptions", "countries", "fabrics", "customers", "colors", 
 # descriptions) son globales — no dependen del cliente.
 CUSTOMER_SCOPED = {"styles", "colors", "manufacturers"}
 
+def _norm_synonym(s: str) -> str:
+    """Normaliza un valor para compararlo: sin acentos, sin puntuación, espacios
+    colapsados, MAYÚSCULAS. '100%COTTON', '100 % Cotton' y '100% COTTON' caen
+    todos en '100 COTTON'; 'MÉXICO' cae en 'MEXICO'."""
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^A-Za-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip().upper()
+
+# Grupos de valores que significan LO MISMO pero NO se parecen como texto. La
+# distancia de edición (_levenshtein, umbral 2) jamás los junta: REPUBLICA
+# DOMINICANA vs DOMINICAN REPUBLIC = distancia 16, y un umbral que los cazara
+# emparejaría medio catálogo (2X vs 3X = 1). Por eso: lista explícita y a mano,
+# cero falsos positivos. Los alias solo se comparan vía _norm_synonym, así que
+# no hace falta listar variantes de acento/puntuación/espaciado.
+_CATALOG_SYNONYM_GROUPS = {
+    "countries": [
+        {"DOMINICAN REPUBLIC", "REPUBLICA DOMINICANA", "REP DOMINICANA", "RD"},
+        {"USA", "US", "UNITED STATES", "UNITED STATES OF AMERICA", "ESTADOS UNIDOS", "EEUU"},
+        {"CHINA", "PEOPLES REPUBLIC OF CHINA", "REPUBLICA POPULAR CHINA"},
+        {"MEXICO", "ESTADOS UNIDOS MEXICANOS"},
+        {"VIETNAM", "VIET NAM", "SOCIALIST REPUBLIC OF VIETNAM"},
+        {"HAITI", "REPUBLIQUE D HAITI", "REPUBLICA DE HAITI"},
+        {"EL SALVADOR", "REPUBLICA DE EL SALVADOR"},
+        {"GUATEMALA", "REPUBLICA DE GUATEMALA"},
+        {"HONDURAS", "REPUBLICA DE HONDURAS"},
+        {"NICARAGUA", "REPUBLICA DE NICARAGUA"},
+        {"INDIA", "REPUBLIC OF INDIA"},
+        {"BANGLADESH", "PEOPLES REPUBLIC OF BANGLADESH"},
+        {"PAKISTAN", "ISLAMIC REPUBLIC OF PAKISTAN"},
+    ],
+    "fabrics": [
+        {"100% COTTON", "100% ALGODON", "ALGODON 100%", "COTTON 100%", "ALGODON"},
+    ],
+}
+
+# (ctype, valor normalizado) -> id del grupo. Se arma una vez al importar.
+_SYNONYM_INDEX: dict = {}
+for _ct, _groups in _CATALOG_SYNONYM_GROUPS.items():
+    for _gid, _group in enumerate(_groups):
+        for _member in _group:
+            _SYNONYM_INDEX[(_ct, _norm_synonym(_member))] = _gid
+
+def _synonym_group_of(ctype: str, value: str):
+    """Id del grupo de sinónimos al que pertenece `value`, o None si no está en
+    ninguno."""
+    return _SYNONYM_INDEX.get((ctype, _norm_synonym(value)))
+
 # Roles allowed to MUTATE catalogs (add / rename / delete / clean). Maps the
 # business notion of "líder o supervisor" onto the existing elevated roles —
 # change this single set if a dedicated 'supervisor' role is added later.
@@ -338,9 +386,41 @@ async def add_catalog_option(request: Request):
     if ctype in CUSTOMER_SCOPED:
         dedupe["customer"] = customer if customer else {"$in": [None, ""]}
     existing = await db.wms_catalog_options.find_one(dedupe)
+    where = f"{ctype} de {customer}" if customer else ctype
     if existing:
-        where = f"{ctype} de {customer}" if customer else ctype
         raise HTTPException(400, f"'{value}' ya existe en {where}")
+
+    # El dedupe de arriba es exact-match: deja pasar '100%COTTON' junto a
+    # '100% COTTON', y deja pasar DOMINICAN REPUBLIC junto a REPUBLICA
+    # DOMINICANA (asi acabamos con las dos curadas y Receiving ofreciendo ambas).
+    # Estos dos chequeos cierran ese hueco contra el MISMO scope:
+    #   1) igualdad normalizada -> variantes de acento/puntuacion/espaciado
+    #   2) grupo de sinonimos   -> el mismo concepto en otro idioma/forma
+    scope = {"type": ctype}
+    if ctype in CUSTOMER_SCOPED:
+        scope["customer"] = customer if customer else {"$in": [None, ""]}
+    curated = await db.wms_catalog_options.find(
+        scope, {"_id": 0, "value": 1}
+    ).to_list(5000)
+
+    value_norm = _norm_synonym(value)
+    gid = _synonym_group_of(ctype, value)
+    for d in curated:
+        other = d.get("value") or ""
+        if _norm_synonym(other) == value_norm:
+            raise HTTPException(
+                400,
+                f"'{value}' es lo mismo que '{other}', que ya está en {where} "
+                f"(solo cambia acentos/espacios/puntuación). Usa '{other}'.",
+            )
+        if gid is not None and _synonym_group_of(ctype, other) == gid:
+            raise HTTPException(
+                400,
+                f"'{value}' y '{other}' son el mismo valor, y '{other}' ya está "
+                f"en {where}. Usa '{other}' — si de verdad quieres cambiar la "
+                f"grafía del catálogo, renombra '{other}' en vez de agregar otra.",
+            )
+
     doc = {
         "catalog_id": gen_id("cat"),
         "type": ctype,
@@ -403,9 +483,15 @@ async def delete_catalog_option(catalog_id: str, request: Request):
 
 # Map catalog type → (collection, field) it sources/normalizes.
 _CATALOG_FIELD_MAP = {
-    "countries":    ("country_of_origin", ["wms_inventory", "wms_receiving"]),
-    "descriptions": ("description",       ["wms_inventory", "wms_receiving"]),
-    "fabrics":      ("fabric_content",    ["wms_inventory", "wms_receiving"]),
+    # country/fabric/description tambien viven en las cajas y en los UPCs: 76.6k
+    # cajas llevan country_of_origin, 77.2k fabric_content y 76.2k description
+    # (+ ~1k UPCs cada uno). Estaban limitados a inventory/receiving, asi que un
+    # rename desde Config dejaba los mirrors driftados — justo lo que el
+    # comentario de abajo advierte. No van a wms_pick_tickets: los tickets no
+    # cargan ninguno de los tres.
+    "countries":    ("country_of_origin", ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog"]),
+    "descriptions": ("description",       ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog"]),
+    "fabrics":      ("fabric_content",    ["wms_inventory", "wms_receiving", "wms_boxes", "wms_upc_catalog"]),
     # Identity fields also live on the physical boxes, on UPCs and on pick tickets
     # — un rename/clean debe barrer TODAS o los mirrors se drift. Ejemplo real
     # (LIGH PINK, 2026-07-13): el color se colo en receiving, se propago a boxes
@@ -1692,8 +1778,11 @@ async def reconcile_lpn(request: Request):
     scanning the physical LPN resolves via the barcode/lpn_id fallback in get_box.
 
     Body: { location, sku|style, color, size, physical_lpn, units, destination }
+
+    Solo admin/supersu: identificar una caja es trabajo de supervisor. El picker
+    que escanea un LPN desconocido se detiene y avisa (ver scan-box).
     """
-    user = await require_auth(request)
+    user = await require_admin(request)
     body = await request.json()
     location = (body.get("location") or "").strip()
     sku = (body.get("sku") or body.get("style") or "").strip()
@@ -3593,9 +3682,20 @@ async def _update_inventory_enhanced(
             # Use the same sku/style as the source record for consistency
             inv_sku = inv.get("sku") or inv.get("style") or sku
             neck_key = {"sku": inv_sku, "color": color or "", "size": size or "", "location": "CUTTING_NECK"}
+            # $setOnInsert del inventory_id: wms_inventory tiene un indice UNICO
+            # en inventory_id, y un upsert que no lo pone crea la fila con
+            # inventory_id=null. Mongo solo admite UN null en un indice unico, asi
+            # que la PRIMERA fila de CUTTING_NECK se quedaba con el slot y todo
+            # pick a neck_cutting posterior moria con E11000 DuplicateKeyError —
+            # despues de haber descontado el estante, dejando el ticket sin
+            # guardar y el material sin rastro (4 casos el 2026-07-15/16).
+            # En un upsert que MATCHEA, $setOnInsert no se aplica: la fila
+            # conserva su inventory_id y $inc suma normal.
             await db.wms_inventory.update_one(
                 neck_key,
-                {"$inc": {"units_on_hand": qty, "units_allocated": qty}, "$set": {"updated_at": now_iso(), "customer": customer, "style": inv.get("style", sku)}},
+                {"$inc": {"units_on_hand": qty, "units_allocated": qty},
+                 "$set": {"updated_at": now_iso(), "customer": customer, "style": inv.get("style", sku)},
+                 "$setOnInsert": {"inventory_id": gen_id("inv")}},
                 upsert=True
             )
         # Surface the inventory_id so callers (e.g. receiving) can link the
@@ -5256,9 +5356,9 @@ async def scan_box(ticket_id: str, request: Request):
 
     Respuestas:
       { status: "matched",       box: {...} }              # ya conocida → deduce
-      { status: "needs_binding", ticket_context: {...},    # no conocida →
-                                 sizes_needed: [...],      #   pide talla y
-                                 candidates: [...] }       #   cantidad al picker
+      { status: "needs_binding", ticket_context: {...},    # no identificada → el
+                                 sizes_needed: [...],      #   PDA se detiene con
+                                 candidates: [...] }       #   "avisa a tu supervisor"
       { status: "wrong_ticket",  box: {...} }              # existe pero es otro style/color
     """
     user = await require_auth(request)
@@ -5362,8 +5462,12 @@ async def bind_box(ticket_id: str, request: Request):
       2. Le pone physical_lpn = lpn.
       3. Si actual_units != box.units → ajusta y logea reconciliación.
       4. Devuelve la caja lista para deducir.
+
+    Solo admin/supersu: el picker ya NO liga cajas. Al escanear un LPN que no
+    está en el sistema el PDA se detiene con "avisa a tu supervisor" y nunca
+    llega aquí; el supervisor identifica la caja antes de que se pueda surtir.
     """
-    user = await require_auth(request)
+    user = await require_admin(request)
     body = await request.json()
     lpn = _norm_lpn(body.get("lpn"))
     location = (body.get("location") or "").strip().upper()
@@ -5568,6 +5672,16 @@ async def pick_size(ticket_id: str, request: Request):
         await _assert_pick_stock(style, color, delta_ps, user)
 
     # WMS-003: abort on failure so we never record a deduction that didn't apply.
+    #
+    # WMS-004 (el inverso, y el peligroso): tampoco podemos APLICAR un descuento
+    # sin registrarlo. Mongo standalone no da transacciones multi-documento, asi
+    # que si la celda 1 se descuenta y la celda 2 revienta, el material YA salio.
+    # Antes se abortaba con "no se guardó" y el ticket quedaba intacto: el picker
+    # leia el aviso, re-escaneaba, y como deducted_map seguia vacio el delta se
+    # recalculaba COMPLETO -> segunda baja del mismo material.
+    # Ahora rastreamos las celdas realmente aplicadas y, si algo se movio, lo
+    # persistimos antes de propagar el error. El reintento ve el delta correcto.
+    applied = []   # [(sz, loc, delta_firmado)] celdas que SI tocaron el stock
     try:
         for sz, loc, d in pos:
             # Si el picker escaneó una caja para esta celda, descontamos de ESA
@@ -5581,12 +5695,53 @@ async def pick_size(ticket_id: str, request: Request):
             await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
                                      user=user, ticket_id=ticket_id,
                                      only_box_id=only_box)
+            applied.append((sz, loc, d))
         for sz, loc, d in neg:
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error descontando talla en pick-size")
+            applied.append((sz, loc, -d))
+    except Exception as exc:
+        is_http = isinstance(exc, HTTPException)
+        if not is_http:
+            logger.exception("Error descontando talla en pick-size")
+        if applied:
+            # Algo YA se movio. Registrarlo es obligatorio: sin esto el reintento
+            # descuenta doble y el material queda sin rastro en el ticket.
+            salvage = {k: dict(v) for k, v in old_map.items()}
+            cell = dict(salvage.get(size) or {})
+            for sz, loc, d in applied:
+                cell[loc] = cell.get(loc, 0) + d
+            salvage[size] = {k: v for k, v in cell.items() if v}
+            salvaged_total = sum(salvage[size].values())
+            salvaged_ps = dict(ticket.get("picked_sizes") or {})
+            salvaged_ps[size] = {"total": salvaged_total, "details": dict(salvage[size])}
+            await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {
+                "picked_sizes": salvaged_ps,
+                "deducted_map": salvage,
+                "picking_status": "in_progress",
+                "last_picked_by": user.get("user_id"),
+                "last_picked_by_name": user.get("name", user.get("email", "")),
+                "last_picked_at": now_iso(),
+            }})
+            await log_movement(user, "pick_size_partial", {
+                "ticket_id": ticket_id, "size": size,
+                "applied_cells": [{"size": s, "location": l, "delta": d} for s, l, d in applied],
+                "salvaged_total": salvaged_total,
+                "error": str(getattr(exc, "detail", None) or exc)[:300],
+                "note": "El stock se movio pero la operacion fallo a medias; se "
+                        "registro lo aplicado para que el reintento no descuente doble.",
+            })
+            logger.error(
+                "pick_size PARCIAL ticket=%s talla=%s celdas_aplicadas=%s error=%s",
+                ticket_id, size, applied, getattr(exc, "detail", None) or exc,
+            )
+            raise HTTPException(409, (
+                f"Talla {size}: se descontaron {salvaged_total} pz PERO la operación "
+                f"falló a medias. El material YA salió del inventario y quedó "
+                f"registrado — NO vuelvas a escanear las mismas cajas. Avisa a tu "
+                f"supervisor."
+            ))
+        if is_http:
+            raise
         raise HTTPException(500, "No se pudo descontar la talla; no se guardó")
 
     # Merge only this size's deducted cells into the map.

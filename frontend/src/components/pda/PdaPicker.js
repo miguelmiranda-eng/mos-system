@@ -397,7 +397,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const [activeSize, setActiveSize] = useState(null);
   const [activeLocation, setActiveLocation] = useState(null);
   const [activeBox, setActiveBox] = useState(null);        // {box_id, units, lpn}
-  const [bindingInfo, setBindingInfo] = useState(null);    // {lpn, ticket_context, sizes_needed}
+  const [unidentifiedLpn, setUnidentifiedLpn] = useState(null); // LPN escaneado que no existe en el sistema
   const [takeQty, setTakeQty] = useState(0);
   // Carrito de cajas escaneadas EN LA UBICACIÓN ACTIVA, aún sin descontar.
   // Cada item: { box_id, lpn, boxUnits, qty, size }. Se acumula multi-talla y
@@ -429,7 +429,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     ));
     setStage('sizes');
     setActiveSize(null); setActiveLocation(null); setActiveBox(null);
-    setBindingInfo(null); setTakeQty(0); setCart([]); setLocBoxes([]);
+    setUnidentifiedLpn(null); setTakeQty(0); setCart([]); setLocBoxes([]);
     setLocScan(""); setBoxScan("");
   }, [ticket]);
 
@@ -528,20 +528,20 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   // ── Navegación entre stages (UBICACIÓN-PRIMERO) ───────────────────────────
   const goToLocations = () => {
     setActiveSize(null); setActiveLocation(null); setActiveBox(null);
-    setLocScan(""); setBoxScan(""); setBindingInfo(null); setCart([]); setLocBoxes([]);
+    setLocScan(""); setBoxScan(""); setUnidentifiedLpn(null); setCart([]); setLocBoxes([]);
     setStage('locations');
   };
   const backToSizes = () => {
     setActiveSize(null); setActiveLocation(null); setActiveBox(null);
-    setBindingInfo(null); setStage('sizes');
+    setUnidentifiedLpn(null); setStage('sizes');
   };
   const backToLocations = () => {
     setActiveLocation(null); setActiveBox(null);
-    setBindingInfo(null); setBoxScan(""); setCart([]); setLocBoxes([]);
+    setUnidentifiedLpn(null); setBoxScan(""); setCart([]); setLocBoxes([]);
     setStage('locations');
   };
   const backToBoxes = () => {
-    setActiveBox(null); setBindingInfo(null); setBoxScan("");
+    setActiveBox(null); setUnidentifiedLpn(null); setBoxScan("");
     setStage('boxes');
   };
 
@@ -563,7 +563,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   // Entra a una ubicación (por scan o tap en la lista): carrito limpio + cajas.
   const enterLocation = (hit) => {
     setActiveLocation(hit);
-    setActiveSize(null); setActiveBox(null); setBindingInfo(null);
+    setActiveSize(null); setActiveBox(null); setUnidentifiedLpn(null);
     setCart([]); setBoxScan("");
     setStage('boxes');
     loadLocationBoxes(hit.location);
@@ -604,10 +604,12 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         toast.error(data.message || "La caja no es de este ticket");
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       } else if (data.status === "needs_binding") {
-        // LPN externo / código no-BOX → deja seleccionar la caja de la lista
-        // de esta ubicación para ligarla y descontarla manualmente.
-        setBindingInfo(data);
-        setStage('binding');
+        // LPN externo / código no-BOX → el picker NO liga cajas. Antes aquí se
+        // le abría un cuestionario para atar la etiqueta a una caja a mano; eso
+        // ahora es trabajo del supervisor (POST /bind-box exige admin/supersu).
+        setUnidentifiedLpn(data.lpn || lpn);
+        setStage('unidentified');
+        if (navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 120]);
       }
     } catch (e) { toast.error("Error de conexión al escanear"); }
   };
@@ -642,31 +644,6 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     if (navigator.vibrate) navigator.vibrate(60);
   };
 
-  // ── LPN externo / no-BOX → seleccionar la caja de la lista a mano ─────────
-  // Liga el LPN escaneado a la caja elegida (talla+units de esa caja) y la abre
-  // para descontarla de ubicación e inventario como cualquier otra.
-  const selectBindCandidate = async (candidate) => {
-    const lpn = bindingInfo?.lpn;
-    try {
-      const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/bind-box`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lpn, location: activeLocation.location,
-          size: candidate.size, actual_units: candidate.units,
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) { toast.error(data.detail || "Error al ligar caja"); return; }
-      setBindingInfo(null);
-      toast.success(data.reconciled
-        ? `LPN ligado a ${data.box.box_id} + ajuste (${data.delta > 0 ? '+' : ''}${data.delta})`
-        : `LPN ligado a ${data.box.box_id}`);
-      if (navigator.vibrate) navigator.vibrate(80);
-      openBoxForQty(data.box, lpn);
-    } catch { toast.error("Error de conexión al ligar"); }
-  };
-
   // ── Acumular caja (NO descuenta; solo agrega al carrito local) ─────────────
   const addToCart = () => {
     const qty = parseInt(takeQty) || 0;
@@ -678,7 +655,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     setCart(prev => [...prev, {
       box_id: activeBox.box_id, lpn: activeBox.lpn, boxUnits: activeBox.units, qty, size: sz,
     }]);
-    setActiveBox(null); setBindingInfo(null); setBoxScan(""); setTakeQty(0);
+    setActiveBox(null); setUnidentifiedLpn(null); setBoxScan(""); setTakeQty(0);
     setStage("boxes");
     if (navigator.vibrate) navigator.vibrate(40);
     const faltaSz = Math.max(0, remainingOf(sz) - (cartQtyForSize(sz) + qty));
@@ -955,8 +932,8 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             </div>
           </div>
 
-          {/* Cajas que el sistema tiene AQUÍ (guía). Escanea cada una; si es un
-              LPN de proveedor, tócala en la lista para ligarla y descontarla. */}
+          {/* Cajas que el sistema tiene AQUÍ (guía). Escanea cada una; si el
+              código no está en el sistema, el picker se detiene y avisa. */}
           <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
             <div className="px-3 py-2 border-b border-white/10 text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
               <Boxes className="w-3.5 h-3.5" /> Cajas en esta ubicación {locBoxesLoading ? "…" : `(${locBoxes.length})`}
@@ -1005,7 +982,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               Identificar caja
             </button>
             <div className="mt-2 text-[10px] text-slate-500 px-1 leading-relaxed">
-              Si es BOX- registrada se identifica al instante. Si es LPN de proveedor, te pediremos ligar la caja.
+              Si es una caja BOX- registrada se identifica al instante. Si no está en el sistema, avisa a tu supervisor.
             </div>
           </div>
 
@@ -1060,43 +1037,28 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         </div>
       )}
 
-      {/* ══════ STAGE 4a: LPN externo / no-BOX → selecciona la caja ══════ */}
-      {stage === 'binding' && bindingInfo && (
+      {/* ══════ STAGE 4a: LPN no identificado → alto, avisa al supervisor ══════ */}
+      {stage === 'unidentified' && unidentifiedLpn && (
         <div className="px-3 space-y-3">
+          <div className="bg-red-500/15 border-2 border-red-500/50 rounded-2xl p-4 text-center">
+            <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-2" />
+            <div className="text-lg font-black uppercase tracking-widest text-red-300 leading-tight">
+              Esta caja no está identificada
+            </div>
+            <div className="text-base font-black uppercase tracking-wide text-red-200 mt-1">
+              Avisa a tu supervisor
+            </div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-red-400/70 mt-3">Código escaneado</div>
+            <div className="font-mono font-black text-red-100 text-base break-all">{unidentifiedLpn}</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-[11px] text-slate-400 leading-relaxed">
+            No la descuentes ni la muevas. El supervisor tiene que registrar esta
+            caja antes de que se pueda surtir.
+          </div>
           <button onClick={backToBoxes}
-            className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
+            className="w-full h-14 rounded-2xl bg-white/5 active:bg-white/10 border border-white/10 text-slate-200 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2">
             <ChevronLeft className="w-4 h-4" /> Volver a cajas
           </button>
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3">
-            <div className="text-[10px] font-black uppercase tracking-widest text-amber-300">Código no reconocido</div>
-            <div className="font-mono font-black text-amber-100 text-base break-all">{bindingInfo.lpn}</div>
-            <div className="text-[11px] text-slate-300 mt-1">
-              Selecciona a qué caja de <b className="text-blue-300 font-mono">{activeLocation.location}</b> corresponde,
-              para ligarla y descontarla de la ubicación e inventario.
-            </div>
-          </div>
-          {(bindingInfo.candidates || []).length === 0 ? (
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-center text-[12px] text-slate-400">
-              No hay cajas sin ligar en esta ubicación para este ticket.
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {(bindingInfo.candidates || []).map((c, i) => (
-                <button key={c.box_id || i} onClick={() => selectBindCandidate(c)}
-                  className="w-full rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3 active:bg-white/5 text-left">
-                  <span className="text-[11px] font-black px-2 py-0.5 rounded bg-white/5 text-slate-200 shrink-0">{c.size}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono font-black text-blue-200 text-sm truncate">{c.box_id}</div>
-                    <div className="text-[10px] text-slate-500 font-mono truncate">{c.location}</div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-lg font-mono font-black text-emerald-300">{c.units}</div>
-                    <div className="text-[9px] uppercase text-slate-500 font-black">pz</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -1171,74 +1133,3 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   );
 }
 
-// ═════════════════════ BindingStage ══════════════════════════════════════════
-// Cuestionario inline (no modal) cuando el LPN escaneado no está en sistema.
-// Pide talla + cantidad real, llama /bind-box y regresa al stage quantity.
-function BindingStage({ info, location, onBack, onSubmit, defaultSize }) {
-  const preselected = defaultSize && info.sizes_needed.find(s => s.size === defaultSize)
-    ? defaultSize
-    : (info.sizes_needed[0]?.size || "");
-  const [size, setSize] = useState(preselected);
-  const [units, setUnits] = useState(() => {
-    const r = info.sizes_needed.find(s => s.size === preselected)?.remaining;
-    return r != null ? String(r) : "";
-  });
-
-  return (
-    <div className="px-3 space-y-3">
-      <button onClick={onBack}
-        className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
-        <ChevronLeft className="w-4 h-4" /> Volver a caja
-      </button>
-
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3">
-        <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle className="w-5 h-5 text-amber-400" />
-          <div className="text-sm font-black uppercase tracking-widest text-amber-300">Caja no registrada</div>
-        </div>
-        <div className="text-[10px] text-amber-400/70 mb-1">LPN escaneado</div>
-        <div className="font-mono font-black text-lg text-amber-100 break-all">{info.lpn}</div>
-        <div className="mt-2 text-[10px] text-slate-400 leading-relaxed">
-          Vas a atar esta etiqueta a la caja de la BD en{" "}
-          <b className="text-blue-300 font-mono">{location}</b>. Confirma:
-        </div>
-      </div>
-
-      <div>
-        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
-          Talla real de la caja
-        </label>
-        <select value={size} onChange={e => {
-            setSize(e.target.value);
-            const r = info.sizes_needed.find(s => s.size === e.target.value)?.remaining;
-            if (r != null) setUnits(String(r));
-          }}
-          className="w-full h-14 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-lg font-mono font-black focus:outline-none focus:border-amber-400">
-          {info.sizes_needed.map(s => (
-            <option key={s.size} value={s.size}>{s.size} · faltan {s.remaining}</option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
-          Cantidad REAL en la caja (cuenta física)
-        </label>
-        <input type="number" inputMode="numeric" min="0" value={units}
-          onChange={e => setUnits(e.target.value)}
-          onFocus={(e) => e.target.select()}
-          placeholder="0"
-          className="w-full h-16 bg-black/40 border-2 border-white/10 rounded-xl px-3 text-3xl text-center font-mono font-black focus:outline-none focus:border-amber-400" />
-        <div className="text-[10px] text-slate-500 mt-1">
-          El sistema ajustará el inventario si difiere de la BD.
-        </div>
-      </div>
-
-      <button onClick={() => onSubmit({ size, actual_units: parseInt(units) || 0 })}
-        disabled={!size || !units}
-        className="w-full h-16 rounded-2xl bg-amber-500 active:bg-amber-600 text-black text-base font-black uppercase tracking-widest disabled:opacity-40">
-        Ligar y continuar
-      </button>
-    </div>
-  );
-}
