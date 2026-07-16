@@ -525,10 +525,32 @@ _IDENTITY_LABELS = {
 }
 
 
+async def _is_strict_customer(customer: str) -> bool:
+    """True si el cliente esta en modo ESTRICTO: solo pasa lo curado, sin el
+    escape "ya existe en inventario".
+
+    El escape existe porque el catalogo cubre una fraccion de la realidad: para
+    la mayoria de los clientes, cerrarlo de golpe les impide recibir (LIF: 11.5k
+    filas con descripciones sin curar). Pero un cliente cuyo catalogo YA describe
+    su realidad no necesita el escape — y mientras lo tenga, cualquier basura que
+    se cuele queda legitimada para siempre. Por eso se activa cliente por cliente
+    conforme se cura su catalogo, en config_options.strict_identity_customers.
+    """
+    cu = (customer or "").strip().upper()
+    if not cu:
+        return False
+    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
+    strict = cfg.get("strict_identity_customers")
+    if strict is None:
+        strict = DEFAULT_OPTIONS.get("strict_identity_customers") or []
+    return cu in {str(c).strip().upper() for c in strict}
+
+
 async def _assert_curated_identity(customer: str, values: dict):
     """Rechaza (HTTP 400) si algun valor no esta en el catalogo curado.
     `values`: {ctype: value_string}. Vacios se ignoran. `styles` se scopea por
     customer (unico campo per-cliente); el resto son globales."""
+    strict = await _is_strict_customer(customer)
     for ctype, raw in values.items():
         v = (raw or "").strip()
         if not v:
@@ -556,14 +578,23 @@ async def _assert_curated_identity(customer: str, values: dict):
         # consolida con "Detectar typos". Solo se rechaza lo que no esta NI
         # curado NI en inventario (basura nueva). Los dropdowns son select-only,
         # asi que la UI ya no deja teclear valores libres.
-        field = (_CATALOG_FIELD_MAP.get(ctype) or (None,))[0]
-        if field:
-            in_inv = await db.wms_inventory.find_one(
-                {field: {"$regex": f"^{re.escape(v)}$", "$options": "i"}}, {"_id": 1})
-            if in_inv:
-                continue  # existe en inventario → válido
+        # En modo ESTRICTO no hay escape: si no está curado, se rechaza.
+        if not strict:
+            field = (_CATALOG_FIELD_MAP.get(ctype) or (None,))[0]
+            if field:
+                in_inv = await db.wms_inventory.find_one(
+                    {field: {"$regex": f"^{re.escape(v)}$", "$options": "i"}}, {"_id": 1})
+                if in_inv:
+                    continue  # existe en inventario → válido
         label = _IDENTITY_LABELS.get(ctype, ctype)
         scope = f" de {customer}" if ctype in CUSTOMER_SCOPED and customer else ""
+        if strict:
+            raise HTTPException(
+                400,
+                f"{label} '{v}' no está en el catálogo curado{scope}. "
+                f"{customer} está en modo estricto: los valores se dan de alta "
+                f"únicamente desde Config WMS.",
+            )
         raise HTTPException(
             400,
             f"{label} '{v}' no está ni en el catálogo curado ni en inventario{scope}. "
@@ -598,9 +629,16 @@ async def _build_identity_checker():
         vals = await db.wms_inventory.distinct(field)
         inv[ctype] = {str(x).strip().upper() for x in vals if x}
 
+    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
+    _s = cfg.get("strict_identity_customers")
+    if _s is None:
+        _s = DEFAULT_OPTIONS.get("strict_identity_customers") or []
+    strict_set = {str(c).strip().upper() for c in _s}
+
     def check(customer, values):
         errs = []
         cu = (customer or "").strip().upper()
+        strict = cu in strict_set
         for ctype, raw in values.items():
             v = (raw or "").strip()
             if not v:
@@ -616,7 +654,8 @@ async def _build_identity_checker():
                 continue                      # bootstrap: sin catalogo aun
             if v.upper() in ok:
                 continue                      # curado
-            if v.upper() in (inv.get(ctype) or set()):
+            # En modo ESTRICTO no aplica el escape del inventario.
+            if not strict and v.upper() in (inv.get(ctype) or set()):
                 continue                      # ya existe en inventario
             errs.append("%s '%s'" % (_IDENTITY_LABELS.get(ctype, ctype), v))
         return errs

@@ -117,6 +117,13 @@ DEFAULT_OPTIONS = {
     # pregunta talla y cantidad real, ata el LPN a la caja FIFO de esa loc y
     # reconcilia el conteo. Apagable desde catalog-center en emergencias.
     "pick_requires_scan": True,
+    # Clientes en modo ESTRICTO de identidad: para ellos, un valor solo pasa si
+    # esta en el catalogo curado. Para el resto sigue valiendo el escape "ya
+    # existe en inventario" — sin el, un cliente cuyo catalogo no cubre su
+    # realidad no puede recibir nada (LIF tiene 11.5k filas con descripciones
+    # sin curar). Se activa cliente por cliente conforme se cura su catalogo.
+    # Ver _assert_curated_identity / _build_identity_checker en routers/wms.py.
+    "strict_identity_customers": [],
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]
