@@ -9895,6 +9895,49 @@ async def cc_scan_location(count_id: str, request: Request):
     }
 
 
+@router.post("/cycle-counts/{count_id}/unscan-location")
+async def cc_unscan_location(count_id: str, request: Request):
+    """Quita un LPN escaneado por error del set del pase actual de una ubicación.
+    Solo corrige la captura antes de cerrar — no cierra, no escala, no toca
+    inventario. Mismas validaciones/gate de nivel 3 que scan-location."""
+    user = await require_inventory_level(request, 1)
+    body = await request.json()
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+    if count.get("mode") != "box_scan":
+        raise HTTPException(400, "Este conteo no es por caja (box_scan)")
+    if count.get("status") == "approved":
+        raise HTTPException(400, "Este conteo ya fue aprobado")
+    location = (body.get("location") or "").strip()
+    box_id = (body.get("box_id") or body.get("lpn") or "").strip().upper()
+    if not location or not box_id:
+        raise HTTPException(400, "location y box_id (LPN) son requeridos")
+    L = _cc_find_loc(count, location)
+    if not L:
+        raise HTTPException(404, f"La ubicación {location} no está en este conteo")
+    if L.get("status") in ("ok", "supervisor"):
+        raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
+    if int(L.get("pass", 1)) >= 3 and get_inventory_level(user) < 3:
+        raise HTTPException(403, "El 3er conteo solo puede procesarlo inventario nivel 3")
+    scanned = L.get("scanned_boxes", [])
+    if box_id not in scanned:
+        raise HTTPException(404, f"{box_id} no está en el escaneo de {location}")
+    scanned = [b for b in scanned if b != box_id]
+    await db.wms_cycle_counts.update_one(
+        {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
+        {"$set": {"scan_locations.$.scanned_boxes": scanned, "last_updated_at": now_iso()}},
+    )
+    expected = set(L.get("expected_boxes", []))
+    return {
+        "box_id": box_id,
+        "removed": True,
+        "scanned_count": len(scanned),
+        "expected_count": len(expected),
+        "pass": L.get("pass"),
+    }
+
+
 @router.post("/cycle-counts/{count_id}/close-location")
 async def cc_close_location(count_id: str, request: Request):
     """Cierra una ubicación bajo la máquina de DOBLE CONTEO CIEGO:

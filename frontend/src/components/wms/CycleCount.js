@@ -638,6 +638,21 @@ export const CycleCountModule = () => {
       } catch { toast.error('Error de conexión'); }
     };
 
+    // Quita un LPN escaneado por error antes de cerrar la ubicación.
+    const unscanBox = async (loc, boxId) => {
+      try {
+        const res = await poster(`/cycle-counts/${selectedCount.count_id}/unscan-location`, { location: loc, box_id: boxId });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al quitar'); return; }
+        setSelectedCount(prev => ({
+          ...prev,
+          scan_locations: prev.scan_locations.map(L => L.location === loc
+            ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== boxId) }
+            : L)
+        }));
+        toast.success(`${boxId} quitada del escaneo`);
+      } catch { toast.error('Error de conexión'); }
+    };
+
     const closeLocation = async (loc) => {
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/close-location`, { location: loc });
@@ -742,8 +757,14 @@ export const CycleCountModule = () => {
                     {scanned.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {scanned.map(b => (
-                          <span key={b} className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${exp.has(b) ? 'bg-green-500/15 text-green-500' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'}`} title={exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}>
+                          <span key={b} className={`inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded ${exp.has(b) ? 'bg-green-500/15 text-green-500' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'}`} title={exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}>
                             {b}{exp.has(b) ? '' : ' ⚠'}
+                            {!isTerminal && (
+                              <button onClick={() => unscanBox(L.location, b)}
+                                className="ml-0.5 leading-none text-sm opacity-60 hover:opacity-100 hover:text-red-500"
+                                title="Quitar (escaneada por error)"
+                                data-testid={`cc-unscan-${L.location}-${b}`}>×</button>
+                            )}
                           </span>
                         ))}
                       </div>
