@@ -7431,21 +7431,30 @@ async def generate_location_labels(request: Request, location: str = ""):
 # ==================== EXPORT ====================
 
 @router.get("/export/inventory")
-async def export_inventory(request: Request, exclude_hold: bool = False):
+async def export_inventory(request: Request, exclude_hold: bool = False, customer: str = ""):
     await require_auth(request)
+    # Filtro opcional por cliente (mismo patron que /export/receiving). Sin el,
+    # el Excel trae los ~23k renglones de TODOS los clientes y una columna como
+    # UPC —que hoy solo tiene SPEKTRUM— se ve casi vacia porque las filas del
+    # cliente con datos quedan dispersas. Con customer=X baja solo ese cliente.
+    cust = (customer or "").strip()
+    stock_filter = {"$or": [
+        {"units_on_hand": {"$gt": 0}},
+        {"total_boxes": {"$gt": 0}},
+        {"units_allocated": {"$gt": 0}},
+    ]}
+    inv_query = dict(stock_filter)
+    box_query = {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]}
+    if cust:
+        cust_rx = {"$regex": f"^{re.escape(cust)}$", "$options": "i"}
+        inv_query = {"$and": [stock_filter, {"customer": cust_rx}]}
+        box_query = {"$and": [box_query, {"customer": cust_rx}]}
     # to_list(None) returns ALL rows. A fixed cap (e.g. 20000) silently dropped
     # the alphabetical tail (W/X/Y/Z SKUs) once the catalog grew past it.
     # Skip fully-empty orphan rows (no units, no boxes, no allocations) so the
     # report never shows phantom lines — e.g. a row left behind after a move/pick
     # decremented one counter but not the other.
-    inventory = await db.wms_inventory.find(
-        {"$or": [
-            {"units_on_hand": {"$gt": 0}},
-            {"total_boxes": {"$gt": 0}},
-            {"units_allocated": {"$gt": 0}},
-        ]},
-        {"_id": 0},
-    ).sort("sku", 1).to_list(None)
+    inventory = await db.wms_inventory.find(inv_query, {"_id": 0}).sort("sku", 1).to_list(None)
     # Optionally drop rows sitting in SAT-held locations (case-insensitive match
     # against the hold list).
     if exclude_hold:
@@ -7455,10 +7464,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
     import xlsxwriter
     # Pull boxes up-front so the aggregated "Inventory" sheet can show each row's
     # MOST RECENT box transfer (date + user). Reused for the per-box sheet below.
-    boxes = await db.wms_boxes.find(
-        {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]},
-        {"_id": 0},
-    ).sort([("location", 1), ("sku", 1)]).to_list(None)
+    boxes = await db.wms_boxes.find(box_query, {"_id": 0}).sort([("location", 1), ("sku", 1)]).to_list(None)
     if exclude_hold and held:
         boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
     # Last transfer INTO each location (date + user) from the movement log. The
@@ -7571,8 +7577,10 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
 
     wb.close()
     buf.seek(0)
+    # El nombre del archivo lleva el cliente para no encimar descargas.
+    _slug = re.sub(r"[^A-Za-z0-9]+", "_", cust).strip("_") if cust else "todos"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": "attachment; filename=inventory.xlsx"})
+                             headers={"Content-Disposition": f"attachment; filename=inventory_{_slug}.xlsx"})
 
 
 @router.get("/export/receiving")

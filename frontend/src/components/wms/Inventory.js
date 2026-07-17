@@ -389,7 +389,18 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   }, [load, hasAnyFilter]);
 
   const [excludeHold, setExcludeHold] = useState(false);
-  const exportExcel = () => window.open(`${API}/export/inventory${excludeHold ? '?exclude_hold=true' : ''}`, '_blank');
+  // El export respeta el cliente activo (columna filtrada o el filtro general).
+  // Sin cliente, baja todos — igual que antes. Con cliente, el Excel trae solo
+  // ese cliente, para que columnas como UPC (hoy solo SPEKTRUM) no se pierdan
+  // entre 23k renglones de todos.
+  const exportExcel = () => {
+    const params = new URLSearchParams();
+    if (excludeHold) params.set('exclude_hold', 'true');
+    const cust = (colFilters.customer || customerFilter || '').trim();
+    if (cust) params.set('customer', cust);
+    const qs = params.toString();
+    window.open(`${API}/export/inventory${qs ? `?${qs}` : ''}`, '_blank');
+  };
 
   const handleImport = async (e) => {
     const file = e.target.files?.[0];
