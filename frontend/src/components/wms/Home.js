@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight, Factory } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
+import { UpcCatalog } from "./UpcCatalog";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
@@ -307,6 +308,10 @@ export const HomeModule = () => {
 
   return (
     <div className="space-y-6">
+      {/* Catálogo de UPC — el menú del supervisor para dar de alta los códigos
+          que el operador escanea en Receiving (Receiving ya no los crea). */}
+      <UpcCatalog isManager={isManager} />
+
       <div className="bg-card/40 border border-border/20 rounded-2xl p-5">
         <h2 className="text-sm font-black uppercase tracking-widest text-foreground mb-1">Catálogos maestros</h2>
         <p className="text-xs text-muted-foreground">
