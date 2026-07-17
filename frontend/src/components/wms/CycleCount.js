@@ -29,6 +29,9 @@ export const CycleCountModule = () => {
   // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
   const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
   const [scanDraft, setScanDraft] = useState({}); // { [location]: textoLPN }
+  // Resolución manual del supervisor: { [`${loc}:${boxId}`]: {action,units,sku,color,size,customer} }
+  const [supForm, setSupForm] = useState({});
+  const [resolvingSup, setResolvingSup] = useState(false);
 
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail' | 'timeline'
   const [reportsSummary, setReportsSummary] = useState(null);
@@ -653,6 +656,30 @@ export const CycleCountModule = () => {
       } catch { toast.error('Error de conexión'); }
     };
 
+    // Resolución manual (nivel 3) de una ubicación en 'supervisor': por cada LPN
+    // desconocido, crear con unidades tecleadas o descartar, y cerrar la ubicación.
+    const resolveSupervisor = async (loc, unknownBoxes) => {
+      const resolutions = (unknownBoxes || []).map(b => {
+        const f = supForm[`${loc}:${b}`] || {};
+        const action = f.action || 'discard';
+        return action === 'create'
+          ? { box_id: b, action, units: parseInt(f.units, 10) || 0, sku: f.sku || '', color: f.color || '', size: f.size || '', customer: f.customer || '' }
+          : { box_id: b, action: 'discard' };
+      });
+      const bad = resolutions.find(r => r.action === 'create' && (!r.units || r.units <= 0 || !r.sku));
+      if (bad) { toast.error(`Falta style o unidades (>0) para crear ${bad.box_id}`); return; }
+      setResolvingSup(true);
+      try {
+        const res = await poster(`/cycle-counts/${selectedCount.count_id}/resolve-supervisor`, { location: loc, resolutions });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
+        const data = await res.json();
+        toast.success(`${loc}: resuelta · ${data.created} creada(s), ${data.discarded} descartada(s)`);
+        const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
+        setSelectedCount(updated);
+      } catch { toast.error('Error de conexión'); }
+      finally { setResolvingSup(false); }
+    };
+
     const closeLocation = async (loc) => {
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/close-location`, { location: loc });
@@ -780,7 +807,47 @@ export const CycleCountModule = () => {
                         Cerrar ubicación
                       </button>
                     )}
-                    {L.status === 'supervisor' && <div className="text-[11px] text-red-400 font-bold uppercase tracking-widest">⚑ No cuadró tras 3 pases — requiere ajuste manual del supervisor</div>}
+                    {L.status === 'supervisor' && (
+                      <div className="space-y-2 border-t border-red-500/20 pt-2 mt-1">
+                        <div className="text-[11px] text-red-400 font-bold uppercase tracking-widest">⚑ Cajas desconocidas — requiere resolución del supervisor</div>
+                        {invLevel < 3 ? (
+                          <div className="text-[11px] text-muted-foreground italic">Requiere inventario nivel 3 para resolver.</div>
+                        ) : (
+                          <>
+                            {(L.unknown_boxes || []).map(b => {
+                              const key = `${L.location}:${b}`;
+                              const f = supForm[key] || { action: 'discard' };
+                              const upd = (patch) => setSupForm(s => ({ ...s, [key]: { ...f, ...patch } }));
+                              const isCreate = f.action === 'create';
+                              return (
+                                <div key={b} className="bg-background/50 border border-border rounded p-2 space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-mono font-bold text-amber-400">{b}</span>
+                                    <div className="ml-auto flex gap-1">
+                                      <button onClick={() => upd({ action: 'create' })} className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isCreate ? 'bg-green-600 text-white' : 'bg-secondary text-muted-foreground'}`}>Crear</button>
+                                      <button onClick={() => upd({ action: 'discard' })} className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${!isCreate ? 'bg-red-600 text-white' : 'bg-secondary text-muted-foreground'}`}>Descartar</button>
+                                    </div>
+                                  </div>
+                                  {isCreate && (
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <input value={f.units || ''} onChange={e => upd({ units: e.target.value })} type="number" min="1" placeholder="Unidades *" className="px-2 py-1 bg-background border border-border rounded text-xs font-mono" />
+                                      <input value={f.sku || ''} onChange={e => upd({ sku: e.target.value })} placeholder="Style / SKU *" className="px-2 py-1 bg-background border border-border rounded text-xs font-mono" />
+                                      <input value={f.color || ''} onChange={e => upd({ color: e.target.value })} placeholder="Color" className="px-2 py-1 bg-background border border-border rounded text-xs font-mono" />
+                                      <input value={f.size || ''} onChange={e => upd({ size: e.target.value })} placeholder="Talla" className="px-2 py-1 bg-background border border-border rounded text-xs font-mono" />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            <button onClick={() => resolveSupervisor(L.location, L.unknown_boxes)} disabled={resolvingSup}
+                              className="w-full px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-bold disabled:opacity-50"
+                              data-testid={`cc-resolve-sup-${L.location}`}>
+                              {resolvingSup ? 'Resolviendo…' : 'Cerrar ubicación (resuelto)'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {L.status === 'ok' && <div className="text-[11px] text-green-500 font-bold uppercase tracking-widest">✅ Cuadró</div>}
                   </div>
                 </div>

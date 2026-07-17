@@ -9653,20 +9653,48 @@ def _cc_find_loc(count: dict, location: str) -> Optional[dict]:
     return None
 
 
-async def _cc_prior_negative_units(box_id: str) -> Optional[int]:
-    """Unidades a restaurar de la caja si tuvo un ajuste NEGATIVO previo (p.ej. un
-    'cycle_count_shrink' o 'inventory_adjust_box' con delta_units<0). Devuelve el
-    valor absoluto del último ajuste negativo, o None si no existe ninguno."""
-    m = await db.wms_movements.find_one(
-        {"details.box_id": box_id, "details.delta_units": {"$lt": 0}},
-        sort=[("created_at", -1)],
-    )
-    if not m:
-        return None
-    try:
-        return abs(int(m.get("details", {}).get("delta_units")))
-    except (TypeError, ValueError):
-        return None
+async def _cc_recover_box(box_id: str) -> Optional[dict]:
+    """Reconstruye unidades e identidad de una caja que ya no está viva, a partir de
+    su ÚLTIMO movimiento con unidades conocidas — ajuste negativo (old_units /
+    |delta_units|), alta manual (added_units) o cualquier registro con units>0.
+    Devuelve {units, sku, color, size, customer} o None si no hay ningún rastro
+    con unidades (caja realmente desconocida → supervisor)."""
+    cursor = db.wms_movements.find({"details.box_id": box_id}).sort("created_at", -1)
+    async for m in cursor:
+        d = m.get("details") or {}
+        units = None
+        # 1) unidades que tenía la caja antes de agotarse
+        if d.get("old_units") not in (None, 0):
+            try: units = int(d["old_units"])
+            except (TypeError, ValueError): units = None
+        # 2) unidades de un alta manual (repartidas entre las cajas del alta)
+        if not units and d.get("added_units") not in (None, 0):
+            try:
+                ab = int(d.get("added_boxes") or 1) or 1
+                au = int(d["added_units"])
+                units = au // ab if ab > 1 else au
+            except (TypeError, ValueError): units = None
+        # 3) un ajuste negativo (agotamiento total): |delta|
+        if not units:
+            dv = d.get("delta_units")
+            if isinstance(dv, (int, float)) and int(dv) < 0:
+                units = abs(int(dv))
+        # 4) cualquier registro que nombre unidades positivas de la caja
+        if not units:
+            uv = d.get("units")
+            if isinstance(uv, (int, float)) and int(uv) > 0:
+                units = int(uv)
+        if not units or units <= 0:
+            continue
+        sku = d.get("sku") or d.get("style")
+        if not sku:
+            continue
+        return {
+            "units": units, "sku": sku,
+            "color": d.get("color", "") or "", "size": d.get("size", "") or "",
+            "customer": d.get("customer", "") or "",
+        }
+    return None
 
 
 async def _cc_add_inventory(sku, color, size, loc, qty, customer, box_id):
@@ -9729,9 +9757,10 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
     estado VIVO de wms_boxes:
       • caja ajena (escaneada aquí, no esperada aquí) que el sistema tiene viva en
         otra ubicación  -> putaway move a esta ubicación (camino 1)
-      • caja ajena que estaba agotada/ajustada en negativo antes -> ajuste positivo
-        que la revive aquí (camino 3)
-      • caja ajena totalmente desconocida (sin registro vivo ni ajuste previo) ->
+      • caja ajena que ya no está viva pero tiene unidades recuperables en su
+        historial (ajuste negativo, alta manual, recepción) -> se revive aquí con
+        esas unidades (camino 3, vía _cc_recover_box)
+      • caja ajena totalmente desconocida (sin ningún rastro de unidades) ->
         queda en unknown[] -> la ubicación va a revisión de supervisor
       • caja faltante (esperada aquí, no escaneada) que sigue viva aquí -> ajuste
         negativo, se agota del sistema (camino 2)
@@ -9750,7 +9779,10 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
 
     # ── EXTRA: cajas físicamente aquí que el sistema no tenía aquí ──
     for box_id in sorted(extra):
-        box = await db.wms_boxes.find_one({"box_id": box_id})
+        # Resuelve por box_id, barcode o lpn_id (el operador escanea la etiqueta física).
+        box = await db.wms_boxes.find_one(
+            {"$or": [{"box_id": box_id}, {"barcode": box_id}, {"lpn_id": box_id}]})
+        bx_id = box.get("box_id") if box else box_id
         units = int((box or {}).get("units") or (box or {}).get("qty") or 0)
         status = (box or {}).get("status")
         cur_loc = ((box or {}).get("location") or "").strip()
@@ -9759,49 +9791,37 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
                 continue  # ya está aquí (movida tras el snapshot) -> nada por hacer
             # CAMINO 1 — mover la caja ajena a donde el contador la encontró.
             await db.wms_boxes.update_one(
-                {"box_id": box_id},
+                {"box_id": bx_id},
                 {"$set": {"location": loc, "status": "stored",
                           "last_transferred_at": now_iso(),
                           "last_transferred_by": user.get("name", user.get("email", ""))}},
             )
             await _move_box_inventory(box, cur_loc, loc)
             await log_movement(user, "cycle_count_move", {
-                "box_id": box_id, "from": cur_loc, "to": loc,
+                "box_id": bx_id, "from": cur_loc, "to": loc,
                 "sku": box.get("sku") or box.get("style"), "units": units,
                 "via": "cycle_count", "count_id": count_id, "pass": cur_pass,
             })
             moved += 1
             continue
-        # No está viva (inexistente o agotada) -> intentar REVERTIR (camino 3).
-        restore_units = await _cc_prior_negative_units(box_id)
-        if not restore_units:
-            unknown.append(box_id)
+        # No está viva (inexistente o agotada) -> RECUPERARLA de su historial
+        # (camino 3 ampliado: ajuste negativo, alta manual o recepción con unidades).
+        rec = await _cc_recover_box(bx_id)
+        if not rec:
+            unknown.append(bx_id)
             continue
-        ref = box
-        if not ref:
-            m = await db.wms_movements.find_one(
-                {"details.box_id": box_id, "details.delta_units": {"$lt": 0}},
-                sort=[("created_at", -1)],
-            )
-            ref = (m or {}).get("details", {})
-        sku = ref.get("sku") or ref.get("style")
-        if not sku:
-            unknown.append(box_id)
-            continue
-        color = ref.get("color", "") or ""
-        size = ref.get("size", "") or ""
-        customer = ref.get("customer", "") or ""
-        # CAMINO 3 — revivir la caja aquí con las unidades del ajuste negativo previo.
+        restore_units = rec["units"]
+        sku, color, size, customer = rec["sku"], rec["color"], rec["size"], rec["customer"]
         if box:
             await db.wms_boxes.update_one(
-                {"box_id": box_id},
+                {"box_id": bx_id},
                 {"$set": {"units": restore_units, "qty": restore_units,
                           "location": loc, "status": "stored",
                           "updated_at": now_iso(), "updated_by": user.get("user_id")}},
             )
         else:
             await db.wms_boxes.insert_one({
-                "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
+                "box_id": bx_id, "barcode": bx_id, "lpn_id": bx_id,
                 "sku": sku, "style": sku, "color": color, "size": size,
                 "units": restore_units, "qty": restore_units,
                 "location": loc, "status": "stored", "customer": customer,
@@ -9809,12 +9829,13 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
                 "created_at": now_iso(), "updated_at": now_iso(),
                 "updated_by": user.get("user_id"),
             })
-        await _cc_add_inventory(sku, color, size, loc, restore_units, customer, box_id)
+        await _cc_add_inventory(sku, color, size, loc, restore_units, customer, bx_id)
         await log_movement(user, "cycle_count_restore", {
-            "box_id": box_id, "location": loc,
+            "box_id": bx_id, "location": loc,
             "sku": sku, "color": color, "size": size,
             "old_units": 0, "new_units": restore_units, "delta_units": restore_units,
             "via": "cycle_count", "count_id": count_id, "pass": cur_pass,
+            "recovered_from_history": True,
         })
         restored += 1
 
@@ -10055,6 +10076,99 @@ async def cc_close_location(count_id: str, request: Request):
         "needs_supervisor": new_status == "supervisor",
         "resolution": resolution,
     }
+
+
+@router.post("/cycle-counts/{count_id}/resolve-supervisor")
+async def cc_resolve_supervisor(count_id: str, request: Request):
+    """Resolución MANUAL de una ubicación en estado 'supervisor'. Solo inventario
+    NIVEL 3. Por cada LPN desconocido (unknown_boxes) el supervisor decide:
+      • action 'create' -> crea la caja aquí con las unidades e identidad tecleadas
+        y sube el inventario;
+      • action 'discard' -> la descarta (error de escaneo), sin tocar inventario.
+    Al terminar cierra la ubicación como 'ok'. Todo queda en wms_movements."""
+    user = await require_inventory_level(request, 3)
+    body = await request.json()
+    count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
+    if not count:
+        raise HTTPException(404, "Conteo no encontrado")
+    if count.get("mode") != "box_scan":
+        raise HTTPException(400, "Este conteo no es por caja (box_scan)")
+    location = (body.get("location") or "").strip()
+    L = _cc_find_loc(count, location)
+    if not L:
+        raise HTTPException(404, f"La ubicación {location} no está en este conteo")
+    if L.get("status") != "supervisor":
+        raise HTTPException(400, f"La ubicación {location} no está en revisión de supervisor")
+    loc = (L.get("location") or "").strip()
+    pending = set(L.get("unknown_boxes") or [])
+    resolutions = body.get("resolutions") or []
+    created = discarded = 0
+    items = []
+    for r in resolutions:
+        bid = (r.get("box_id") or "").strip().upper()
+        action = (r.get("action") or "").strip()
+        if not bid or bid not in pending:
+            continue
+        if action == "create":
+            try:
+                units = int(r.get("units"))
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Unidades inválidas para {bid}")
+            if units <= 0:
+                raise HTTPException(400, f"Las unidades de {bid} deben ser mayores a 0")
+            sku = (r.get("sku") or r.get("style") or "").strip().upper()
+            if not sku:
+                raise HTTPException(400, f"El style/SKU es obligatorio para crear {bid}")
+            color = (r.get("color") or "").strip().upper()
+            size = (r.get("size") or "").strip().upper()
+            customer = (r.get("customer") or "").strip().upper()
+            existing = await db.wms_boxes.find_one(
+                {"$or": [{"box_id": bid}, {"barcode": bid}, {"lpn_id": bid}]})
+            real_id = existing.get("box_id") if existing else bid
+            if existing:
+                await db.wms_boxes.update_one(
+                    {"box_id": real_id},
+                    {"$set": {"units": units, "qty": units, "location": loc, "status": "stored",
+                              "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+                )
+            else:
+                await db.wms_boxes.insert_one({
+                    "box_id": real_id, "barcode": real_id, "lpn_id": real_id,
+                    "sku": sku, "style": sku, "color": color, "size": size,
+                    "units": units, "qty": units, "location": loc, "status": "stored",
+                    "customer": customer, "is_adjustment": True,
+                    "created_at": now_iso(), "updated_at": now_iso(),
+                    "updated_by": user.get("user_id"),
+                })
+            await _cc_add_inventory(sku, color, size, loc, units, customer, real_id)
+            await log_movement(user, "cycle_count_manual_create", {
+                "box_id": real_id, "location": loc, "sku": sku, "color": color, "size": size,
+                "old_units": 0, "new_units": units, "delta_units": units,
+                "via": "cycle_count", "count_id": count_id,
+            })
+            created += 1
+            items.append({"box_id": real_id, "action": "create", "units": units})
+        else:  # discard (u otra acción -> descartar)
+            await log_movement(user, "cycle_count_manual_discard", {
+                "box_id": bid, "location": loc, "via": "cycle_count", "count_id": count_id,
+            })
+            discarded += 1
+            items.append({"box_id": bid, "action": "discard"})
+
+    await db.wms_cycle_counts.update_one(
+        {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
+        {"$set": {
+            "scan_locations.$.status": "ok",
+            "scan_locations.$.unknown_boxes": [],
+            "scan_locations.$.manual_resolution": {
+                "by": user.get("user_id"), "by_name": user.get("name", ""),
+                "at": now_iso(), "items": items,
+            },
+            "last_updated_at": now_iso(),
+        }},
+    )
+    await notify_badge_change("cycle_count")
+    return {"location": loc, "created": created, "discarded": discarded, "status": "ok"}
 
 
 @router.get("/cycle-counts")
