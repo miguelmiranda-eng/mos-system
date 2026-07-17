@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { fetcher, poster, putter, deleter, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 
@@ -80,10 +80,17 @@ export const UpcCatalog = ({ isManager }) => {
   }, []);
   useEffect(() => { const h = setTimeout(() => doSearch(search), 300); return () => clearTimeout(h); }, [search, doSearch]);
 
-  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setFormOpen(true); };
+  // Datos descriptivos (fabricante/descripcion/pais/tela) colapsados por
+  // defecto: NO son parte de la identidad del UPC (el SKU es estilo+color+talla),
+  // asi que el modal muestra solo lo requerido. En edicion se abre si ya traen
+  // algo, para no esconder datos existentes.
+  const [showOptional, setShowOptional] = useState(false);
+  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setShowOptional(false); setFormOpen(true); };
   const openEdit = (r) => {
     setDraft({ ...EMPTY, ...r, upc: r.upc || "" });
-    setEditMode(true); setFormOpen(true);
+    setEditMode(true);
+    setShowOptional(!!(r.manufacturer || r.description || r.country_of_origin || r.fabric_content));
+    setFormOpen(true);
   };
 
   const codeValid = validGtin(draft.upc);
@@ -294,22 +301,40 @@ export const UpcCatalog = ({ isManager }) => {
                   {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
-                <input value={draft.manufacturer} onChange={e => setD("manufacturer", e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" placeholder="(opcional)" />
-              </div>
+              {/* Datos descriptivos — NO son identidad del UPC. Ocultos por
+                  defecto; el país sobre todo cambia por embarque, no por UPC.
+                  Si se llenan, Receiving los autocompleta al escanear. */}
               <div className="col-span-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
-                <SearchableSelect options={descOptions} value={draft.description} onChange={v => setD("description", v)} placeholder="Descripción…" testId="upc-cat-draft-desc" allowCreate={false} />
+                <button
+                  type="button"
+                  onClick={() => setShowOptional(o => !o)}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 hover:bg-secondary/60 text-[11px] font-black uppercase tracking-widest text-muted-foreground transition-colors"
+                  data-testid="upc-cat-optional-toggle"
+                >
+                  <span>Datos descriptivos (opcional): descripción, país, tela, fabricante</span>
+                  {showOptional ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
-              <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
-                <SearchableSelect options={countryOptions} value={draft.country_of_origin} onChange={v => setD("country_of_origin", v)} placeholder="País…" testId="upc-cat-draft-country" allowCreate={false} />
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Contenido / tela</label>
-                <SearchableSelect options={fabricOptions} value={draft.fabric_content} onChange={v => setD("fabric_content", v)} placeholder="Tela…" testId="upc-cat-draft-fabric" allowCreate={false} />
-              </div>
+              {showOptional && (
+                <>
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
+                    <input value={draft.manufacturer} onChange={e => setD("manufacturer", e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" placeholder="(opcional)" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                    <SearchableSelect options={descOptions} value={draft.description} onChange={v => setD("description", v)} placeholder="Descripción…" testId="upc-cat-draft-desc" allowCreate={false} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                    <SearchableSelect options={countryOptions} value={draft.country_of_origin} onChange={v => setD("country_of_origin", v)} placeholder="País…" testId="upc-cat-draft-country" allowCreate={false} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Contenido / tela</label>
+                    <SearchableSelect options={fabricOptions} value={draft.fabric_content} onChange={v => setD("fabric_content", v)} placeholder="Tela…" testId="upc-cat-draft-fabric" allowCreate={false} />
+                  </div>
+                </>
+              )}
             </div>
             <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
               <button onClick={() => setFormOpen(false)} className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold">Cancelar</button>
