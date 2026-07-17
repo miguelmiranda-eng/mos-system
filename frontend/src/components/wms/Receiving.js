@@ -398,8 +398,18 @@ export const ReceivingModule = () => {
     loadOptions(val, '', '');
   };
   const handleManufacturerChange = (val) => {
-    setForm(p => ({ ...p, manufacturer: val, style: '', color: '' }));
-    loadOptions(form.customer, val, '');
+    // Reseteo en cascada SOLO de lo que el fabricante realmente filtra. Si la
+    // identidad vino de un UPC escaneado, style/color están fijados y bloqueados
+    // por el catálogo: NO se deben borrar al elegir el fabricante (que ahora es
+    // editable porque el UPC ya no lleva manufacturer). Sin esta guarda, elegir
+    // el fabricante vaciaba el style/color del UPC y dejaba el recibo trabado.
+    setForm(p => ({
+      ...p,
+      manufacturer: val,
+      style: upcDoc?.style ? p.style : '',
+      color: upcDoc?.color ? p.color : '',
+    }));
+    loadOptions(form.customer, val, upcDoc?.style ? form.style : '');
   };
   const handleStyleChange = (val) => {
     setForm(p => ({ ...p, style: val, color: '' }));
@@ -1279,9 +1289,10 @@ export const ReceivingModule = () => {
             <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            <button onClick={() => requestSubmit()} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : 'Revisar y Recibir'}
-            </button>
+            {/* No hay botón "Revisar y Recibir" ni edición de recibos: NO se
+                edita un recibo existente. Todo material se recibe con
+                "Recibir a Carro" (que incluye la opción "Ubicación Temporal
+                legacy" al fondo del menú). */}
             {!editingId && (
               <div className="relative" ref={cartMenuRef}>
                 <button
