@@ -124,6 +124,18 @@ DEFAULT_OPTIONS = {
     # sin curar). Se activa cliente por cliente conforme se cura su catalogo.
     # Ver _assert_curated_identity / _build_identity_checker en routers/wms.py.
     "strict_identity_customers": [],
+    # Clientes cuya recepcion EXIGE un UPC registrado en el catalogo: el operador
+    # escanea el carton; si el codigo no existe, se da de alta primero por
+    # POST /upc (que valida GTIN + identidad curada). Admin nivel 3+ puede
+    # recibir sin UPC (queda auditado). Se activa por cliente, igual que
+    # strict_identity_customers.
+    "receiving_requires_upc_customers": [],
+    # Tolerancia de sobrerrecepcion contra ASN (%): un recibo que deje la linea
+    # por encima de qty_expected * (1 + tol/100) se rechaza con 422, salvo
+    # admin nivel 3+ (queda auditado como override). Solo aplica cuando la
+    # linea del ASN casa; si no casa, se mantiene el comportamiento
+    # warning-permisivo de siempre.
+    "asn_over_receipt_tolerance_percent": 5.0,
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]

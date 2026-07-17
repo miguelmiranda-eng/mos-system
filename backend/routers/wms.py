@@ -2312,6 +2312,117 @@ async def create_receiving(request: Request):
     if not fabric_content:
         raise HTTPException(400, "Contenido / fabric_content es obligatorio")
 
+    # ── Candados de recepción sana (corren ANTES de cualquier escritura) ─────
+    # Mongo standalone no tiene transacciones multi-documento, así que el orden
+    # es el candado: validar TODO primero, escribir después.
+    _admin_lvl = get_admin_level(user)
+    _cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
+
+    # Total entrante — se necesita aquí (dup + tolerancia) sin esperar a que se
+    # construyan las cajas. Es el mismo cálculo que hará box_docs después.
+    if items:
+        incoming_total = sum(int(it.get("boxes", 1) or 1) * int(it.get("units_per_box", 1) or 1)
+                             for it in items)
+    else:
+        incoming_total = units if units > 0 else (dozens * 12 + pieces)
+
+    # (a) UPC obligatorio por cliente. El circuito sano: se escanea el cartón y
+    # el UPC ya registrado dicta la identidad (la guardia de coincidencia de
+    # arriba hace el resto). Sin UPC, o con uno no registrado, el recibo se
+    # rechaza — salvo admin nivel 3+, que queda auditado (upc_bypass).
+    _req_upc = _cfg.get("receiving_requires_upc_customers")
+    if _req_upc is None:
+        _req_upc = DEFAULT_OPTIONS.get("receiving_requires_upc_customers") or []
+    upc_bypass = False
+    if customer.upper() in {str(c).strip().upper() for c in _req_upc}:
+        upc_registered = bool(upc_code) and bool(
+            await db.wms_upc_catalog.find_one({"upc": upc_code}, {"_id": 1}))
+        if not upc_registered:
+            if _admin_lvl >= 3:
+                upc_bypass = True
+            elif not upc_code:
+                raise HTTPException(422, (
+                    f"{customer} exige recibir escaneando el UPC del cartón. "
+                    f"Escanéalo; si el código no existe todavía, dalo de alta "
+                    f"primero en el catálogo de UPC."
+                ))
+            else:
+                raise HTTPException(422, (
+                    f"El UPC {upc_code} no está registrado en el catálogo. "
+                    f"{customer} exige recibir contra un UPC dado de alta: "
+                    f"créalo primero (valida código de barras e identidad) y "
+                    f"vuelve a escanear."
+                ))
+
+    # (b) Anti doble-captura (idempotencia práctica). El export de recibos ya
+    # detecta \"POSIBLE DOBLE RECIBO\" a posteriori — esto lo previene: mismo
+    # usuario + misma identidad + misma cantidad + misma ubicación en los
+    # últimos 10 minutos se rechaza con 409, salvo force_duplicate=true (para
+    # el caso legítimo de dos tarimas idénticas seguidas), que queda auditado.
+    duplicate_forced = bool(body.get("force_duplicate"))
+    if incoming_total > 0 and not duplicate_forced:
+        _cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        _dup = await db.wms_receiving.find_one({
+            "customer": customer, "style": style, "color": color, "size": size,
+            "inv_location": inv_location, "total_units": incoming_total,
+            "received_by": user.get("user_id"),
+            "created_at": {"$gte": _cutoff},
+        }, {"_id": 0, "receiving_id": 1, "created_at": 1})
+        if _dup:
+            raise HTTPException(409, (
+                f"Posible doble captura: ya registraste un recibo idéntico "
+                f"({_dup['receiving_id']}, {style}/{color or '—'}/{size or '—'}, "
+                f"{incoming_total} pz en {inv_location}) hace menos de 10 minutos. "
+                f"Si de verdad es OTRA tarima igual, reenvía con "
+                f"force_duplicate=true."
+            ))
+
+    # (c) Tolerancia de sobrerrecepción contra el ASN. Solo cuando la línea
+    # casa (por asn_line_no o por part_number == style); si no casa, se deja el
+    # comportamiento warning-permisivo de la conciliación de siempre.
+    tolerance_override = None
+    if asn_ref and incoming_total > 0:
+        _tol = _cfg.get("asn_over_receipt_tolerance_percent")
+        if _tol is None:
+            _tol = DEFAULT_OPTIONS.get("asn_over_receipt_tolerance_percent", 5.0)
+        try:
+            _tol = float(_tol)
+        except (TypeError, ValueError):
+            _tol = 5.0
+        _asn_doc = await db.wms_asn.find_one({"asn_id": asn_ref}, {"_id": 0, "items": 1})
+        _target = None
+        if _asn_doc:
+            _raw_ln = body.get("asn_line_no")
+            try:
+                _pre_ln = int(_raw_ln) if _raw_ln not in (None, "", 0) else None
+            except (TypeError, ValueError):
+                _pre_ln = None
+            if _pre_ln is not None:
+                _target = next((it for it in _asn_doc.get("items", [])
+                                if it.get("line_no") == _pre_ln), None)
+            else:
+                _target = next((it for it in _asn_doc.get("items", [])
+                                if (it.get("part_number") or "").strip().upper() == style), None)
+        if _target:
+            _expected = int(_target.get("qty_expected") or 0)
+            _already = int(_target.get("qty_received") or 0)
+            _cap = _expected * (1.0 + _tol / 100.0)
+            if _expected > 0 and _already + incoming_total > _cap:
+                if _admin_lvl >= 3:
+                    tolerance_override = {
+                        "expected": _expected, "already_received": _already,
+                        "incoming": incoming_total, "cap": int(_cap),
+                        "tolerance_percent": _tol,
+                    }
+                else:
+                    raise HTTPException(422, (
+                        f"Sobrerrecepción contra el ASN {asn_ref}: la línea espera "
+                        f"{_expected} pz, ya lleva {_already} y este recibo trae "
+                        f"{incoming_total} → {_already + incoming_total} supera el "
+                        f"tope de {int(_cap)} (tolerancia {_tol:g}%). Verifica la "
+                        f"cantidad; un admin nivel 3+ puede autorizar el exceso."
+                    ))
+
     # Auto-generate SKU if not provided
     if not sku and style:
         base = style.upper().replace(' ', '-')
@@ -2437,8 +2548,24 @@ async def create_receiving(request: Request):
         "created_at": now_iso(),
         "boxes": [{"box_id": b["box_id"], "units": b["units"]} for b in box_docs]
     }
+    # Excepciones autorizadas: quedan en el recibo Y en el movimiento, para que
+    # una sobrerrecepción o un recibo sin UPC de un cliente que lo exige nunca
+    # pase como recibo normal.
+    if upc_bypass:
+        receiving_doc["upc_required_bypass"] = True
+    if duplicate_forced:
+        receiving_doc["duplicate_forced"] = True
+    if tolerance_override:
+        receiving_doc["tolerance_override"] = tolerance_override
     await db.wms_receiving.insert_one(receiving_doc)
-    await log_movement(user, "receiving", {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo})
+    _mv = {"receiving_id": receiving_id, "total_units": total_units, "is_bpo": is_bpo}
+    if upc_bypass:
+        _mv["upc_required_bypass"] = True
+    if duplicate_forced:
+        _mv["duplicate_forced"] = True
+    if tolerance_override:
+        _mv["tolerance_override"] = tolerance_override
+    await log_movement(user, "receiving", _mv)
     
     # Update inventory — pass through the receiving metadata so the inventory
     # row mirrors what the operator captured (Cliente, Manufacturer, COO, etc.).
