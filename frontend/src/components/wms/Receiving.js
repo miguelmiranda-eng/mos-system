@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Pencil, Search, Download, ScanLine, AlertTriangle, ClipboardCheck } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, putter, deleter, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
@@ -196,6 +196,82 @@ export const ReceivingModule = () => {
   const pendingAsnLines = (selectedAsnDoc && !selectedAsnDoc.closed)
     ? (selectedAsnDoc.items || [])
     : [];
+
+  // ── Escáner global ─────────────────────────────────────────────────────────
+  // Barra siempre visible arriba del módulo: el flujo sano es escanear el
+  // cartón ANTES de teclear nada. El código cae en `upc` y el lookup con
+  // debounce de abajo hace el resto (autofill + candado de campos). El feedback
+  // sonoro/vibración vive en ese mismo lookup, así que aplica igual si el
+  // operador teclea el código a mano.
+  const scanRef = useRef(null);
+  const [scanBuf, setScanBuf] = useState('');
+  const scanFeedback = (ok) => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = ok ? 880 : 200;
+        gain.gain.value = 0.08;
+        osc.start();
+        osc.stop(ctx.currentTime + (ok ? 0.12 : 0.35));
+        osc.onended = () => ctx.close();
+      }
+    } catch { /* sin audio no pasa nada */ }
+    if (navigator.vibrate) navigator.vibrate(ok ? 60 : [120, 60, 120]);
+  };
+  const handleGlobalScan = () => {
+    const code = cleanScan(scanBuf);
+    setScanBuf('');
+    if (!code) return;
+    if (!showForm || editingId) {
+      setEditingId(null);
+      setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: form.asn_reference || '' });
+      setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
+      setShowForm(true);
+    }
+    setUpc(code);
+  };
+
+  // ── Progreso del ASN (semáforo por línea + matriz color×talla) ─────────────
+  // GET /asn/{id} devuelve las cajas ya recibidas contra ese packing list; de
+  // ahí sale la matriz. Se refresca tras cada recibo exitoso (asnRefresh).
+  const [asnBoxes, setAsnBoxes] = useState(null);
+  const [asnRefresh, setAsnRefresh] = useState(0);
+  const selectedAsnId = selectedAsnDoc?.asn_id || null;
+  useEffect(() => {
+    if (!selectedAsnId) { setAsnBoxes(null); return; }
+    let alive = true;
+    fetcher(`/asn/${encodeURIComponent(selectedAsnId)}`)
+      .then(d => { if (alive) setAsnBoxes(d?.boxes || []); })
+      .catch(() => { if (alive) setAsnBoxes(null); });
+    return () => { alive = false; };
+  }, [selectedAsnId, asnRefresh]);
+  const asnMatrix = useMemo(() => {
+    if (!asnBoxes || asnBoxes.length === 0) return null;
+    const CANON = ['XS', 'S', 'M', 'L', 'XL', '1X', '2X', '3X', '4X', '5X',
+                   '2T', '3T', '4T', '5T', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
+    const cells = {}; const sizesSeen = new Set(); const colors = new Set();
+    for (const b of asnBoxes) {
+      const co = (b.color || '—').toUpperCase();
+      const sz = (b.size || '—').toUpperCase();
+      colors.add(co); sizesSeen.add(sz);
+      const k = `${co}|${sz}`;
+      cells[k] = (cells[k] || 0) + (parseInt(b.units ?? b.qty) || 0);
+    }
+    const sizes = [...CANON.filter(s => sizesSeen.has(s)),
+                   ...[...sizesSeen].filter(s => !CANON.includes(s)).sort()];
+    return { sizes, colors: [...colors].sort(), cells };
+  }, [asnBoxes]);
+
+  // ── Resumen previo a confirmar ─────────────────────────────────────────────
+  // El submit ya no dispara directo: primero un resumen con lo que se va a
+  // crear + advertencias (sin UPC, fuera de catálogo, posible sobrerrecepción
+  // contra la línea del ASN). Editar metadata (editingId) va directo: no crea
+  // inventario.
+  const [pendingSubmit, setPendingSubmit] = useState(null); // { opts, warnings }
 
   // Smart autofill from ASN line. STRICT: every field — including Style —
   // only fills when the ASN value resolves to an entry that already exists
@@ -408,6 +484,7 @@ export const ReceivingModule = () => {
         }
         if (res.status === 404) {
           setUpcDoc(null);
+          scanFeedback(false);
           return;
         }
         if (!res.ok) {
@@ -425,6 +502,7 @@ export const ReceivingModule = () => {
           return;
         }
         setUpcDoc(doc);
+        scanFeedback(true);
         // Autofill — preserve numeric/operational fields the operator types.
         setForm(p => ({
           ...p,
@@ -628,6 +706,42 @@ export const ReceivingModule = () => {
   // `toLocation` (when set) overrides whatever inv_location the user typed and
   // forces the box into a specific Putaway 2.0 slot — one of the 5 carts, or
   // the legacy UBICACION TEMPORAL. Used by the "Recibir a Carro" dropdown.
+  // Validación previa + resumen. Mismo criterio que handleSubmit (que revalida
+  // por si acaso): si algo obligatorio falta -> toast y no hay resumen; si todo
+  // está -> modal con lo que se va a crear + advertencias no bloqueantes.
+  const requestSubmit = (opts = {}) => {
+    if (editingId) { handleSubmit(opts); return; }   // editar metadata: directo
+    if (!form.style) { toast.error(t('wms_style_req')); return; }
+    const requeridos = [
+      ['customer', 'Customer'], ['manufacturer', 'Fabricante'], ['style', 'Style'],
+      ['color', 'Color'], ['size', 'Talla (Size)'], ['description', 'Descripción'],
+      ['country_of_origin', 'País de origen'], ['fabric_content', 'Contenido de tela'],
+    ];
+    const falta = requeridos.find(([k]) => !String(form[k] || '').trim());
+    if (falta) { toast.error(`${falta[1]} es obligatorio`); return; }
+    if (totalUnits <= 0) { toast.error('Ingresa una cantidad mayor a 0 (N° de cajas o piezas sueltas)'); return; }
+    if (!form.asn_reference?.trim()) { toast.error('ASN obligatorio — captura el número de packing list o créalo primero'); return; }
+    if (!selectedAsnDoc) { toast.error(`ASN ${form.asn_reference} no existe. Créalo con el botón "+ Crear ASN".`); return; }
+
+    const warnings = [];
+    if (!upc.trim()) warnings.push('Sin UPC — el recibo se guardará sin referencia de catálogo.');
+    else if (!upcDoc) warnings.push(`UPC ${upc.trim().toUpperCase()} no está en catálogo — se guardará de todas formas.`);
+    // Posible sobrerrecepción contra la línea del ASN (mismo criterio que el
+    // candado del backend, tolerancia default 5%): aviso aquí, el backend decide.
+    const line = selectedAsnLine != null
+      ? (selectedAsnDoc.items || []).find(l => l.line_no === selectedAsnLine)
+      : (selectedAsnDoc.items || []).find(l => (l.part_number || '').trim().toUpperCase() === form.style.trim().toUpperCase());
+    if (line) {
+      const exp = parseInt(line.qty_expected) || 0;
+      const rec = parseInt(line.qty_received) || 0;
+      if (exp > 0 && rec + totalUnits > exp * 1.05) {
+        warnings.push(`Posible sobrerrecepción: la línea ${line.part_number} espera ${exp.toLocaleString()}, lleva ${rec.toLocaleString()} y este recibo trae ${totalUnits.toLocaleString()} — el sistema lo rechazará salvo autorización de un admin.`);
+      }
+    }
+    setShowCartMenu(false);
+    setPendingSubmit({ opts, warnings });
+  };
+
   const handleSubmit = async (opts = {}) => {
     const toLocation = opts.toLocation || (opts.toTransit ? TRANSIT_LOCATION : null);
     if (!form.style) { toast.error(t('wms_style_req')); return; }
@@ -732,6 +846,10 @@ export const ReceivingModule = () => {
           setUpc(''); setUpcDoc(null);
           fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
           load();
+          // El siguiente cartón se escanea de inmediato: refresca la matriz del
+          // ASN y regresa el foco a la barra de escaneo.
+          setAsnRefresh(n => n + 1);
+          setTimeout(() => scanRef.current?.focus(), 50);
         } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
       }
     } catch { toast.error(t('error_connection')); }
@@ -844,6 +962,23 @@ export const ReceivingModule = () => {
 
   return (
     <div className="space-y-6">
+      {/* ── Barra de escaneo global: el flujo sano empieza escaneando el cartón.
+          El código abre el formulario y dispara el lookup de UPC (autofill +
+          candado). Beep/vibración según el resultado. ── */}
+      <div className="relative">
+        <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-indigo-400" />
+        <input
+          ref={scanRef}
+          value={scanBuf}
+          onChange={e => setScanBuf(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleGlobalScan(); } }}
+          placeholder="ESCANEA EL UPC DEL CARTÓN PARA RECIBIR…"
+          className="w-full pl-14 pr-4 py-4 bg-indigo-500/5 border-2 border-indigo-500/40 focus:border-indigo-400 rounded-2xl text-lg font-mono font-black tracking-wider focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-sm placeholder:tracking-widest placeholder:font-bold"
+          data-testid="rcv-global-scan"
+          autoFocus
+        />
+        {upcLooking && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-400 animate-spin" />}
+      </div>
       <div className="flex items-center justify-between gap-3">
         <div className="relative flex-1 max-w-2xl group">
           {searching
@@ -1004,6 +1139,53 @@ export const ReceivingModule = () => {
                       })}
                     </div>
                   )}
+                </div>
+              )}
+              {/* Matriz color × talla de lo YA recibido contra este ASN. Se
+                  alimenta de las cajas reales (GET /asn/{id}) y se refresca en
+                  cada recibo — el operador ve el packing list llenarse en vivo. */}
+              {selectedAsnDoc && !editingId && asnMatrix && (
+                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden" data-testid="rcv-asn-matrix">
+                  <div className="px-3 py-2 bg-secondary/30 border-b border-border/20 flex items-center gap-2">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                      Recibido en este ASN — color × talla ({(asnBoxes || []).length} cajas)
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-[11px] tabular-nums">
+                      <thead>
+                        <tr className="bg-secondary/20">
+                          <th className="text-left px-3 py-1.5 font-black uppercase tracking-wider text-muted-foreground">Color</th>
+                          {asnMatrix.sizes.map(sz => (
+                            <th key={sz} className="px-2 py-1.5 font-black text-muted-foreground">{sz}</th>
+                          ))}
+                          <th className="px-3 py-1.5 font-black text-muted-foreground">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {asnMatrix.colors.map(co => {
+                          const rowTotal = asnMatrix.sizes.reduce((s, sz) => s + (asnMatrix.cells[`${co}|${sz}`] || 0), 0);
+                          const isActiveColor = (form.color || '').toUpperCase() === co;
+                          return (
+                            <tr key={co} className={`border-t border-border/10 ${isActiveColor ? 'bg-primary/5' : ''}`}>
+                              <td className="px-3 py-1.5 font-bold font-mono">{co}</td>
+                              {asnMatrix.sizes.map(sz => {
+                                const v = asnMatrix.cells[`${co}|${sz}`] || 0;
+                                const isActiveCell = isActiveColor && (form.size || '').toUpperCase() === sz;
+                                return (
+                                  <td key={sz} className={`px-2 py-1.5 text-center ${v ? 'font-black text-foreground' : 'text-muted-foreground/40'} ${isActiveCell ? 'ring-2 ring-primary/60 rounded' : ''}`}>
+                                    {v ? v.toLocaleString() : '·'}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-3 py-1.5 text-center font-black text-emerald-500">{rowTotal.toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -1227,8 +1409,8 @@ export const ReceivingModule = () => {
             <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            <button onClick={() => handleSubmit()} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : t('wms_receive_btn')}
+            <button onClick={() => requestSubmit()} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="rcv-submit">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingId ? 'Actualizar Detalles' : 'Revisar y Recibir'}
             </button>
             {!editingId && (
               <div className="relative" ref={cartMenuRef}>
@@ -1250,7 +1432,7 @@ export const ReceivingModule = () => {
                     ).map(c => (
                       <button
                         key={c.name}
-                        onClick={() => { setShowCartMenu(false); handleSubmit({ toLocation: c.name }); }}
+                        onClick={() => requestSubmit({ toLocation: c.name })}
                         disabled={loading}
                         className="w-full text-left px-3 py-2 text-sm hover:bg-amber-500/15 flex items-center justify-between gap-2 disabled:opacity-50"
                         data-testid={`rcv-submit-cart-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
@@ -1264,7 +1446,7 @@ export const ReceivingModule = () => {
                       </button>
                     ))}
                     <button
-                      onClick={() => { setShowCartMenu(false); handleSubmit({ toLocation: TRANSIT_LOCATION }); }}
+                      onClick={() => requestSubmit({ toLocation: TRANSIT_LOCATION })}
                       disabled={loading}
                       className="w-full text-left px-3 py-2 text-xs border-t border-border/40 hover:bg-secondary/60 text-muted-foreground disabled:opacity-50"
                       title="Ubicación temporal legacy — solo si ninguno de los carros aplica."
@@ -1277,6 +1459,70 @@ export const ReceivingModule = () => {
               </div>
             )}
             <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
+          </div>
+        </div>
+      )}
+      {/* ── Resumen previo a confirmar: lo que se va a crear, en cristiano,
+          con las advertencias no bloqueantes. Confirmar dispara el submit real
+          (el backend revalida todo de todas formas). ── */}
+      {pendingSubmit && (
+        <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="rcv-summary-modal">
+          <div className="w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-3 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
+              <ClipboardCheck className="w-5 h-5 text-primary" />
+              <span className="font-black uppercase tracking-wider text-sm">Revisar y confirmar recepción</span>
+            </div>
+            <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                <span className="text-muted-foreground text-xs uppercase font-bold">Cliente</span>
+                <span className="font-bold">{form.customer}</span>
+                <span className="text-muted-foreground text-xs uppercase font-bold">Producto</span>
+                <span className="font-mono font-black text-primary">{form.style} / {form.color} / {form.size}</span>
+                <span className="text-muted-foreground text-xs uppercase font-bold">UPC</span>
+                <span className="font-mono">{upcDoc?.upc || (upc.trim() ? `${upc.trim().toUpperCase()} (sin catálogo)` : '— sin UPC —')}</span>
+                <span className="text-muted-foreground text-xs uppercase font-bold">ASN</span>
+                <span className="font-mono">{form.asn_reference}{selectedAsnLine != null ? ` · línea ${selectedAsnLine}` : ''}</span>
+                <span className="text-muted-foreground text-xs uppercase font-bold">Destino</span>
+                <span className="font-mono font-bold">{pendingSubmit.opts.toLocation || 'UBICACION TEMPORAL'}</span>
+              </div>
+              <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-center">
+                <div className="text-2xl font-black tabular-nums">
+                  {(parseInt(form.boxes) || 0).toLocaleString()} caja(s) × {effectiveUpb}
+                  {(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''}
+                </div>
+                <div className="text-sm font-bold text-primary uppercase tracking-wider mt-1">
+                  = {totalUnits.toLocaleString()} piezas
+                </div>
+              </div>
+              {pendingSubmit.warnings.length > 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 space-y-1.5">
+                  {pendingSubmit.warnings.map((w, i) => (
+                    <div key={i} className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{w}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
+              <button
+                onClick={() => setPendingSubmit(null)}
+                className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold"
+                data-testid="rcv-summary-cancel"
+              >
+                Volver
+              </button>
+              <button
+                onClick={() => { const p = pendingSubmit; setPendingSubmit(null); handleSubmit(p.opts); }}
+                disabled={loading}
+                className="px-5 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-black uppercase tracking-wider flex items-center gap-2 disabled:opacity-50"
+                data-testid="rcv-summary-confirm"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                Confirmar recepción
+              </button>
+            </div>
           </div>
         </div>
       )}
