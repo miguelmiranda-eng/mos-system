@@ -9653,6 +9653,203 @@ def _cc_find_loc(count: dict, location: str) -> Optional[dict]:
     return None
 
 
+async def _cc_prior_negative_units(box_id: str) -> Optional[int]:
+    """Unidades a restaurar de la caja si tuvo un ajuste NEGATIVO previo (p.ej. un
+    'cycle_count_shrink' o 'inventory_adjust_box' con delta_units<0). Devuelve el
+    valor absoluto del último ajuste negativo, o None si no existe ninguno."""
+    m = await db.wms_movements.find_one(
+        {"details.box_id": box_id, "details.delta_units": {"$lt": 0}},
+        sort=[("created_at", -1)],
+    )
+    if not m:
+        return None
+    try:
+        return abs(int(m.get("details", {}).get("delta_units")))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _cc_add_inventory(sku, color, size, loc, qty, customer, box_id):
+    """Suma qty unidades + 1 caja a la fila de inventario de (sku,color,size,loc),
+    creándola si no existe, y re-enlaza la caja. Espejo del paso 'destino' de
+    _move_box_inventory — usado por el camino 3 (revivir una caja ajustada)."""
+    if qty <= 0:
+        return
+    dst = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": loc})
+    if dst:
+        dst_id = dst.get("inventory_id") or gen_id("inv")
+        await db.wms_inventory.update_one(
+            {"_id": dst["_id"]},
+            {"$inc": {"units_on_hand": qty, "total_boxes": 1},
+             "$set": {"inventory_id": dst_id, "updated_at": now_iso(), "style": sku}},
+        )
+    else:
+        dst_id = gen_id("inv")
+        await db.wms_inventory.insert_one({
+            "inventory_id": dst_id, "sku": sku, "style": sku,
+            "color": color, "size": size, "location": loc,
+            "units_on_hand": qty, "total_boxes": 1, "units_allocated": 0,
+            "customer": customer or "", "updated_at": now_iso(),
+        })
+    if box_id:
+        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"inventory_id": dst_id}})
+
+
+async def _cc_remove_inventory(box, units):
+    """Resta units unidades y 1 caja de la fila de inventario de la caja agotada.
+    Espejo del ajuste a la baja de adjust_box_count — usado por el camino 2. El
+    `box` debe traer sus campos PRE-agotamiento (location/sku/units)."""
+    if units <= 0:
+        return
+    sku = box.get("sku") or box.get("style") or ""
+    color = box.get("color", "")
+    size = box.get("size", "")
+    loc = box.get("location", "")
+    inv = (
+        (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
+        or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": loc})
+    )
+    if not inv:
+        return
+    new_on_hand = max(0, int(inv.get("units_on_hand", 0) or 0) - units)
+    new_boxes = max(0, int(inv.get("total_boxes", 0) or 0) - 1)
+    if new_on_hand == 0 and new_boxes == 0 and int(inv.get("units_allocated", 0) or 0) <= 0:
+        await db.wms_inventory.delete_one({"_id": inv["_id"]})
+    else:
+        await db.wms_inventory.update_one(
+            {"_id": inv["_id"]},
+            {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_boxes, "updated_at": now_iso()}},
+        )
+
+
+async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict) -> dict:
+    """Aplica al inventario la realidad física CONFIRMADA de una ubicación (dos
+    contadores coinciden, o cierre autoritativo de nivel 3). Compara el set
+    confirmado contra el snapshot del sistema (expected_boxes) y actúa sobre el
+    estado VIVO de wms_boxes:
+      • caja ajena (escaneada aquí, no esperada aquí) que el sistema tiene viva en
+        otra ubicación  -> putaway move a esta ubicación (camino 1)
+      • caja ajena que estaba agotada/ajustada en negativo antes -> ajuste positivo
+        que la revive aquí (camino 3)
+      • caja ajena totalmente desconocida (sin registro vivo ni ajuste previo) ->
+        queda en unknown[] -> la ubicación va a revisión de supervisor
+      • caja faltante (esperada aquí, no escaneada) que sigue viva aquí -> ajuste
+        negativo, se agota del sistema (camino 2)
+    Todo queda en wms_movements con via='cycle_count' y el nombre del usuario.
+    Las acciones se toman sobre el estado VIVO, así que si otra ubicación ya movió
+    la caja, aquí ya no aparece y se omite (evita doble acción). Devuelve el
+    resumen {moved, restored, shrunk, unknown}."""
+    loc = (L.get("location") or "").strip()
+    count_id = count.get("count_id")
+    cur_pass = L.get("pass")
+    system_here = set(L.get("expected_boxes", []))
+    extra = confirmed - system_here      # escaneadas aquí, no esperadas aquí
+    missing = system_here - confirmed    # esperadas aquí, no escaneadas
+    moved = restored = shrunk = 0
+    unknown = []
+
+    # ── EXTRA: cajas físicamente aquí que el sistema no tenía aquí ──
+    for box_id in sorted(extra):
+        box = await db.wms_boxes.find_one({"box_id": box_id})
+        units = int((box or {}).get("units") or (box or {}).get("qty") or 0)
+        status = (box or {}).get("status")
+        cur_loc = ((box or {}).get("location") or "").strip()
+        if box and units > 0 and status != "depleted":
+            if cur_loc == loc:
+                continue  # ya está aquí (movida tras el snapshot) -> nada por hacer
+            # CAMINO 1 — mover la caja ajena a donde el contador la encontró.
+            await db.wms_boxes.update_one(
+                {"box_id": box_id},
+                {"$set": {"location": loc, "status": "stored",
+                          "last_transferred_at": now_iso(),
+                          "last_transferred_by": user.get("name", user.get("email", ""))}},
+            )
+            await _move_box_inventory(box, cur_loc, loc)
+            await log_movement(user, "cycle_count_move", {
+                "box_id": box_id, "from": cur_loc, "to": loc,
+                "sku": box.get("sku") or box.get("style"), "units": units,
+                "via": "cycle_count", "count_id": count_id, "pass": cur_pass,
+            })
+            moved += 1
+            continue
+        # No está viva (inexistente o agotada) -> intentar REVERTIR (camino 3).
+        restore_units = await _cc_prior_negative_units(box_id)
+        if not restore_units:
+            unknown.append(box_id)
+            continue
+        ref = box
+        if not ref:
+            m = await db.wms_movements.find_one(
+                {"details.box_id": box_id, "details.delta_units": {"$lt": 0}},
+                sort=[("created_at", -1)],
+            )
+            ref = (m or {}).get("details", {})
+        sku = ref.get("sku") or ref.get("style")
+        if not sku:
+            unknown.append(box_id)
+            continue
+        color = ref.get("color", "") or ""
+        size = ref.get("size", "") or ""
+        customer = ref.get("customer", "") or ""
+        # CAMINO 3 — revivir la caja aquí con las unidades del ajuste negativo previo.
+        if box:
+            await db.wms_boxes.update_one(
+                {"box_id": box_id},
+                {"$set": {"units": restore_units, "qty": restore_units,
+                          "location": loc, "status": "stored",
+                          "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+            )
+        else:
+            await db.wms_boxes.insert_one({
+                "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
+                "sku": sku, "style": sku, "color": color, "size": size,
+                "units": restore_units, "qty": restore_units,
+                "location": loc, "status": "stored", "customer": customer,
+                "is_adjustment": True,
+                "created_at": now_iso(), "updated_at": now_iso(),
+                "updated_by": user.get("user_id"),
+            })
+        await _cc_add_inventory(sku, color, size, loc, restore_units, customer, box_id)
+        await log_movement(user, "cycle_count_restore", {
+            "box_id": box_id, "location": loc,
+            "sku": sku, "color": color, "size": size,
+            "old_units": 0, "new_units": restore_units, "delta_units": restore_units,
+            "via": "cycle_count", "count_id": count_id, "pass": cur_pass,
+        })
+        restored += 1
+
+    # ── MISSING: cajas que el sistema tenía aquí y no aparecieron ──
+    for box_id in sorted(missing):
+        box = await db.wms_boxes.find_one({"box_id": box_id})
+        if not box:
+            continue
+        units = int(box.get("units") or box.get("qty") or 0)
+        cur_loc = (box.get("location") or "").strip()
+        if cur_loc != loc:
+            continue  # ya fue movida a otra ubicación -> contabilizada allá
+        if units <= 0 or box.get("status") == "depleted":
+            continue  # ya estaba agotada
+        # CAMINO 2 — agotar del sistema la caja faltante (ajuste negativo).
+        sku = box.get("sku") or box.get("style") or ""
+        color = box.get("color", "")
+        size = box.get("size", "")
+        await db.wms_boxes.update_one(
+            {"box_id": box_id},
+            {"$set": {"units": 0, "qty": 0, "status": "depleted",
+                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        )
+        await _cc_remove_inventory(box, units)
+        await log_movement(user, "cycle_count_shrink", {
+            "box_id": box_id, "location": loc,
+            "sku": sku, "color": color, "size": size,
+            "old_units": units, "new_units": 0, "delta_units": -units,
+            "via": "cycle_count", "count_id": count_id, "pass": cur_pass,
+        })
+        shrunk += 1
+
+    return {"moved": moved, "restored": restored, "shrunk": shrunk, "unknown": unknown}
+
+
 @router.post("/cycle-counts/{count_id}/scan-location")
 async def cc_scan_location(count_id: str, request: Request):
     """Escanea el LPN de una caja para una ubicación del conteo. Agrega el box_id
@@ -9676,6 +9873,8 @@ async def cc_scan_location(count_id: str, request: Request):
         raise HTTPException(404, f"La ubicación {location} no está en este conteo")
     if L.get("status") in ("ok", "supervisor"):
         raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
+    if int(L.get("pass", 1)) >= 3 and get_inventory_level(user) < 3:
+        raise HTTPException(403, "El 3er conteo solo puede procesarlo inventario nivel 3")
     scanned = L.get("scanned_boxes", [])
     dup = box_id in scanned
     if not dup:
@@ -9698,10 +9897,21 @@ async def cc_scan_location(count_id: str, request: Request):
 
 @router.post("/cycle-counts/{count_id}/close-location")
 async def cc_close_location(count_id: str, request: Request):
-    """Cierra una ubicación: compara el set de LPN escaneados vs los esperados.
-    Cuadra (sin faltantes ni ajenas) → status ok. No cuadra → sube de pase
-    (1→2→3); tras el pase 3 queda 'supervisor' (revisión/ajuste manual). Nunca
-    ajusta unidades — solo audita cajas y escala."""
+    """Cierra una ubicación bajo la máquina de DOBLE CONTEO CIEGO:
+
+      • Pase 1: el conteo se compara contra el SISTEMA (expected_boxes).
+        - cuadra   → status 'ok' (sin discrepancia, no toca inventario).
+        - no cuadra→ se crea el 2do conteo (pase 2).
+      • Pase 2: se compara contra lo que contó el CONTADOR 1 (history pass==1).
+        - coincide con el 1ro → DISCREPANCIA CONFIRMADA → se resuelve el inventario
+          (mover ajena / agotar faltante / revertir ajuste) → 'ok' (o 'supervisor'
+          si hubo LPN desconocido).
+        - difiere del 1ro → se crea el 3er conteo (pase 3).
+      • Pase 3: lo procesa inventario NIVEL 3 y es AUTORITATIVO — su conteo es la
+        verdad → se resuelve el inventario → 'ok' (o 'supervisor' si LPN desconocido).
+
+    La resolución de discrepancia confirmada SÍ muta inventario (a diferencia del
+    comportamiento viejo, solo-auditoría); ver _cc_resolve_location."""
     user = await require_inventory_level(request, 1)
     body = await request.json()
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
@@ -9715,13 +9925,25 @@ async def cc_close_location(count_id: str, request: Request):
         raise HTTPException(404, f"La ubicación {location} no está en este conteo")
     if L.get("status") in ("ok", "supervisor"):
         raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
+    cur_pass = int(L.get("pass", 1))
+    if cur_pass >= 3 and get_inventory_level(user) < 3:
+        raise HTTPException(403, "El 3er conteo solo puede procesarlo inventario nivel 3")
 
     expected = set(L.get("expected_boxes", []))
     scanned = set(L.get("scanned_boxes", []))
-    missing = sorted(expected - scanned)   # esperadas que no aparecieron
-    extra = sorted(scanned - expected)     # escaneadas que no van aquí (ajenas)
-    matched = (not missing and not extra)
-    cur_pass = int(L.get("pass", 1))
+    missing = sorted(expected - scanned)   # esperadas que no aparecieron (vs sistema)
+    extra = sorted(scanned - expected)     # escaneadas que no van aquí (vs sistema)
+
+    # Base de comparación según el pase: pase 1 vs sistema; pase 2 vs contador 1
+    # (último history con pass==1); pase 3 es autoritativo (sin base — siempre resuelve).
+    if cur_pass <= 1:
+        baseline = expected
+    elif cur_pass == 2:
+        prev = [h for h in (L.get("history") or []) if int(h.get("pass", 0)) == 1]
+        baseline = set(prev[-1].get("scanned", [])) if prev else expected
+    else:
+        baseline = None
+    matched = (baseline is not None) and (scanned == baseline)
 
     hist = L.get("history", [])
     hist.append({
@@ -9739,18 +9961,38 @@ async def cc_close_location(count_id: str, request: Request):
         "scan_locations.$.counted_at": now_iso(),
         "last_updated_at": now_iso(),
     }
-    if matched:
+    resolution = None
+    if cur_pass <= 1 and matched:
+        # Contador 1 == sistema → cierra limpio, sin tocar inventario.
         set_fields["scan_locations.$.status"] = "ok"
         new_status, new_pass = "ok", cur_pass
-    elif cur_pass < CYCLE_COUNT_MAX_PASS:
-        new_pass = cur_pass + 1
+    elif cur_pass == 1:
+        # Contador 1 ≠ sistema → se crea el 2do conteo.
+        new_pass = 2
         set_fields["scan_locations.$.status"] = "escalated"
         set_fields["scan_locations.$.pass"] = new_pass
         set_fields["scan_locations.$.scanned_boxes"] = []   # nuevo pase arranca limpio
         new_status = "escalated"
+    elif cur_pass == 2 and not matched:
+        # Contador 2 ≠ contador 1 → se crea el 3er conteo (nivel 3).
+        new_pass = 3
+        set_fields["scan_locations.$.status"] = "escalated"
+        set_fields["scan_locations.$.pass"] = new_pass
+        set_fields["scan_locations.$.scanned_boxes"] = []
+        new_status = "escalated"
     else:
-        set_fields["scan_locations.$.status"] = "supervisor"
-        new_status, new_pass = "supervisor", cur_pass
+        # DISCREPANCIA CONFIRMADA: pase 2 (contador2==contador1) o pase 3
+        # (autoritativo). Aplicar acciones reales de inventario sobre el estado vivo.
+        resolution = await _cc_resolve_location(count, L, scanned, user)
+        set_fields["scan_locations.$.resolution"] = resolution
+        new_pass = cur_pass
+        if resolution["unknown"]:
+            set_fields["scan_locations.$.status"] = "supervisor"
+            set_fields["scan_locations.$.unknown_boxes"] = resolution["unknown"]
+            new_status = "supervisor"
+        else:
+            set_fields["scan_locations.$.status"] = "ok"
+            new_status = "ok"
 
     await db.wms_cycle_counts.update_one(
         {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
@@ -9759,7 +10001,7 @@ async def cc_close_location(count_id: str, request: Request):
     await log_movement(user, "cycle_count_location_closed", {
         "count_id": count_id, "location": L.get("location"), "pass": cur_pass,
         "matched": matched, "missing": len(missing), "extra": len(extra),
-        "result": new_status, "next_pass": new_pass,
+        "result": new_status, "next_pass": new_pass, "resolution": resolution,
     })
     await notify_badge_change("cycle_count")
     return {
@@ -9768,6 +10010,7 @@ async def cc_close_location(count_id: str, request: Request):
         "result": new_status, "pass": new_pass,
         "escalated": new_status == "escalated",
         "needs_supervisor": new_status == "supervisor",
+        "resolution": resolution,
     }
 
 

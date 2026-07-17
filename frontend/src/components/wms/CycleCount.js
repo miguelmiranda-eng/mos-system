@@ -12,6 +12,10 @@ export const CycleCountModule = () => {
   const { t } = useLang();
   const { user } = useAuth();
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
+  // Nivel de inventario efectivo (mismo criterio que WMS.js / deps.get_inventory_level):
+  // admin/supersu = 3; el resto, su inventory_level numérico. Gatea el 3er conteo.
+  const invLevel = (user?.role === 'supersu' || user?.role === 'admin')
+    ? 3 : (parseInt(user?.inventory_level, 10) || 0);
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
@@ -639,9 +643,26 @@ export const CycleCountModule = () => {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/close-location`, { location: loc });
         if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
         const data = await res.json();
-        if (data.matched) toast.success(`${loc}: ✅ cuadra`);
-        else if (data.needs_supervisor) toast.error(`${loc}: no cuadra tras 3 pases → revisión de supervisor`);
-        else toast.warning(`${loc}: no cuadra → pasa al ${data.pass}° cicloconteo`);
+        const r = data.resolution;
+        const acts = r ? (r.moved + r.restored + r.shrunk) : 0;
+        const summ = r
+          ? [r.moved && `${r.moved} movida(s)`, r.shrunk && `${r.shrunk} agotada(s)`, r.restored && `${r.restored} restaurada(s)`]
+              .filter(Boolean).join(' · ')
+          : '';
+        if (data.needs_supervisor) {
+          // Discrepancia confirmada con LPN desconocido(s) → supervisor.
+          const unk = r?.unknown?.length ? ` (${r.unknown.length} LPN desconocido[s])` : '';
+          toast.error(`${loc}: revisión de supervisor${unk}${acts ? ` · ${summ}` : ''}`);
+        } else if (r) {
+          // Discrepancia confirmada y resuelta (pase 2 == contador 1, o cierre nivel 3).
+          toast.success(acts
+            ? `${loc}: ✅ confirmada y resuelta · ${summ}`
+            : `${loc}: ✅ confirmada (sin cambios de inventario)`);
+        } else if (data.matched) {
+          toast.success(`${loc}: ✅ cuadra con el sistema`);
+        } else {
+          toast.warning(`${loc}: discrepancia → pasa al ${data.pass}° conteo`);
+        }
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
       } catch { toast.error('Error de conexión'); }
@@ -657,12 +678,16 @@ export const CycleCountModule = () => {
         'supervisor': SL.filter(L => L.status === 'supervisor'),
         'ok': SL.filter(L => L.status === 'ok'),
       };
+      // El 3er conteo solo lo procesa inventario nivel 3.
+      const canPass3 = invLevel >= 3;
       const TABS = [
         { k: '1', label: '1er Conteo' }, { k: '2', label: '2do Cicloconteo' },
-        { k: '3', label: '3er Cicloconteo' }, { k: 'supervisor', label: 'Rev. Supervisor' },
+        { k: '3', label: '3er Cicloconteo', lvl3: true }, { k: 'supervisor', label: 'Rev. Supervisor' },
         { k: 'ok', label: 'Cuadradas' },
-      ];
-      const active = buckets[scanPass] || [];
+      ].filter(tb => !tb.lvl3 || canPass3);
+      // Si un no-nivel-3 quedó parado en la pestaña 3, mándalo a la 1.
+      const effectivePass = (scanPass === '3' && !canPass3) ? '1' : scanPass;
+      const active = buckets[effectivePass] || [];
       return (
         <div className="space-y-4" data-testid="cycle-count-boxscan">
           <div className="flex items-center gap-3">
@@ -675,10 +700,15 @@ export const CycleCountModule = () => {
           <div className="flex items-center gap-2 flex-wrap">
             {TABS.map(tb => (
               <button key={tb.k} onClick={() => setScanPass(tb.k)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${scanPass === tb.k ? 'bg-primary text-primary-foreground shadow' : 'bg-secondary/40 text-muted-foreground hover:text-foreground'}`}>
+                className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${effectivePass === tb.k ? 'bg-primary text-primary-foreground shadow' : 'bg-secondary/40 text-muted-foreground hover:text-foreground'}`}>
                 {tb.label} <span className="ml-1 opacity-70">({buckets[tb.k].length})</span>
               </button>
             ))}
+            {!canPass3 && buckets['3'].length > 0 && (
+              <span className="px-3 py-1.5 text-[10px] text-muted-foreground italic">
+                {buckets['3'].length} ubicación(es) en 3er conteo — requiere inventario nivel 3
+              </span>
+            )}
           </div>
           <div className="space-y-3 max-h-[560px] overflow-y-auto">
             {active.length === 0 && (
