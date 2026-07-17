@@ -7373,7 +7373,10 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf)
     ws = wb.add_worksheet("Inventory")
-    headers = ["Customer", "Style", "Color", "Size", "Description", "Category",
+    # SKU y UPC van pegados al Style: son la identidad con la que el cliente y
+    # las etiquetas fisicas hablan (el UPC solo lo traen las filas que entraron
+    # por receiving con codigo; puede venir vacio en cargas de Excel viejas).
+    headers = ["Customer", "Style", "SKU", "UPC", "Color", "Size", "Description", "Category",
                "Manufacturer", "Location", "Total Boxes", "On Hand", "Allocated", "Available",
                "Country of Origin", "Fabric Content", "Is BPO",
                "Última transferencia", "Transferido por"]
@@ -7381,48 +7384,63 @@ async def export_inventory(request: Request, exclude_hold: bool = False):
     for i, h in enumerate(headers):
         ws.write(0, i, h, bold)
     for row, inv in enumerate(inventory, 1):
-        ws.write(row, 0, inv.get("customer", ""))
-        ws.write(row, 1, inv.get("style", inv.get("sku", "")))
-        ws.write(row, 2, inv.get("color", ""))
-        ws.write(row, 3, inv.get("size", ""))
-        ws.write(row, 4, inv.get("description", ""))
-        ws.write(row, 5, inv.get("category", ""))
-        ws.write(row, 6, inv.get("manufacturer", ""))
-        ws.write(row, 7, inv.get("location", ""))
-        ws.write(row, 8, inv.get("total_boxes", 0))
-        ws.write(row, 9, inv.get("units_on_hand", 0))
-        ws.write(row, 10, inv.get("units_allocated", 0))
-        ws.write(row, 11, inv.get("units_on_hand", 0) - inv.get("units_allocated", 0))
-        ws.write(row, 12, inv.get("country_of_origin", ""))
-        ws.write(row, 13, inv.get("fabric_content", ""))
-        ws.write(row, 14, "YES" if inv.get("is_bpo") else "NO")
         _tr_at, _tr_by = _row_transfer(inv)
-        ws.write(row, 15, _tr_at)
-        ws.write(row, 16, _tr_by)
+        values = [
+            inv.get("customer", ""),
+            inv.get("style", inv.get("sku", "")),
+            inv.get("sku", ""),
+            str(inv.get("upc", "") or ""),
+            inv.get("color", ""),
+            inv.get("size", ""),
+            inv.get("description", ""),
+            inv.get("category", ""),
+            inv.get("manufacturer", ""),
+            inv.get("location", ""),
+            inv.get("total_boxes", 0),
+            inv.get("units_on_hand", 0),
+            inv.get("units_allocated", 0),
+            inv.get("units_on_hand", 0) - inv.get("units_allocated", 0),
+            inv.get("country_of_origin", ""),
+            inv.get("fabric_content", ""),
+            "YES" if inv.get("is_bpo") else "NO",
+            _tr_at,
+            _tr_by,
+        ]
+        for col, v in enumerate(values):
+            ws.write(row, col, v)
 
     # ── Sheet 2: box-level detail (Case# 007) ────────────────────────────────
     # Which physical box / LPN sits in each location — the aggregated sheet above
     # buckets by SKU+location and hides the box numbers. (boxes fetched up-front.)
     ws2 = wb.add_worksheet("Cajas - LPNs")
-    box_headers = ["Box / LPN", "Customer", "Style", "Color", "Size", "Location",
+    # En las cajas el sku es el COMPUESTO (ej. CORE-BLACK-L) y el upc es el
+    # codigo con el que se recibio ese carton — la llave para rastrear contra
+    # la lista del cliente.
+    box_headers = ["Box / LPN", "Customer", "Style", "SKU", "UPC", "Color", "Size", "Location",
                    "Units", "Status", "Country of Origin", "Fabric Content", "Description",
                    "Última transferencia", "Transferido por"]
     for i, h in enumerate(box_headers):
         ws2.write(0, i, h, bold)
     for row, b in enumerate(boxes, 1):
-        ws2.write(row, 0, b.get("box_id", b.get("lpn_id", "")))
-        ws2.write(row, 1, b.get("customer", ""))
-        ws2.write(row, 2, b.get("style", b.get("sku", "")))
-        ws2.write(row, 3, b.get("color", ""))
-        ws2.write(row, 4, b.get("size", ""))
-        ws2.write(row, 5, b.get("location", ""))
-        ws2.write(row, 6, int(b.get("units") or b.get("qty") or 0))
-        ws2.write(row, 7, b.get("status", b.get("state", "")))
-        ws2.write(row, 8, b.get("country_of_origin", b.get("coo", "")))
-        ws2.write(row, 9, b.get("fabric_content", ""))
-        ws2.write(row, 10, b.get("description", ""))
-        ws2.write(row, 11, (b.get("last_transferred_at") or "")[:19].replace("T", " "))
-        ws2.write(row, 12, b.get("last_transferred_by", ""))
+        values = [
+            b.get("box_id", b.get("lpn_id", "")),
+            b.get("customer", ""),
+            b.get("style", b.get("sku", "")),
+            b.get("sku", ""),
+            str(b.get("upc", "") or ""),
+            b.get("color", ""),
+            b.get("size", ""),
+            b.get("location", ""),
+            int(b.get("units") or b.get("qty") or 0),
+            b.get("status", b.get("state", "")),
+            b.get("country_of_origin", b.get("coo", "")),
+            b.get("fabric_content", ""),
+            b.get("description", ""),
+            (b.get("last_transferred_at") or "")[:19].replace("T", " "),
+            b.get("last_transferred_by", ""),
+        ]
+        for col, v in enumerate(values):
+            ws2.write(row, col, v)
 
     wb.close()
     buf.seek(0)
