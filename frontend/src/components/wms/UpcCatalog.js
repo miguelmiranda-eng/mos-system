@@ -88,6 +88,29 @@ export const UpcCatalog = ({ isManager }) => {
 
   const codeValid = validGtin(draft.upc);
 
+  // Aviso de duplicado de VARIANTE: un UPC identifica UN estilo+color+talla
+  // (el SKU). Si ese trio ya tiene un UPC en el catalogo, crear otro es un
+  // duplicado — la causa exacta de los 416 SKUs con multiples UPC que se
+  // investigaron. Se avisa (no bloquea: a veces el cliente reasigna codigo),
+  // pero el operador ve que ya existe uno.
+  const [dupUpc, setDupUpc] = useState(null);
+  useEffect(() => {
+    const { customer, style, color, size } = draft;
+    if (editMode || !style?.trim() || !color?.trim() || !size?.trim()) { setDupUpc(null); return; }
+    let alive = true;
+    fetcher(`/upc?search=${encodeURIComponent(style.trim())}&limit=200`)
+      .then(rows => {
+        if (!alive) return;
+        const eq = (a, b) => String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+        const hit = (Array.isArray(rows) ? rows : []).find(r =>
+          eq(r.style, style) && eq(r.color, color) && eq(r.size, size) &&
+          (!customer || eq(r.customer, customer)) && !eq(r.upc, draft.upc));
+        setDupUpc(hit ? hit.upc : null);
+      })
+      .catch(() => { if (alive) setDupUpc(null); });
+    return () => { alive = false; };
+  }, [draft.customer, draft.style, draft.color, draft.size, draft.upc, editMode]);
+
   const save = async () => {
     const code = String(draft.upc || "").trim().toUpperCase();
     if (!code) { toast.error("Captura el UPC"); return; }
@@ -95,7 +118,15 @@ export const UpcCatalog = ({ isManager }) => {
       toast.error("El UPC no es un código de barras válido (dígitos + verificador). Escanéalo, no lo teclees.");
       return;
     }
-    if (!draft.style?.trim()) { toast.error("Style es obligatorio"); return; }
+    // Identidad del UPC = SKU = estilo + color + talla. Los tres son
+    // obligatorios: un UPC sin color o sin talla no identifica una prenda real.
+    if (!draft.customer?.trim()) { toast.error("Cliente es obligatorio"); return; }
+    if (!draft.style?.trim()) { toast.error("Estilo es obligatorio"); return; }
+    if (!draft.color?.trim()) { toast.error("Color es obligatorio (es parte del SKU)"); return; }
+    if (!draft.size?.trim()) { toast.error("Talla es obligatoria (es parte del SKU)"); return; }
+    if (dupUpc && !window.confirm(
+      `Ya existe el UPC ${dupUpc} para ${draft.style}/${draft.color}/${draft.size}. ` +
+      `Un SKU normalmente lleva UN solo UPC. ¿Crear otro de todas formas?`)) return;
     setSaving(true);
     try {
       const payload = editMode ? { ...draft, upc: code, propagate_to_boxes: true } : { ...draft, upc: code };
@@ -234,6 +265,15 @@ export const UpcCatalog = ({ isManager }) => {
                     <AlertTriangle className="w-3 h-3" /> No pasa el dígito verificador — no es un código de barras real. Escanéalo, no lo teclees.
                   </p>
                 )}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  El UPC identifica una variante única: <b>estilo + color + talla</b> (el SKU). Los tres son obligatorios.
+                </p>
+                {dupUpc && (
+                  <p className="text-[10px] text-amber-500 mt-1 flex items-start gap-1" data-testid="upc-cat-dup-warn">
+                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    <span>Ya existe el UPC <span className="font-mono font-bold">{dupUpc}</span> para {draft.style}/{draft.color}/{draft.size}. Un SKU normalmente lleva un solo UPC.</span>
+                  </p>
+                )}
               </div>
               <div className="col-span-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente *</label>
@@ -244,11 +284,11 @@ export const UpcCatalog = ({ isManager }) => {
                 <SearchableSelect options={styleOptions} value={draft.style} onChange={v => setD("style", v)} placeholder={draft.customer ? "Estilo…" : "Elige cliente primero"} testId="upc-cat-draft-style" allowCreate={false} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color *</label>
                 <SearchableSelect options={colorOptions} value={draft.color} onChange={v => setD("color", v)} placeholder="Color…" testId="upc-cat-draft-color" allowCreate={false} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla *</label>
                 <select value={draft.size} onChange={e => setD("size", e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" data-testid="upc-cat-draft-size">
                   <option value="">—</option>
                   {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
