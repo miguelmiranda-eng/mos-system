@@ -42,6 +42,9 @@ export const CycleCountModule = () => {
   // Resolución manual del supervisor: { [`${loc}:${boxId}`]: {action,units,sku,color,size,customer} }
   const [supForm, setSupForm] = useState({});
   const [resolvingSup, setResolvingSup] = useState(false);
+  // ── Modal de confirmación genérico para acciones destructivas ───────────────
+  // { title, message, onConfirm } | null
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail' | 'timeline'
   const [reportsSummary, setReportsSummary] = useState(null);
@@ -585,18 +588,24 @@ export const CycleCountModule = () => {
   };
 
   const approveCount = async () => {
-    if (!selectedCount || !window.confirm(t('wms_cc_approve_conf'))) return;
-    setSaving(true);
-    try {
-      const res = await putter(`/cycle-counts/${selectedCount.count_id}/approve`, {});
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(data.message || t('success'));
-        setSelectedCount(null);
-        load();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('error')); }
-    finally { setSaving(false); }
+    if (!selectedCount) return;
+    setConfirmDialog({
+      title: 'Aprobar conteo',
+      message: '¿Confirmas que quieres aprobar este conteo? Esta acción aplicará los ajustes de inventario y no se puede deshacer.',
+      onConfirm: async () => {
+        setSaving(true);
+        try {
+          const res = await putter(`/cycle-counts/${selectedCount.count_id}/approve`, {});
+          if (res.ok) {
+            const data = await res.json();
+            toast.success(data.message || t('success'));
+            setSelectedCount(null);
+            load();
+          } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+        } catch { toast.error(t('error')); }
+        finally { setSaving(false); }
+      },
+    });
   };
 
   // Counting interface
@@ -951,7 +960,14 @@ export const CycleCountModule = () => {
                       </div>
                     )}
                     {!isTerminal && (
-                      <button onClick={() => closeLocation(L.location)} className="w-full mt-1 px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-bold" data-testid={`cc-close-${L.location}`}>
+                      <button
+                        onClick={() => setConfirmDialog({
+                          title: `Cerrar ${L.location}`,
+                          message: `¿Confirmas que terminaste de escanear todas las cajas de ${L.location}? Esta acción registrará el conteo y no se puede deshacer fácilmente.`,
+                          onConfirm: () => closeLocation(L.location),
+                        })}
+                        className="w-full mt-1 px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-bold"
+                        data-testid={`cc-close-${L.location}`}>
                         Cerrar ubicación
                       </button>
                     )}
@@ -987,7 +1003,13 @@ export const CycleCountModule = () => {
                                 </div>
                               );
                             })}
-                            <button onClick={() => resolveSupervisor(L.location, L.unknown_boxes)} disabled={resolvingSup}
+                            <button
+                              onClick={() => setConfirmDialog({
+                                title: `Resolver y cerrar ${L.location}`,
+                                message: `¿Confirmas que las decisiones para cada caja desconocida son correctas? Se crearán o descartarán según lo indicado y se cerrará la ubicación.`,
+                                onConfirm: () => resolveSupervisor(L.location, L.unknown_boxes),
+                              })}
+                              disabled={resolvingSup}
                               className="w-full px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-bold disabled:opacity-50"
                               data-testid={`cc-resolve-sup-${L.location}`}>
                               {resolvingSup ? 'Resolviendo…' : 'Cerrar ubicación (resuelto)'}
@@ -1008,6 +1030,33 @@ export const CycleCountModule = () => {
     }
 
     return (
+      <>
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-border">
+              <div className="font-black text-base text-foreground">{confirmDialog.title}</div>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-muted-foreground leading-relaxed">{confirmDialog.message}</p>
+            </div>
+            <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold hover:bg-secondary/80 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+                className="px-5 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-black uppercase tracking-wider hover:opacity-90 transition-opacity"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="space-y-4" data-testid="cycle-count-detail">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1130,6 +1179,7 @@ export const CycleCountModule = () => {
           </div>
         )}
       </div>
+      </>
     );
   }
 
