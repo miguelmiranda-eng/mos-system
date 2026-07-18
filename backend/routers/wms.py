@@ -9769,6 +9769,10 @@ async def _cc_bind_candidates(location: str, sku: str = ""):
         "location": location,
         "units": {"$gt": 0},
         "status": {"$nin": ["depleted", "picked"]},
+        # SOLO las fantasma (box_id LPN<hex>). Las "BOX-..." NO son candidatas:
+        # su box_id ES su etiqueta impresa, ya se escanean solas y atarles un
+        # numero "A-..." les robaria su identidad real.
+        "box_id": {"$regex": "^LPN"},
         "$or": [{"physical_lpn": {"$exists": False}},
                 {"physical_lpn": None}, {"physical_lpn": ""}],
     }
@@ -9995,11 +9999,24 @@ async def cc_scan_location(count_id: str, request: Request):
     if existing:
         # Ya se conoce (etiqueta BOX-, o un "A-123" atado en un escaneo previo).
         canonical = existing.get("box_id") or box_id
+    elif box_id.startswith("BOX"):
+        # Una etiqueta "BOX-..." que no aparece en el sistema NO se puede atar a
+        # una caja fantasma: o se tecleo mal, o es de otro almacen/ya agotada.
+        # Se registra crudo -> revision de supervisor.
+        canonical = box_id
+        await log_movement(user, "cycle_count_box_unmatched", {
+            "physical_lpn": box_id, "location": location, "reason": "BOX- no registrado",
+            "via": "cycle_count", "count_id": count_id, "pass": L.get("pass"),
+        })
     elif target_box_id:
         if bool(count.get("is_general")) and actual_units is None:
             raise HTTPException(400, "Conteo general: captura las unidades reales de la caja")
         # Atomico + acotado a ESTA ubicacion: dos contadores en paralelo no
         # pueden reclamar la misma caja, y no se puede atar a otra ubicacion.
+        if not target_box_id.startswith("LPN"):
+            raise HTTPException(400, (
+                "Solo se puede identificar una caja con LPN generico. Las cajas "
+                "BOX-... ya tienen su etiqueta impresa."))
         target = await db.wms_boxes.find_one_and_update(
             {"box_id": target_box_id, "location": location, "units": {"$gt": 0},
              "status": {"$nin": ["depleted", "picked"]},
