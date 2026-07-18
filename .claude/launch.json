@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start", "--prefix", "frontend"],
       "port": 3000
+    },
+    {
+      "name": "frontend-build-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3002", "--directory", "frontend/build"],
+      "port": 3002
     }
   ]
 }
