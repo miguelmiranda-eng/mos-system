@@ -2825,8 +2825,27 @@ async def delete_receiving(receiving_id: str, request: Request):
     await notify_badge_change("putaway")
     return {"message": "Receiving eliminado y revertido exitosamente"}
 
-# ==================== BOXES ====================
+# ==================== BADGES ====================
 
+@router.get("/badges")
+async def get_badges(request: Request):
+    """Ultra-fast count for the WMS sidebar navigation badges."""
+    await require_auth(request)
+    import asyncio
+    counts = await asyncio.gather(
+        db.wms_boxes.count_documents({"status": {"$in": ["received", "putaway_pending"]}, "units": {"$gt": 0}}),
+        db.wms_pick_tickets.count_documents({"status": "pending"}),
+        db.wms_cycle_counts.count_documents({"status": "in_progress"}),
+        db.wms_pick_tickets.count_documents({"status": "in_neck_cutting"})
+    )
+    return {
+        "putaway": counts[0],
+        "picking": counts[1],
+        "cycle_count": counts[2],
+        "neck_cutting": counts[3]
+    }
+
+# ==================== BOXES ====================
 @router.get("/stocktakes")
 @router.get("/boxes")
 async def list_boxes(request: Request, sku: str = "", color: str = "", size: str = "",

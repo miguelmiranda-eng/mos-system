@@ -147,18 +147,8 @@ export default function WMS() {
 
   const loadBadges = useCallback(async () => {
     try {
-      const [pendingBoxes, pendingTickets, activeCounts, neckCutting] = await Promise.all([
-        fetcher(`/boxes?status=${BoxStatus.RECEIVED}`),
-        fetcher(`/pick-tickets?status=${TicketStatus.PENDING}`),
-        fetcher(`/cycle-counts?status=${CycleCountStatus.IN_PROGRESS}`),
-        fetcher('/neck-cutting')
-      ]);
-      setBadges({
-        putaway: pendingBoxes.length || 0,
-        picking: pendingTickets.length || 0,
-        cycle_count: activeCounts.length || 0,
-        neck_cutting: neckCutting.length || 0
-      });
+      const data = await fetcher('/badges');
+      setBadges(data);
     } catch (err) { logLoadError('badges')(err); }
   }, []);
 
