@@ -62,7 +62,14 @@ const renderActiveModule = (moduleId, ctx) => {
 export default function WMS() {
   const navigate = useNavigate();
   const { t } = useLang();
-  const [activeModule, setActiveModule] = useState('home');
+  const [activeModule, setActiveModule] = useState(() => {
+    try {
+      const stored = localStorage.getItem("mos_user");
+      const u = stored ? JSON.parse(stored) : null;
+      if (u?.role === 'inventory') return 'cycle_count';
+    } catch {}
+    return 'home';
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNav, setMobileNav] = useState(false); // off-canvas drawer on phones/PDAs
   // Short transient flag shown the moment the user clicks a different module

@@ -637,21 +637,26 @@ export const CycleCountModule = () => {
     // número físico "A-123" queda atado a la caja del sistema.
     const applyScanResult = (loc, data) => {
       const shown = data.scanned_code || data.box_id;
+      let alreadyScanned = data.duplicate;
+      
       setSelectedCount(prev => ({
         ...prev,
-        scan_locations: prev.scan_locations.map(L => L.location === loc
-          ? {
-              ...L,
-              scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), data.box_id],
-              // El contador debe ver el número que ESCANEÓ ("A-123"), no el
-              // box_id interno: si ve el interno cree que no se registró.
-              scanned_labels: (data.scanned_code && data.scanned_code !== data.box_id)
-                ? { ...(L.scanned_labels || {}), [data.box_id]: data.scanned_code }
-                : (L.scanned_labels || {}),
-            }
-          : L)
+        scan_locations: prev.scan_locations.map(L => {
+          if (L.location !== loc) return L;
+          const currentScanned = L.scanned_boxes || [];
+          if (currentScanned.includes(data.box_id)) {
+            alreadyScanned = true;
+          }
+          return {
+            ...L,
+            scanned_boxes: alreadyScanned ? currentScanned : [...currentScanned, data.box_id],
+            scanned_labels: (data.scanned_code && data.scanned_code !== data.box_id)
+              ? { ...(L.scanned_labels || {}), [data.box_id]: data.scanned_code }
+              : (L.scanned_labels || {}),
+          };
+        })
       }));
-      if (data.duplicate) toast.warning(`${shown} ya estaba escaneada`);
+      if (alreadyScanned) toast.warning(`${shown} ya estaba escaneada`);
       else if (data.bound) toast.success(`${shown} identificada y registrada ✔`);
       else if (!data.expected_here) toast.warning(`⚠️ ${shown} NO pertenece a ${loc} (ajena)`);
     };
