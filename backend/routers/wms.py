@@ -3175,14 +3175,19 @@ async def box_history(box_id: str, request: Request, limit: int = 300):
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
         box = await db.wms_boxes.find_one(
-            {"$or": [{"barcode": box_id}, {"lpn_id": box_id}]}, {"_id": 0}
+            # physical_lpn: el numero fisico impreso en el carton ("A-123") que el
+            # conteo ciclico ata a la caja fantasma del import por Excel (box_id
+            # interno LPN<hex>). Sin esto, buscar una caja YA IDENTIFICADA por su
+            # numero fisico nunca la encontraba -> se veia como "no existe, sin
+            # movimientos", aunque la caja este viva y con historial completo.
+            {"$or": [{"barcode": box_id}, {"lpn_id": box_id}, {"physical_lpn": box_id}]}, {"_id": 0}
         )
 
     # Every identifier this box has answered to. A deleted box still leaves
     # movements keyed by its original id, so fall back to the raw input.
     keys = set()
     if box:
-        for k in (box.get("box_id"), box.get("lpn_id"), box.get("barcode")):
+        for k in (box.get("box_id"), box.get("lpn_id"), box.get("barcode"), box.get("physical_lpn")):
             if k:
                 keys.add(k)
     keys.add(box_id)
@@ -3191,6 +3196,7 @@ async def box_history(box_id: str, request: Request, limit: int = 300):
     or_clauses = [
         {"details.box_id": {"$in": keys}},     # single-box events
         {"details.box_ids": {"$in": keys}},    # this box inside a bulk move
+        {"details.physical_lpn": {"$in": keys}},  # bindeo del conteo ciclico (cycle_count_bind_box)
     ]
     # The creation (receiving) event is keyed by receiving_id, not box_id.
     receiving_id = (box or {}).get("receiving_id")
