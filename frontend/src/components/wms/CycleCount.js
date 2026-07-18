@@ -1363,7 +1363,16 @@ export const CycleCountModule = () => {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {counts.map(c => {
-          const pct = c.total_lines > 0 ? Math.round((c.counted_lines / c.total_lines) * 100) : 0;
+          // Un conteo box_scan guarda el avance en scan_locations, NO en lines:
+          // medirlo con counted_lines/total_lines lo deja SIEMPRE en 0% aunque
+          // lleve cientos de cajas escaneadas. Se mide por ubicaciones cerradas.
+          const SL = Array.isArray(c.scan_locations) ? c.scan_locations : [];
+          const isBoxScan = SL.length > 0;
+          const locDone = SL.filter(L => L.status === 'ok' || L.status === 'supervisor').length;
+          const boxesScanned = SL.reduce((n, L) => n + ((L.scanned_boxes || []).length), 0);
+          const pct = isBoxScan
+            ? Math.round((locDone / SL.length) * 100)
+            : (c.total_lines > 0 ? Math.round((c.counted_lines / c.total_lines) * 100) : 0);
           const statusColors = {
             'approved': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
             'completed': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
@@ -1418,7 +1427,14 @@ export const CycleCountModule = () => {
                     <div className={`h-full rounded-full transition-all duration-700 ${pct === 100 ? 'bg-emerald-500' : 'bg-primary shadow-[0_0_10px_rgba(255,193,7,0.5)]'}`} style={{ width: `${pct}%` }} />
                   </div>
                   <div className="mt-2 text-[10px] font-bold text-muted-foreground flex items-center justify-between">
-                    <span>{c.counted_lines} {t('of')} {c.total_lines} {t('wms_cc_items')}</span>
+                    {isBoxScan ? (
+                      <span>
+                        {locDone} {t('of')} {SL.length} ubicaciones
+                        <span className="ml-1.5 text-primary">· {boxesScanned} cajas</span>
+                      </span>
+                    ) : (
+                      <span>{c.counted_lines} {t('of')} {c.total_lines} {t('wms_cc_items')}</span>
+                    )}
                     {c.assigned_to_name && <span className="text-indigo-400 italic">@{c.assigned_to_name}</span>}
                   </div>
                 </div>
