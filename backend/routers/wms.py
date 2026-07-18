@@ -10059,6 +10059,15 @@ async def cc_scan_location(count_id: str, request: Request):
         scanned.append(canonical)
         L["scanned_boxes"] = scanned
         set_doc["scan_locations.$.scanned_boxes"] = scanned
+    # Etiqueta que el contador REALMENTE escaneo ("A-123"). En scanned_boxes vive
+    # el box_id interno (LPN<hex>), que el contador no reconoce: si la pantalla se
+    # lo muestra parece que no se registro y vuelve a escanear. Se guarda el mapa
+    # para poder pintar el numero fisico.
+    if canonical != box_id:
+        labels = dict(L.get("scanned_labels") or {})
+        labels[canonical] = box_id
+        L["scanned_labels"] = labels
+        set_doc["scan_locations.$.scanned_labels"] = labels
     if actual_units is not None:
         # Se GUARDA ahora; se APLICA en la resolucion confirmada (doble ciego).
         cu = dict(L.get("counted_units") or {})
@@ -10120,6 +10129,9 @@ async def cc_unscan_location(count_id: str, request: Request):
     cu = dict(L.get("counted_units") or {})
     if cu.pop(canonical, None) is not None:
         set_doc["scan_locations.$.counted_units"] = cu
+    labels = dict(L.get("scanned_labels") or {})
+    if labels.pop(canonical, None) is not None:
+        set_doc["scan_locations.$.scanned_labels"] = labels
     await db.wms_cycle_counts.update_one(
         {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
         {"$set": set_doc},

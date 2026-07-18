@@ -34,7 +34,11 @@ export const CycleCountModule = () => {
   // Al escanear un código desconocido el backend pide el SKU (solo si la
   // ubicación tiene varios) y las unidades reales, y ata el número a la caja.
   const [bindPrompt, setBindPrompt] = useState(null);
-  // { loc, code, step:'sku'|'units', candidates:[], sku, units, preview }
+  // { loc, code, candidates:[], total, target, units }
+  // Ubicación abierta. El conteo general trae miles de ubicaciones: se listan
+  // como LÍNEA compacta y solo la abierta despliega el escaneo, para que el
+  // contador no se sature.
+  const [openLoc, setOpenLoc] = useState(null);
   // Resolución manual del supervisor: { [`${loc}:${boxId}`]: {action,units,sku,color,size,customer} }
   const [supForm, setSupForm] = useState({});
   const [resolvingSup, setResolvingSup] = useState(false);
@@ -636,7 +640,15 @@ export const CycleCountModule = () => {
       setSelectedCount(prev => ({
         ...prev,
         scan_locations: prev.scan_locations.map(L => L.location === loc
-          ? { ...L, scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), data.box_id] }
+          ? {
+              ...L,
+              scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), data.box_id],
+              // El contador debe ver el número que ESCANEÓ ("A-123"), no el
+              // box_id interno: si ve el interno cree que no se registró.
+              scanned_labels: (data.scanned_code && data.scanned_code !== data.box_id)
+                ? { ...(L.scanned_labels || {}), [data.box_id]: data.scanned_code }
+                : (L.scanned_labels || {}),
+            }
           : L)
       }));
       if (data.duplicate) toast.warning(`${shown} ya estaba escaneada`);
@@ -867,30 +879,46 @@ export const CycleCountModule = () => {
               </span>
             )}
           </div>
-          <div className="space-y-3 max-h-[560px] overflow-y-auto">
+          <div className="border border-border rounded-lg overflow-hidden max-h-[620px] overflow-y-auto custom-scrollbar">
             {active.length === 0 && (
               <div className="text-center text-muted-foreground text-sm py-10">Sin ubicaciones en esta pestaña.</div>
             )}
             {active.map(L => {
               const exp = new Set(L.expected_boxes || []);
               const scanned = L.scanned_boxes || [];
+              const labels = L.scanned_labels || {};
               const isTerminal = L.status === 'ok' || L.status === 'supervisor';
+              const open = openLoc === L.location;
+              const dot = L.status === 'supervisor' ? 'bg-red-500'
+                : L.status === 'ok' ? 'bg-green-500'
+                : scanned.length > 0 ? 'bg-amber-500' : 'bg-muted-foreground/40';
               return (
-                <div key={L.loc_id} className={`border rounded-lg overflow-hidden ${L.status === 'supervisor' ? 'border-red-500/40' : L.status === 'ok' ? 'border-green-500/40' : 'border-border'}`}>
-                  <div className="bg-secondary px-3 py-2 flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-primary" />
-                    <span className="text-sm font-bold">{L.location}</span>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">Pase {L.pass}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">Escaneadas {scanned.length} / Sistema {exp.size}</span>
-                  </div>
+                <div key={L.loc_id} className={`border-b border-border/60 ${open ? 'bg-secondary/20' : ''}`}>
+                  {/* LÍNEA compacta: una ubicación por renglón */}
+                  <button
+                    onClick={() => setOpenLoc(open ? null : L.location)}
+                    className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-secondary/40"
+                    data-testid={`cc-loc-row-${L.location}`}>
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                    <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <span className="font-mono font-bold text-sm truncate">{L.location}</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">P{L.pass}</span>
+                    <span className="ml-auto text-xs font-mono tabular-nums text-muted-foreground whitespace-nowrap">
+                      <span className={scanned.length === exp.size ? 'text-green-500 font-bold' : 'text-foreground font-bold'}>{scanned.length}</span>
+                      <span className="opacity-50">/{exp.size}</span>
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+                  </button>
+                  {open && (
                   <div className="p-3 space-y-2">
                     {!isTerminal && (
                       <div className="flex gap-2">
                         <input
+                          autoFocus
                           value={scanDraft[L.location] || ''}
                           onChange={e => setScanDraft(d => ({ ...d, [L.location]: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); scanBox(L.location); } }}
-                          placeholder="Escanea el LPN de la caja…"
+                          placeholder="Escanea la caja (LPN o número físico A-…)"
                           className="flex-1 px-3 py-2 bg-background border border-border rounded text-sm font-mono"
                           data-testid={`cc-scan-${L.location}`} />
                         <button onClick={() => scanBox(L.location)} className="px-3 py-2 bg-secondary rounded text-xs font-bold uppercase tracking-widest">Escanear</button>
@@ -899,8 +927,8 @@ export const CycleCountModule = () => {
                     {scanned.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {scanned.map(b => (
-                          <span key={b} className={`inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded ${exp.has(b) ? 'bg-green-500/15 text-green-500' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'}`} title={exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}>
-                            {b}{exp.has(b) ? '' : ' ⚠'}
+                          <span key={b} className={`inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded ${exp.has(b) ? 'bg-green-500/15 text-green-500' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'}`} title={`${labels[b] ? `Etiqueta física ${labels[b]} → ${b}. ` : ''}${exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}`}>
+                            {labels[b] || b}{exp.has(b) ? '' : ' ⚠'}
                             {!isTerminal && (
                               <button onClick={() => unscanBox(L.location, b)}
                                 className="ml-0.5 leading-none text-sm opacity-60 hover:opacity-100 hover:text-red-500"
@@ -965,6 +993,7 @@ export const CycleCountModule = () => {
                     )}
                     {L.status === 'ok' && <div className="text-[11px] text-green-500 font-bold uppercase tracking-widest">✅ Cuadró</div>}
                   </div>
+                  )}
                 </div>
               );
             })}
