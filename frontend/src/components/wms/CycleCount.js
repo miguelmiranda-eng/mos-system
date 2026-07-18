@@ -794,6 +794,33 @@ export const CycleCountModule = () => {
       const effectivePass = (scanPass === '3' && !canPass3) ? '1' : scanPass;
       const active = buckets[effectivePass] || [];
       return (
+        <>
+        {confirmDialog && (
+          <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-border">
+                <div className="font-black text-base text-foreground">{confirmDialog.title}</div>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-sm text-muted-foreground leading-relaxed">{confirmDialog.message}</p>
+              </div>
+              <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDialog(null)}
+                  className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold hover:bg-secondary/80 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+                  className="px-5 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-black uppercase tracking-wider hover:opacity-90 transition-opacity"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="space-y-4" data-testid="cycle-count-boxscan">
           {/* ── Identificar caja física ──────────────────────────────────────
               Las cajas cargadas por Excel tienen un LPN genérico que NO está
@@ -1026,6 +1053,7 @@ export const CycleCountModule = () => {
             })}
           </div>
         </div>
+        </>
       );
     }
 
