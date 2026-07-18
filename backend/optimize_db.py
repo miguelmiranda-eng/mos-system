@@ -16,6 +16,14 @@ WMS_INDEXES = [
     ("wms_inventory", "location", {}),
     ("wms_boxes", [("sku", 1), ("color", 1), ("size", 1), ("location", 1), ("units", 1)], {}),
     ("wms_boxes", [("style", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
+    # Consultas SOLO por location (p.ej. _cc_bind_candidates del conteo ciclico,
+    # que busca las cajas fantasma de una ubicacion al identificar un LPN fisico
+    # desconocido) no calzaban con ninguno de los compuestos de arriba (location
+    # va 4ta, Mongo no la usa como prefijo). Sin esto caia al indice de box_id y
+    # examinaba las ~50k cajas "LPN*" completas por cada escaneo no resuelto
+    # (verificado: 49,980 examinados -> 12 tras este indice). Confirmado en vivo
+    # 2026-07-18 durante el conteo general.
+    ("wms_boxes", "location", {}),
     ("wms_boxes", "box_id", {"unique": True}),
     ("wms_boxes", "receiving_id", {}),
     ("wms_boxes", [("status", 1), ("state", 1)], {}),
@@ -32,6 +40,12 @@ WMS_INDEXES = [
     ("wms_tasks", [("task_type", 1), ("status", 1)], {}),
     ("wms_locations", "name", {}),
     ("wms_asn", "asn_id", {}),
+    # wms_cycle_counts no tenia NINGUN indice mas alla de _id: cada operacion del
+    # conteo por caja (scan-location, unscan, close, resolve) busca por count_id
+    # sin indice. La coleccion es chica (~30 docs) pero cada documento de un
+    # pasillo del conteo general pesa hasta ~280KB (scan_locations embebido) y se
+    # reescribe entero en cada escaneo. Confirmado en vivo 2026-07-18.
+    ("wms_cycle_counts", "count_id", {"unique": True}),
     # Core (non-WMS) uniqueness guards against duplicate generated IDs.
     ("invoices", "invoice_id", {"unique": True}),
 ]
