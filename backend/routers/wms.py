@@ -9758,6 +9758,55 @@ async def _cc_remove_inventory(box, units):
         )
 
 
+async def _cc_bind_candidates(location: str, sku: str = ""):
+    """Cajas VIVAS en `location` que todavia no tienen un LPN fisico atado.
+
+    Son las ~50k 'fantasma' del import por Excel: ese import venia agregado
+    ("en RP10-A26 hay 5 cajas / 35 unidades") y el sistema invento 5 cajas con
+    un box_id LPN<hex> que NO esta impreso en ningun carton — el carton real
+    trae su propio numero ("A-123"). Se ordenan FIFO para mantener rotacion."""
+    q = {
+        "location": location,
+        "units": {"$gt": 0},
+        "status": {"$nin": ["depleted", "picked"]},
+        "$or": [{"physical_lpn": {"$exists": False}},
+                {"physical_lpn": None}, {"physical_lpn": ""}],
+    }
+    if sku:
+        q["sku"] = sku
+    return await db.wms_boxes.find(q, {"_id": 0}).sort("created_at", 1).to_list(5000)
+
+
+async def _cc_apply_counted_units(box: dict, new_units: int, user: dict,
+                                  count_id: str, cur_pass) -> bool:
+    """Corrige las unidades REALES de una caja contada (las del import son un
+    reparto inventado: 34 unidades / 4 cajas -> 9,9,8,8). Ajusta la fila de
+    inventario por el DELTA sin tocar total_boxes (la caja sigue siendo una) y
+    deja rastro. Solo se llama en la resolucion CONFIRMADA — nunca en el pase 1,
+    porque el conteo es doble ciego y el pase 1 no muta inventario."""
+    cur = int(box.get("units") or box.get("qty") or 0)
+    if int(new_units) == cur:
+        return False
+    delta = int(new_units) - cur
+    await db.wms_boxes.update_one(
+        {"box_id": box.get("box_id")},
+        {"$set": {"units": int(new_units), "qty": int(new_units),
+                  "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+    )
+    await db.wms_inventory.update_one(
+        {"sku": box.get("sku"), "color": box.get("color"),
+         "size": box.get("size"), "location": box.get("location")},
+        {"$inc": {"units_on_hand": delta}, "$set": {"updated_at": now_iso()}},
+    )
+    await log_movement(user, "cycle_count_units_fix", {
+        "box_id": box.get("box_id"), "location": box.get("location"),
+        "sku": box.get("sku"), "old_units": cur, "new_units": int(new_units),
+        "delta_units": delta, "via": "cycle_count",
+        "count_id": count_id, "pass": cur_pass,
+    })
+    return True
+
+
 async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict) -> dict:
     """Aplica al inventario la realidad física CONFIRMADA de una ubicación (dos
     contadores coinciden, o cierre autoritativo de nivel 3). Compara el set
@@ -9876,7 +9925,22 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
         })
         shrunk += 1
 
-    return {"moved": moved, "restored": restored, "shrunk": shrunk, "unknown": unknown}
+    # ── UNIDADES REALES: se capturaron al escanear y se aplican AQUI (ya es una
+    # discrepancia confirmada). Solo para cajas que de verdad estan aqui; las
+    # faltantes ya se agotaron arriba y las ajenas se movieron con sus unidades.
+    units_fixed = 0
+    counted_units = L.get("counted_units") or {}
+    for bx_id, cnt_u in counted_units.items():
+        if bx_id not in confirmed:
+            continue
+        bx = await db.wms_boxes.find_one({"box_id": bx_id})
+        if not bx or (bx.get("location") or "").strip() != loc:
+            continue
+        if await _cc_apply_counted_units(bx, int(cnt_u), user, count_id, cur_pass):
+            units_fixed += 1
+
+    return {"moved": moved, "restored": restored, "shrunk": shrunk,
+            "units_fixed": units_fixed, "unknown": unknown}
 
 
 @router.post("/cycle-counts/{count_id}/scan-location")
@@ -9904,20 +9968,115 @@ async def cc_scan_location(count_id: str, request: Request):
         raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
     if int(L.get("pass", 1)) >= 3 and get_inventory_level(user) < 3:
         raise HTTPException(403, "El 3er conteo solo puede procesarlo inventario nivel 3")
-    scanned = L.get("scanned_boxes", [])
-    dup = box_id in scanned
-    if not dup:
-        scanned.append(box_id)
-        L["scanned_boxes"] = scanned
-        await db.wms_cycle_counts.update_one(
-            {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
-            {"$set": {"scan_locations.$.scanned_boxes": scanned, "last_updated_at": now_iso()}},
+    # ── Resolucion del codigo escaneado ─────────────────────────────────────
+    # Las cajas del import por Excel tienen un box_id inventado (LPN<hex>) que
+    # NO esta impreso en el carton; el carton real trae su numero ("A-123").
+    # Si comparamos el codigo crudo contra expected_boxes, TODA caja fisica sale
+    # ajena y TODA fantasma sale faltante. Por eso resolvemos el codigo a la caja
+    # del sistema (atandolo si hace falta) y guardamos el box_id CANONICO en
+    # scanned_boxes: asi la comparacion y _cc_resolve_location siguen intactas.
+    raw_units = body.get("actual_units", None)
+    actual_units = None
+    if raw_units not in (None, ""):
+        try:
+            actual_units = int(raw_units)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "actual_units debe ser entero")
+        if actual_units < 0:
+            raise HTTPException(400, "actual_units no puede ser negativo")
+    # Caja del sistema que el CONTADOR eligio de la lista para atar el numero
+    # fisico. NUNCA se elige sola: atar a ciegas puede pegar el numero a un
+    # producto equivocado y eso es mas caro de deshacer que de prevenir.
+    target_box_id = (body.get("target_box_id") or "").strip().upper()
+
+    canonical = box_id
+    bound_now = False
+    existing = await _find_box_by_lpn(box_id)
+    if existing:
+        # Ya se conoce (etiqueta BOX-, o un "A-123" atado en un escaneo previo).
+        canonical = existing.get("box_id") or box_id
+    elif target_box_id:
+        if bool(count.get("is_general")) and actual_units is None:
+            raise HTTPException(400, "Conteo general: captura las unidades reales de la caja")
+        # Atomico + acotado a ESTA ubicacion: dos contadores en paralelo no
+        # pueden reclamar la misma caja, y no se puede atar a otra ubicacion.
+        target = await db.wms_boxes.find_one_and_update(
+            {"box_id": target_box_id, "location": location, "units": {"$gt": 0},
+             "status": {"$nin": ["depleted", "picked"]},
+             "$or": [{"physical_lpn": {"$exists": False}},
+                     {"physical_lpn": None}, {"physical_lpn": ""}]},
+            {"$set": {"physical_lpn": box_id, "bound_by": user.get("user_id"),
+                      "bound_by_name": user.get("name", ""), "bound_at": now_iso(),
+                      "bound_via": "cycle_count", "bound_count_id": count_id}},
+            return_document=True, projection={"_id": 0},
         )
+        if not target:
+            raise HTTPException(409, (
+                f"{target_box_id} ya fue identificada por otro contador o ya no está "
+                f"disponible en {location}. Vuelve a escanear la caja."))
+        canonical = target.get("box_id") or box_id
+        bound_now = True
+        await log_movement(user, "cycle_count_bind_box", {
+            "box_id": canonical, "physical_lpn": box_id, "location": location,
+            "sku": target.get("sku"), "via": "cycle_count",
+            "count_id": count_id, "pass": L.get("pass"),
+        })
+    elif body.get("force_unknown"):
+        # "Ninguna de estas": el contador vio la lista y su caja NO corresponde
+        # a ninguna. Se registra el codigo crudo -> la resolucion la mandara a
+        # revision de supervisor. Mejor una excepcion visible que un bindeo malo.
+        canonical = box_id
+        await log_movement(user, "cycle_count_box_unmatched", {
+            "physical_lpn": box_id, "location": location,
+            "via": "cycle_count", "count_id": count_id, "pass": L.get("pass"),
+        })
+    else:
+        # Codigo fisico no registrado: devolver las cajas de ESTA ubicacion que
+        # aun tienen LPN generico, para que el contador elija cual es. Se manda
+        # la lista completa (con SKU y unidades del sistema) para que pueda
+        # cotejar contra lo que tiene en la mano.
+        cands = await _cc_bind_candidates(location)
+        if cands:
+            return {
+                "scanned_code": box_id, "needs_box": True,
+                "candidates": [{
+                    "box_id": cbx.get("box_id"), "sku": cbx.get("sku"),
+                    "style": cbx.get("style"), "color": cbx.get("color"),
+                    "size": cbx.get("size"), "system_units": int(cbx.get("units") or 0),
+                    "customer": cbx.get("customer", ""),
+                } for cbx in cands[:300]],
+                "candidate_total": len(cands),
+                "message": (f"{box_id} no está en el sistema. Elige a qué caja de "
+                            f"{location} corresponde."),
+            }
+        # Sin candidatas: caja realmente desconocida. Se registra tal cual y la
+        # resolucion la mandara a supervisor (comportamiento de siempre).
+
+    scanned = L.get("scanned_boxes", [])
+    dup = canonical in scanned
+    set_doc = {"last_updated_at": now_iso()}
+    if not dup:
+        scanned.append(canonical)
+        L["scanned_boxes"] = scanned
+        set_doc["scan_locations.$.scanned_boxes"] = scanned
+    if actual_units is not None:
+        # Se GUARDA ahora; se APLICA en la resolucion confirmada (doble ciego).
+        cu = dict(L.get("counted_units") or {})
+        cu[canonical] = actual_units
+        L["counted_units"] = cu
+        set_doc["scan_locations.$.counted_units"] = cu
+    await db.wms_cycle_counts.update_one(
+        {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
+        {"$set": set_doc},
+    )
     expected = set(L.get("expected_boxes", []))
     return {
-        "box_id": box_id,
+        "box_id": canonical,
+        "scanned_code": box_id,
+        "bound": bound_now,                    # True => se acaba de atar "A-123"
         "duplicate": dup,
-        "expected_here": box_id in expected,   # False => caja AJENA a esta ubicación
+        "expected_here": canonical in expected,  # False => caja AJENA a esta ubicación
+        "counted_units": actual_units,
         "scanned_count": len(scanned),
         "expected_count": len(expected),
         "pass": L.get("pass"),
@@ -9949,17 +10108,41 @@ async def cc_unscan_location(count_id: str, request: Request):
         raise HTTPException(400, f"La ubicación {location} ya está cerrada ({L.get('status')})")
     if int(L.get("pass", 1)) >= 3 and get_inventory_level(user) < 3:
         raise HTTPException(403, "El 3er conteo solo puede procesarlo inventario nivel 3")
+    # Resolver igual que en el scan: el contador puede teclear el numero fisico
+    # ("A-123") aunque en scanned_boxes viva el box_id canonico.
+    existing = await _find_box_by_lpn(box_id)
+    canonical = (existing or {}).get("box_id") or box_id
     scanned = L.get("scanned_boxes", [])
-    if box_id not in scanned:
+    if canonical not in scanned:
         raise HTTPException(404, f"{box_id} no está en el escaneo de {location}")
-    scanned = [b for b in scanned if b != box_id]
+    scanned = [b for b in scanned if b != canonical]
+    set_doc = {"scan_locations.$.scanned_boxes": scanned, "last_updated_at": now_iso()}
+    cu = dict(L.get("counted_units") or {})
+    if cu.pop(canonical, None) is not None:
+        set_doc["scan_locations.$.counted_units"] = cu
     await db.wms_cycle_counts.update_one(
         {"count_id": count_id, "scan_locations.loc_id": L["loc_id"]},
-        {"$set": {"scan_locations.$.scanned_boxes": scanned, "last_updated_at": now_iso()}},
+        {"$set": set_doc},
     )
+    # Si este mismo conteo ato el LPN fisico y ahora se deshace el escaneo,
+    # SOLTAR el bindeo: un mal escaneo no puede dejar el numero pegado a una
+    # caja equivocada (queda libre para atarse bien despues).
+    if existing and (existing.get("physical_lpn") or "") == box_id \
+            and existing.get("bound_via") == "cycle_count" \
+            and existing.get("bound_count_id") == count_id:
+        await db.wms_boxes.update_one(
+            {"box_id": canonical},
+            {"$unset": {"physical_lpn": "", "bound_by": "", "bound_by_name": "",
+                        "bound_at": "", "bound_via": "", "bound_count_id": ""}},
+        )
+        await log_movement(user, "cycle_count_unbind_box", {
+            "box_id": canonical, "physical_lpn": box_id, "location": location,
+            "via": "cycle_count", "count_id": count_id, "pass": L.get("pass"),
+        })
     expected = set(L.get("expected_boxes", []))
     return {
-        "box_id": box_id,
+        "box_id": canonical,
+        "scanned_code": box_id,
         "removed": True,
         "scanned_count": len(scanned),
         "expected_count": len(expected),

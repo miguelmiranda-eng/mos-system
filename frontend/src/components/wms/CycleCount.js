@@ -29,6 +29,12 @@ export const CycleCountModule = () => {
   // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
   const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
   const [scanDraft, setScanDraft] = useState({}); // { [location]: textoLPN }
+  // Identificación de caja física: las cajas del import por Excel traen un
+  // box_id inventado que NO está impreso en el cartón (el cartón dice "A-123").
+  // Al escanear un código desconocido el backend pide el SKU (solo si la
+  // ubicación tiene varios) y las unidades reales, y ata el número a la caja.
+  const [bindPrompt, setBindPrompt] = useState(null);
+  // { loc, code, step:'sku'|'units', candidates:[], sku, units, preview }
   // Resolución manual del supervisor: { [`${loc}:${boxId}`]: {action,units,sku,color,size,customer} }
   const [supForm, setSupForm] = useState({});
   const [resolvingSup, setResolvingSup] = useState(false);
@@ -622,23 +628,52 @@ export const CycleCountModule = () => {
     };
 
     // ── BOX-SCAN: conteo por caja (escaneo LPN) por ubicación, 3 pases ──
+    // Aplica el resultado de un escaneo ya resuelto. OJO: se guarda el box_id
+    // CANÓNICO que devuelve el backend (no el código tecleado), porque el
+    // número físico "A-123" queda atado a la caja del sistema.
+    const applyScanResult = (loc, data) => {
+      const shown = data.scanned_code || data.box_id;
+      setSelectedCount(prev => ({
+        ...prev,
+        scan_locations: prev.scan_locations.map(L => L.location === loc
+          ? { ...L, scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), data.box_id] }
+          : L)
+      }));
+      if (data.duplicate) toast.warning(`${shown} ya estaba escaneada`);
+      else if (data.bound) toast.success(`${shown} identificada y registrada ✔`);
+      else if (!data.expected_here) toast.warning(`⚠️ ${shown} NO pertenece a ${loc} (ajena)`);
+    };
+
+    // Envía el escaneo. Si el backend pide SKU o unidades, abre el diálogo.
+    const sendScan = async (loc, code, opts = {}) => {
+      const payload = { location: loc, box_id: code };
+      if (opts.targetBoxId) payload.target_box_id = opts.targetBoxId;
+      if (opts.forceUnknown) payload.force_unknown = true;
+      if (opts.units !== undefined && opts.units !== '') payload.actual_units = parseInt(opts.units, 10);
+      const res = await poster(`/cycle-counts/${selectedCount.count_id}/scan-location`, payload);
+      if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al escanear'); return null; }
+      const data = await res.json();
+      if (data.needs_box) {
+        // Código físico sin registrar: el contador elige a MANO a qué caja
+        // (de las que tienen LPN genérico en esta ubicación) corresponde.
+        setBindPrompt({
+          loc, code, candidates: data.candidates || [],
+          total: data.candidate_total || (data.candidates || []).length,
+          target: '', units: '',
+        });
+        return data;
+      }
+      setBindPrompt(null);
+      applyScanResult(loc, data);
+      return data;
+    };
+
     const scanBox = async (loc) => {
       const boxId = (scanDraft[loc] || '').trim().toUpperCase();
       if (!boxId) return;
       setScanDraft(d => ({ ...d, [loc]: '' }));
-      try {
-        const res = await poster(`/cycle-counts/${selectedCount.count_id}/scan-location`, { location: loc, box_id: boxId });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al escanear'); return; }
-        const data = await res.json();
-        setSelectedCount(prev => ({
-          ...prev,
-          scan_locations: prev.scan_locations.map(L => L.location === loc
-            ? { ...L, scanned_boxes: data.duplicate ? L.scanned_boxes : [...(L.scanned_boxes || []), boxId] }
-            : L)
-        }));
-        if (data.duplicate) toast.warning(`${boxId} ya estaba escaneada`);
-        else if (!data.expected_here) toast.warning(`⚠️ ${boxId} NO pertenece a ${loc} (ajena)`);
-      } catch { toast.error('Error de conexión'); }
+      try { await sendScan(loc, boxId); }
+      catch { toast.error('Error de conexión'); }
     };
 
     // Quita un LPN escaneado por error antes de cerrar la ubicación.
@@ -646,13 +681,15 @@ export const CycleCountModule = () => {
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/unscan-location`, { location: loc, box_id: boxId });
         if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al quitar'); return; }
+        const data = await res.json().catch(() => ({}));
+        const canonical = data.box_id || boxId;
         setSelectedCount(prev => ({
           ...prev,
           scan_locations: prev.scan_locations.map(L => L.location === loc
-            ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== boxId) }
+            ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== canonical) }
             : L)
         }));
-        toast.success(`${boxId} quitada del escaneo`);
+        toast.success(`${data.scanned_code || boxId} quitada del escaneo`);
       } catch { toast.error('Error de conexión'); }
     };
 
@@ -732,6 +769,84 @@ export const CycleCountModule = () => {
       const active = buckets[effectivePass] || [];
       return (
         <div className="space-y-4" data-testid="cycle-count-boxscan">
+          {/* ── Identificar caja física ──────────────────────────────────────
+              Las cajas cargadas por Excel tienen un LPN genérico que NO está
+              impreso en el cartón. Al escanear un número físico ("A-123") el
+              backend pide el SKU (solo si la ubicación tiene varios) y las
+              unidades reales, y lo ata a la caja del sistema. */}
+          {bindPrompt && (
+            <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="cc-bind-modal">
+              <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+                <div className="px-5 py-3 bg-amber-500/15 border-b border-amber-500/30">
+                  <div className="font-black uppercase tracking-wider text-sm text-amber-600 dark:text-amber-400">Identificar caja</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    <span className="font-mono font-bold text-foreground">{bindPrompt.code}</span> en {bindPrompt.loc}
+                  </div>
+                </div>
+                <div className="p-5 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Este número no está en el sistema. Elige a qué caja de <b className="text-foreground">{bindPrompt.loc}</b> corresponde
+                    {bindPrompt.total > bindPrompt.candidates.length && (
+                      <> <span className="text-amber-500">(mostrando {bindPrompt.candidates.length} de {bindPrompt.total})</span></>
+                    )}:
+                  </p>
+                  <div className="space-y-1.5 max-h-[38vh] overflow-y-auto custom-scrollbar">
+                    {bindPrompt.candidates.map(cd => {
+                      const sel = bindPrompt.target === cd.box_id;
+                      return (
+                        <button key={cd.box_id}
+                          onClick={() => setBindPrompt(p => ({ ...p, target: cd.box_id }))}
+                          className={`w-full text-left px-3 py-2 rounded-lg border flex items-center justify-between gap-2 transition-all ${sel ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'border-border hover:border-primary/50 hover:bg-primary/5'}`}
+                          data-testid={`cc-bind-box-${cd.box_id}`}>
+                          <span className="min-w-0">
+                            <span className="block font-mono font-bold text-sm text-primary truncate">{cd.sku}</span>
+                            <span className="block text-[10px] text-muted-foreground truncate">
+                              {cd.color} / {cd.size} · <span className="font-mono">{cd.box_id}</span>
+                            </span>
+                          </span>
+                          <span className="text-[10px] uppercase tracking-widest text-muted-foreground whitespace-nowrap">
+                            {cd.system_units} u
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block pt-1">Unidades REALES en la caja</label>
+                  <input type="number" min="0" inputMode="numeric"
+                    value={bindPrompt.units}
+                    onChange={e => setBindPrompt(p => ({ ...p, units: e.target.value }))}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && bindPrompt.target && bindPrompt.units !== '') {
+                        e.preventDefault();
+                        sendScan(bindPrompt.loc, bindPrompt.code, { targetBoxId: bindPrompt.target, units: bindPrompt.units });
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-lg font-black font-mono text-foreground"
+                    data-testid="cc-bind-units" />
+                  <p className="text-[10px] text-muted-foreground">Cuenta lo que hay físicamente. Se aplica al confirmar el conteo, no ahora.</p>
+                </div>
+                <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-between gap-2">
+                  <button
+                    onClick={() => sendScan(bindPrompt.loc, bindPrompt.code, { forceUnknown: true })}
+                    className="px-3 py-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold"
+                    title="El producto de esta caja no coincide con ninguna de la lista — se manda a revisión de supervisor."
+                    data-testid="cc-bind-none">
+                    Ninguna de estas
+                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setBindPrompt(null)} className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold" data-testid="cc-bind-cancel">Cancelar</button>
+                    <button
+                      onClick={() => sendScan(bindPrompt.loc, bindPrompt.code, { targetBoxId: bindPrompt.target, units: bindPrompt.units })}
+                      disabled={!bindPrompt.target || bindPrompt.units === ''}
+                      className="px-5 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-black uppercase tracking-wider disabled:opacity-50"
+                      data-testid="cc-bind-confirm">
+                      Registrar caja
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <button onClick={() => setSelectedCount(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-secondary"><ArrowLeft className="w-4 h-4" /></button>
             <div>
