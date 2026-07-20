@@ -35,6 +35,18 @@ export const UpcCatalog = ({ isManager }) => {
   const [draft, setDraft] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // Override: el codigo VIENE IMPRESO en la caja pero no pasa el verificador GS1
+  // (algunas etiquetas de fabrica, p.ej. Gildan, traen GTIN mal formado).
+  const [allowNonCompliant, setAllowNonCompliant] = useState(false);
+  // Filtros por columna (client-side, sobre las filas ya cargadas). Refinan lo
+  // que trajo el buscador global. "contiene", sin distinguir mayus/minus.
+  const [colFilters, setColFilters] = useState({
+    customer: "", style: "", color: "", size: "", description: "", country_of_origin: "",
+  });
+  const setF = (k, v) => setColFilters(p => ({ ...p, [k]: v }));
+  const clearFilters = () => setColFilters({
+    customer: "", style: "", color: "", size: "", description: "", country_of_origin: "",
+  });
 
   // Listas curadas para los dropdowns (igual que Receiving).
   const wmsCat = useWmsCatalogs();
@@ -70,10 +82,19 @@ export const UpcCatalog = ({ isManager }) => {
   const countryOptions = useMemo(() => mergeUnique(wmsCat.countries, fieldOpts.countries), [wmsCat.countries, fieldOpts.countries]);
   const fabricOptions = useMemo(() => mergeUnique(wmsCat.fabrics, fieldOpts.fabrics), [wmsCat.fabrics, fieldOpts.fabrics]);
 
+  // Aplica los filtros de columna sobre las filas cargadas. "contiene", ci.
+  const filteredRows = useMemo(() => {
+    const active = Object.entries(colFilters).filter(([, v]) => v.trim());
+    if (!active.length) return rows;
+    return rows.filter(r => active.every(([k, v]) =>
+      String(r[k] ?? "").toLowerCase().includes(v.trim().toLowerCase())));
+  }, [rows, colFilters]);
+  const filtersActive = Object.values(colFilters).some(v => v.trim());
+
   const doSearch = useCallback(async (q) => {
     setLoading(true);
     try {
-      const qs = q?.trim() ? `?search=${encodeURIComponent(q.trim())}&limit=200` : "?limit=200";
+      const qs = q?.trim() ? `?search=${encodeURIComponent(q.trim())}&limit=1000` : "?limit=1000";
       const data = await fetcher(`/upc${qs}`);
       setRows(Array.isArray(data) ? data : []);
     } catch { toast.error("No se pudo cargar el catálogo de UPC"); }
@@ -86,15 +107,19 @@ export const UpcCatalog = ({ isManager }) => {
   // asi que el modal muestra solo lo requerido. En edicion se abre si ya traen
   // algo, para no esconder datos existentes.
   const [showOptional, setShowOptional] = useState(false);
-  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setShowOptional(false); setFormOpen(true); };
+  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setShowOptional(false); setAllowNonCompliant(false); setFormOpen(true); };
   const openEdit = (r) => {
     setDraft({ ...EMPTY, ...r, upc: r.upc || "" });
     setEditMode(true);
     setShowOptional(!!(r.manufacturer || r.description || r.country_of_origin || r.fabric_content));
+    setAllowNonCompliant(false);
     setFormOpen(true);
   };
 
   const codeValid = validGtin(draft.upc);
+  // Codigo que PARECE de caja: numerico y de longitud GS1 (12-14). Solo estos
+  // pueden registrarse con el override si no pasan el verificador — nunca texto.
+  const looksLikeBoxCode = /^\d{12,14}$/.test(String(draft.upc || ""));
 
   // Aviso de duplicado de VARIANTE: un UPC identifica UN estilo+color+talla
   // (el SKU). Si ese trio ya tiene un UPC en el catalogo, crear otro es un
@@ -122,8 +147,15 @@ export const UpcCatalog = ({ isManager }) => {
   const save = async () => {
     const code = String(draft.upc || "").trim().toUpperCase();
     if (!code) { toast.error("Captura el UPC"); return; }
-    if (!editMode && !codeValid) {
-      toast.error("El UPC no es un código de barras válido (dígitos + verificador). Escanéalo, no lo teclees.");
+    // Override: código impreso en la caja (numérico 12-14) que no pasa el
+    // verificador GS1, aceptado solo si el operador marca la casilla.
+    const boxOverride = allowNonCompliant && looksLikeBoxCode;
+    if (!editMode && !codeValid && !boxOverride) {
+      if (looksLikeBoxCode) {
+        toast.error("Ese código no pasa el verificador GS1. Si viene impreso en la caja, marca la casilla para registrarlo tal cual.");
+      } else {
+        toast.error("El UPC no es un código de barras válido (dígitos + verificador). Escanéalo, no lo teclees.");
+      }
       return;
     }
     // Identidad del UPC = SKU = estilo + color + talla. Los tres son
@@ -137,7 +169,9 @@ export const UpcCatalog = ({ isManager }) => {
       `Un SKU normalmente lleva UN solo UPC. ¿Crear otro de todas formas?`)) return;
     setSaving(true);
     try {
-      const payload = editMode ? { ...draft, upc: code, propagate_to_boxes: true } : { ...draft, upc: code };
+      const payload = editMode
+        ? { ...draft, upc: code, propagate_to_boxes: true }
+        : { ...draft, upc: code, ...(boxOverride ? { allow_noncompliant: true } : {}) };
       const res = editMode
         ? await putter(`/upc/${encodeURIComponent(code)}`, payload)
         : await poster("/upc", payload);
@@ -235,17 +269,45 @@ export const UpcCatalog = ({ isManager }) => {
             {search.trim() ? "Sin resultados." : "Escribe para buscar UPC en el catálogo."}
           </div>
         ) : (
+          <>
+          {filtersActive && (
+            <div className="flex items-center justify-between mb-2 text-[10px] text-muted-foreground">
+              <span>Mostrando <b>{filteredRows.length}</b> de {rows.length} con filtros de columna</span>
+              <button onClick={clearFilters} className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider" data-testid="upc-cat-clear-filters">
+                <X className="w-3 h-3" /> Limpiar filtros
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto custom-scrollbar max-h-[420px] overflow-y-auto rounded-xl border border-border/30">
             <table className="w-full text-[11px]">
-              <thead className="sticky top-0 bg-secondary/60 backdrop-blur">
+              <thead className="sticky top-0 bg-secondary/80 backdrop-blur z-10">
                 <tr className="text-left">
                   {["UPC", "Cliente", "Estilo", "Color", "Talla", "Descripción", "País", ""].map(h => (
-                    <th key={h} className="px-2.5 py-2 font-black uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
+                    <th key={h} className="px-2.5 pt-2 pb-1 font-black uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
                   ))}
+                </tr>
+                {/* Fila de filtros por columna: contiene, sin distinguir mayúsculas. */}
+                <tr>
+                  <th className="px-2.5 pb-2"></th>
+                  {["customer", "style", "color", "size", "description", "country_of_origin"].map(k => (
+                    <th key={k} className="px-2.5 pb-2">
+                      <input
+                        value={colFilters[k]}
+                        onChange={e => setF(k, e.target.value)}
+                        placeholder="Filtrar…"
+                        className="w-full min-w-[64px] px-1.5 py-1 bg-background border border-border rounded text-[10px] font-normal normal-case tracking-normal"
+                        data-testid={`upc-cat-filter-${k}`}
+                      />
+                    </th>
+                  ))}
+                  <th className="px-2.5 pb-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/10">
-                {rows.map(r => {
+                {filteredRows.length === 0 && (
+                  <tr><td colSpan={8} className="px-2.5 py-6 text-center text-muted-foreground italic">Ningún UPC coincide con los filtros.</td></tr>
+                )}
+                {filteredRows.map(r => {
                   const ok = validGtin(r.upc);
                   return (
                     <tr key={r.upc} className="hover:bg-secondary/20">
@@ -275,6 +337,7 @@ export const UpcCatalog = ({ isManager }) => {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 
@@ -319,8 +382,26 @@ export const UpcCatalog = ({ isManager }) => {
                 </div>
                 {draft.upc && !codeValid && !editMode && (
                   <p className="text-[10px] text-amber-500 mt-1 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" /> No pasa el dígito verificador — no es un código de barras real. Escanéalo, no lo teclees.
+                    <AlertTriangle className="w-3 h-3" /> No pasa el dígito verificador — {looksLikeBoxCode ? "no es un GTIN válido." : "no es un código de barras real. Escanéalo, no lo teclees."}
                   </p>
+                )}
+                {/* Override: solo para códigos numéricos 12-14 que vienen impresos
+                    en la caja pero no cumplen el checksum (GTIN de fábrica mal
+                    formado). El texto libre (ICEBLUE2X) nunca llega aquí. */}
+                {draft.upc && !codeValid && looksLikeBoxCode && !editMode && (
+                  <label className="mt-2 flex items-start gap-2 p-2 rounded-lg bg-amber-500/5 border border-amber-500/30 cursor-pointer" data-testid="upc-cat-noncompliant">
+                    <input
+                      type="checkbox"
+                      checked={allowNonCompliant}
+                      onChange={e => setAllowNonCompliant(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400 leading-snug">
+                      <b>Este código viene impreso en la caja</b> aunque no pase el verificador
+                      (algunas etiquetas de fábrica traen el GTIN mal formado). Regístralo tal
+                      cual para poder escanear la caja como viene.
+                    </span>
+                  </label>
                 )}
                 <p className="text-[10px] text-muted-foreground mt-1">
                   El UPC identifica una variante única: <b>estilo + color + talla</b> (el SKU). Los tres son obligatorios.
