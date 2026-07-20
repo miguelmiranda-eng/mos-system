@@ -34,6 +34,7 @@ export const UpcCatalog = ({ isManager }) => {
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   // Listas curadas para los dropdowns (igual que Receiving).
   const wmsCat = useWmsCatalogs();
@@ -152,6 +153,40 @@ export const UpcCatalog = ({ isManager }) => {
     finally { setSaving(false); }
   };
 
+  // Genera un UPC-A interno VALIDO para material sin codigo de fabrica (blanks
+  // de importacion, etc.). No teclea texto: el backend arma un GTIN real con
+  // prefijo interno (2) + secuencial + verificador, escaneable e imprimible en
+  // la etiqueta de caja. Idempotente: si el SKU ya tiene UPC, lo reusa.
+  const generateUpc = async () => {
+    if (editMode) return;
+    if (!draft.customer?.trim()) { toast.error("Elige el cliente primero"); return; }
+    if (!draft.style?.trim() || !draft.color?.trim() || !draft.size?.trim()) {
+      toast.error("Elige estilo, color y talla primero — son el SKU del UPC");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const res = await poster("/upc/generate-internal", {
+        customer: draft.customer, style: draft.style, color: draft.color,
+        size: draft.size, description: draft.description,
+        country_of_origin: draft.country_of_origin,
+        fabric_content: draft.fabric_content, manufacturer: draft.manufacturer,
+        brand: draft.brand,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se pudo generar el UPC interno");
+        return;
+      }
+      const doc = await res.json();
+      setD("upc", doc.upc);
+      toast.success(doc.reused
+        ? `Ese SKU ya tenía UPC: ${doc.upc} (reusado)`
+        : `UPC interno generado: ${doc.upc}`);
+    } catch { toast.error("Error de conexión"); }
+    finally { setGenerating(false); }
+  };
+
   const remove = async (r) => {
     if (!window.confirm(`¿Eliminar el UPC ${r.upc} del catálogo? Los recibos ya hechos NO se afectan.`)) return;
     try {
@@ -256,17 +291,32 @@ export const UpcCatalog = ({ isManager }) => {
             <div className="p-5 grid grid-cols-2 gap-3 max-h-[65vh] overflow-y-auto custom-scrollbar">
               <div className="col-span-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">UPC (código de barras) *</label>
-                <input
-                  value={draft.upc}
-                  onChange={e => setD("upc", e.target.value.replace(/\s+/g, "").toUpperCase())}
-                  disabled={editMode}
-                  placeholder="Escanea el código físico"
-                  className={`w-full px-3 py-2 bg-background border rounded text-sm font-mono font-bold disabled:opacity-60 ${
-                    draft.upc ? (codeValid ? "border-emerald-500/50" : "border-amber-500/50") : "border-border"
-                  }`}
-                  data-testid="upc-cat-draft-upc"
-                  autoFocus={!editMode}
-                />
+                <div className="flex gap-2">
+                  <input
+                    value={draft.upc}
+                    onChange={e => setD("upc", e.target.value.replace(/\s+/g, "").toUpperCase())}
+                    disabled={editMode}
+                    placeholder="Escanea el código físico"
+                    className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono font-bold disabled:opacity-60 ${
+                      draft.upc ? (codeValid ? "border-emerald-500/50" : "border-amber-500/50") : "border-border"
+                    }`}
+                    data-testid="upc-cat-draft-upc"
+                    autoFocus={!editMode}
+                  />
+                  {!editMode && (
+                    <button
+                      type="button"
+                      onClick={generateUpc}
+                      disabled={generating}
+                      title="Para material sin código de fábrica: genera un UPC-A interno válido (estilo+color+talla)"
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-black uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                      data-testid="upc-cat-generate"
+                    >
+                      {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Barcode className="w-3.5 h-3.5" />}
+                      Generar interno
+                    </button>
+                  )}
+                </div>
                 {draft.upc && !codeValid && !editMode && (
                   <p className="text-[10px] text-amber-500 mt-1 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" /> No pasa el dígito verificador — no es un código de barras real. Escanéalo, no lo teclees.
@@ -274,6 +324,7 @@ export const UpcCatalog = ({ isManager }) => {
                 )}
                 <p className="text-[10px] text-muted-foreground mt-1">
                   El UPC identifica una variante única: <b>estilo + color + talla</b> (el SKU). Los tres son obligatorios.
+                  Si el material <b>no trae código de fábrica</b> (blank de importación), usa <b>Generar interno</b>.
                 </p>
                 {dupUpc && (
                   <p className="text-[10px] text-amber-500 mt-1 flex items-start gap-1" data-testid="upc-cat-dup-warn">

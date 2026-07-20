@@ -11310,6 +11310,113 @@ async def create_upc(request: Request):
     return doc
 
 
+# Prefijo GS1 "2" = number system de circulacion restringida / uso interno:
+# reservado justo para articulos SIN codigo de fabrica. Un UPC-A generado aqui
+# (2 + 10 digitos secuenciales + verificador) es un codigo de barras REAL y
+# escaneable, pasa _valid_gtin, y no colisiona con los UPC de fabrica (prefijo
+# 8 en este catalogo). NO es texto inventado: eso es lo que llenó el catalogo
+# de basura (ICEBLUE2X). Aqui el numero es un GTIN valido de verdad.
+INTERNAL_UPC_PREFIX = "2"
+
+
+def _build_internal_upc(seq: int) -> str:
+    """UPC-A de 12 digitos: prefijo interno + secuencial(10) + verificador GS1.
+    El verificador se calcula igual que _valid_gtin lo valida (pesos 3/1 desde
+    la derecha), asi que el codigo generado siempre pasa esa guardia."""
+    body = f"{INTERNAL_UPC_PREFIX}{int(seq):010d}"   # 11 digitos
+    rev = [int(x) for x in body][::-1]
+    s = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(rev))
+    check = (10 - s % 10) % 10
+    return f"{body}{check}"
+
+
+async def _reserve_internal_upc_seq() -> int:
+    """Reserva atomica del siguiente secuencial de UPC interno (contador propio,
+    mismo patron que wms_box_seq). Concurrencia segura."""
+    doc = await db.counters.find_one_and_update(
+        {"_id": "wms_upc_internal_seq"}, {"$inc": {"seq": 1}},
+        upsert=True, return_document=ReturnDocument.AFTER,
+    )
+    return int(doc.get("seq", 1) or 1)
+
+
+@router.post("/upc/generate-internal")
+async def generate_internal_upc(request: Request):
+    """Genera (o reusa) un UPC-A interno valido para un SKU sin codigo de fabrica.
+
+    body: { customer, style, color, size, ... (resto de identidad opcional) }
+
+    - Idempotente por SKU: si ya existe un UPC para (customer, style, color,
+      size) — sea de fabrica o interno — lo devuelve en vez de crear otro. Un
+      SKU lleva UN solo UPC.
+    - Valida identidad curada igual que create_upc: no se generan UPC para
+      styles/colores que no esten en el catalogo (el style nuevo se da de alta
+      primero en Config WMS).
+    - El codigo es un UPC-A real (prefijo interno 2 + secuencial + verificador),
+      escaneable e imprimible en la etiqueta de caja.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    customer = await _canonical_customer(body.get("customer", ""))
+    style = str(body.get("style", "")).strip().upper()
+    color = str(body.get("color", "")).strip().upper()
+    size = str(body.get("size", "")).strip().upper()
+    if not style:
+        raise HTTPException(400, "style es obligatorio")
+    if not color:
+        raise HTTPException(400, "color es obligatorio (es parte del SKU)")
+    if not size:
+        raise HTTPException(400, "talla es obligatoria (es parte del SKU)")
+
+    # Misma guardia de identidad curada que create_upc: no generar UPC de basura.
+    await _assert_curated_identity(customer, {
+        "styles": style, "colors": color, "sizes": size,
+        "descriptions": str(body.get("description", "")).strip().upper(),
+        "countries": str(body.get("country_of_origin", "")).strip().upper(),
+        "fabrics": str(body.get("fabric_content", "")).strip().upper(),
+    })
+
+    # Idempotencia: un SKU = un UPC. Si ya hay uno (de fabrica o interno), reusar.
+    def _ci(v):
+        return {"$regex": f"^{re.escape(v)}$", "$options": "i"}
+    existing = await db.wms_upc_catalog.find_one({
+        "style": _ci(style), "color": _ci(color), "size": _ci(size),
+        **({"customer": _ci(customer)} if customer else {}),
+    }, {"_id": 0})
+    if existing:
+        return {**existing, "generated": False, "reused": True}
+
+    # Reintenta por si el codigo generado ya existiera (unicidad del catalogo).
+    for _ in range(5):
+        code = _build_internal_upc(await _reserve_internal_upc_seq())
+        if await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0}):
+            continue
+        doc = {
+            "upc": code,
+            "customer": customer,
+            "manufacturer": str(body.get("manufacturer", "")).strip().upper(),
+            "style": style, "color": color, "size": size,
+            "description": str(body.get("description", "")).strip(),
+            "country_of_origin": str(body.get("country_of_origin", "")).strip().upper(),
+            "fabric_content": str(body.get("fabric_content", "")).strip(),
+            "brand": str(body.get("brand", "")).strip().upper(),
+            "sku": (str(body.get("sku", "")).strip().upper()
+                    or f"{style}-{color}-{size}"),
+            "upc_source": "internal_generated",
+            "created_at": now_iso(),
+            "created_by": user.get("user_id"),
+            "created_by_name": user.get("name", ""),
+        }
+        await db.wms_upc_catalog.insert_one(doc)
+        doc.pop("_id", None)
+        await log_movement(user, "upc_internal_generated", {
+            "upc": code, "style": style, "color": color, "size": size,
+            "customer": customer,
+        })
+        return {**doc, "generated": True, "reused": False}
+    raise HTTPException(500, "No se pudo generar un UPC interno unico; reintenta")
+
+
 @router.put("/upc/{upc}")
 async def update_upc(upc: str, request: Request):
     """Editar UPC del catalogo. Cualquier operador autenticado puede editar,
