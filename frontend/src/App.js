@@ -253,7 +253,7 @@ const AuthCallback = () => {
 };
 
 // Protected Route
-const ProtectedRoute = ({ children, allowCustomer = false }) => {
+const ProtectedRoute = ({ children, allowCustomer = false, supersuOnly = false }) => {
   const { t } = useLang();
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -269,13 +269,17 @@ const ProtectedRoute = ({ children, allowCustomer = false }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
+      } else if (supersuOnly && user.role !== 'supersu') {
+        // Conciliación física: reservada al super usuario. Aquí solo se oculta;
+        // el backend es quien de verdad rechaza (403).
+        navigate('/wms', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && !['/wms', '/pda', '/pda-recon'].includes(window.location.pathname)) {
+      } else if (user.role === 'picker' && !['/wms', '/pda'].includes(window.location.pathname)) {
         // Pickers use the WMS launcher: "Picking" returns to their original /pda
-        // view, "Putaway 2.0" is the WMS module, "/pda-recon" es la conciliacion
-        // fisica. Allow those; bounce anything else back to the launcher (covers
-        // the iPad PWA entry too).
+        // view, "Putaway 2.0" is the WMS module. Allow those; bounce anything
+        // else back to the launcher (covers the iPad PWA entry too).
+        // "/pda-recon" ya NO está permitida: la conciliación es solo supersu.
         navigate('/wms', { replace: true });
       } else if (QC_ROLES.includes(user.role) && window.location.pathname !== '/qc') {
         // QC inspectors are locked to the QC dashboard, like operators to /operator.
@@ -829,7 +833,7 @@ function AppRouter() {
         </ProtectedRoute>
       } />
       <Route path="/pda-recon" element={
-        <ProtectedRoute>
+        <ProtectedRoute supersuOnly>
           <PdaRecon />
         </ProtectedRoute>
       } />

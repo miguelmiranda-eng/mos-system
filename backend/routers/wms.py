@@ -6964,7 +6964,7 @@ def _recon_lpn_boxes(boxes):
 async def recon_location(loc: str, request: Request):
     """Estado de una ubicacion para conciliar: cajas esperadas + si ya fue
     conciliada (bloqueada)."""
-    await require_auth(request)
+    await require_supersu(request)
     location = _RECON_NORM(loc)
     if not location:
         raise HTTPException(400, "Ubicacion requerida")
@@ -6995,8 +6995,11 @@ async def recon_commit(request: Request):
     - Marca faltantes (esperadas y no escaneadas) como recon_pending -> tabla admin.
     - Reconstruye el inventario de la ubicacion desde las cajas presentes.
     - Bloquea la ubicacion. Reversible via wms_recon_bak + commit_id.
+
+    RESTRINGIDO A SUPER USUARIO: reconstruye el inventario de una ubicacion
+    completa a partir de lo escaneado, asi que un error borra saldo real.
     """
-    user = await require_auth(request)
+    user = await require_supersu(request)
     body = await request.json()
     location = _RECON_NORM(body.get("location"))
     if not location:
@@ -7141,7 +7144,7 @@ async def recon_commit(request: Request):
 @router.get("/recon/pending")
 async def recon_pending(request: Request):
     """Conciliación: cajas faltantes (recon_pending) + creadas/desconocidas."""
-    await require_inventory_level(request, 2)
+    await require_supersu(request)
     faltantes = await db.wms_boxes.find(
         {"status": "recon_pending"},
         {"_id": 0, "box_id": 1, "style": 1, "color": 1, "size": 1, "units": 1,
@@ -7158,7 +7161,7 @@ async def recon_pending(request: Request):
 @router.get("/recon/log")
 async def recon_log(request: Request):
     """Conciliación: registro de ubicaciones conciliadas."""
-    await require_inventory_level(request, 2)
+    await require_supersu(request)
     locs = await db.wms_reconciled_locations.find({}, {"_id": 0}).sort("reconciled_at", -1).to_list(5000)
     return {"count": len(locs), "locations": locs}
 
@@ -7168,7 +7171,7 @@ async def recon_lpn_locations(request: Request):
     """Conciliación: ubicaciones que tienen cajas con LPN fisico y por lo tanto NO
     se pueden conciliar por el flujo PDA (para avisar a los contadores de antemano).
     El sistema ya lo sabe sin necesidad de escanear."""
-    await require_inventory_level(request, 2)
+    await require_supersu(request)
     rows = await db.wms_boxes.aggregate([
         {"$match": {"status": {"$nin": list(_BOX_OUT_STATUSES)}, "units": {"$gt": 0}, "$or": [
             {"box_id": {"$not": {"$regex": "^BOX", "$options": "i"}}},
@@ -7186,7 +7189,7 @@ async def recon_lpn_locations(request: Request):
 async def recon_adjustments(request: Request):
     """Conciliación: registro de ajustes de cajas (p. ej. restauracion de LPN
     marcadas faltantes por conciliacion). Visible en el modulo de Conciliacion."""
-    await require_inventory_level(request, 2)
+    await require_supersu(request)
     adj = await db.wms_recon_adjustments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return {"count": len(adj), "adjustments": adj}
 
@@ -7195,7 +7198,7 @@ async def recon_adjustments(request: Request):
 async def recon_resolve(request: Request):
     """Conciliación: resuelve una caja pendiente/creada.
     body: { box_id, action: 'assign'|'delete', location? }"""
-    user = await require_inventory_level(request, 2)
+    user = await require_supersu(request)
     body = await request.json()
     bid = str(body.get("box_id", "")).strip().upper()
     action = body.get("action")
@@ -7222,7 +7225,7 @@ async def recon_resolve(request: Request):
 @router.post("/recon/reopen")
 async def recon_reopen(request: Request):
     """Conciliación: reabre una ubicacion bloqueada para volver a conciliarla."""
-    user = await require_inventory_level(request, 2)
+    user = await require_supersu(request)
     body = await request.json()
     location = _RECON_NORM(body.get("location"))
     r = await db.wms_reconciled_locations.delete_one({"location": location})
@@ -7238,7 +7241,7 @@ async def recon_second_count_start(request: Request):
     marcadas como faltantes (recon_pending), para que los operadores hagan un
     segundo conteo fisico de esas ubicaciones en el PDA. Deja un registro en
     Ajustes de cajas con el detalle de que ubicaciones se liberaron."""
-    user = await require_inventory_level(request, 2)
+    user = await require_supersu(request)
     pending = await db.wms_boxes.find(
         {"status": "recon_pending"},
         {"_id": 0, "units": 1, "recon_missing_from": 1}

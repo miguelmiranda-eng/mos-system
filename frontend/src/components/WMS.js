@@ -53,7 +53,10 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
-    case 'reconciliation': return <ReconciliationModule />;
+    // Conciliación: solo super usuario. El mosaico ya viene filtrado; esta guarda
+    // es por si el módulo se alcanza por otra vía. El backend igual devuelve 403.
+    case 'reconciliation': return ctx.currentUser?.role === 'supersu'
+      ? <ReconciliationModule /> : <ReceivingModule />;
     case 'audit':        return <AuditModule />;
     default:             return <ReceivingModule />;
   }
@@ -139,8 +142,10 @@ export default function WMS() {
     { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
     { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
     { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
-    // Conciliación física: panel PC (admin+). El PDA de los contadores vive en /pda-recon.
-    { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', adminOnly: true },
+    // Conciliación física: SOLO super usuario. Reconstruye el inventario de una
+    // ubicación completa desde lo escaneado, así que un error borra saldo real.
+    // El backend también rechaza (403) a cualquier otro rol.
+    { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
     // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
     { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
   ];
@@ -274,7 +279,9 @@ export default function WMS() {
                   </button>
                 );
               })}
-              {/* Conciliación física: ruta PDA dedicada (/pda-recon). */}
+              {/* Conciliación física (/pda-recon): SOLO super usuario. El backend
+                  también rechaza (403) a cualquier otro rol. */}
+              {currentUser?.role === 'supersu' && (
               <button onClick={() => navigate('/pda-recon')} data-testid="picker-launch-recon"
                 className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-emerald-500/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
                 <div className="p-4 sm:p-6 rounded-2xl bg-emerald-500/10">
@@ -283,6 +290,7 @@ export default function WMS() {
                 <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">Conciliación</span>
                 <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
               </button>
+              )}
             </div>
           </div>
         </div>
@@ -394,17 +402,17 @@ export default function WMS() {
           {MODULES.filter(m => {
             // WMS inventory role: scoped to the inventory area by level. This is
             // an explicit allowlist, so it runs BEFORE the adminOnly/supersuOnly
-            // gates — Conciliación is adminOnly but nivel 2 gets it on purpose.
+            // gates — por eso NO puede incluir 'reconciliation'.
             //   nivel 1 → locaciones, mover (sin ajustes), conteo cíclico,
             //             inventario (sin "agregar manual") y movimientos
-            //   nivel 2 → además conciliación (+ ajustes en Mover y "agregar
-            //             manual" en Inventario, gateados dentro de cada módulo)
+            //   nivel 2 → además ajustes en Mover y "agregar manual" en
+            //             Inventario, gateados dentro de cada módulo
             // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
+            // Conciliación quedó reservada al super usuario, ningún nivel la ve.
             if (currentUser?.role === 'inventory') {
               const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
               if (lvl < 1) return false;
               const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'movements'];
-              if (lvl >= 2) allowed.push('reconciliation');
               return allowed.includes(m.id);
             }
             if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
