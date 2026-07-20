@@ -11268,13 +11268,27 @@ async def create_upc(request: Request):
     # UPC/EAN no puede producir ninguno de los dos. Los codigos internos
     # no-GS1 de un cliente (p.ej. Culture Kings) entran por IMPORT de su
     # archivo, no por este endpoint — esos no pasan por aqui.
+    noncompliant = False
     if not _valid_gtin(code):
-        raise HTTPException(400, (
-            f"'{code}' no es un codigo de barras valido (UPC-A/EAN: solo digitos "
-            f"y el verificador debe cuadrar). Escanea la etiqueta en vez de "
-            f"teclearla; si el cliente usa codigos internos, se cargan por "
-            f"import de su archivo, no a mano."
-        ))
+        # OVERRIDE consciente: hay proveedores (p.ej. Gildan) que imprimen en la
+        # etiqueta de carton un "GTIN"/"SSCC" que NO cumple el digito verificador
+        # GS1 — es un codigo real, fisico, pero mal formado. Para poder escanear
+        # la caja tal como viene, se acepta SI: (a) el operador lo marca como
+        # impreso en la caja, y (b) el codigo es NUMERICO y de longitud GS1
+        # (12-14). Esa doble condicion sigue bloqueando la basura tecleada
+        # (ICEBLUE2X no es numerico) pero deja pasar el codigo de fabrica.
+        allow_printed = bool(body.get("allow_noncompliant") or body.get("printed_on_box"))
+        looks_like_box_code = code.isdigit() and len(code) in (12, 13, 14)
+        if allow_printed and looks_like_box_code:
+            noncompliant = True
+        else:
+            raise HTTPException(400, (
+                f"'{code}' no es un codigo de barras valido (UPC-A/EAN: solo digitos "
+                f"y el verificador debe cuadrar). Escanea la etiqueta en vez de "
+                f"teclearla. Si el codigo VIENE IMPRESO en la caja pero no pasa el "
+                f"verificador (algunas etiquetas de fabrica traen GTIN mal formado), "
+                f"marca la casilla 'codigo impreso en la caja' para registrarlo tal cual."
+            ))
 
     doc = {
         "upc": code,
@@ -11292,6 +11306,11 @@ async def create_upc(request: Request):
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name", ""),
     }
+    if noncompliant:
+        # Trazabilidad: quedo registrado que este codigo no cumple el checksum
+        # GS1 y se acepto como "viene impreso en la caja" (no es un GTIN valido).
+        doc["gtin_compliant"] = False
+        doc["upc_source"] = "box_printed_noncompliant"
     if not doc["style"]:
         raise HTTPException(400, "style es obligatorio para crear un UPC")
     # Misma guardia que create_receiving: los 6 campos de identidad deben venir
