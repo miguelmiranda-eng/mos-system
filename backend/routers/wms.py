@@ -10248,16 +10248,37 @@ async def cc_close_location(count_id: str, request: Request):
 
     expected = set(L.get("expected_boxes", []))
     scanned = set(L.get("scanned_boxes", []))
-    missing = sorted(expected - scanned)   # esperadas que no aparecieron (vs sistema)
+    raw_missing = expected - scanned       # esperadas que no aparecieron (bruto)
     extra = sorted(scanned - expected)     # escaneadas que no van aquí (vs sistema)
+
+    # ── Filtrar faltantes pickeadas legítimamente ─────────────────────────────
+    # Si un picker sacó una caja DESPUÉS del snapshot del conteo, la caja queda
+    # con units=0 / status='depleted' en wms_boxes. No son discrepancias reales:
+    # excluirlas del baseline evita escaladas innecesarias al 2do pase.
+    picked_away: set = set()
+    if raw_missing:
+        async for mb in db.wms_boxes.find(
+            {"box_id": {"$in": list(raw_missing)},
+             "$or": [{"status": "depleted"}, {"units": {"$lte": 0}}]},
+            {"box_id": 1, "_id": 0},
+        ):
+            bid = mb.get("box_id")
+            if bid:
+                picked_away.add(bid)
+
+    # Baseline limpio: el snapshot menos las cajas sacadas por picking concurrente.
+    effective_expected = expected - picked_away
+    missing = sorted(raw_missing - picked_away)   # discrepancias reales (no pickeadas)
 
     # Base de comparación según el pase: pase 1 vs sistema; pase 2 vs contador 1
     # (último history con pass==1); pase 3 es autoritativo (sin base — siempre resuelve).
     if cur_pass <= 1:
-        baseline = expected
+        baseline = effective_expected
     elif cur_pass == 2:
         prev = [h for h in (L.get("history") or []) if int(h.get("pass", 0)) == 1]
-        baseline = set(prev[-1].get("scanned", [])) if prev else expected
+        # También quitar del baseline del pase 1 las cajas pickeadas entre pase 1 y 2.
+        raw_baseline_2 = set(prev[-1].get("scanned", [])) if prev else effective_expected
+        baseline = raw_baseline_2 - picked_away
     else:
         baseline = None
     matched = (baseline is not None) and (scanned == baseline)
@@ -10266,6 +10287,7 @@ async def cc_close_location(count_id: str, request: Request):
     hist.append({
         "pass": cur_pass, "scanned": sorted(scanned),
         "missing": missing, "extra": extra, "matched": matched,
+        "picked_away": sorted(picked_away),   # cajas sacadas por picking durante el conteo
         "by": user.get("user_id"), "by_name": user.get("name", ""), "at": now_iso(),
     })
 
@@ -10273,6 +10295,7 @@ async def cc_close_location(count_id: str, request: Request):
         "scan_locations.$.history": hist,
         "scan_locations.$.missing": missing,
         "scan_locations.$.extra": extra,
+        "scan_locations.$.picked_away": sorted(picked_away),
         "scan_locations.$.counted_by": user.get("user_id"),
         "scan_locations.$.counted_by_name": user.get("name", ""),
         "scan_locations.$.counted_at": now_iso(),
@@ -10318,12 +10341,14 @@ async def cc_close_location(count_id: str, request: Request):
     await log_movement(user, "cycle_count_location_closed", {
         "count_id": count_id, "location": L.get("location"), "pass": cur_pass,
         "matched": matched, "missing": len(missing), "extra": len(extra),
+        "picked_away": len(picked_away),
         "result": new_status, "next_pass": new_pass, "resolution": resolution,
     })
     await notify_badge_change("cycle_count")
     return {
         "location": L.get("location"), "matched": matched,
         "missing": missing, "extra": extra,
+        "picked_away": sorted(picked_away),
         "result": new_status, "pass": new_pass,
         "escalated": new_status == "escalated",
         "needs_supervisor": new_status == "supervisor",
