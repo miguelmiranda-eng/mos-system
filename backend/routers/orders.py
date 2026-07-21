@@ -897,6 +897,72 @@ async def create_comment(order_id: str, comment: CommentCreate, request: Request
     await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": order_id})
     return {**{k: v for k, v in comment_doc.items() if k not in ["_id", "reactions"]}, "reactions": {}}
 
+@router.post("/seed-packing-link")
+async def seed_packing_link(request: Request):
+    """Siembra un enlace (etiqueta + URL) como comentario en varias ordenes a la
+    vez, identificadas por su order_number (p.ej. la columna A de un packing list).
+    - Deduplica los numeros de orden.
+    - Omite las ordenes que ya tienen exactamente el mismo enlace sembrado
+      (idempotente: correrlo dos veces no duplica el comentario).
+    body: { order_numbers: [str], label: str, url: str }
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    raw_numbers = body.get("order_numbers") or []
+    label = str(body.get("label") or "").strip()
+    url = str(body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="El enlace (url) es obligatorio")
+    if not isinstance(raw_numbers, list) or not raw_numbers:
+        raise HTTPException(status_code=400, detail="Se requieren numeros de orden")
+
+    # Normaliza + deduplica preservando el orden.
+    seen, numbers = set(), []
+    for n in raw_numbers:
+        s = str(n).strip()
+        if s and s not in seen:
+            seen.add(s)
+            numbers.append(s)
+
+    # El enlace se guarda como [file]etiqueta|url[/file]: el modal de comentarios
+    # ya lo renderiza como link clickeable (con icono de Excel si termina en .xlsx).
+    display = label or url
+    content = f"[file]{display}|{url}[/file]"
+    now = datetime.now(timezone.utc).isoformat()
+
+    seeded, not_found, skipped = [], [], []
+    for num in numbers:
+        order = await db.orders.find_one(
+            {"$or": [{"order_id": num}, {"order_number": num}]},
+            {"_id": 0, "order_id": 1, "order_number": 1},
+        )
+        if not order:
+            not_found.append(num)
+            continue
+        oid = order["order_id"]
+        if await db.comments.find_one({"order_id": oid, "content": content}, {"_id": 1}):
+            skipped.append(num)
+            continue
+        cid = f"comment_{uuid.uuid4().hex[:12]}"
+        await db.comments.insert_one({
+            "comment_id": cid, "order_id": oid, "content": content, "parent_id": None,
+            "user_id": user["user_id"], "user_name": user["name"],
+            "user_picture": user.get("picture"), "mentions": [],
+            "created_at": now, "source": "packing_link_seed",
+        })
+        await log_activity(user, "seed_packing_link", {
+            "order_id": oid, "order_number": order.get("order_number"), "url": url, "label": label,
+        })
+        await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": oid})
+        seeded.append(num)
+
+    return {
+        "total": len(numbers),
+        "seeded": seeded, "seeded_count": len(seeded),
+        "not_found": not_found, "not_found_count": len(not_found),
+        "skipped_duplicate": skipped, "skipped_count": len(skipped),
+    }
+
 @router.put("/{order_id}/comments/{comment_id}")
 async def update_comment(order_id: str, comment_id: str, request: Request):
     user = await require_auth(request)
