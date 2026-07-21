@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -923,14 +923,23 @@ const Dashboard = () => {
               {order.order_number}
             </span>
             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
-              <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white mt-1" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
-                {order.board}
-              </span>
+              <div className="flex items-center gap-1 mt-1">
+                {order.packing_link && (
+                  <span title={`Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="inline-flex text-emerald-500" data-testid={`order-imported-${order.order_id}`}>
+                    <Truck className="w-3 h-3" />
+                  </span>
+                )}
+                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                  {order.board}
+                </span>
+              </div>
             )}
           </div>
 
-          {/* TWIN / NECK / SEP badges horizontal row (centered) */}
-          <div className="flex flex-row items-center justify-center gap-1.5 mt-2 w-full shrink-0">
+          {/* TWIN / NECK / SEP / PL badges horizontal row (centered).
+              Padding y gap reducidos para que los 4 quepan sin apretarse en la
+              columna de 200px. */}
+          <div className="flex flex-row items-center justify-center gap-1 mt-2 w-full shrink-0">
             {/* TWIN Badge */}
             {order.twin_order_number ? (
               <button
@@ -946,19 +955,19 @@ const Dashboard = () => {
                     toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
                   } catch { toast.error('Error buscando la orden gemela'); }
                 }}
-                className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
+                className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
                 title={`Twin: ${order.twin_order_number} — click para ir`}
               >
                 TWIN
               </button>
             ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
                 TWIN
               </span>
             )}
 
             {/* NECK Badge */}
-            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none border transition-all ${order.art_neck_status
+            <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
               ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
@@ -966,11 +975,21 @@ const Dashboard = () => {
             </span>
 
             {/* SEP Badge */}
-            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider leading-none border transition-all ${order.art_sep_status
+            <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
               ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
               SEP
+            </span>
+
+            {/* PL / Packing importado — se enciende cuando la orden tiene el enlace
+                del packing sembrado (icono de camion). */}
+            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.packing_link
+              ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
+              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              }`} title={order.packing_link ? `Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}` : 'Sin packing importado'}
+              data-testid={`order-pl-badge-${order.order_id}`}>
+              <Truck className="w-2.5 h-2.5" />
             </span>
           </div>
         </div>
@@ -1133,7 +1152,10 @@ const Dashboard = () => {
             {order.scheduled_day && (
               <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20 uppercase tracking-wider">{order.scheduled_day}</span>
             )}
-            <span className="ml-auto text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest truncate max-w-[40%] text-right">{order.board}</span>
+            <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest max-w-[45%]">
+              {order.packing_link && <Truck className="w-3 h-3 text-emerald-500 flex-shrink-0" title="Packing importado" />}
+              <span className="truncate">{order.board}</span>
+            </span>
           </div>
 
           {/* Quick facts — read-only for speed (tap the card to edit in detail).
@@ -2511,7 +2533,14 @@ const Dashboard = () => {
                         </div>
                       </div>
                       <div role="cell" className="py-3 px-4 min-w-[200px] border-r border-border/30">
-                        <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                        <div className="flex items-center gap-2">
+                          {order.packing_link && (
+                            <span title={`Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="text-emerald-500 flex-shrink-0" data-testid={`search-imported-${order.order_id}`}>
+                              <Truck className="w-4 h-4" />
+                            </span>
+                          )}
+                          <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                        </div>
                       </div>
                       {columns.filter(c => c.key !== 'order_number').map(col => (
                         <div role="cell" key={col.key} className="py-3 px-4 border-r border-border/30" style={{ minWidth: col.width || 150 }}>

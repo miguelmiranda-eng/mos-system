@@ -940,6 +940,11 @@ async def seed_packing_link(request: Request):
             not_found.append(num)
             continue
         oid = order["order_id"]
+        # Marca la orden como "packing importado" para el indicador (camion) en el
+        # CRM. Se hace para toda orden encontrada, aunque el comentario ya exista.
+        await db.orders.update_one({"order_id": oid}, {"$set": {
+            "packing_link": url, "packing_link_label": label or None, "packing_link_at": now,
+        }})
         if await db.comments.find_one({"order_id": oid, "content": content}, {"_id": 1}):
             skipped.append(num)
             continue
