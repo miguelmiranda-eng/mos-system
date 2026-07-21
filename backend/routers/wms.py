@@ -3096,6 +3096,7 @@ async def adjust_box_count(box_id: str, request: Request):
             (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
             or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": location})
         )
+    restored_inv_id = None
     if inv:
         on_hand = int(inv.get("units_on_hand", 0) or 0)
         allocated = int(inv.get("units_allocated", 0) or 0)
@@ -3122,16 +3123,42 @@ async def adjust_box_count(box_id: str, request: Request):
             })
             if not still:
                 await db.wms_inventory.delete_one({"_id": inv["_id"]})
+    elif counted > 0 and location:
+        # NO existe fila de inventario para este SKU/ubicacion: se borro cuando la
+        # caja llego a 0 (limpieza de filas vacias). Sin recrearla, ajustar la
+        # caja hacia arriba deja unidades en la caja pero units_on_hand=0, y el
+        # picker marca "sin stock". La recreamos desde los datos de la caja.
+        restored_inv_id = box.get("inventory_id") or gen_id("inv")
+        await db.wms_inventory.insert_one({
+            "inventory_id": restored_inv_id,
+            "sku": sku, "style": box.get("style") or sku,
+            "color": color, "size": size, "location": location,
+            "customer": box.get("customer", ""),
+            "manufacturer": box.get("manufacturer", ""),
+            "description": box.get("description", ""),
+            "country_of_origin": box.get("country_of_origin", ""),
+            "fabric_content": box.get("fabric_content", ""),
+            "is_bpo": box.get("is_bpo", False),
+            "units_on_hand": counted, "units_allocated": 0, "total_boxes": 1,
+            "updated_at": now_iso(),
+            "restored_by_adjust": real_box_id,
+        })
 
     # Apply to the box itself: delete when emptied, otherwise set the new count.
     if counted == 0:
         await db.wms_boxes.delete_one({"box_id": real_box_id})
     else:
-        await db.wms_boxes.update_one(
-            {"box_id": real_box_id},
-            {"$set": {"units": counted, "qty": counted,
-                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
-        )
+        box_upd = {"units": counted, "qty": counted,
+                   "updated_at": now_iso(), "updated_by": user.get("user_id")}
+        # Una caja que vuelve a tener unidades NO puede seguir 'depleted': el
+        # picker excluye las depleted (nunca las ve). Reactivar a 'located' para
+        # que sea surtible de nuevo.
+        if box.get("status") == "depleted":
+            box_upd["status"] = "located"
+        # Si recreamos la fila de inventario, ligar la caja a ese inventory_id.
+        if restored_inv_id:
+            box_upd["inventory_id"] = restored_inv_id
+        await db.wms_boxes.update_one({"box_id": real_box_id}, {"$set": box_upd})
 
     await log_movement(user, "inventory_adjust_box", {
         "box_id": real_box_id,
