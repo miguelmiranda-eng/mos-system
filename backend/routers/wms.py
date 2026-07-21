@@ -11056,6 +11056,25 @@ async def get_cycle_count_report(count_id: str, request: Request):
 
     location_breakdown = sorted(loc_map.values(), key=lambda x: x["discrepant"], reverse=True)
 
+    # Detalle por CAJA (solo conteos por escaneo/box_scan): cada caja escaneada,
+    # faltante o sobrante por ubicacion. Los conteos por lineas no escanean cajas
+    # individuales, asi que esta tabla queda vacia para ellos.
+    scanned_boxes_table = []
+    for sl in (count.get("scan_locations") or []):
+        loc = sl.get("location", "")
+        by = sl.get("counted_by_name") or sl.get("counted_by") or ""
+        at = sl.get("counted_at")
+        st = sl.get("status", "")
+        for bid, tipo in (
+            [(b, "Escaneada") for b in (sl.get("scanned_boxes") or [])]
+            + [(b, "FALTANTE") for b in (sl.get("missing") or [])]
+            + [(b, "SOBRANTE") for b in (sl.get("extra") or [])]
+        ):
+            scanned_boxes_table.append({
+                "location": loc, "box_id": bid, "tipo": tipo,
+                "loc_status": st, "counted_by_name": by, "counted_at": at,
+            })
+
     return {
         "count_id": count["count_id"],
         "name": count.get("name", ""),
@@ -11085,6 +11104,7 @@ async def get_cycle_count_report(count_id: str, request: Request):
         "discrepancy_table": discrepancy_table,
         "all_lines": all_lines_table,
         "location_breakdown": location_breakdown,
+        "scanned_boxes": scanned_boxes_table,
     }
 
 

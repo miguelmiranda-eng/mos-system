@@ -352,6 +352,23 @@ export const CycleCountModule = () => {
     wsLoc['!cols'] = [16,14,12,16,16,16,16].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, wsLoc, "Por Ubicación");
 
+    // ── HOJA 8: Detalle por Caja (números de caja escaneados) ────────────
+    // Solo aplica a conteos por escaneo (box_scan); vacía en conteos por líneas.
+    if (Array.isArray(reportDetail.scanned_boxes) && reportDetail.scanned_boxes.length > 0) {
+      const boxData = reportDetail.scanned_boxes.map(b => ({
+        "Ubicación":     b.location,
+        "N° de Caja":    b.box_id,
+        "Tipo":          b.tipo,
+        "Estado Ubic.":  b.loc_status,
+        "Contado por":   b.counted_by_name || '—',
+        "Fecha":         b.counted_at ? new Date(b.counted_at).toLocaleDateString() : '—',
+        "Hora":          b.counted_at ? new Date(b.counted_at).toLocaleTimeString() : '—',
+      }));
+      const wsBoxes = XLSX.utils.json_to_sheet(boxData);
+      wsBoxes['!cols'] = [16,18,12,14,22,14,12].map(wch => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, wsBoxes, "Detalle por Caja");
+    }
+
     const fname = `CC_${reportDetail.name.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
     XLSX.writeFile(wb, fname);
   };
