@@ -135,7 +135,7 @@ DEFAULT_OPTIONS = {
     # admin nivel 3+ (queda auditado como override). Solo aplica cuando la
     # linea del ASN casa; si no casa, se mantiene el comportamiento
     # warning-permisivo de siempre.
-    "asn_over_receipt_tolerance_percent": 5.0,
+    "asn_over_receipt_tolerance_percent": 30.0,
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]
