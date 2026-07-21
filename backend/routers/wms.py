@@ -2270,21 +2270,18 @@ async def create_receiving(request: Request):
     # 5000 BLACK L de GOODIE 2026-07-13: UPC decia NICARAGUA pero se recibio
     # como REPUBLICA DOMINICANA). Solo bloqueamos si los valores difieren de
     # forma no-vacia (evita bloquear cuando el UPC tiene el campo vacio).
+    # El UPC identifica UNICAMENTE el SKU: estilo + color + talla. Pais de origen,
+    # descripcion y contenido/porcentajes NO son parte del UPC — son metadata del
+    # embarque (varian por lote) y las provee el ASN o la captura del operador.
+    # Por eso la guardia compara SOLO la identidad: si el estilo/color/talla
+    # capturado difiere del UPC es un error real (se escaneo el UPC equivocado).
+    # Pais/desc/fabric pueden diferir del UPC libremente y NO se validan aqui.
     upc_code = str(body.get("upc", "")).strip().upper()
     if upc_code:
         upc_doc = await db.wms_upc_catalog.find_one({"upc": upc_code}, {"_id": 0})
         if upc_doc:
-            _upc_labels = {
-                "style": "Style", "color": "Color", "size": "Talla",
-                "description": "Descripcion", "country_of_origin": "Pais de origen",
-                "fabric_content": "Fabric",
-            }
-            captured = {
-                "style": style, "color": color, "size": size,
-                "description": description,
-                "country_of_origin": country_of_origin,
-                "fabric_content": fabric_content,
-            }
+            _upc_labels = {"style": "Style", "color": "Color", "size": "Talla"}
+            captured = {"style": style, "color": color, "size": size}
             divergences = []
             for k, cap in captured.items():
                 upc_val = (upc_doc.get(k) or "").strip()
@@ -2297,9 +2294,9 @@ async def create_receiving(request: Request):
                     divergences.append(f"{_upc_labels[k]}: capturaste '{cap}' pero el UPC dice '{upc_val}'")
             if divergences:
                 raise HTTPException(400, (
-                    f"El UPC {upc_code} ya existe en el catalogo con datos distintos:\n"
+                    f"El UPC {upc_code} corresponde a otro SKU:\n"
                     + "\n".join(f"  - {d}" for d in divergences)
-                    + "\n\nCorrige tu captura o edita primero el UPC en el catalogo."
+                    + "\n\nEscanea el UPC correcto o corrige el estilo/color/talla."
                 ))
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
@@ -11290,17 +11287,15 @@ async def create_upc(request: Request):
                 f"marca la casilla 'codigo impreso en la caja' para registrarlo tal cual."
             ))
 
+    # El UPC es UNICAMENTE el SKU: cliente + estilo + color + talla. Fabricante,
+    # descripcion, pais de origen y contenido NO son parte del UPC — son metadata
+    # del embarque (varian por lote) y las provee el ASN en Receiving.
     doc = {
         "upc": code,
         "customer": await _canonical_customer(body.get("customer", "")),
-        "manufacturer": str(body.get("manufacturer", "")).strip().upper(),
         "style": str(body.get("style", "")).strip().upper(),
         "color": str(body.get("color", "")).strip().upper(),
         "size": str(body.get("size", "")).strip().upper(),
-        "description": str(body.get("description", "")).strip(),
-        "country_of_origin": str(body.get("country_of_origin", "")).strip().upper(),
-        "fabric_content": str(body.get("fabric_content", "")).strip(),
-        "brand": str(body.get("brand", "")).strip().upper(),
         "sku": str(body.get("sku", "")).strip().upper(),
         "created_at": now_iso(),
         "created_by": user.get("user_id"),
@@ -11313,16 +11308,12 @@ async def create_upc(request: Request):
         doc["upc_source"] = "box_printed_noncompliant"
     if not doc["style"]:
         raise HTTPException(400, "style es obligatorio para crear un UPC")
-    # Misma guardia que create_receiving: los 6 campos de identidad deben venir
-    # del catalogo curado. El UPC es la puerta trasera preferida para basura,
-    # antes se escribia libre en un <input> del modal.
+    # Identidad del SKU: estilo + color + talla deben venir del catalogo curado.
+    # El UPC es la puerta trasera preferida para basura, antes se escribia libre.
     await _assert_curated_identity(doc["customer"], {
         "styles": doc["style"],
         "colors": doc["color"],
         "sizes": doc["size"],
-        "descriptions": doc["description"],
-        "countries": doc["country_of_origin"],
-        "fabrics": doc["fabric_content"],
     })
     await db.wms_upc_catalog.insert_one(doc)
     doc.pop("_id", None)
@@ -11387,12 +11378,9 @@ async def generate_internal_upc(request: Request):
     if not size:
         raise HTTPException(400, "talla es obligatoria (es parte del SKU)")
 
-    # Misma guardia de identidad curada que create_upc: no generar UPC de basura.
+    # Identidad del SKU curada (estilo + color + talla): no generar UPC de basura.
     await _assert_curated_identity(customer, {
         "styles": style, "colors": color, "sizes": size,
-        "descriptions": str(body.get("description", "")).strip().upper(),
-        "countries": str(body.get("country_of_origin", "")).strip().upper(),
-        "fabrics": str(body.get("fabric_content", "")).strip().upper(),
     })
 
     # Idempotencia: un SKU = un UPC. Si ya hay uno (de fabrica o interno), reusar.
@@ -11410,15 +11398,11 @@ async def generate_internal_upc(request: Request):
         code = _build_internal_upc(await _reserve_internal_upc_seq())
         if await db.wms_upc_catalog.find_one({"upc": code}, {"_id": 0}):
             continue
+        # El UPC es solo el SKU: cliente + estilo + color + talla.
         doc = {
             "upc": code,
             "customer": customer,
-            "manufacturer": str(body.get("manufacturer", "")).strip().upper(),
             "style": style, "color": color, "size": size,
-            "description": str(body.get("description", "")).strip(),
-            "country_of_origin": str(body.get("country_of_origin", "")).strip().upper(),
-            "fabric_content": str(body.get("fabric_content", "")).strip(),
-            "brand": str(body.get("brand", "")).strip().upper(),
             "sku": (str(body.get("sku", "")).strip().upper()
                     or f"{style}-{color}-{size}"),
             "upc_source": "internal_generated",
@@ -11438,44 +11422,32 @@ async def generate_internal_upc(request: Request):
 
 @router.put("/upc/{upc}")
 async def update_upc(upc: str, request: Request):
-    """Editar UPC del catalogo. Cualquier operador autenticado puede editar,
-    PERO los 6 campos de identidad (style/color/size/description/country/
-    fabric) DEBEN venir del catalogo curado — se valida con
-    `_assert_curated_identity` igual que create_upc/create_receiving. Solo
-    admin cambia el customer (mover el UPC a otro cliente cambia su scope
-    de styles y no debe ser un cambio casual del operador).
-    Propagacion a filas historicas NO es automatica — solo futuros lecturas
-    heredan el valor."""
+    """Editar UPC del catalogo. El UPC es SOLO el SKU: cliente + estilo + color +
+    talla. Estilo/color/talla DEBEN venir del catalogo curado (misma guardia que
+    create_upc). Pais/descripcion/tela/fabricante NO son editables aqui: no son
+    parte del UPC — se corrigen en Receiving (los provee el ASN)."""
     user = await require_auth(request)
     code = _norm_upc(upc)
     body = await request.json()
     existing = await db.wms_upc_catalog.find_one({"upc": code})
     if not existing:
         raise HTTPException(404, f"UPC {code} no encontrado")
-    allowed = ["customer", "manufacturer", "style", "color", "size", "description",
-               "country_of_origin", "fabric_content", "brand", "sku"]
+    allowed = ["customer", "style", "color", "size", "sku"]
     update = {}
     for k in allowed:
         if k in body:
             if k == "customer":
-                # Cualquier usuario autenticado puede cambiar el customer del UPC
-                # (incluye mover a otro cliente). El valor se canonicaliza igual.
                 update[k] = await _canonical_customer(body[k])
             else:
-                update[k] = (str(body[k]).strip().upper() if k != "description" and k != "fabric_content"
-                              else str(body[k]).strip())
+                update[k] = str(body[k]).strip().upper()
     if not update:
         raise HTTPException(400, "Nada que actualizar")
-    # Guard curated: valores de identidad deben estar en el catalogo curado.
-    # Merge del doc actual con el update para evaluar los 6 campos.
+    # Guard curated: estilo/color/talla deben estar en el catalogo curado.
     merged = {**existing, **update}
     await _assert_curated_identity(merged.get("customer", ""), {
         "styles": merged.get("style", ""),
         "colors": merged.get("color", ""),
         "sizes": merged.get("size", ""),
-        "descriptions": merged.get("description", ""),
-        "countries": merged.get("country_of_origin", ""),
-        "fabrics": merged.get("fabric_content", ""),
     })
     update["updated_at"] = now_iso()
     update["updated_by"] = user.get("user_id")

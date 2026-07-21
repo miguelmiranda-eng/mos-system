@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { fetcher, poster, putter, deleter, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 
@@ -17,9 +17,9 @@ function validGtin(code) {
   return (10 - (sum % 10)) % 10 === d[d.length - 1];
 }
 
+// El UPC es SOLO el SKU: cliente + estilo + color + talla.
 const EMPTY = {
-  upc: "", customer: "", manufacturer: "", style: "", color: "", size: "",
-  description: "", country_of_origin: "", fabric_content: "", brand: "",
+  upc: "", customer: "", style: "", color: "", size: "",
 };
 
 // Catálogo de UPC para el módulo de Configuración. El supervisor da de alta aquí
@@ -41,28 +41,23 @@ export const UpcCatalog = ({ isManager }) => {
   // Filtros por columna (client-side, sobre las filas ya cargadas). Refinan lo
   // que trajo el buscador global. "contiene", sin distinguir mayus/minus.
   const [colFilters, setColFilters] = useState({
-    customer: "", style: "", color: "", size: "", description: "", country_of_origin: "",
+    customer: "", style: "", color: "", size: "",
   });
   const setF = (k, v) => setColFilters(p => ({ ...p, [k]: v }));
   const clearFilters = () => setColFilters({
-    customer: "", style: "", color: "", size: "", description: "", country_of_origin: "",
+    customer: "", style: "", color: "", size: "",
   });
 
   // Listas curadas para los dropdowns (igual que Receiving).
   const wmsCat = useWmsCatalogs();
   const { all: sizeOptions } = useWmsSizes();
-  const [globalOpts, setGlobalOpts] = useState({ customers: [], styles: [], colors: [], manufacturers: [] });
-  const [fieldOpts, setFieldOpts] = useState({ descriptions: [], countries: [], fabrics: [] });
+  const [globalOpts, setGlobalOpts] = useState({ customers: [], styles: [], colors: [] });
   const [custStyles, setCustStyles] = useState([]);
   const [custColors, setCustColors] = useState([]);
 
   useEffect(() => {
     fetcher("/inventory/options?").then(d => setGlobalOpts({
-      customers: d?.customers || [], styles: d?.styles || [],
-      colors: d?.colors || [], manufacturers: d?.manufacturers || [],
-    })).catch(() => {});
-    fetcher("/inventory/field-options").then(d => setFieldOpts({
-      descriptions: d?.descriptions || [], countries: d?.countries || [], fabrics: d?.fabrics || [],
+      customers: d?.customers || [], styles: d?.styles || [], colors: d?.colors || [],
     })).catch(() => {});
   }, []);
 
@@ -78,9 +73,6 @@ export const UpcCatalog = ({ isManager }) => {
   const customerOptions = useMemo(() => mergeUnique(wmsCat.customers, globalOpts.customers), [wmsCat.customers, globalOpts.customers]);
   const styleOptions = useMemo(() => mergeUnique(custStyles, globalOpts.styles), [custStyles, globalOpts.styles]);
   const colorOptions = useMemo(() => mergeUnique(custColors, globalOpts.colors), [custColors, globalOpts.colors]);
-  const descOptions = useMemo(() => mergeUnique(wmsCat.descriptions, fieldOpts.descriptions), [wmsCat.descriptions, fieldOpts.descriptions]);
-  const countryOptions = useMemo(() => mergeUnique(wmsCat.countries, fieldOpts.countries), [wmsCat.countries, fieldOpts.countries]);
-  const fabricOptions = useMemo(() => mergeUnique(wmsCat.fabrics, fieldOpts.fabrics), [wmsCat.fabrics, fieldOpts.fabrics]);
 
   // Aplica los filtros de columna sobre las filas cargadas. "contiene", ci.
   const filteredRows = useMemo(() => {
@@ -102,16 +94,11 @@ export const UpcCatalog = ({ isManager }) => {
   }, []);
   useEffect(() => { const h = setTimeout(() => doSearch(search), 300); return () => clearTimeout(h); }, [search, doSearch]);
 
-  // Datos descriptivos (fabricante/descripcion/pais/tela) colapsados por
-  // defecto: NO son parte de la identidad del UPC (el SKU es estilo+color+talla),
-  // asi que el modal muestra solo lo requerido. En edicion se abre si ya traen
-  // algo, para no esconder datos existentes.
-  const [showOptional, setShowOptional] = useState(false);
-  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setShowOptional(false); setAllowNonCompliant(false); setFormOpen(true); };
+  const openCreate = () => { setDraft(EMPTY); setEditMode(false); setAllowNonCompliant(false); setFormOpen(true); };
   const openEdit = (r) => {
-    setDraft({ ...EMPTY, ...r, upc: r.upc || "" });
+    // Solo el SKU es editable; los campos descriptivos viejos no se cargan.
+    setDraft({ upc: r.upc || "", customer: r.customer || "", style: r.style || "", color: r.color || "", size: r.size || "" });
     setEditMode(true);
-    setShowOptional(!!(r.manufacturer || r.description || r.country_of_origin || r.fabric_content));
     setAllowNonCompliant(false);
     setFormOpen(true);
   };
@@ -201,11 +188,7 @@ export const UpcCatalog = ({ isManager }) => {
     setGenerating(true);
     try {
       const res = await poster("/upc/generate-internal", {
-        customer: draft.customer, style: draft.style, color: draft.color,
-        size: draft.size, description: draft.description,
-        country_of_origin: draft.country_of_origin,
-        fabric_content: draft.fabric_content, manufacturer: draft.manufacturer,
-        brand: draft.brand,
+        customer: draft.customer, style: draft.style, color: draft.color, size: draft.size,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -282,14 +265,14 @@ export const UpcCatalog = ({ isManager }) => {
             <table className="w-full text-[11px]">
               <thead className="sticky top-0 bg-secondary/80 backdrop-blur z-10">
                 <tr className="text-left">
-                  {["UPC", "Cliente", "Estilo", "Color", "Talla", "Descripción", "País", ""].map(h => (
+                  {["UPC", "Cliente", "Estilo", "Color", "Talla", ""].map(h => (
                     <th key={h} className="px-2.5 pt-2 pb-1 font-black uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
                 {/* Fila de filtros por columna: contiene, sin distinguir mayúsculas. */}
                 <tr>
                   <th className="px-2.5 pb-2"></th>
-                  {["customer", "style", "color", "size", "description", "country_of_origin"].map(k => (
+                  {["customer", "style", "color", "size"].map(k => (
                     <th key={k} className="px-2.5 pb-2">
                       <input
                         value={colFilters[k]}
@@ -305,7 +288,7 @@ export const UpcCatalog = ({ isManager }) => {
               </thead>
               <tbody className="divide-y divide-border/10">
                 {filteredRows.length === 0 && (
-                  <tr><td colSpan={8} className="px-2.5 py-6 text-center text-muted-foreground italic">Ningún UPC coincide con los filtros.</td></tr>
+                  <tr><td colSpan={6} className="px-2.5 py-6 text-center text-muted-foreground italic">Ningún UPC coincide con los filtros.</td></tr>
                 )}
                 {filteredRows.map(r => {
                   const ok = validGtin(r.upc);
@@ -321,8 +304,6 @@ export const UpcCatalog = ({ isManager }) => {
                       <td className="px-2.5 py-1.5 font-bold">{r.style}</td>
                       <td className="px-2.5 py-1.5">{r.color}</td>
                       <td className="px-2.5 py-1.5 font-mono">{r.size}</td>
-                      <td className="px-2.5 py-1.5 text-muted-foreground truncate max-w-[180px]" title={r.description}>{r.description}</td>
-                      <td className="px-2.5 py-1.5 text-muted-foreground">{r.country_of_origin}</td>
                       <td className="px-2.5 py-1.5 whitespace-nowrap">
                         {isManager && (
                           <div className="flex items-center gap-1 justify-end">
@@ -433,40 +414,9 @@ export const UpcCatalog = ({ isManager }) => {
                   {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              {/* Datos descriptivos — NO son identidad del UPC. Ocultos por
-                  defecto; el país sobre todo cambia por embarque, no por UPC.
-                  Si se llenan, Receiving los autocompleta al escanear. */}
-              <div className="col-span-2">
-                <button
-                  type="button"
-                  onClick={() => setShowOptional(o => !o)}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 hover:bg-secondary/60 text-[11px] font-black uppercase tracking-widest text-muted-foreground transition-colors"
-                  data-testid="upc-cat-optional-toggle"
-                >
-                  <span>Datos descriptivos (opcional): descripción, país, tela, fabricante</span>
-                  {showOptional ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              {showOptional && (
-                <>
-                  <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
-                    <input value={draft.manufacturer} onChange={e => setD("manufacturer", e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" placeholder="(opcional)" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
-                    <SearchableSelect options={descOptions} value={draft.description} onChange={v => setD("description", v)} placeholder="Descripción…" testId="upc-cat-draft-desc" allowCreate={false} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
-                    <SearchableSelect options={countryOptions} value={draft.country_of_origin} onChange={v => setD("country_of_origin", v)} placeholder="País…" testId="upc-cat-draft-country" allowCreate={false} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Contenido / tela</label>
-                    <SearchableSelect options={fabricOptions} value={draft.fabric_content} onChange={v => setD("fabric_content", v)} placeholder="Tela…" testId="upc-cat-draft-fabric" allowCreate={false} />
-                  </div>
-                </>
-              )}
+              {/* El UPC es SOLO el SKU: cliente + estilo + color + talla. País,
+                  descripción, tela y fabricante NO son parte del UPC — son
+                  metadata del embarque y las provee el ASN en Receiving. */}
             </div>
             <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
               <button onClick={() => setFormOpen(false)} className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold">Cancelar</button>

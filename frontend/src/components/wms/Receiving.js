@@ -260,21 +260,23 @@ export const ReceivingModule = () => {
   // inventario.
   const [pendingSubmit, setPendingSubmit] = useState(null); // { opts, warnings }
 
-  // Smart autofill from ASN line. STRICT: every field — including Style —
-  // only fills when the ASN value resolves to an entry that already exists
-  // in the operator's dropdown. No-match leaves the field empty so it never
-  // ends up in the inventory record as a foreign string.
-  //
-  // Customer / manufacturer / style are cascading: a manufacturer only
-  // appears under its customer, and a style only under its customer +
-  // manufacturer. So we refetch the cascade after each level resolves,
-  // and run the next match against the freshly-loaded list.
-  const pickAsnLine = async (line) => {
+  // Autofill desde la línea del ASN. REGLA: el ASN llena Fabricante, País de
+  // origen, Descripción y Contenido (tela) — son metadata del embarque y varían
+  // por lote. La IDENTIDAD del SKU (cliente, estilo, color, talla) NUNCA se
+  // toca: viene del UPC escaneado o de la captura del operador. Antes esta
+  // función sobreescribía cliente/estilo con los valores del ASN y pisaba la
+  // identidad del UPC (bug reportado). Cada campo solo se llena si el valor del
+  // ASN resuelve a una entrada del dropdown curado; si no, se omite.
+  const pickAsnLine = (line) => {
     setSelectedAsnLine(line.line_no);
 
     const updates = {};
     const matched = [];
     const skipped = [];
+
+    const manufacturer = findInOptions(line.brand, manufacturerOptions);
+    if (manufacturer) { updates.manufacturer = manufacturer; matched.push('Fabricante'); }
+    else if (line.brand) skipped.push('Fabricante');
 
     const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
     if (country) { updates.country_of_origin = country; matched.push('País'); }
@@ -287,42 +289,6 @@ export const ReceivingModule = () => {
     const fabric = findInOptions(line.fabric_content, fieldOptions.fabrics);
     if (fabric) { updates.fabric_content = fabric; matched.push('Tela'); }
     else if (line.fabric_content) skipped.push('Tela');
-
-    // Customer first (top of the cascade)
-    const customer = findInOptions(selectedAsnDoc?.customer, options.customers);
-    if (customer) { updates.customer = customer; matched.push('Cliente'); }
-    else if (selectedAsnDoc?.customer) skipped.push('Cliente');
-
-    const effectiveCustomer = customer || form.customer;
-    let manufacturerHaystack = manufacturerOptions;
-    let stylesHaystack = options.styles || [];
-    if (effectiveCustomer) {
-      try {
-        const data = await fetcher(`/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}`);
-        setOptions(prev => ({ ...prev, ...data }));
-        manufacturerHaystack = data.manufacturers || manufacturerHaystack;
-        stylesHaystack = data.styles || stylesHaystack;
-      } catch (err) { /* keep previous haystacks */ }
-    }
-
-    const manufacturer = findInOptions(line.brand, manufacturerHaystack);
-    if (manufacturer) { updates.manufacturer = manufacturer; matched.push('Fabricante'); }
-    else if (line.brand) skipped.push('Fabricante');
-
-    // Refetch styles for the customer + manufacturer combo, then match Style
-    const effectiveManufacturer = manufacturer || form.manufacturer;
-    if (effectiveCustomer && effectiveManufacturer) {
-      try {
-        const data2 = await fetcher(
-          `/inventory/options?customer=${encodeURIComponent(effectiveCustomer)}&manufacturer=${encodeURIComponent(effectiveManufacturer)}`
-        );
-        setOptions(prev => ({ ...prev, ...data2 }));
-        stylesHaystack = data2.styles || stylesHaystack;
-      } catch (err) { /* keep previous haystack */ }
-    }
-    const style = findInOptions(line.part_number, stylesHaystack);
-    if (style) { updates.style = style; matched.push('Style'); }
-    else if (line.part_number) skipped.push('Style');
 
     setForm(p => ({ ...p, ...updates }));
 
@@ -500,17 +466,17 @@ export const ReceivingModule = () => {
         }
         setUpcDoc(doc);
         scanFeedback(true);
-        // Autofill — preserve numeric/operational fields the operator types.
+        // Autofill SOLO la identidad del SKU. El UPC es unicamente estilo+color+
+        // talla (+ cliente, que define el scope). Fabricante, pais de origen,
+        // descripcion y contenido/porcentajes NO son parte del UPC — los provee
+        // el ASN o el operador, y varian por embarque. Preserva lo que el
+        // operador ya haya capturado en esos campos.
         setForm(p => ({
           ...p,
           customer: doc.customer || p.customer,
-          manufacturer: doc.manufacturer || p.manufacturer,
           style: doc.style || p.style,
           color: doc.color || p.color,
           size: doc.size || p.size,
-          description: doc.description || p.description,
-          country_of_origin: doc.country_of_origin || p.country_of_origin,
-          fabric_content: doc.fabric_content || p.fabric_content,
           sku: doc.sku || p.sku,
         }));
       } catch (err) {
@@ -1169,9 +1135,9 @@ export const ReceivingModule = () => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('manufacturer')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.manufacturer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('manufacturer')} {!editingId && <span className="text-red-500">*</span>}
               </label>
-              <SearchableSelect options={manufacturerOptions} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" disabled={!!upcDoc?.manufacturer} allowCreate={false} />
+              <SearchableSelect options={manufacturerOptions} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
@@ -1204,9 +1170,9 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('description')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.description && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('description')} {!editingId && <span className="text-red-500">*</span>}
               </label>
-              <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!upcDoc?.description} />
+              <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} />
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
@@ -1218,10 +1184,10 @@ export const ReceivingModule = () => {
             </div>
             <div>
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.fabric_content && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!upcDoc?.fabric_content} />
+                <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} />
               </div>
             </div>
           </div>
