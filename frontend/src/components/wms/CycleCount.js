@@ -16,6 +16,10 @@ export const CycleCountModule = () => {
   // admin/supersu = 3; el resto, su inventory_level numérico. Gatea el 3er conteo.
   const invLevel = (user?.role === 'supersu' || user?.role === 'admin')
     ? 3 : (parseInt(user?.inventory_level, 10) || 0);
+  // Quién puede generar/exportar reportes: mismo criterio que la pestaña de
+  // reportes y que el backend (/cycle-counts/{id}/report exige inventory_level 3).
+  const canExportReport = user?.access_level >= 5 || user?.role === 'supersu'
+    || user?.role === 'admin' || invLevel >= 3;
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
@@ -127,7 +131,10 @@ export const CycleCountModule = () => {
     }
   };
 
-  const exportExcel = () => {
+  // Recibe el reporte como parámetro (sombrea el estado `reportDetail`) para que
+  // se pueda exportar tanto desde el detalle abierto como directo desde la lista
+  // de cada conteo, sin navegar. `exportCountById` hace el fetch y lo llama.
+  const exportExcel = (reportDetail) => {
     if (!reportDetail) return;
     const wb = XLSX.utils.book_new();
     const now = new Date().toLocaleString();
@@ -347,6 +354,19 @@ export const CycleCountModule = () => {
 
     const fname = `CC_${reportDetail.name.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
     XLSX.writeFile(wb, fname);
+  };
+
+  // Exporta el reporte de UN conteo directo desde su fila en la lista, sin abrir
+  // el detalle: carga /cycle-counts/{id}/report y genera el mismo Excel.
+  const [exportingId, setExportingId] = useState(null);
+  const exportCountById = async (countId) => {
+    setExportingId(countId);
+    try {
+      const rd = await fetcher(`/cycle-counts/${countId}/report`);
+      if (!rd || !rd.count_id) { toast.error('No se pudo generar el reporte de este conteo'); return; }
+      exportExcel(rd);
+    } catch { toast.error('No se pudo generar el reporte de este conteo'); }
+    finally { setExportingId(null); }
   };
 
   const exportGlobalExcel = () => {
@@ -1224,7 +1244,7 @@ export const CycleCountModule = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={exportExcel} className="px-4 py-2.5 bg-primary text-black rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-lg hover:scale-105 transition-all">
+            <button onClick={() => exportExcel(reportDetail)} className="px-4 py-2.5 bg-primary text-black rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-lg hover:scale-105 transition-all">
               <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
             </button>
           </div>
@@ -1488,6 +1508,17 @@ export const CycleCountModule = () => {
                     <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${statusColors[c.status] || 'bg-secondary text-muted-foreground border-border/20'}`}>
                       {c.status === 'approved' ? t('wms_status_approved') : c.status === 'completed' ? t('wms_status_completed') : t('wms_status_in_progress')}
                     </div>
+                    {canExportReport && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); exportCountById(c.count_id); }}
+                      disabled={exportingId === c.count_id}
+                      className="p-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary/80 hover:text-primary transition-all border border-primary/20 disabled:opacity-50"
+                      title="Exportar reporte Excel"
+                      data-testid={`export-cc-${c.count_id}`}
+                    >
+                      {exportingId === c.count_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                    </button>
+                    )}
                     {isAdmin && (
                       <button
                         onClick={(e) => handleDelete(c.count_id, e)}
@@ -1681,12 +1712,23 @@ export const CycleCountModule = () => {
                         </td>
                         <td className="p-4 text-right">
                           {c.status === 'approved' ? (
-                            <button
-                              onClick={() => openReportDetail(c.count_id)}
-                              className="px-3 py-1.5 bg-secondary text-foreground rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 ml-auto opacity-50 group-hover:opacity-100"
-                            >
-                              <Eye className="w-3.5 h-3.5" /> Ver
-                            </button>
+                            <div className="flex items-center gap-1.5 justify-end">
+                              <button
+                                onClick={() => openReportDetail(c.count_id)}
+                                className="px-3 py-1.5 bg-secondary text-foreground rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 opacity-50 group-hover:opacity-100"
+                              >
+                                <Eye className="w-3.5 h-3.5" /> Ver
+                              </button>
+                              <button
+                                onClick={() => exportCountById(c.count_id)}
+                                disabled={exportingId === c.count_id}
+                                title="Exportar reporte Excel"
+                                className="px-3 py-1.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase hover:bg-primary hover:text-black transition-all flex items-center gap-1 opacity-50 group-hover:opacity-100 disabled:opacity-50"
+                                data-testid={`export-hist-${c.count_id}`}
+                              >
+                                {exportingId === c.count_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />} Excel
+                              </button>
+                            </div>
                           ) : <span className="text-[10px] text-muted-foreground">—</span>}
                         </td>
                       </tr>
