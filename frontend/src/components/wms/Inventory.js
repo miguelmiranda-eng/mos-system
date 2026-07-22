@@ -709,21 +709,14 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           {t('wms_stock_monitor')}
         </div>
         <div className="flex items-center gap-2">
-          {canAddManual && (
-            <button
-              onClick={openAddManual}
-              className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all hover:scale-105 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-              data-testid="add-manual-inv-btn"
-            >
-              <Plus className="w-4 h-4" />
-              Agregar Manual
-            </button>
-          )}
-          <label className={`px-4 py-2 bg-primary text-black rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 cursor-pointer transition-all hover:scale-105 shadow-[0_0_15px_rgba(255,193,7,0.3)] ${importing ? 'opacity-50' : ''}`} data-testid="import-inv-btn">
-            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-            {importing ? t('wms_importing') : t('wms_import_excel')}
-            <input type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" disabled={importing} />
-          </label>
+          {/* RETIRADOS 2026-07-22 (pedido del usuario): "Agregar Manual" e
+              "Importar Excel". Ambos creaban renglones de inventario SIN cajas
+              fisicas detras — la fuente de los "saldos sin cajas" (el import
+              masivo es el principal sospechoso de los ~68k u fantasma en
+              CARROS 413-438). En el modelo "la caja manda" el inventario entra
+              por Recepcion, que SI genera cajas; nunca por renglon suelto.
+              Handlers y modales quedan por si se rehabilitan con candado
+              supersu. */}
           <label className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
             <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk" />
             Excluir HOLD
