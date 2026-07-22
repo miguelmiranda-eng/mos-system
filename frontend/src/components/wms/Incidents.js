@@ -32,9 +32,11 @@ const TIPOS = {
     icon: Copy, tono: "text-orange-400 bg-orange-500/10 border-orange-500/30", gravedad: 1,
   },
   picking_sin_fila_inventario: {
-    label: "Picking sin fila de inventario",
-    detalle: "Se surtió material de una caja pero no existe la fila de inventario de ese material y lote, "
-      + "así que el saldo de la ubicación no se actualizó. La ubicación quedará mostrando de más.",
+    label: "Picking sin renglón de resumen",
+    detalle: "El material SÍ existe: el picker surtió una caja real y la caja se descontó bien. Lo que no "
+      + "existe es el RENGLÓN de resumen de ese material y lote en esa ubicación (suele estar mal "
+      + "etiquetado de país), así que el saldo quedó sin actualizar y la ubicación queda descuadrada. "
+      + "Se repara reproyectando la ubicación desde sus cajas.",
     icon: SearchX, tono: "text-red-400 bg-red-500/10 border-red-500/30", gravedad: 0,
   },
   picking_sin_caja_de_respaldo: {
