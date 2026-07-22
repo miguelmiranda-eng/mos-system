@@ -48,7 +48,7 @@ import argparse
 import os
 import sys
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 import pymongo
@@ -106,7 +106,7 @@ def analizar(db, k, firma, rows):
         "$or": [{"sku": {"$in": keys}}, {"style": {"$in": keys}}],
         "color": k["color"] or "", "size": k["size"] or "",
         "location": k["location"],
-    }, {"_id": 0, "box_id": 1, "units": 1, "qty": 1, "inventory_id": 1,
+    }, {"_id": 0, "box_id": 1, "units": 1, "qty": 1, "inventory_id": 1, "sku": 1,
         "country_of_origin": 1, "coo": 1, "fabric_content": 1}))
     # Sólo las cajas de ESTE lote respaldan estas filas.
     boxes = [b for b in todas if row_signature(b) == firma]
@@ -118,13 +118,23 @@ def analizar(db, k, firma, rows):
 
     tier = "C" if fisico_c == 0 else ("A" if sistema_u == fisico_u else "B")
 
-    # Sobreviviente: la fila que las cajas ya referencian (menos re-vinculación y
-    # menos riesgo de romper enlaces), luego la de sku compuesto (formato
-    # mayoritario, 82% de la colección), luego la más antigua.
+    # Sobreviviente. El criterio manda en este orden:
+    #  1. Que su `sku` coincida con el que llevan las cajas físicas. Es la señal
+    #     más fuerte de "esta fila representa estas cajas", y conserva la fila
+    #     ORIGINAL en vez de la que creó el bug (que además suele venir sin la
+    #     metadata de recepción/conteo: recon_batch, asn_reference…).
+    #  2. Que las cajas ya la referencien por inventory_id.
+    #  3. sku compuesto (formato mayoritario, 82% de la colección).
+    #  4. La más antigua.
+    # Las cajas se re-vinculan a la sobreviviente en cualquier caso, así que (1)
+    # no cuesta integridad de enlaces.
     ids_cajas = {b.get("inventory_id") for b in boxes if b.get("inventory_id")}
+    skus_cajas = Counter((b.get("sku") or "") for b in boxes if b.get("sku"))
+    sku_fisico = skus_cajas.most_common(1)[0][0] if skus_cajas else None
 
     def prioridad(r):
         return (
+            0 if sku_fisico and (r.get("sku") or "") == sku_fisico else 1,
             0 if r.get("inventory_id") in ids_cajas else 1,
             0 if (r.get("sku") or "") != (r.get("style") or "") else 1,
             r.get("updated_at") or "",
@@ -200,6 +210,8 @@ def main():
                     help="ejecuta los cambios (por defecto sólo simula)")
     ap.add_argument("--tiers", default="A,B",
                     help="casos a procesar (por defecto A,B; C nunca es automático)")
+    ap.add_argument("--only", default=None, metavar="UBICACION",
+                    help="procesa SOLO esta ubicación (piloto de bajo riesgo)")
     ap.add_argument("--mongo", default=MONGODB_URL, help="URL de MongoDB")
     args = ap.parse_args()
 
@@ -215,11 +227,18 @@ def main():
     lote = uuid.uuid4().hex[:8]
 
     duplicados, legitimos = cargar_duplicados(db)
+    if args.only:
+        objetivo = args.only.strip().upper()
+        duplicados = [d for d in duplicados if (d[0]["location"] or "").upper() == objetivo]
+        if not duplicados:
+            sys.exit(f"No hay duplicados reales en '{objetivo}'.")
+        print(f"FILTRO --only: sólo {objetivo}\n")
     grupos = [analizar(db, k, f, rows) for k, f, rows in duplicados]
     grupos.sort(key=lambda a: (a["tier"], -abs(a["fisico_u"] - a["sistema_u"])))
 
     print(f"{'SIMULACIÓN (dry-run)' if dry else f'APLICANDO · lote {lote}'}\n")
-    print(f"  lotes LEGÍTIMOS (país/composición distintos, NO se tocan): {legitimos}")
+    ambito = " (global)" if args.only else ""
+    print(f"  lotes LEGÍTIMOS{ambito} (país/composición distintos, NO se tocan): {legitimos}")
     print(f"  duplicados REALES (mismo lote, más de una fila)         : {len(grupos)}\n")
 
     procesados = omitidos = 0
@@ -255,6 +274,9 @@ def main():
 
     if not dry:
         restantes, _ = cargar_duplicados(db)
+        if args.only:
+            restantes = [d for d in restantes
+                         if (d[0]["location"] or "").upper() == args.only.strip().upper()]
         pendientes = [analizar(db, k, f, r) for k, f, r in restantes]
         pendientes = [a for a in pendientes if a["tier"] in tiers]
         print(f"  duplicados restantes en los casos procesados: {len(pendientes)}")
