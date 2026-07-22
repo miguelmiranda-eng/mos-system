@@ -266,6 +266,19 @@ async def create_order(order: OrderCreate, request: Request):
     user = await require_auth(request)
     return await internal_create_order(order, user)
 
+# Job Title A/B guardan el enlace capturado del trabajo (link + descripción).
+# Regla de negocio: capturado una vez, solo supersu lo modifica o elimina.
+_JOB_TITLE_PROTECTED = ("job_title_a", "job_title_b")
+
+
+def _link_canon(v):
+    """Forma canónica de una celda link_desc para comparar: (url, desc).
+    El valor puede venir como dict {url, desc}, string plano o vacío."""
+    if isinstance(v, dict):
+        return ((v.get("url") or "").strip(), (v.get("desc") or "").strip())
+    return ((str(v).strip() if v else ""), "")
+
+
 @router.put("/{order_id}")
 async def update_order(order_id: str, order: OrderUpdate, request: Request):
     user = await require_auth(request)
@@ -290,6 +303,21 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     if existing.get("locked_by_qc") and user.get("role") not in ("supersu", "inspector_qc", "qc"):
         if any(f in update_data for f in _LOCK_PROTECTED):
             raise HTTPException(status_code=403, detail="locked_by_qc")
+
+    # Job Title A/B: una vez capturado el enlace, SOLO supersu puede modificarlo
+    # o vaciarlo. Cualquiera puede llenarlo cuando está vacío. Se protege aquí
+    # (el backend es la autoridad) porque ocultar el lápiz en la UI no detiene a
+    # un request directo ni a otra pantalla que edite el mismo campo.
+    if user.get("role") != "supersu":
+        for _f in _JOB_TITLE_PROTECTED:
+            if _f in update_data:
+                antes = _link_canon(existing.get(_f))
+                despues = _link_canon(update_data.get(_f))
+                if any(antes) and despues != antes:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Job Title {'A' if _f.endswith('_a') else 'B'} ya tiene un "
+                               f"enlace capturado; solo el Super Usuario puede modificarlo o eliminarlo.")
 
     # Set lock when production_status transitions to "NECESITA QC"
     if (update_data.get("production_status") == "NECESITA QC"
@@ -1467,6 +1495,13 @@ async def import_orders_excel(
                     if update_existing:
                         # Update order
                         oid = existing["order_id"]
+                        # Job Title A/B: el import masivo no puede pisar un enlace
+                        # ya capturado (misma regla que la edición de celda) —
+                        # salvo que quien importa sea supersu.
+                        if user.get("role") != "supersu":
+                            for _f in _JOB_TITLE_PROTECTED:
+                                if _f in order_data and any(_link_canon(existing.get(_f))):
+                                    order_data.pop(_f)
                         order_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                         await db.orders.update_one({"order_id": oid}, {"$set": order_data})
                         stats["updated"] += 1

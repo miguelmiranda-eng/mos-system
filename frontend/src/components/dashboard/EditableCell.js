@@ -5,6 +5,20 @@ import { getStatusColor, evaluateFormula, normalizePublicUrl } from "../../lib/c
 import { ColoredBadge } from "./ColoredBadge";
 import SearchableSelect from "../SearchableSelect";
 
+// Job Title A/B: columnas con enlace capturado protegido (solo supersu edita o
+// borra un valor existente). El rol se lee una vez por sesión de pestaña: la
+// grilla pinta miles de celdas y un JSON.parse por celda sería gratuito pero
+// innecesario; cambiar de usuario recarga la app de todos modos.
+const PROTECTED_LINK_FIELDS = new Set(['job_title_a', 'job_title_b']);
+let _cachedRole;
+const userRole = () => {
+  if (_cachedRole === undefined) {
+    try { _cachedRole = JSON.parse(localStorage.getItem('mos_user') || '{}').role || null; }
+    catch { _cachedRole = null; }
+  }
+  return _cachedRole;
+};
+
 // Memoized: the orders grid renders thousands of cells, so without React.memo a
 // row/selection/search-highlight change re-rendered every cell. Props from the
 // parent are stable (handleCellUpdate/options are useOrders refs, columns is
@@ -42,7 +56,14 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
     if (e.key === "Escape") { setEditValue(value || ""); setIsEditing(false); }
   };
 
-  if (readOnly) {
+  // Job Title A/B: una vez capturado el enlace, solo supersu puede tocarlo.
+  // El candado REAL vive en el backend (PUT /orders devuelve 403); esto solo
+  // evita ofrecer un lápiz que va a fallar. Vacía, cualquiera puede llenarla.
+  const _pv = type === 'link_desc' ? parseLinkDesc(value) : null;
+  const hasContent = _pv ? !!(_pv.url || _pv.desc) : !!value;
+  const linkLocked = PROTECTED_LINK_FIELDS.has(field) && hasContent && userRole() !== 'supersu';
+
+  if (readOnly || linkLocked) {
     if (type === 'checkbox') return <div className="flex items-center justify-center min-h-[32px]"><input type="checkbox" checked={!!value} disabled className="w-5 h-5 rounded border-border opacity-60" /></div>;
     if (type === 'link_desc') {
       const p = parseLinkDesc(value);
