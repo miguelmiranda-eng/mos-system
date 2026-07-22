@@ -263,7 +263,43 @@ async def main():
         check("fila == cajas restantes", (fila or {}).get("units_on_hand") == fisico,
               f"fila={(fila or {}).get('units_on_hand')} fisico={fisico}")
 
-        print("\n== 9. BLINDAJE: el indice unico frena a los puntos NO migrados ==")
+        print("\n== 9. LA CAJA MANDA: pick con renglon mal etiquetado se autocorrige ==")
+        # Escenario BOX-004851 @ PS02-A24: cajas HAITI, renglon unico dice
+        # NICARAGUA con saldo inflado. El picker solo escanea la caja. Tras el
+        # pick, el resumen se RECALCULA desde las cajas: el renglon queda
+        # reetiquetado a HAITI con exactamente lo que queda en piso.
+        sdb.wms_inventory.delete_many({"location": "PS08-T1"})
+        sdb.wms_boxes.delete_many({"location": "PS08-T1"})
+        sdb.wms_inventory.insert_one({
+            "inventory_id": "inv_mal", "sku": "5000-BLACK-XL", "style": "5000",
+            "color": "BLACK", "size": "XL", "location": "PS08-T1",
+            "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
+            "units_on_hand": 2160, "total_boxes": 30, "units_allocated": 0,
+        })
+        for i, u in enumerate([72, 72]):
+            sdb.wms_boxes.insert_one({
+                "box_id": f"HT-{i}", "style": "5000", "sku": "5000-BLACK-XL",
+                "color": "BLACK", "size": "XL", "location": "PS08-T1", "units": u,
+                "country_of_origin": "HAITI", "fabric_content": "100% COTTON",
+                "status": "located", "state": "located",
+            })
+        from routers import wms as W
+        await W._deduct_pick_boxes("5000", "BLACK", "XL", "PS08-T1", 39, "remove",
+                                   user={"user_id": "u_smoke", "name": "Smoke"},
+                                   ticket_id="pick_test", only_box_id="HT-0")
+        caja = sdb.wms_boxes.find_one({"box_id": "HT-0"})
+        check("la caja escaneada se desconto (72->33)", caja and caja.get("units") == 33,
+              f"units={caja and caja.get('units')}")
+        filas9 = list(sdb.wms_inventory.find({"location": "PS08-T1"}))
+        check("queda UN solo renglon", len(filas9) == 1, f"{len(filas9)} renglones")
+        r9 = filas9[0] if filas9 else {}
+        check("reetiquetado al lote REAL (HAITI)", r9.get("country_of_origin") == "HAITI",
+              f"coo={r9.get('country_of_origin')}")
+        check("saldo == cajas restantes (33+72=105)", r9.get("units_on_hand") == 105,
+              f"saldo={r9.get('units_on_hand')} (2160 = el fantasma sobrevivio; 2121 = aritmetica vieja)")
+        check("cajas del renglon == 2", r9.get("total_boxes") == 2)
+
+        print("\n== 10. BLINDAJE: el indice unico frena a los puntos NO migrados ==")
         # Quedan ~47 puntos en wms.py con la llave vieja (conteos ciclicos,
         # ajustes, generar caja...). El indice unico los detiene a TODOS a nivel
         # de base de datos, y el handler traduce el rechazo en un 409 accionable

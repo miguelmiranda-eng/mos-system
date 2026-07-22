@@ -248,6 +248,110 @@ async def _record_incident(kind, user, mensaje, **campos):
         logger.exception("no se pudo registrar la incidencia %s", kind)
 
 
+async def _reproject_material_rows(style, sku, color, size, location, *, user=None, contexto=None):
+    """Reconstruye el resumen de UN material en UNA ubicación desde sus CAJAS.
+
+    LA CAJA ES LA VERDAD. En vez de buscar "el renglón correspondiente" y
+    hacerle aritmética (el origen de todos los duplicados y fantasmas de esta
+    base), se cuentan las cajas que quedan y los renglones se ajustan a eso:
+      - renglón cuyo lote coincide con cajas -> se fija en lo que suman
+      - un solo renglón sobrante + un solo lote sin renglón -> es el mismo
+        renglón con el país/composición mal puestos: se reetiqueta
+      - lote físico sin renglón -> se crea desde la caja
+      - renglón con saldo y sin ninguna caja -> NO se borra (puede ser saldo
+        legado real): se marca pending_cycle_count
+
+    Es la pieza del modelo "mover cajas y recalcular": autocorrectiva — si un
+    renglón quedó mal ayer, la siguiente operación sobre ese material lo repara.
+    """
+    if not (location or "").strip():
+        return
+    keys = ledger.material_keys(style, sku)
+    if not keys:
+        return
+    boxes = await db.wms_boxes.find({
+        "$or": [{"sku": {"$in": keys}}, {"style": {"$in": keys}}],
+        "color": (color or "").strip(), "size": (size or "").strip(),
+        "location": location,
+    }, {"_id": 0}).to_list(5000)
+    lotes = {}
+    for b in boxes:
+        u = int(b.get("units") or b.get("qty") or 0)
+        if u <= 0:
+            continue
+        f = ledger.row_signature(b)
+        acc = lotes.setdefault(f, {"units": 0, "boxes": 0, "sample": b})
+        acc["units"] += u
+        acc["boxes"] += 1
+
+    rows = await db.wms_inventory.find(
+        ledger.row_query(style, sku, color, size, location)).to_list(50)
+    por_firma = {}
+    for r in rows:
+        por_firma.setdefault(ledger.row_signature(r), []).append(r)
+
+    notables = []
+    usados = set()
+    sobrantes = []
+    for f, rs in por_firma.items():
+        if f in lotes:
+            usados.add(f)
+            acc = lotes[f]
+            r = rs[0]
+            if (int(r.get("units_on_hand") or 0) != acc["units"]
+                    or int(r.get("total_boxes") or 0) != acc["boxes"]):
+                await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
+                    "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
+                    "updated_at": now_iso()}})
+        else:
+            sobrantes.extend(rs)
+    faltantes = {f: acc for f, acc in lotes.items() if f not in usados}
+
+    if len(sobrantes) == 1 and len(faltantes) == 1:
+        f, acc = next(iter(faltantes.items()))
+        r = sobrantes[0]
+        s = acc["sample"]
+        await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
+            "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
+            "country_of_origin": s.get("country_of_origin", "") or s.get("coo", ""),
+            "fabric_content": s.get("fabric_content", ""),
+            "sku": s.get("sku") or r.get("sku"),
+            "updated_at": now_iso(),
+        }, "$unset": {"pending_cycle_count": "", "pending_cycle_count_reason": ""}})
+        notables.append(f"renglón reetiquetado a [{f[0] or 'sin país'}] con {acc['units']}u/{acc['boxes']}c")
+    else:
+        for f, acc in faltantes.items():
+            s = acc["sample"]
+            await db.wms_inventory.insert_one({
+                "inventory_id": gen_id("inv"),
+                "sku": s.get("sku") or (style or sku), "style": s.get("style") or style,
+                "color": (color or "").strip(), "size": (size or "").strip(),
+                "customer": s.get("customer", ""), "manufacturer": s.get("manufacturer", ""),
+                "description": s.get("description", ""),
+                "country_of_origin": s.get("country_of_origin", "") or s.get("coo", ""),
+                "fabric_content": s.get("fabric_content", ""),
+                "location": location,
+                "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
+                "units_allocated": 0, "updated_at": now_iso(),
+            })
+            notables.append(f"renglón creado [{f[0] or 'sin país'}] con {acc['units']}u/{acc['boxes']}c")
+        for r in sobrantes:
+            if int(r.get("units_on_hand") or 0) > 0 and not r.get("pending_cycle_count"):
+                await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
+                    "pending_cycle_count": True,
+                    "pending_cycle_count_reason": "saldo sin cajas detectado al recalcular tras una operación",
+                }})
+                notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                                f"con {r.get('units_on_hand')}u sin cajas: marcado para conteo")
+
+    if notables and user is not None:
+        await _record_incident(
+            "inventory_reprojected", user,
+            "Resumen recalculado desde las cajas: " + " · ".join(notables),
+            material=ledger.describe(style, sku, color, size), location=location,
+            **(contexto or {}))
+
+
 def _box_batch(box):
     """Lote de una caja: (país de origen, composición). Es lo que separa dos
     recepciones del mismo style/color/size — y lo que los movimientos ignoraban,
@@ -3850,6 +3954,7 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
     used "no movements for this box_id" as its data-loss signal and re-materialized
     ~46k already-picked units into the carros. This movement closes that hole."""
     remaining = int(qty or 0)
+    tocados = set()   # materiales+ubicaciones cuyas cajas cambian: se reproyectan al final
     if remaining <= 0:
         return
     if only_box_id:
@@ -3946,43 +4051,26 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                 continue
         touched.append({"box_id": box.get("box_id"), "taken": take,
                         "emptied": new_b == 0, "location": box.get("location", location)})
-        # Descuento de la fila de inventario vía el ledger: resuelve por style Y
-        # sku (los dos formatos conviven) y por LOTE (país + composición), que es
-        # lo que la caja realmente dice.
+        # LA CAJA ES LA VERDAD. Aquí ya no se busca ningún renglón de resumen:
+        # el resumen del material tocado se RECALCULA desde las cajas al final
+        # (ver _reproject_material_rows). El operador escanea la caja, la caja
+        # se descuenta, y el resumen sale de las cajas — no puede discrepar.
         #
-        # HISTORIA: aquí se elegía UNA sola forma del sku. Elegir la compuesta
-        # no encontraba la fila y la caja se vaciaba mientras el ledger seguía
-        # lleno (caso NA04-A17); elegir la corta produjo el espejo — PS06-A01
-        # quedó con la fila en 0 y 4 cajas con 208 u dentro (2026-07-22). Con la
-        # resolución tolerante ya no hay que apostar por un formato.
-        b_loc = box.get("location", location)
-        b_style = box.get("style") or style
-        b_sku = box.get("sku") or style
-        b_coo, b_fabric = _box_batch(box)
-        inv_row = await _resolve_inventory_row(
-            b_style, b_sku, box.get("color", color), box.get("size", size), b_loc,
-            required=False, coo=b_coo, fabric=b_fabric)
-        if inv_row:
-            nuevo = max(0, int(inv_row.get("units_on_hand") or 0) - take)
-            cajas = int(inv_row.get("total_boxes") or 0) - (1 if new_b == 0 else 0)
-            await db.wms_inventory.update_one({"_id": inv_row["_id"]}, {"$set": {
-                "units_on_hand": nuevo, "total_boxes": max(0, cajas), "updated_at": now_iso()}})
-            inv_id = inv_row.get("inventory_id")
-        else:
-            # Sin fila que descontar: el picking NO puede inventar ni destruir
-            # saldo en silencio. Se registra la incidencia y se sigue con la
-            # caja (el material físico sí salió), para no dejar al picker
-            # atrapado a media orden.
-            inv_id = None
-            await _record_incident(
-                "picking_sin_fila_inventario", user,
-                f"Se descontaron {take} u de la caja {box.get('box_id')} en {b_loc} pero no "
-                f"existe fila de inventario para ese material y lote. El saldo de la "
-                f"ubicación quedó sin actualizar.",
-                material=ledger.describe(b_style, b_sku, box.get("color", color), box.get("size", size)),
-                location=b_loc, box_id=box.get("box_id"), unidades=take,
-                ticket_id=ticket_id, order_number=order_number)
+        # HISTORIA: este bloque intentaba descontar el renglón "correspondiente"
+        # eligiendo llave y lote. Cada elección falló en alguna dirección
+        # (NA04-A17, PS06-A01, BOX-004851 en PS02-A24 con el renglón mal
+        # etiquetado de país). La pregunta del usuario que lo enterró: "¿por qué
+        # va a tener información diferente si es la misma caja que escanea?"
+        tocados.add((box.get("style") or style, box.get("sku") or style,
+                     box.get("color", color), box.get("size", size),
+                     box.get("location", location)))
         remaining -= take
+
+    # El resumen de cada material tocado se reconstruye desde sus cajas.
+    for t_style, t_sku, t_color, t_size, t_loc in tocados:
+        await _reproject_material_rows(t_style, t_sku, t_color, t_size, t_loc,
+                                       user=user, contexto={"ticket_id": ticket_id,
+                                                            "order_number": order_number})
     # Leftover with no backing box: deduct straight from inventory (legacy/Excel).
     #
     # Esta ruta desincroniza POR DISEÑO: baja la fila sin que ninguna caja
