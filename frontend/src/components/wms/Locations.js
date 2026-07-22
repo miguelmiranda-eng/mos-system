@@ -1091,7 +1091,8 @@ export const LocationsModule = ({ currentUser }) => {
                         <tr>
                           <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground w-8"></th>
                           <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
-                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Style / SKU</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Style</th>
+                          <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">SKU</th>
                           <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
                           <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">Descripción</th>
                           <th className="p-2.5 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">País</th>
@@ -1122,8 +1123,11 @@ export const LocationsModule = ({ currentUser }) => {
                                   )}
                                 </td>
                                 <td className="p-2.5 text-[11px] font-bold truncate max-w-[140px]" title={it.customer}>{it.customer || '—'}</td>
-                                <td className="p-2.5 font-mono text-[11px] font-black text-primary truncate max-w-[200px]" title={`${it.style}-${it.color}-${it.size}`}>
-                                  {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''}
+                                <td className="p-2.5 font-mono text-[11px] font-black text-primary truncate max-w-[110px]" title={it.style}>
+                                  {it.style || '—'}
+                                </td>
+                                <td className="p-2.5 font-mono text-[11px] text-muted-foreground truncate max-w-[170px]" title={it.sku}>
+                                  {it.sku || '—'}
                                 </td>
                                 <td className="p-2.5 font-mono text-[11px]">
                                   <span className="text-foreground">{it.color || '—'}</span>
@@ -1168,7 +1172,7 @@ export const LocationsModule = ({ currentUser }) => {
 
                               {relocatingLineId === it.inventory_id && (
                                 <tr className="bg-amber-500/10 border-b border-amber-500/20">
-                                  <td colSpan={canManageLocations ? 11 : 10} className="py-2.5 px-4">
+                                  <td colSpan={canManageLocations ? 12 : 11} className="py-2.5 px-4">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 whitespace-nowrap">
                                         Mover {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''} →
@@ -1225,7 +1229,7 @@ export const LocationsModule = ({ currentUser }) => {
                               {/* LPN drawer expands below the row when clicked */}
                               {hasBoxes && (
                                 <tr>
-                                  <td colSpan={canManageLocations ? 11 : 10} className="p-0 border-b border-border/20">
+                                  <td colSpan={canManageLocations ? 12 : 11} className="p-0 border-b border-border/20">
                                     <div className="bg-secondary/15 px-4 py-3">
                                       <div className="flex items-center gap-2 mb-2">
                                         <div className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
