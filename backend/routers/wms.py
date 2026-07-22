@@ -251,7 +251,12 @@ async def _reconcile_missing_inventory_row(user, style, sku, color, size, locati
         "updated_at": now_iso(),
         "reconciled_from_boxes_at": now_iso(),
     }
-    await db.wms_inventory.insert_one(dict(row))
+    # El `_id` se copia de vuelta: el llamador usa esta fila como `src_row` y la
+    # decrementa/borra por `_id`. Insertar una copia dejaba el dict sin `_id` y
+    # reventaba con KeyError al agotar la fila reconciliada (detectado en el
+    # smoke test HTTP; las pruebas unitarias no ejercitan esta ruta).
+    res = await db.wms_inventory.insert_one(dict(row))
+    row["_id"] = res.inserted_id
 
     material = ledger.describe(style, sku, color, size)
     logger.warning(

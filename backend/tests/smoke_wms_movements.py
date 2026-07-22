@@ -1,0 +1,180 @@
+"""Smoke test de integración de los endpoints de movimiento del WMS.
+
+Ejercita el cableado HTTP real —FastAPI + rutas + auth + Motor— contra una base
+de datos DESECHABLE. Es la contraparte de tests/test_wms_inventory_ledger.py:
+aquél cubre las invariantes en memoria, éste cubre que los endpoints realmente
+las usen.
+
+No es decorativo: en su primera ejecución (2026-07-22) detectó un KeyError '_id'
+que crasheaba /boxes/relocate al agotar una fila reconciliada. Las 25 pruebas
+unitarias no podían verlo porque no ejercitan el router.
+
+SEGURIDAD
+─────────
+Se niega a correr si la base destino es la de producción. Al terminar la
+elimina. Nunca apuntes SMOKE_DB_NAME a una base con datos reales.
+
+USO
+───
+    set MONGODB_URL=mongodb://usuario:clave@host:27017/?authSource=admin
+    python backend/tests/smoke_wms_movements.py
+
+Variables: MONGODB_URL (requerida), SMOKE_DB_NAME (por defecto 'mos-smoke-test'),
+PROD_DB_NAME (por defecto 'mos-system', se usa sólo para rechazarla).
+"""
+import asyncio
+import os
+import sys
+
+BE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SMOKE_DB = os.environ.get("SMOKE_DB_NAME", "mos-smoke-test")
+PROD_DB = os.environ.get("PROD_DB_NAME", "mos-system")
+MONGO = os.environ.get("MONGODB_URL") or os.environ.get("MONGO_URL")
+
+if not MONGO:
+    sys.exit("Falta MONGODB_URL")
+if SMOKE_DB == PROD_DB:
+    sys.exit(f"NEGADO: SMOKE_DB_NAME es la base de producción ('{PROD_DB}'). "
+             f"Este script BORRA la base al terminar.")
+
+# La app lee su configuración del entorno al importarse: hay que fijarla antes.
+os.environ["MONGODB_URL"] = MONGO
+os.environ["DB_NAME"] = SMOKE_DB
+os.environ.setdefault("JWT_SECRET", "smoke_secret")
+os.environ.setdefault("ENV", "local")
+sys.path.insert(0, BE)
+os.chdir(BE)
+
+import pymongo  # noqa: E402
+from passlib.hash import bcrypt  # noqa: E402
+
+raw = pymongo.MongoClient(MONGO)
+sdb = raw[SMOKE_DB]
+ok = fail = 0
+
+
+def check(nombre, cond, detalle=""):
+    global ok, fail
+    if cond:
+        ok += 1
+        print(f"   PASS  {nombre}")
+    else:
+        fail += 1
+        print(f"   FAIL  {nombre}  {detalle}")
+
+
+def total(loc):
+    return sum(r.get("units_on_hand", 0) for r in sdb.wms_inventory.find({"location": loc}))
+
+
+def filas(loc, style):
+    return sdb.wms_inventory.count_documents({"location": loc, "style": style})
+
+
+def sembrar():
+    """Escenario del incidente CK001: fila keyed COMPUESTO, cajas con style CORTO."""
+    print(f"== Sembrando {SMOKE_DB} ==")
+    for c in ["wms_inventory", "wms_boxes", "wms_locations", "wms_movements",
+              "wms_incidents", "users", "user_sessions"]:
+        sdb[c].delete_many({})
+    for name in ["PS07-A25", "NA08-C37", "NA08-C38"]:
+        sdb.wms_locations.insert_one({"name": name, "location_id": f"loc_{name}"})
+    sdb.wms_inventory.insert_one({
+        "inventory_id": "inv_smoke_ck001", "sku": "CK001-PFD-M", "style": "CK001",
+        "color": "PFD", "size": "M", "location": "PS07-A25",
+        "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
+        "customer": "SPEKTRUM", "updated_at": "2026-07-01T00:00:00+00:00",
+    })
+    for i in range(10):
+        sdb.wms_boxes.insert_one({
+            "box_id": f"SMOKE-{i:03d}", "style": "CK001", "sku": "CK001-PFD-M",
+            "color": "PFD", "size": "M", "location": "PS07-A25", "units": 48,
+            "inventory_id": "inv_smoke_ck001", "status": "located", "state": "located",
+        })
+    # Caja huérfana: existe físicamente, ninguna fila la respalda (~3.3% del real).
+    sdb.wms_boxes.insert_one({
+        "box_id": "SMOKE-ORPHAN", "style": "9999", "sku": "9999-RED-L",
+        "color": "RED", "size": "L", "location": "PS07-A25", "units": 24,
+        "status": "located", "state": "located",
+    })
+    sdb.users.insert_one({
+        "user_id": "u_smoke", "email": "smoke@test.local", "name": "Smoke Tester",
+        "password_hash": bcrypt.hash("smoke123"),
+        "role": "supersu", "admin_level": 5, "inventory_level": 5, "active": True,
+    })
+
+
+async def main():
+    sembrar()
+    # Todo dentro de UN event loop: Motor se ata al primero que ve, y TestClient
+    # crea uno por petición ("RuntimeError: Event loop is closed").
+    from httpx import ASGITransport, AsyncClient
+    from server import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as c:
+        print("\n== Autenticación ==")
+        r = await c.post("/api/auth/login",
+                         json={"email": "smoke@test.local", "password": "smoke123"})
+        check("login", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+        if r.status_code != 200:
+            return
+        tok = r.json().get("session_token")
+        H = {"Authorization": f"Bearer {tok}"} if tok else {}
+
+        print("\n== 1. /boxes/relocate: caja style-corto vs fila sku-compuesto (EL BUG) ==")
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": [f"SMOKE-{i:03d}" for i in range(4)],
+                               "to": "NA08-C37"}, headers=H)
+        check("mueve sin error", r.status_code == 200, r.text[:160])
+        check("origen DESCONTADO (el bug dejaba 480)", total("PS07-A25") == 288,
+              f"origen={total('PS07-A25')} esperado=288")
+        check("destino con 192", total("NA08-C37") == 192, f"={total('NA08-C37')}")
+        check("conservación: sigue habiendo 480",
+              total("PS07-A25") + total("NA08-C37") == 480)
+        check("SIN fila duplicada en origen", filas("PS07-A25", "CK001") == 1,
+              f"filas={filas('PS07-A25', 'CK001')}")
+
+        print("\n== 2. /move-location: regreso completo, debe FUSIONAR no duplicar ==")
+        r = await c.post("/api/wms/move-location",
+                         json={"from": "NA08-C37", "to": "PS07-A25"}, headers=H)
+        check("regreso sin error", r.status_code == 200, r.text[:160])
+        check("UNA sola fila CK001 en PS07-A25", filas("PS07-A25", "CK001") == 1,
+              f"filas={filas('PS07-A25', 'CK001')}")
+        check("origen vuelve a 480", total("PS07-A25") == 480, f"={total('PS07-A25')}")
+        check("NA08-C37 vacía", total("NA08-C37") == 0, f"={total('NA08-C37')}")
+
+        print("\n== 3. Caja huérfana: se reconcilia y queda auditada ==")
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": ["SMOKE-ORPHAN"], "to": "NA08-C38"}, headers=H)
+        check("movimiento permitido", r.status_code == 200, r.text[:160])
+        check("destino con las 24 u", total("NA08-C38") == 24, f"={total('NA08-C38')}")
+        check("auditado en wms_incidents",
+              sdb.wms_incidents.count_documents({"kind": "orphan_boxes_reconciled"}) == 1)
+        check("auditado en wms_movements",
+              sdb.wms_movements.count_documents({"type": "inventory_row_reconciled"}) == 1)
+
+        print("\n== 4. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
+        sdb.wms_inventory.insert_one({
+            "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
+            "color": "PFD", "size": "M", "location": "PS07-A25",
+            "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
+        })
+        antes = total("PS07-A25")
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": ["SMOKE-000"], "to": "NA08-C37"}, headers=H)
+        check("responde 409", r.status_code == 409, f"fue {r.status_code}")
+        check("mensaje accionable", "duplicad" in r.text.lower(), r.text[:120])
+        check("CERO cambios: destino intacto", total("NA08-C37") == 0)
+        check("CERO cambios: origen intacto", total("PS07-A25") == antes)
+        check("la caja NO se movió",
+              (sdb.wms_boxes.find_one({"box_id": "SMOKE-000"}) or {}).get("location") == "PS07-A25")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    finally:
+        print(f"\n===== {ok} PASS / {fail} FAIL =====")
+        raw.drop_database(SMOKE_DB)
+        print(f"base {SMOKE_DB} eliminada")
+    sys.exit(1 if fail else 0)
