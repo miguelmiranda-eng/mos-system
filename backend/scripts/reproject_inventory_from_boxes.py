@@ -64,6 +64,13 @@ def gen_id(p):
     return f"{p}_{uuid.uuid4().hex[:12]}"
 
 
+def lote_txt(k):
+    """Etiqueta legible del lote. Mostrar SOLO el país hacía que dos lotes que
+    difieren en composición se vieran idénticos en el reporte — imposible de
+    revisar."""
+    return " · ".join(p for p in (k[3], k[4]) if p) or "sin lote"
+
+
 def firma(doc):
     return (canon_coo(doc.get("country_of_origin") or doc.get("coo")),
             canon_fabric(doc.get("fabric_content")))
@@ -107,7 +114,7 @@ def main():
         sys.exit("--all es sólo auditoría. Reproyecta ubicación por ubicación con --only.")
 
     print(f"{'AUDITORÍA' if dry else f'APLICANDO · lote {lote}'} · {len(ubicaciones)} ubicación(es)\n")
-    creadas = corregidas = huerfanas = 0
+    creadas = corregidas = huerfanas = rotas = 0
 
     for loc in ubicaciones:
         fis = lotes_fisicos(db, loc)
@@ -115,6 +122,14 @@ def main():
         por_firma = defaultdict(list)
         for r in filas:
             por_firma[(r.get("style") or "", r.get("color") or "", r.get("size") or "") + firma(r)].append(r)
+
+        # GUARDA: cajas sin `style`. Son ~598 en la base (dato roto de origen).
+        # Crear una fila con style vacío generaría basura estructurada: una fila
+        # que ningún flujo del WMS puede volver a encontrar. Se reportan aparte
+        # para que se reparen en la caja, que es donde está el problema.
+        sin_identidad = {k: acc for k, acc in fis.items() if not (k[0] or "").strip()}
+        for k, acc in sin_identidad.items():
+            fis.pop(k)
 
         acciones = []
         sin_pareja = []          # lotes físicos sin fila
@@ -154,7 +169,7 @@ def main():
         # Filas sin ninguna caja física que las respalde: se reportan, no se borran.
         sin_cajas = [r for r in filas_sueltas if int(r.get("units_on_hand") or 0) > 0]
 
-        if not acciones and not sin_cajas:
+        if not acciones and not sin_cajas and not sin_identidad:
             continue
 
         print(f"── {loc} ──")
@@ -167,7 +182,7 @@ def main():
         for tipo, k, acc, r in acciones:
             s = acc["sample"] or {}
             if tipo == "CREAR":
-                print(f"   CREAR    {k[0]}/{k[1]}/{k[2]} [{k[3]}]  {acc['units']}u / {acc['boxes']}c")
+                print(f"   CREAR       {k[0]}/{k[1]}/{k[2]}  [{lote_txt(k)}]  {acc['units']}u / {acc['boxes']}c")
                 creadas += 1
                 if not dry:
                     db.wms_inventory.insert_one({
@@ -187,7 +202,7 @@ def main():
                 etq = ("REETIQUETAR" if tipo == "REETIQUETAR" else "CORREGIR")
                 extra = (f"  [{canon_coo(r.get('country_of_origin'))} -> {k[3]}]"
                          if tipo == "REETIQUETAR" else "")
-                print(f"   {etq:11s} {k[0]}/{k[1]}/{k[2]} [{k[3]}]  "
+                print(f"   {etq:11s} {k[0]}/{k[1]}/{k[2]}  [{lote_txt(k)}]  "
                       f"{r.get('units_on_hand')}u/{r.get('total_boxes')}c -> "
                       f"{acc['units']}u/{acc['boxes']}c{extra}")
                 corregidas += 1
@@ -200,9 +215,15 @@ def main():
                         "updated_at": now_iso(), "reprojected_batch": lote,
                         "relabeled_from_coo": (r.get("country_of_origin") or "") if tipo == "REETIQUETAR" else None,
                     }, "$unset": {"pending_cycle_count": "", "pending_cycle_count_reason": ""}})
+        for k, acc in sin_identidad.items():
+            ids = ", ".join((acc["ids"] or [])[:3])
+            print(f"   SIN STYLE   ?/{k[1]}/{k[2]}  [{lote_txt(k)}]  {acc['units']}u / {acc['boxes']}c  "
+                  f"-> cajas sin `style`, hay que repararlas en la caja ({ids})")
+            rotas += 1
         for r in sin_cajas:
-            print(f"   SIN CAJAS {r.get('style')}/{r.get('color')}/{r.get('size')} "
-                  f"[{r.get('country_of_origin')}] {r.get('units_on_hand')}u -> requiere conteo cíclico")
+            print(f"   SIN CAJAS   {r.get('style')}/{r.get('color')}/{r.get('size')}  "
+                  f"[{canon_coo(r.get('country_of_origin'))} · {canon_fabric(r.get('fabric_content'))}]  "
+                  f"{r.get('units_on_hand')}u/{r.get('total_boxes')}c -> requiere conteo cíclico")
             huerfanas += 1
             if not dry:
                 db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
@@ -232,6 +253,7 @@ def main():
     print(f"  filas a crear    : {creadas}")
     print(f"  filas a corregir : {corregidas}")
     print(f"  filas sin cajas  : {huerfanas}  (NO se borran: requieren conteo)")
+    print(f"  lotes SIN STYLE  : {rotas}  (OMITIDOS: reparar el dato en la caja)")
     if dry:
         print("\n  Nada fue modificado. Añade --apply.")
 
