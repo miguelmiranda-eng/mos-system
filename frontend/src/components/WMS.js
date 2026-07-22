@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck,
+  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -32,6 +32,7 @@ import { TransitModule } from "./wms/Transit";
 import { MoverModule } from "./wms/Mover";
 import { AuditModule } from "./wms/Audit";
 import { ReconciliationModule } from "./wms/Reconciliation";
+import IncidentsModule from "./wms/Incidents";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -58,6 +59,10 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'reconciliation': return ctx.currentUser?.role === 'supersu'
       ? <ReconciliationModule /> : <ReceivingModule />;
     case 'audit':        return <AuditModule />;
+    // Incidencias: solo super usuario. El mosaico ya viene filtrado; esta guarda
+    // es por si el módulo se alcanza por otra vía. El backend igual devuelve 403.
+    case 'incidents':    return ctx.currentUser?.role === 'supersu'
+      ? <IncidentsModule /> : <ReceivingModule />;
     default:             return <ReceivingModule />;
   }
 };
@@ -148,6 +153,9 @@ export default function WMS() {
     { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
     // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
     { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
+    // Incidencias del sistema: material no encontrado, duplicados bloqueados,
+    // errores de recepción. SOLO super usuario (el backend responde 403 al resto).
+    { id: 'incidents', label: 'Incidencias', icon: ShieldAlert, color: 'text-orange-400', desc: 'Alertas del sistema: material no encontrado, duplicados bloqueados y errores de recepción', supersuOnly: true },
   ];
 
   const loadBadges = useCallback(async () => {
