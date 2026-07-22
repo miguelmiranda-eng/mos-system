@@ -35,6 +35,11 @@ TRES CASOS, TRES RIESGOS (dentro de los duplicados reales)
   B · AJUSTE       — no coincide; se ajusta a lo que hay en piso. Riesgo MEDIO.
   C · SIN RESPALDO — filas sin una sola caja física. NUNCA automático: requiere
                      conteo cíclico. Riesgo ALTO.
+  M · MAL ETIQUETADAS — no cuadran con el físico de SU lote pero sí con el del
+                     material completo: son filas que juntas cubren varios lotes
+                     con el país mal puesto. NO son duplicados. Se omiten y se
+                     derivan a reproject_inventory_from_boxes.py. (Tratarlas como
+                     duplicado costó 324 u en PS14-A11 el 2026-07-22.)
 
 USO
 ───
@@ -116,7 +121,24 @@ def analizar(db, k, firma, rows):
     sistema_u = sum(int(r.get("units_on_hand") or 0) for r in rows)
     allocated = sum(int(r.get("units_allocated") or 0) for r in rows)
 
+    # TODAS las cajas del material en la ubicación, sin filtrar por lote.
+    fisico_total_u = sum(int(b.get("units") or b.get("qty") or 0) for b in todas)
+    fisico_total_c = len(todas)
+
     tier = "C" if fisico_c == 0 else ("A" if sistema_u == fisico_u else "B")
+
+    # GUARDA CONTRA FILAS MAL ETIQUETADAS (incidente 2026-07-22, PS14-A11).
+    # Si las filas NO cuadran con el físico de SU lote pero SÍ con el físico de
+    # TODOS los lotes del material, entonces no son un duplicado: son dos filas
+    # que juntas cubren varios lotes, con el país mal puesto en alguna. Ajustar
+    # al físico del lote destruiría la cobertura del resto — que es exactamente
+    # el daño que se causó en PS14-A11 (se perdieron 324 u / 9 cajas de Haití).
+    mal_etiquetadas = (
+        sistema_u != fisico_u
+        and (sistema_u == fisico_total_u or fisico_total_c > fisico_c)
+    )
+    if mal_etiquetadas:
+        tier = "M"
 
     # Sobreviviente. El criterio manda en este orden:
     #  1. Que su `sku` coincida con el que llevan las cajas físicas. Es la señal
@@ -143,6 +165,7 @@ def analizar(db, k, firma, rows):
     return {
         "key": k, "firma": firma, "rows": rows, "boxes": boxes, "tier": tier,
         "fisico_u": fisico_u, "fisico_c": fisico_c,
+        "fisico_total_u": fisico_total_u, "fisico_total_c": fisico_total_c,
         "sistema_u": sistema_u, "allocated": allocated,
         "survivor": sorted(rows, key=prioridad)[0],
     }
@@ -278,6 +301,13 @@ def main():
               f"ajuste={cambio:+d}")
         if a["allocated"]:
             print(f"     !! units_allocated={a['allocated']} - se conserva en la sobreviviente")
+        if marca == "M":
+            print(f"     -> OMITIDO: las filas cubren VARIOS lotes con el país mal puesto "
+                  f"(físico del lote={a['fisico_u']}u/{a['fisico_c']}c pero del material "
+                  f"completo={a['fisico_total_u']}u/{a['fisico_total_c']}c). NO es un duplicado. "
+                  f"Usa reproject_inventory_from_boxes.py --only {k['location']}")
+            omitidos += 1
+            continue
         if marca == "C" and not args.merge_c:
             print("     -> OMITIDO: sin cajas físicas de este lote. Requiere conteo cíclico.")
             omitidos += 1
