@@ -77,17 +77,34 @@ def firma(doc):
 
 
 def lotes_fisicos(db, location):
-    """Agrupa las cajas de una ubicación por material + lote."""
+    """Agrupa las cajas de una ubicación por material + lote.
+
+    CUENTA SÓLO CAJAS CON MATERIAL. 12,709 cajas (15.8% del total) quedaron con
+    0 unidades y `status='depleted'`: se vaciaron al surtir y su registro nunca
+    salió de la ubicación. NO son cajas físicas ocupando espacio — CARRO 3 tiene
+    1,094 registros de los que 1,082 están vacíos, y PS05-A26 tiene 87 de los
+    que 82 lo están. Ningún rack aguanta eso.
+
+    `total_boxes` en wms_inventory significa "cajas con material": contarlas
+    todas inflaba el conteo. Contar las vacías fue el error que metió una caja
+    de más en cada ubicación del piloto PS08 el 2026-07-22 — lo detectó el
+    usuario preguntando "¿80 cajas en una ubicación? no caben".
+    """
     g = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None, "ids": []})
+    vacias = 0
     for b in db.wms_boxes.find({"location": location}, {"_id": 0}):
+        u = int(b.get("units") or b.get("qty") or 0)
+        if u <= 0:
+            vacias += 1
+            continue
         k = (b.get("style") or "", b.get("color") or "", b.get("size") or "") + firma(b)
         acc = g[k]
-        acc["units"] += int(b.get("units") or b.get("qty") or 0)
+        acc["units"] += u
         acc["boxes"] += 1
         acc["ids"].append(b.get("box_id"))
         if acc["sample"] is None:
             acc["sample"] = b
-    return g
+    return g, vacias
 
 
 def main():
@@ -117,7 +134,7 @@ def main():
     creadas = corregidas = huerfanas = rotas = 0
 
     for loc in ubicaciones:
-        fis = lotes_fisicos(db, loc)
+        fis, vacias = lotes_fisicos(db, loc)
         filas = list(db.wms_inventory.find({"location": loc}))
         por_firma = defaultdict(list)
         for r in filas:
@@ -172,7 +189,7 @@ def main():
         if not acciones and not sin_cajas and not sin_identidad:
             continue
 
-        print(f"── {loc} ──")
+        print(f"── {loc} ──" + (f"   ({vacias} cajas vacías ignoradas)" if vacias else ""))
         if not dry:
             # Respaldo COMPLETO de la ubicación antes de tocar nada. Reproyectar
             # reescribe cantidades: sin respaldo no hay vuelta atrás.
