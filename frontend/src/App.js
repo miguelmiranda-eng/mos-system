@@ -669,6 +669,7 @@ const WMS = lazy(() => import("./components/WMS"));
 const OperatorView = lazy(() => import("./components/OperatorView"));
 const PdaPicker = lazy(() => import("./components/pda/PdaPicker"));
 const PdaRecon = lazy(() => import("./components/pda/PdaRecon"));
+const WmsIncidents = lazy(() => import("./components/wms/Incidents"));
 const AutomationCenter = lazy(() => import("./components/AutomationCenter"));
 const ActivityLogCenter = lazy(() => import("./components/ActivityLogCenter"));
 const LogsCenter = lazy(() => import("./components/LogsCenter"));
@@ -835,6 +836,12 @@ function AppRouter() {
       <Route path="/pda-recon" element={
         <ProtectedRoute supersuOnly>
           <PdaRecon />
+        </ProtectedRoute>
+      } />
+      {/* Incidencias de integridad del inventario: sólo Super Usuario. */}
+      <Route path="/wms-incidencias" element={
+        <ProtectedRoute supersuOnly>
+          <WmsIncidents />
         </ProtectedRoute>
       } />
       <Route path="/automation-center" element={

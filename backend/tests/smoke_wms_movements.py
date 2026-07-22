@@ -232,7 +232,30 @@ async def main():
         check("el destino mantiene un lote por pais", len(dst_rows) == 2,
               f"filas={len(dst_rows)} coos={[x.get('country_of_origin') for x in dst_rows]}")
 
-        print("\n== 8. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
+        print("\n== 8. BLINDAJE: el indice unico frena a los puntos NO migrados ==")
+        # Quedan ~47 puntos en wms.py con la llave vieja (conteos ciclicos,
+        # ajustes, generar caja...). El indice unico los detiene a TODOS a nivel
+        # de base de datos, y el handler traduce el rechazo en un 409 accionable
+        # en vez de un 500 con jerga de Mongo.
+        sdb.wms_inventory.create_index(
+            [("style", 1), ("color", 1), ("size", 1), ("location", 1),
+             ("country_of_origin", 1), ("fabric_content", 1)],
+            unique=True, name="uniq_inventory_material_lote")
+        fila = sdb.wms_inventory.find_one({"location": "PS07-A25", "style": "CK001"})
+        check("hay fila para intentar duplicar", fila is not None)
+        try:
+            copia = {k: v for k, v in fila.items() if k != "_id"}
+            copia["inventory_id"] = "inv_intento_duplicado"
+            sdb.wms_inventory.insert_one(copia)
+            check("la BD RECHAZA el duplicado", False, "se inserto: el indice no funciono")
+        except Exception as e:
+            check("la BD RECHAZA el duplicado", "E11000" in str(e) or "duplicate" in str(e).lower(),
+                  str(e)[:100])
+        check("no quedo la fila duplicada",
+              sdb.wms_inventory.count_documents({"location": "PS07-A25", "style": "CK001"}) == 1)
+        sdb.wms_inventory.drop_index("uniq_inventory_material_lote")
+
+        print("\n== 9. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
         sdb.wms_inventory.insert_one({
             "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
             "color": "PFD", "size": "M", "location": "PS07-A25",

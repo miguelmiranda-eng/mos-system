@@ -79,6 +79,65 @@ from fastapi import Request as _Request
 from fastapi.responses import JSONResponse
 import traceback
 
+from pymongo.errors import DuplicateKeyError as _DuplicateKeyError
+
+
+@app.exception_handler(_DuplicateKeyError)
+async def duplicate_key_handler(request: _Request, exc: _DuplicateKeyError):
+    """El índice único de wms_inventory rechazó un duplicado de inventario.
+
+    BLINDAJE TRANSVERSAL. Los 4 endpoints de movimiento ya resuelven la fila
+    correctamente vía services/inventory_ledger.py, pero quedan ~47 puntos en
+    wms.py (conteos cíclicos, ajustes, generar caja, allocation…) que todavía
+    identifican la fila con la llave vieja y podrían intentar crear un duplicado.
+
+    El índice único los detiene a TODOS a nivel de base de datos. Este handler
+    traduce ese rechazo —que si no sería un 500 con jerga de Mongo— en un 409
+    accionable para el operador, y lo deja registrado como incidencia para que
+    sistemas sepa QUÉ punto falta migrar.
+    """
+    mensaje = str(exc)
+    es_inventario = "wms_inventory" in mensaje or "uniq_inventory_material_lote" in mensaje
+    logging.error(f"DUPLICATE KEY on {request.method} {request.url}: {mensaje}")
+
+    if es_inventario:
+        try:
+            from deps import db as _db, get_current_user as _gcu
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+            usuario = {}
+            try:
+                usuario = await _gcu(request) or {}
+            except Exception:
+                pass
+            await _db.wms_incidents.insert_one({
+                "incident_id": f"inc_{_uuid.uuid4().hex[:12]}",
+                "kind": "duplicate_blocked_by_index",
+                "endpoint": f"{request.method} {request.url.path}",
+                "mongo_error": mensaje[:500],
+                "user_id": usuario.get("user_id"),
+                "user_name": usuario.get("name", usuario.get("email", "")),
+                "created_at": _dt.now(_tz.utc).isoformat(),
+            })
+        except Exception:
+            logging.exception("no se pudo registrar la incidencia de duplicado")
+
+        detalle = ("Operación cancelada: crearía un inventario duplicado para ese "
+                   "material y lote en la ubicación. La base de datos lo impidió. "
+                   "Avisa a sistemas — quedó registrado en Incidencias.")
+    else:
+        detalle = "Registro duplicado: ya existe un elemento con esa clave."
+
+    origin = request.headers.get("origin")
+    allowed_origin = origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0]
+    return JSONResponse(
+        status_code=409,
+        content={"detail": detalle, "type": "DuplicateKeyError"},
+        headers={"Access-Control-Allow-Origin": allowed_origin,
+                 "Access-Control-Allow-Credentials": "true"},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: _Request, exc: Exception):
     error_detail = traceback.format_exc()

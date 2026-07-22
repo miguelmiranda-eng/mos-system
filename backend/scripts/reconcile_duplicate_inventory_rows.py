@@ -155,22 +155,41 @@ def etiqueta(k, firma=None):
 
 
 def aplicar(db, a, lote, dry):
-    """Fusiona el grupo en la fila sobreviviente y ajusta al físico del lote."""
+    """Fusiona el grupo en la fila sobreviviente.
+
+    DEDUPLICAR NO ES DECIDIR LA CANTIDAD. Son dos preguntas distintas:
+      - "¿sobran filas?"      -> siempre se puede responder: sí, fusionar.
+      - "¿cuánto material hay?" -> sólo se responde contra las cajas físicas.
+
+    En A y B las cajas contestan la segunda, así que se ajusta al físico. En C no
+    hay cajas: se fusionan las filas CONSERVANDO las unidades (no se da nada de
+    baja) y se marca la ubicación para conteo cíclico. Así se elimina el
+    duplicado —que es lo que bloquea el índice único— sin que un script decida
+    dar de baja material que quizá sí existe y perdió su vínculo.
+    """
     if dry:
         return
     k, survivor, rows = a["key"], a["survivor"], a["rows"]
     perdedoras = [r for r in rows if r["_id"] != survivor["_id"]]
+    solo_fusion = a["tier"] == "C"
 
     db[f"wms_inventory_bak_dedupe_{lote}"].insert_many(
         [dict(r, _bak_group=etiqueta(k, a["firma"])) for r in rows]
     )
-    db.wms_inventory.update_one({"_id": survivor["_id"]}, {"$set": {
-        "units_on_hand": a["fisico_u"],
-        "total_boxes": a["fisico_c"],
+    nuevos = {
+        "units_on_hand": a["sistema_u"] if solo_fusion else a["fisico_u"],
+        "total_boxes": (sum(int(r.get("total_boxes") or 0) for r in rows)
+                        if solo_fusion else a["fisico_c"]),
         "units_allocated": a["allocated"],
         "updated_at": now_iso(),
         "reconciled_dedupe_batch": lote,
-    }})
+    }
+    if solo_fusion:
+        nuevos["pending_cycle_count"] = True
+        nuevos["pending_cycle_count_reason"] = (
+            "filas fusionadas sin cajas físicas que las respalden; "
+            "la cantidad no fue ajustada y requiere conteo")
+    db.wms_inventory.update_one({"_id": survivor["_id"]}, {"$set": nuevos})
     if perdedoras:
         db.wms_inventory.delete_many({"_id": {"$in": [r["_id"] for r in perdedoras]}})
 
@@ -210,6 +229,10 @@ def main():
                     help="ejecuta los cambios (por defecto sólo simula)")
     ap.add_argument("--tiers", default="A,B",
                     help="casos a procesar (por defecto A,B; C nunca es automático)")
+    ap.add_argument("--merge-c", action="store_true",
+                    help="fusiona tambien el caso C SIN ajustar cantidades: elimina el "
+                         "duplicado (desbloquea el indice unico) y marca la ubicacion "
+                         "para conteo ciclico")
     ap.add_argument("--only", default=None, metavar="UBICACION",
                     help="procesa SOLO esta ubicación (piloto de bajo riesgo)")
     ap.add_argument("--mongo", default=MONGODB_URL, help="URL de MongoDB")
@@ -218,9 +241,12 @@ def main():
     if not args.mongo:
         sys.exit("Falta MONGODB_URL (variable de entorno o --mongo)")
     tiers = {t.strip().upper() for t in args.tiers.split(",") if t.strip()}
-    if "C" in tiers:
-        sys.exit("El caso C nunca se procesa automáticamente: filas sin una sola "
-                 "caja física requieren conteo cíclico y decisión humana.")
+    if "C" in tiers and not args.merge_c:
+        sys.exit("El caso C no se procesa con --tiers: usa --merge-c, que SÓLO "
+                 "fusiona las filas conservando las unidades (no da nada de baja) "
+                 "y marca la ubicación para conteo cíclico.")
+    if args.merge_c:
+        tiers.add("C")
 
     db = pymongo.MongoClient(args.mongo)[DB_NAME]
     dry = not args.apply
@@ -252,10 +278,13 @@ def main():
               f"ajuste={cambio:+d}")
         if a["allocated"]:
             print(f"     !! units_allocated={a['allocated']} - se conserva en la sobreviviente")
-        if marca == "C":
+        if marca == "C" and not args.merge_c:
             print("     -> OMITIDO: sin cajas físicas de este lote. Requiere conteo cíclico.")
             omitidos += 1
             continue
+        if marca == "C":
+            print(f"     -> SOLO FUSION: conserva {a['sistema_u']} u (NO se da de baja "
+                  f"nada) y se marca para conteo cíclico")
         if marca not in tiers:
             print(f"     -> OMITIDO: caso {marca} fuera de --tiers")
             omitidos += 1
@@ -265,7 +294,7 @@ def main():
               f"re-vincular {a['fisico_c']} cajas")
         aplicar(db, a, lote, dry)
         procesados += 1
-        delta_total += cambio
+        delta_total += 0 if marca == "C" else cambio
 
     print(f"\n--- {'SIMULACIÓN' if dry else 'RESULTADO'} ---")
     print(f"  grupos procesados : {procesados}")

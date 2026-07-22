@@ -372,6 +372,59 @@ async def _assert_conserved(before_total, scopes, *, user, operation, context):
         )
 
 
+@router.get("/incidents")
+async def list_incidents(request: Request, kind: str = "", days: int = 30,
+                         limit: int = 200, unresolved_only: bool = False):
+    """Incidencias de integridad de inventario. SOLO supersu.
+
+    `wms_incidents` se llenaba desde 2026-07 pero NADIE la leía: ni endpoint, ni
+    pantalla, ni reporte. Un registro que nadie abre no sirve de nada — este
+    endpoint existe para que dejen de ser invisibles.
+    """
+    user = await require_supersu(request)
+    desde = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+    q = {"created_at": {"$gte": desde}}
+    if kind:
+        q["kind"] = kind
+    if unresolved_only:
+        q["resolved_at"] = {"$exists": False}
+
+    items = await db.wms_incidents.find(q, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
+    # Resumen por tipo para el encabezado del módulo.
+    resumen = await db.wms_incidents.aggregate([
+        {"$match": {"created_at": {"$gte": desde}}},
+        {"$group": {"_id": "$kind", "total": {"$sum": 1},
+                    "sin_resolver": {"$sum": {"$cond": [{"$ifNull": ["$resolved_at", False]}, 0, 1]}},
+                    "ultimo": {"$max": "$created_at"}}},
+        {"$sort": {"total": -1}},
+    ]).to_list(50)
+
+    return {
+        "items": items,
+        "summary": [{"kind": r["_id"], **{k: r[k] for k in ("total", "sin_resolver", "ultimo")}}
+                    for r in resumen],
+        "days": days,
+        "total": len(items),
+        "user_role": user.get("role"),
+    }
+
+
+@router.post("/incidents/{incident_id}/resolve")
+async def resolve_incident(incident_id: str, request: Request):
+    """Marca una incidencia como atendida. SOLO supersu. No borra: deja rastro."""
+    user = await require_supersu(request)
+    body = await request.json() if await request.body() else {}
+    res = await db.wms_incidents.update_one(
+        {"incident_id": incident_id},
+        {"$set": {"resolved_at": now_iso(),
+                  "resolved_by": user.get("name", user.get("email", "")),
+                  "resolution_note": (body.get("note") or "").strip()}},
+    )
+    if not res.matched_count:
+        raise HTTPException(404, "Incidencia no encontrada")
+    return {"message": "Incidencia marcada como atendida", "incident_id": incident_id}
+
+
 async def get_sku_movement_history(style: str, color: str = "", size: str = "", limit: int = 200):
     """Return movements that touch a given SKU dimension, newest first.
 
