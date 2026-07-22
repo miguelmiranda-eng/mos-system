@@ -8,6 +8,7 @@ from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
 )
+from services import inventory_ledger as ledger
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata
@@ -205,6 +206,151 @@ async def log_movement(user, movement_type, details):
         "user_name": user.get("name", user.get("email", "")),
         "created_at": now_iso(),
     })
+
+# ── Invariantes de inventario (adaptadores HTTP de services.inventory_ledger) ─
+# Ver services/inventory_ledger.py para el porqué. Resumen: los endpoints de
+# movimiento buscaban la fila origen con un solo formato de `sku` y, si no la
+# encontraban, seguían adelante en silencio duplicando el stock en el destino.
+
+
+async def _reconcile_missing_inventory_row(user, style, sku, color, size, location):
+    """Reconstruye una fila de inventario faltante desde las cajas físicas.
+
+    NO inventa stock: cuenta las cajas que realmente están en la ubicación y
+    crea la fila que debió existir siempre. Las ~2,650 cajas huérfanas del
+    sistema (3.3%) son herencia de importaciones y scripts de reparación que
+    tocaron `wms_boxes` sin actualizar `wms_inventory`.
+
+    Devuelve la fila creada, o None si tampoco hay cajas físicas — en ese caso
+    no hay nada que reconciliar y el movimiento debe abortar.
+
+    Queda auditado por partida doble: un movimiento `inventory_row_reconciled`
+    y un registro en `wms_incidents`, para que el volumen de huérfanas sea
+    medible y decreciente en vez de invisible.
+    """
+    stock = await ledger.physical_stock_at(db, style, sku, color, size, location)
+    if stock["boxes"] == 0:
+        return None
+
+    sample = stock["sample"] or {}
+    row = {
+        "inventory_id": gen_id("inv"),
+        "sku": sample.get("sku") or sku or style,
+        "style": style or sample.get("style") or sku,
+        "color": color,
+        "size": size,
+        "customer": sample.get("customer", ""),
+        "manufacturer": sample.get("manufacturer", ""),
+        "description": sample.get("description", ""),
+        "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
+        "fabric_content": sample.get("fabric_content", ""),
+        "location": location,
+        "total_boxes": stock["boxes"],
+        "units_on_hand": stock["units"],
+        "units_allocated": 0,
+        "updated_at": now_iso(),
+        "reconciled_from_boxes_at": now_iso(),
+    }
+    await db.wms_inventory.insert_one(dict(row))
+
+    material = ledger.describe(style, sku, color, size)
+    logger.warning(
+        "Fila de inventario reconstruida desde cajas físicas: %s en %s (%s cajas, %s unidades)",
+        material, location, stock["boxes"], stock["units"],
+    )
+    await log_movement(user, MovementType.INVENTORY_ROW_RECONCILED, {
+        "location": location, "material": material,
+        "style": style, "sku": row["sku"], "color": color, "size": size,
+        "boxes": stock["boxes"], "units": stock["units"],
+        "inventory_id": row["inventory_id"],
+        "reason": "cajas huérfanas sin fila de inventario",
+    })
+    await db.wms_incidents.insert_one({
+        "incident_id": gen_id("inc"),
+        "kind": "orphan_boxes_reconciled",
+        "location": location, "material": material,
+        "boxes": stock["boxes"], "units": stock["units"],
+        "inventory_id": row["inventory_id"],
+        "user_id": user.get("user_id"),
+        "user_name": user.get("name", user.get("email", "")),
+        "created_at": now_iso(),
+    })
+    return row
+
+
+async def _resolve_inventory_row(style, sku, color, size, location, *, required,
+                                 reconcile=False, user=None):
+    """Localiza LA fila de inventario de un material en una ubicación.
+
+    Traduce los fallos de invariante a un 409 accionable. DEBE llamarse para
+    todos los buckets ANTES de escribir nada, para que abortar deje la
+    operación en cero cambios.
+
+    `reconcile=True` (sólo para el ORIGEN de un movimiento): si la fila no
+    existe pero las cajas físicas sí, la reconstruye y deja auditoría en vez de
+    bloquear al operador. La ambigüedad NUNCA se auto-resuelve: dos filas para
+    el mismo material requieren decisión humana.
+    """
+    try:
+        return await ledger.resolve_row(
+            db, style, sku, color, size, location, required=required
+        )
+    except ledger.InventoryRowNotFound as e:
+        if reconcile and user is not None:
+            row = await _reconcile_missing_inventory_row(user, style, sku, color, size, location)
+            if row is not None:
+                return row
+        raise HTTPException(
+            409,
+            f"Movimiento cancelado: no existe fila de inventario para {e.material} "
+            f"en {e.location} y tampoco hay cajas físicas ahí que permitan "
+            f"reconstruirla. Continuar habría duplicado el stock en el destino. "
+            f"Reporta esta ubicación a sistemas.",
+        )
+    except ledger.AmbiguousInventoryRow as e:
+        raise HTTPException(
+            409,
+            f"Movimiento cancelado: {e.material} tiene {len(e.rows)} filas de "
+            f"inventario duplicadas en {e.location}. Mover desde ahí propagaría "
+            f"el duplicado. Requiere reconciliación previa por sistemas.",
+        )
+
+
+async def _assert_conserved(before_total, scopes, *, user, operation, context):
+    """Verifica que el movimiento no creó ni destruyó unidades (origen+destino).
+
+    Post-escritura: mientras no haya transacciones (requiere replica set) esto
+    NO revierte el daño, lo vuelve visible y auditable en el instante en que
+    ocurre en lugar de descubrirlo semanas después en un conteo cíclico.
+    """
+    after_total = await ledger.total_units(db, scopes)
+    try:
+        ledger.assert_conserved(before_total, after_total, context)
+    except ledger.ConservationViolation as e:
+        incident_id = gen_id("inc")
+        logger.critical(
+            "CONSERVACION DE INVENTARIO VIOLADA [%s] op=%s antes=%s despues=%s delta=%+d ctx=%s",
+            incident_id, operation, e.before, e.after, e.delta, e.context,
+        )
+        await db.wms_incidents.insert_one({
+            "incident_id": incident_id,
+            "kind": "inventory_conservation_violation",
+            "operation": operation,
+            "units_before": e.before,
+            "units_after": e.after,
+            "delta": e.delta,
+            "context": e.context,
+            "user_id": user.get("user_id"),
+            "user_name": user.get("name", user.get("email", "")),
+            "created_at": now_iso(),
+        })
+        raise HTTPException(
+            500,
+            f"ALTO: el movimiento dejó el inventario descuadrado en {e.delta:+d} "
+            f"unidades y ya fue escrito. Incidente {incident_id} registrado. "
+            f"NO repitas la operación; avisa a sistemas.",
+        )
+
 
 async def get_sku_movement_history(style: str, color: str = "", size: str = "", limit: int = 200):
     """Return movements that touch a given SKU dimension, newest first.
@@ -1232,7 +1378,58 @@ async def move_location_bulk(request: Request):
         raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
     await _assert_not_on_hold(user, src, dst)
 
-    # 1. Bulk move boxes (no merge logic needed; box_id is unique).
+    # 1. Reconciliar cajas huérfanas del origen ANTES de leer las filas: este
+    #    endpoint mueve la ubicación COMPLETA, así que una caja sin fila de
+    #    inventario viajaría al destino sin que ninguna unidad la acompañe
+    #    (pérdida silenciosa, el espejo del duplicado).
+    orphan_groups = await db.wms_boxes.aggregate([
+        {"$match": {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}},
+        {"$group": {"_id": {
+            "style": {"$ifNull": ["$style", ""]}, "sku": {"$ifNull": ["$sku", ""]},
+            "color": {"$ifNull": ["$color", ""]}, "size": {"$ifNull": ["$size", ""]},
+        }}},
+    ]).to_list(5000)
+    for g in orphan_groups:
+        k = g["_id"]
+        if not ledger.material_keys(k["style"], k["sku"]):
+            continue  # caja sin style ni sku: dato roto, no reconciliable
+        await _resolve_inventory_row(k["style"], k["sku"], k["color"], k["size"], src,
+                                     required=True, reconcile=True, user=user)
+
+    # 2. Filas origen. Se leen ANTES de escribir nada para poder validar y
+    #    abortar sin cambios.
+    src_rows = await db.wms_inventory.find(
+        {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}, "units_on_hand": {"$gt": 0}}
+    ).to_list(5000)
+
+    # 3. PRE-ESCRITURA: el origen no puede traer duplicados (los propagaría al
+    #    destino) y el destino tiene que resolverse sin ambigüedad. Aquí el
+    #    defecto estaba del lado del DESTINO: buscar sólo por `sku` no encontraba
+    #    la fila equivalente keyed con el otro formato y creaba una segunda fila
+    #    para el mismo material — así nació el duplicado de CK001/PFD/M.
+    seen_material = {}
+    scopes = []
+    for row in src_rows:
+        style = row.get("style") or ""
+        sku = row.get("sku") or ""
+        color = row.get("color", "")
+        size = row.get("size", "")
+        material_key = (style or sku, color, size)
+        if material_key in seen_material:
+            raise HTTPException(
+                409,
+                f"Movimiento cancelado: {ledger.describe(style, sku, color, size)} tiene "
+                f"filas de inventario duplicadas en {src}. Mover propagaría el "
+                f"duplicado a {dst}. Requiere reconciliación previa por sistemas.",
+            )
+        seen_material[material_key] = row
+        await _resolve_inventory_row(style, sku, color, size, dst, required=False)
+        scopes.append((style, sku, color, size, src))
+        scopes.append((style, sku, color, size, dst))
+
+    units_before = await ledger.total_units(db, scopes)
+
+    # 4. Bulk move boxes (no merge logic needed; box_id is unique).
     # Capture the moved box ids first so the per-box history (Case# 003) can
     # surface this relocation; update_many only returns a count.
     src_box_filter = {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
@@ -1240,24 +1437,20 @@ async def move_location_bulk(request: Request):
     box_res = await db.wms_boxes.update_many(src_box_filter, {"$set": {"location": dst, "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
     boxes_moved = box_res.modified_count
 
-    # 2. Inventory: merge per SKU at destination
-    src_rows = await db.wms_inventory.find(
-        {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}, "units_on_hand": {"$gt": 0}}
-    ).to_list(5000)
+    # 5. Inventory: merge per material at destination
     units_moved = 0
     skus_moved = 0
     for row in src_rows:
-        sku = row.get("sku") or row.get("style")
+        style = row.get("style") or ""
+        sku = row.get("sku") or ""
         color = row.get("color", "")
         size = row.get("size", "")
         on_hand = row.get("units_on_hand", 0)
         allocated = row.get("units_allocated", 0)
         boxes_cnt = row.get("total_boxes", 0)
 
-        # Look for existing row at destination
-        existing = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": dst
-        })
+        # Fila equivalente en destino, tolerando ambos formatos de `sku`.
+        existing = await _resolve_inventory_row(style, sku, color, size, dst, required=False)
         if existing:
             await db.wms_inventory.update_one(
                 {"_id": existing["_id"]},
@@ -1272,6 +1465,10 @@ async def move_location_bulk(request: Request):
             )
         units_moved += on_hand
         skus_moved += 1
+
+    await _assert_conserved(units_before, scopes, user=user, operation="move_location",
+                            context={"from": src, "to": dst, "boxes": boxes_moved,
+                                     "units_moved": units_moved})
 
     await log_movement(user, MovementType.BULK_RELOCATION, {
         "from": src, "to": dst,
@@ -1407,25 +1604,20 @@ async def transit_relocate(request: Request):
             "moved": 0, "units_moved": 0, "to": dst_name,
         }
 
-    # 1. Move the boxes in one shot.
-    moved_ids = [b["box_id"] for b in boxes]
-    await db.wms_boxes.update_many(
-        {"box_id": {"$in": moved_ids}},
-        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
-    )
-
-    # 2. Aggregate units per (source_location, sku, color, size) — each box's
-    # source location matters because inventory rows are keyed per-location.
+    # 1. Aggregate units per (source_location, style, sku, color, size) — each
+    # box's source location matters because inventory rows are keyed per-location.
+    # Se arma ANTES de escribir para poder abortar sin cambios.
     from collections import defaultdict
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
     for b in boxes:
         key = (
             b.get("location") or TRANSIT_LOCATION_NAME,
-            # Key by the SHORT style first (like receiving / _move_box_inventory).
-            # Using the box's composite sku ("5000-AZALEA-XL") here failed to match
-            # the cart's inventory row (keyed by "5000"), so the source row was
-            # never decremented and the cart kept phantom (double-counted) units.
-            b.get("style") or b.get("sku") or "",
+            # style Y sku: la fila del carro puede estar keyed por el corto
+            # ("5000") o por el compuesto ("5000-AZALEA-XL"). Elegir uno solo
+            # dejaba sin descontar el origen y el carro conservaba unidades
+            # fantasma (doble conteo). Ver services/inventory_ledger.py.
+            b.get("style") or "",
+            b.get("sku") or "",
             b.get("color", ""),
             b.get("size", ""),
         )
@@ -1434,10 +1626,31 @@ async def transit_relocate(request: Request):
         if bucket[key]["sample"] is None:
             bucket[key]["sample"] = b
 
+    # 2. PRE-ESCRITURA: resolver la fila origen de cada bucket. Si falta o está
+    #    duplicada, aborta con 409 dejando la operación en CERO cambios.
+    scopes = []
+    for (src_location, style, sku, color, size), agg in bucket.items():
+        agg["src_row"] = await _resolve_inventory_row(
+            style, sku, color, size, src_location, required=True, reconcile=True, user=user
+        )
+        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        scopes.append((style, sku, color, size, src_location))
+        scopes.append((style, sku, color, size, dst_name))
+
+    units_before = await ledger.total_units(db, scopes)
+
+    # 3. Move the boxes in one shot.
+    moved_ids = [b["box_id"] for b in boxes]
+    await db.wms_boxes.update_many(
+        {"box_id": {"$in": moved_ids}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
+    )
+
+    # 4. Rebalance inventory.
     units_moved = 0
     skus_moved = 0
     sources_set = set()
-    for (src_location, sku, color, size), agg in bucket.items():
+    for (src_location, style, sku, color, size), agg in bucket.items():
         units = agg["units"]
         boxes_cnt = agg["boxes"]
         sample = agg["sample"] or {}
@@ -1446,9 +1659,7 @@ async def transit_relocate(request: Request):
         sources_set.add(src_location)
 
         # Decrement the source inventory row (or delete it if it would go to 0).
-        src_inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": src_location,
-        })
+        src_inv = agg.get("src_row")
         if src_inv:
             new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
             new_total_boxes = max(0, int(src_inv.get("total_boxes", 0)) - boxes_cnt)
@@ -1465,9 +1676,7 @@ async def transit_relocate(request: Request):
                 )
 
         # Increment (or create) the destination inventory row.
-        dst_inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": dst_name,
-        })
+        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
         if dst_inv:
             await db.wms_inventory.update_one(
                 {"_id": dst_inv["_id"]},
@@ -1477,8 +1686,10 @@ async def transit_relocate(request: Request):
         else:
             await db.wms_inventory.insert_one({
                 "inventory_id": gen_id("inv"),
-                "sku": sku,
-                "style": sample.get("style") or sku,
+                # Hereda el formato de `sku` del origen: el material conserva la
+                # misma llave todo su recorrido (ver inventory_ledger.py).
+                "sku": (src_inv or {}).get("sku") or sku or style,
+                "style": style or sample.get("style") or sku,
                 "color": color,
                 "size": size,
                 "customer": sample.get("customer", ""),
@@ -1492,6 +1703,10 @@ async def transit_relocate(request: Request):
                 "units_allocated": 0,
                 "updated_at": now_iso(),
             })
+
+    await _assert_conserved(units_before, scopes, user=user, operation="transit_relocate",
+                            context={"to": dst_name, "sources": sorted(sources_set),
+                                     "boxes": len(moved_ids), "units_moved": units_moved})
 
     await log_movement(user, MovementType.TRANSIT_RELOCATION, {
         "to": dst_name,
@@ -1554,32 +1769,57 @@ async def boxes_relocate(request: Request):
     src_locs = {(b.get("location") or "") for b in boxes}
     await _assert_not_on_hold(user, dst_name, *src_locs)
 
-    # 1. Bulk update box locations.
-    moved_ids = [b["box_id"] for b in boxes]
-    await db.wms_boxes.update_many(
-        {"box_id": {"$in": moved_ids}},
-        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
-    )
-
-    # 2. Rebalance inventory: bucket by (source_location, sku, color, size) so
-    #    moves spanning multiple source bins still decrement the right rows.
+    # 1. Bucket by (source_location, style, sku, color, size) so moves spanning
+    #    multiple source bins still decrement the right rows. Se arma ANTES de
+    #    escribir: la resolución de filas de abajo tiene que poder abortar sin
+    #    haber tocado nada.
     from collections import defaultdict
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None, "box_ids": []})
     for b in boxes:
         src = (b.get("location") or "")
-        # Short style first (matches how inventory rows are keyed); the composite
-        # sku missed the source row and left phantom double-counted inventory.
-        key = (src, b.get("style") or b.get("sku") or "", b.get("color", ""), b.get("size", ""))
+        # style Y sku: la fila de inventario puede estar keyed por cualquiera de
+        # los dos formatos (ver services/inventory_ledger.py).
+        key = (src, b.get("style") or "", b.get("sku") or "", b.get("color", ""), b.get("size", ""))
         bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
         bucket[key]["boxes"] += 1
         if bucket[key]["sample"] is None:
             bucket[key]["sample"] = b
         bucket[key]["box_ids"].append(b["box_id"])
 
+    # 2. PRE-ESCRITURA: resolver la fila origen de cada bucket. Si alguna falta o
+    #    está duplicada, aborta aquí con 409 y la operación queda en CERO cambios.
+    #    Este paso es la corrección del defecto que duplicó CK001/PFD/M.
+    scopes = []
+    for (src, style, sku, color, size), agg in bucket.items():
+        if not src:
+            # Caja sin ubicación de origen (dato inconsistente): no hay nada que
+            # descontar. Se excluye de la verificación de conservación porque su
+            # ingreso al destino sí es un alta legítima de stock.
+            logger.warning("relocate: caja sin ubicación origen %s", agg["box_ids"][:5])
+            agg["src_row"] = None
+            continue
+        agg["src_row"] = await _resolve_inventory_row(style, sku, color, size, src,
+                                                      required=True, reconcile=True, user=user)
+        # Destino: sólo para detectar duplicados preexistentes; la fila real se
+        # relee dentro del loop porque varios buckets pueden compartir destino.
+        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        scopes.append((style, sku, color, size, src))
+        scopes.append((style, sku, color, size, dst_name))
+
+    units_before = await ledger.total_units(db, scopes)
+
+    # 3. Bulk update box locations.
+    moved_ids = [b["box_id"] for b in boxes]
+    await db.wms_boxes.update_many(
+        {"box_id": {"$in": moved_ids}},
+        {"$set": {"location": dst_name, "state": "located", "status": "located", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}},
+    )
+
+    # 4. Rebalance inventory.
     units_moved = 0
     skus_moved = 0
     sources_touched = set()
-    for (src, sku, color, size), agg in bucket.items():
+    for (src, style, sku, color, size), agg in bucket.items():
         units = agg["units"]
         boxes_cnt = agg["boxes"]
         sample = agg["sample"] or {}
@@ -1589,29 +1829,24 @@ async def boxes_relocate(request: Request):
             sources_touched.add(src)
 
         # Decrement the source inventory row (delete if it would hit 0/0).
-        if src:
-            src_inv = await db.wms_inventory.find_one({
-                "sku": sku, "color": color, "size": size, "location": src,
-            })
-            if src_inv:
-                new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
-                new_total_boxes = max(0, int(src_inv.get("total_boxes", 0)) - boxes_cnt)
-                if new_on_hand == 0 and new_total_boxes == 0:
-                    await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
-                else:
-                    await db.wms_inventory.update_one(
-                        {"_id": src_inv["_id"]},
-                        {"$set": {
-                            "units_on_hand": new_on_hand,
-                            "total_boxes": new_total_boxes,
-                            "updated_at": now_iso(),
-                        }},
-                    )
+        src_inv = agg.get("src_row")
+        if src_inv:
+            new_on_hand = max(0, int(src_inv.get("units_on_hand", 0)) - units)
+            new_total_boxes = max(0, int(src_inv.get("total_boxes", 0)) - boxes_cnt)
+            if new_on_hand == 0 and new_total_boxes == 0:
+                await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+            else:
+                await db.wms_inventory.update_one(
+                    {"_id": src_inv["_id"]},
+                    {"$set": {
+                        "units_on_hand": new_on_hand,
+                        "total_boxes": new_total_boxes,
+                        "updated_at": now_iso(),
+                    }},
+                )
 
         # Increment (or create) the destination inventory row.
-        dst_inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": dst_name,
-        })
+        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
         if dst_inv:
             dst_id = dst_inv.get("inventory_id")
             if not dst_id:
@@ -1631,8 +1866,11 @@ async def boxes_relocate(request: Request):
             dst_id = gen_id("inv")
             await db.wms_inventory.insert_one({
                 "inventory_id": dst_id,
-                "sku": sku,
-                "style": sample.get("style") or sku,
+                # Hereda el formato de `sku` de la fila origen para que el
+                # material conserve la MISMA llave a lo largo de su recorrido;
+                # mezclar formatos es lo que generaba las filas duplicadas.
+                "sku": (src_inv or {}).get("sku") or sku or style,
+                "style": style or sample.get("style") or sku,
                 "color": color,
                 "size": size,
                 "customer": sample.get("customer", ""),
@@ -1663,6 +1901,12 @@ async def boxes_relocate(request: Request):
         if sources_touched and all(_is_transit_name(s) for s in sources_touched)
         else MovementType.BULK_RELOCATION
     )
+
+    # Ley de conservación: origen + destino tienen que sumar lo mismo que antes.
+    await _assert_conserved(units_before, scopes, user=user, operation="boxes_relocate",
+                            context={"to": dst_name, "sources": sorted(sources_touched),
+                                     "boxes": len(moved_ids), "units_moved": units_moved})
+
     await log_movement(user, move_type, {
         "to": dst_name,
         "sources": sorted(sources_touched),

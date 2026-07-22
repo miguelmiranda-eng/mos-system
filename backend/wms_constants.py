@@ -67,6 +67,7 @@ class MovementType:
     ASN_RECEIPT = "asn_receipt"
     TRANSIT_RELOCATION = "transit_relocation"  # boxes moved out of UBICACION TEMPORAL
     LPN_RECONCILED = "lpn_reconciled"          # generic import LPN matched to the box's real physical license plate
+    INVENTORY_ROW_RECONCILED = "inventory_row_reconciled"  # fila de inventario faltante reconstruida desde las cajas físicas
 
 
 class AsnStatus:
