@@ -91,6 +91,12 @@ export const LocationsModule = ({ currentUser }) => {
   // Inline per-LPN relocate inside the detail modal. While a box is being
   // relocated we replace its row with a small destination input + confirm.
   const [relocatingBoxId, setRelocatingBoxId] = useState(null);
+  // Cajas en 0 ('depleted') colapsadas por defecto: son actas de cajas ya
+  // surtidas y ensucian la vista (PS05-A26 llego a listar 87 registros con 5
+  // reales). PERO NO SE OCULTAN DEL TODO: ~292 fueron puestas en 0 por un
+  // conteo que no las vio y siguen fisicamente llenas en el rack — esconderlas
+  // taparia justo el material perdido. Un clic las muestra.
+  const [showEmptyBoxes, setShowEmptyBoxes] = useState(() => new Set());
   const [relocateDst, setRelocateDst] = useState('');
   const [relocateSaving, setRelocateSaving] = useState(false);
   // Per-LINE move: relocate a whole inventory line (all its LPNs) to another
@@ -1259,7 +1265,10 @@ export const LocationsModule = ({ currentUser }) => {
                                 </tr>
                               </thead>
                               <tbody>
-                                {boxesByInv[it.inventory_id].boxes.map((b, bi) => {
+                                {(showEmptyBoxes.has(it.inventory_id)
+                                    ? boxesByInv[it.inventory_id].boxes
+                                    : boxesByInv[it.inventory_id].boxes.filter(b => (b.units ?? b.qty ?? 0) > 0)
+                                  ).map((b, bi) => {
                                   const isRelocating = relocatingBoxId === b.box_id;
                                   if (isRelocating) {
                                     const q = (relocateDst || '').trim().toUpperCase();
@@ -1372,6 +1381,28 @@ export const LocationsModule = ({ currentUser }) => {
                                     </tr>
                                   );
                                 })}
+                              {(() => {
+                                  const vacias = boxesByInv[it.inventory_id].boxes.filter(b => (b.units ?? b.qty ?? 0) <= 0).length;
+                                  if (!vacias) return null;
+                                  const abierto = showEmptyBoxes.has(it.inventory_id);
+                                  return (
+                                    <tr>
+                                      <td colSpan={4} className="p-0">
+                                        <button
+                                          onClick={() => setShowEmptyBoxes(prev => {
+                                            const n = new Set(prev);
+                                            if (n.has(it.inventory_id)) n.delete(it.inventory_id); else n.add(it.inventory_id);
+                                            return n;
+                                          })}
+                                          className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground bg-secondary/20 transition-colors"
+                                          title="Cajas surtidas a 0. Si una caja fisica marca 0 al escanearla pero tiene material, usa MOVER → Ajustar caja."
+                                        >
+                                          {abierto ? '· Ocultar' : `· Ver ${vacias}`} caja{vacias === 1 ? '' : 's'} en 0
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })()}
                               </tbody>
                             </table>
                           )}
