@@ -213,7 +213,17 @@ async def log_movement(user, movement_type, details):
 # encontraban, seguían adelante en silencio duplicando el stock en el destino.
 
 
-async def _reconcile_missing_inventory_row(user, style, sku, color, size, location):
+def _box_batch(box):
+    """Lote de una caja: (país de origen, composición). Es lo que separa dos
+    recepciones del mismo style/color/size — y lo que los movimientos ignoraban,
+    fusionando material de Honduras con material de Nicaragua."""
+    box = box or {}
+    return (box.get("country_of_origin") or box.get("coo") or "",
+            box.get("fabric_content") or "")
+
+
+async def _reconcile_missing_inventory_row(user, style, sku, color, size, location,
+                                           coo=None, fabric=None):
     """Reconstruye una fila de inventario faltante desde las cajas físicas.
 
     NO inventa stock: cuenta las cajas que realmente están en la ubicación y
@@ -228,7 +238,8 @@ async def _reconcile_missing_inventory_row(user, style, sku, color, size, locati
     y un registro en `wms_incidents`, para que el volumen de huérfanas sea
     medible y decreciente en vez de invisible.
     """
-    stock = await ledger.physical_stock_at(db, style, sku, color, size, location)
+    stock = await ledger.physical_stock_at(db, style, sku, color, size, location,
+                                           coo=coo, fabric=fabric)
     if stock["boxes"] == 0:
         return None
 
@@ -242,6 +253,8 @@ async def _reconcile_missing_inventory_row(user, style, sku, color, size, locati
         "customer": sample.get("customer", ""),
         "manufacturer": sample.get("manufacturer", ""),
         "description": sample.get("description", ""),
+        # El lote de la fila lo define la caja: mezclar orígenes destruiría la
+        # trazabilidad aduanera.
         "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
         "fabric_content": sample.get("fabric_content", ""),
         "location": location,
@@ -284,7 +297,7 @@ async def _reconcile_missing_inventory_row(user, style, sku, color, size, locati
 
 
 async def _resolve_inventory_row(style, sku, color, size, location, *, required,
-                                 reconcile=False, user=None):
+                                 reconcile=False, user=None, coo=None, fabric=None):
     """Localiza LA fila de inventario de un material en una ubicación.
 
     Traduce los fallos de invariante a un 409 accionable. DEBE llamarse para
@@ -298,11 +311,13 @@ async def _resolve_inventory_row(style, sku, color, size, location, *, required,
     """
     try:
         return await ledger.resolve_row(
-            db, style, sku, color, size, location, required=required
+            db, style, sku, color, size, location, required=required,
+            coo=coo, fabric=fabric,
         )
     except ledger.InventoryRowNotFound as e:
         if reconcile and user is not None:
-            row = await _reconcile_missing_inventory_row(user, style, sku, color, size, location)
+            row = await _reconcile_missing_inventory_row(user, style, sku, color, size, location,
+                                                         coo=coo, fabric=fabric)
             if row is not None:
                 return row
         raise HTTPException(
@@ -1392,6 +1407,8 @@ async def move_location_bulk(request: Request):
         {"$group": {"_id": {
             "style": {"$ifNull": ["$style", ""]}, "sku": {"$ifNull": ["$sku", ""]},
             "color": {"$ifNull": ["$color", ""]}, "size": {"$ifNull": ["$size", ""]},
+            "coo": {"$ifNull": ["$country_of_origin", ""]},
+            "fabric": {"$ifNull": ["$fabric_content", ""]},
         }}},
     ]).to_list(5000)
     for g in orphan_groups:
@@ -1399,7 +1416,8 @@ async def move_location_bulk(request: Request):
         if not ledger.material_keys(k["style"], k["sku"]):
             continue  # caja sin style ni sku: dato roto, no reconciliable
         await _resolve_inventory_row(k["style"], k["sku"], k["color"], k["size"], src,
-                                     required=True, reconcile=True, user=user)
+                                     required=True, reconcile=True, user=user,
+                                     coo=k["coo"], fabric=k["fabric"])
 
     # 2. Filas origen. Se leen ANTES de escribir nada para poder validar y
     #    abortar sin cambios.
@@ -1419,16 +1437,20 @@ async def move_location_bulk(request: Request):
         sku = row.get("sku") or ""
         color = row.get("color", "")
         size = row.get("size", "")
-        material_key = (style or sku, color, size)
+        coo, fabric = _box_batch(row)
+        # La llave incluye el LOTE: dos filas del mismo style/color/size con
+        # distinto país u composición son lotes legítimos, no duplicados.
+        material_key = (style or sku, color, size) + ledger.batch_signature(coo, fabric)
         if material_key in seen_material:
             raise HTTPException(
                 409,
                 f"Movimiento cancelado: {ledger.describe(style, sku, color, size)} tiene "
-                f"filas de inventario duplicadas en {src}. Mover propagaría el "
-                f"duplicado a {dst}. Requiere reconciliación previa por sistemas.",
+                f"filas de inventario duplicadas en {src} para el mismo lote. Mover "
+                f"propagaría el duplicado a {dst}. Requiere reconciliación previa.",
             )
         seen_material[material_key] = row
-        await _resolve_inventory_row(style, sku, color, size, dst, required=False)
+        await _resolve_inventory_row(style, sku, color, size, dst, required=False,
+                                     coo=coo, fabric=fabric)
         scopes.append((style, sku, color, size, src))
         scopes.append((style, sku, color, size, dst))
 
@@ -1454,8 +1476,11 @@ async def move_location_bulk(request: Request):
         allocated = row.get("units_allocated", 0)
         boxes_cnt = row.get("total_boxes", 0)
 
-        # Fila equivalente en destino, tolerando ambos formatos de `sku`.
-        existing = await _resolve_inventory_row(style, sku, color, size, dst, required=False)
+        # Fila equivalente en destino: mismo material Y mismo lote, tolerando
+        # ambos formatos de `sku` y las variantes de escritura de la composición.
+        coo, fabric = _box_batch(row)
+        existing = await _resolve_inventory_row(style, sku, color, size, dst, required=False,
+                                                coo=coo, fabric=fabric)
         if existing:
             await db.wms_inventory.update_one(
                 {"_id": existing["_id"]},
@@ -1615,16 +1640,20 @@ async def transit_relocate(request: Request):
     from collections import defaultdict
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None})
     for b in boxes:
+        coo, fabric = _box_batch(b)
         key = (
             b.get("location") or TRANSIT_LOCATION_NAME,
             # style Y sku: la fila del carro puede estar keyed por el corto
             # ("5000") o por el compuesto ("5000-AZALEA-XL"). Elegir uno solo
             # dejaba sin descontar el origen y el carro conservaba unidades
-            # fantasma (doble conteo). Ver services/inventory_ledger.py.
+            # fantasma (doble conteo). COO/composición separan lotes distintos.
+            # Ver services/inventory_ledger.py.
             b.get("style") or "",
             b.get("sku") or "",
             b.get("color", ""),
             b.get("size", ""),
+            coo,
+            fabric,
         )
         bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
         bucket[key]["boxes"] += 1
@@ -1634,11 +1663,13 @@ async def transit_relocate(request: Request):
     # 2. PRE-ESCRITURA: resolver la fila origen de cada bucket. Si falta o está
     #    duplicada, aborta con 409 dejando la operación en CERO cambios.
     scopes = []
-    for (src_location, style, sku, color, size), agg in bucket.items():
+    for (src_location, style, sku, color, size, coo, fabric), agg in bucket.items():
         agg["src_row"] = await _resolve_inventory_row(
-            style, sku, color, size, src_location, required=True, reconcile=True, user=user
+            style, sku, color, size, src_location, required=True, reconcile=True, user=user,
+            coo=coo, fabric=fabric,
         )
-        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False,
+                                     coo=coo, fabric=fabric)
         scopes.append((style, sku, color, size, src_location))
         scopes.append((style, sku, color, size, dst_name))
 
@@ -1655,7 +1686,7 @@ async def transit_relocate(request: Request):
     units_moved = 0
     skus_moved = 0
     sources_set = set()
-    for (src_location, style, sku, color, size), agg in bucket.items():
+    for (src_location, style, sku, color, size, coo, fabric), agg in bucket.items():
         units = agg["units"]
         boxes_cnt = agg["boxes"]
         sample = agg["sample"] or {}
@@ -1680,8 +1711,9 @@ async def transit_relocate(request: Request):
                     }},
                 )
 
-        # Increment (or create) the destination inventory row.
-        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        # Increment (or create) the destination inventory row — del MISMO lote.
+        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False,
+                                               coo=coo, fabric=fabric)
         if dst_inv:
             await db.wms_inventory.update_one(
                 {"_id": dst_inv["_id"]},
@@ -1782,9 +1814,12 @@ async def boxes_relocate(request: Request):
     bucket = defaultdict(lambda: {"units": 0, "boxes": 0, "sample": None, "box_ids": []})
     for b in boxes:
         src = (b.get("location") or "")
-        # style Y sku: la fila de inventario puede estar keyed por cualquiera de
-        # los dos formatos (ver services/inventory_ledger.py).
-        key = (src, b.get("style") or "", b.get("sku") or "", b.get("color", ""), b.get("size", ""))
+        # style Y sku porque la fila puede estar keyed por cualquiera de los dos
+        # formatos; COO y composición porque son LOTES distintos que no se deben
+        # fusionar (ver services/inventory_ledger.py).
+        coo, fabric = _box_batch(b)
+        key = (src, b.get("style") or "", b.get("sku") or "", b.get("color", ""),
+               b.get("size", ""), coo, fabric)
         bucket[key]["units"] += int(b.get("units") or b.get("qty") or 0)
         bucket[key]["boxes"] += 1
         if bucket[key]["sample"] is None:
@@ -1795,7 +1830,7 @@ async def boxes_relocate(request: Request):
     #    está duplicada, aborta aquí con 409 y la operación queda en CERO cambios.
     #    Este paso es la corrección del defecto que duplicó CK001/PFD/M.
     scopes = []
-    for (src, style, sku, color, size), agg in bucket.items():
+    for (src, style, sku, color, size, coo, fabric), agg in bucket.items():
         if not src:
             # Caja sin ubicación de origen (dato inconsistente): no hay nada que
             # descontar. Se excluye de la verificación de conservación porque su
@@ -1804,10 +1839,12 @@ async def boxes_relocate(request: Request):
             agg["src_row"] = None
             continue
         agg["src_row"] = await _resolve_inventory_row(style, sku, color, size, src,
-                                                      required=True, reconcile=True, user=user)
+                                                      required=True, reconcile=True, user=user,
+                                                      coo=coo, fabric=fabric)
         # Destino: sólo para detectar duplicados preexistentes; la fila real se
         # relee dentro del loop porque varios buckets pueden compartir destino.
-        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        await _resolve_inventory_row(style, sku, color, size, dst_name, required=False,
+                                     coo=coo, fabric=fabric)
         scopes.append((style, sku, color, size, src))
         scopes.append((style, sku, color, size, dst_name))
 
@@ -1824,7 +1861,7 @@ async def boxes_relocate(request: Request):
     units_moved = 0
     skus_moved = 0
     sources_touched = set()
-    for (src, style, sku, color, size), agg in bucket.items():
+    for (src, style, sku, color, size, coo, fabric), agg in bucket.items():
         units = agg["units"]
         boxes_cnt = agg["boxes"]
         sample = agg["sample"] or {}
@@ -1850,8 +1887,9 @@ async def boxes_relocate(request: Request):
                     }},
                 )
 
-        # Increment (or create) the destination inventory row.
-        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False)
+        # Increment (or create) the destination inventory row — del MISMO lote.
+        dst_inv = await _resolve_inventory_row(style, sku, color, size, dst_name, required=False,
+                                               coo=coo, fabric=fabric)
         if dst_inv:
             dst_id = dst_inv.get("inventory_id")
             if not dst_id:
@@ -1991,33 +2029,14 @@ async def move_units(request: Request):
     # operador (evita el regex case-insensitive que forzaba collection scan).
     src_name = sample.get("location") or src
 
-    # PRE-ESCRITURA: resolver ambas filas antes de tocar una sola caja, para que
-    # abortar deje la operación en CERO cambios. El destino se buscaba sólo por
-    # `sku`, así que no encontraba la fila equivalente keyed con el otro formato
-    # y creaba una SEGUNDA fila: el mismo defecto que duplicó CK001/PFD/M.
-    src_inv = await _resolve_inventory_row(m_style, m_sku, color, size, src_name,
-                                           required=True, reconcile=True, user=user)
-    dst_inv = await _resolve_inventory_row(m_style, m_sku, color, size, dst_name,
-                                           required=False)
-    scopes = [(m_style, m_sku, color, size, src_name),
-              (m_style, m_sku, color, size, dst_name)]
-    units_before = await ledger.total_units(db, scopes)
-
-    # Pre-lookup or pre-generate destination inventory_id
-    if dst_inv:
-        dst_id = dst_inv.get("inventory_id")
-        if not dst_id:
-            dst_id = gen_id("inv")
-            await db.wms_inventory.update_one({"_id": dst_inv["_id"]}, {"$set": {"inventory_id": dst_id}})
-    else:
-        dst_id = gen_id("inv")
-
+    # ── PLAN (sin escribir) ──────────────────────────────────────────────────
+    # El FIFO puede atravesar VARIOS lotes: una ubicación puede tener cajas de
+    # Honduras y de Nicaragua del mismo style/color/size, cada una con su propia
+    # fila. Se simula primero el consumo para saber cuánto sale de cada lote, y
+    # así descontar de la fila correcta en vez de cargarlo todo al primer lote.
+    plan = []          # [(box, take, es_completa)]
+    por_lote = {}      # firma -> {"units", "whole", "split", "sample"}
     remaining = units
-    whole_count = 0   # boxes that left the source entirely
-    split_count = 0   # boxes split → a new partial box created at the destination
-    moved_box_ids = []  # every box touched (whole + shrunk source + split child) for box history
-    next_seq = None
-
     for box in boxes:
         if remaining <= 0:
             break
@@ -2025,7 +2044,48 @@ async def move_units(request: Request):
         if b_qty <= 0:
             continue
         take = min(b_qty, remaining)
-        if take >= b_qty:
+        completa = take >= b_qty
+        plan.append((box, take, completa))
+        firma = ledger.batch_signature(*_box_batch(box))
+        acc = por_lote.setdefault(firma, {"units": 0, "whole": 0, "split": 0, "sample": box})
+        acc["units"] += take
+        acc["whole" if completa else "split"] += 1
+        remaining -= take
+
+    if not plan:
+        raise HTTPException(409, f"No hay cajas disponibles de {sku} en {src}")
+
+    # PRE-ESCRITURA: resolver la fila de CADA lote antes de tocar una sola caja,
+    # para que abortar deje la operación en CERO cambios. El destino se buscaba
+    # sólo por `sku`, así que no encontraba la fila equivalente keyed con el otro
+    # formato y creaba una SEGUNDA fila: el defecto que duplicó CK001/PFD/M.
+    scopes = []
+    for firma, acc in por_lote.items():
+        b_coo, b_fabric = _box_batch(acc["sample"])
+        b_style = acc["sample"].get("style") or sku
+        b_sku = acc["sample"].get("sku") or sku
+        acc["src_row"] = await _resolve_inventory_row(
+            b_style, b_sku, color, size, src_name,
+            required=True, reconcile=True, user=user, coo=b_coo, fabric=b_fabric)
+        acc["dst_row"] = await _resolve_inventory_row(
+            b_style, b_sku, color, size, dst_name,
+            required=False, coo=b_coo, fabric=b_fabric)
+        acc["dst_id"] = (acc["dst_row"] or {}).get("inventory_id") or gen_id("inv")
+        scopes.append((b_style, b_sku, color, size, src_name))
+        scopes.append((b_style, b_sku, color, size, dst_name))
+
+    units_before = await ledger.total_units(db, scopes)
+
+    # ── EJECUCIÓN ────────────────────────────────────────────────────────────
+    whole_count = 0   # boxes that left the source entirely
+    split_count = 0   # boxes split → a new partial box created at the destination
+    moved_box_ids = []  # every box touched (whole + shrunk source + split child) for box history
+    next_seq = None
+
+    for box, take, completa in plan:
+        dst_id = por_lote[ledger.batch_signature(*_box_batch(box))]["dst_id"]
+        b_qty = int((box.get("units") if box.get("units") is not None else box.get("qty", 0)) or 0)
+        if completa:
             # Whole box relocates to the destination.
             await db.wms_boxes.update_one(
                 {"_id": box["_id"]},
@@ -2052,55 +2112,59 @@ async def move_units(request: Request):
             await db.wms_boxes.insert_one(child)
             split_count += 1
             moved_box_ids.extend([box.get("box_id"), new_box_id])
-        remaining -= take
 
-    # Inventory lockstep: decrement the source row by the full requested units and
-    # by the boxes that physically left it; increment/create the destination row by
-    # the units and every box that arrived there (whole + split).
+    # Inventory lockstep, LOTE POR LOTE: cada fila se descuenta exactamente por
+    # las unidades y cajas que salieron de SU lote. Cargarlo todo al primer lote
+    # descuadraría los demás y mezclaría orígenes en el destino.
     boxes_added = whole_count + split_count
-    if src_inv:
-        # Atomic decrement-and-clamp (same race-free pattern as the picking fix):
-        # one document op so concurrent moves from the same row can't lose an
-        # update or drive stock negative.
-        updated = await db.wms_inventory.find_one_and_update(
-            {"_id": src_inv["_id"]},
-            [{"$set": {
-                "units_on_hand": {"$max": [0, {"$subtract": [{"$ifNull": ["$units_on_hand", 0]}, units]}]},
-                "total_boxes": {"$max": [0, {"$subtract": [{"$ifNull": ["$total_boxes", 0]}, whole_count]}]},
-                "updated_at": now_iso(),
-            }}],
-            return_document=ReturnDocument.AFTER,
-        )
-        # Drop the row only once it is fully empty (no units, no boxes, nothing reserved).
-        if (updated and int(updated.get("units_on_hand", 0) or 0) <= 0
-                and int(updated.get("total_boxes", 0) or 0) <= 0
-                and int(updated.get("units_allocated", 0) or 0) <= 0):
-            await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
+    for firma, acc in por_lote.items():
+        src_row, dst_row = acc.get("src_row"), acc.get("dst_row")
+        b_sample = acc["sample"]
+        b_units, b_whole = acc["units"], acc["whole"]
+        b_boxes = acc["whole"] + acc["split"]
 
-    # `dst_inv` ya se resolvió antes de escribir (tolerante a ambos formatos de
-    # sku); el loop FIFO sólo toca cajas, así que sigue siendo válido.
-    if dst_inv:
-        await db.wms_inventory.update_one(
-            {"_id": dst_inv["_id"]},
-            {"$inc": {"units_on_hand": units, "total_boxes": boxes_added},
-             "$set": {"updated_at": now_iso(), "inventory_id": dst_id}},
-        )
-    else:
-        await db.wms_inventory.insert_one({
-            "inventory_id": dst_id,
-            # Hereda el formato de `sku` del origen: el material conserva la
-            # misma llave todo su recorrido (ver inventory_ledger.py).
-            "sku": (src_inv or {}).get("sku") or m_sku,
-            "style": m_style,
-            "color": color, "size": size,
-            "customer": sample.get("customer", ""),
-            "manufacturer": sample.get("manufacturer", ""),
-            "description": sample.get("description", ""),
-            "country_of_origin": sample.get("country_of_origin", "") or sample.get("coo", ""),
-            "fabric_content": sample.get("fabric_content", ""),
-            "location": dst_name, "total_boxes": boxes_added,
-            "units_on_hand": units, "units_allocated": 0, "updated_at": now_iso(),
-        })
+        if src_row:
+            # Atomic decrement-and-clamp (same race-free pattern as the picking fix):
+            # one document op so concurrent moves from the same row can't lose an
+            # update or drive stock negative.
+            updated = await db.wms_inventory.find_one_and_update(
+                {"_id": src_row["_id"]},
+                [{"$set": {
+                    "units_on_hand": {"$max": [0, {"$subtract": [{"$ifNull": ["$units_on_hand", 0]}, b_units]}]},
+                    "total_boxes": {"$max": [0, {"$subtract": [{"$ifNull": ["$total_boxes", 0]}, b_whole]}]},
+                    "updated_at": now_iso(),
+                }}],
+                return_document=ReturnDocument.AFTER,
+            )
+            # Drop the row only once it is fully empty (no units, no boxes, nothing reserved).
+            if (updated and int(updated.get("units_on_hand", 0) or 0) <= 0
+                    and int(updated.get("total_boxes", 0) or 0) <= 0
+                    and int(updated.get("units_allocated", 0) or 0) <= 0):
+                await db.wms_inventory.delete_one({"_id": src_row["_id"]})
+
+        if dst_row:
+            await db.wms_inventory.update_one(
+                {"_id": dst_row["_id"]},
+                {"$inc": {"units_on_hand": b_units, "total_boxes": b_boxes},
+                 "$set": {"updated_at": now_iso(), "inventory_id": acc["dst_id"]}},
+            )
+        else:
+            await db.wms_inventory.insert_one({
+                "inventory_id": acc["dst_id"],
+                # Hereda el formato de `sku` del origen: el material conserva la
+                # misma llave todo su recorrido (ver inventory_ledger.py).
+                "sku": (src_row or {}).get("sku") or b_sample.get("sku") or sku,
+                "style": b_sample.get("style") or sku,
+                "color": color, "size": size,
+                "customer": b_sample.get("customer", ""),
+                "manufacturer": b_sample.get("manufacturer", ""),
+                "description": b_sample.get("description", ""),
+                # Lote del destino = lote de las cajas que llegaron.
+                "country_of_origin": b_sample.get("country_of_origin", "") or b_sample.get("coo", ""),
+                "fabric_content": b_sample.get("fabric_content", ""),
+                "location": dst_name, "total_boxes": b_boxes,
+                "units_on_hand": b_units, "units_allocated": 0, "updated_at": now_iso(),
+            })
 
     # Ley de conservación: origen + destino tienen que sumar lo mismo que antes.
     await _assert_conserved(units_before, scopes, user=user, operation="move_units",

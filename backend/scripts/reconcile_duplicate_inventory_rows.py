@@ -1,57 +1,63 @@
-"""Reconcilia las filas de inventario duplicadas de wms_inventory.
+"""Reconcilia las filas de inventario REALMENTE duplicadas de wms_inventory.
 
 CONTEXTO
 ────────
-`wms_inventory` no tiene identidad canónica: el mismo material en la misma
-ubicación puede tener varias filas, keyed con formatos distintos de `sku`
-(compuesto 'CK001-PFD-M' vs corto 'CK001'). Los endpoints de movimiento las
-generaban al no encontrar la fila origen y crear una nueva en el destino
+Los endpoints de movimiento identificaban la fila de inventario con una llave
+demasiado estrecha y creaban filas nuevas donde debían actualizar una existente
 (corregido en services/inventory_ledger.py). Este script limpia las que ya
 quedaron en la base.
 
-La verdad física son las CAJAS (`wms_boxes`), no las filas. Todo se decide
-contra ellas.
+QUÉ ES Y QUÉ NO ES UN DUPLICADO
+───────────────────────────────
+Varias filas del mismo (style,color,size,location) NO son necesariamente un
+duplicado. Recepción e importación separan deliberadamente los lotes por país de
+origen y composición, y eso hay que respetarlo: en confección importada a EUA el
+país de origen es requisito legal de etiquetado.
 
-TRES CASOS, TRES NIVELES DE RIESGO
-──────────────────────────────────
-  A · ESTRUCTURAL  — la suma de las filas YA coincide con el físico. El stock
-                     es correcto, sólo está partido en varias filas. Fusionar
-                     no cambia ninguna cantidad. Riesgo BAJO.
+Ejemplo REAL que no se debe tocar:
 
-  B · AJUSTE       — la suma NO coincide con el físico. Se fusiona y la
-                     cantidad se ajusta a lo que hay en piso. Riesgo MEDIO:
-                     cambia el inventario, aunque en la dirección correcta.
+    18000/SAND/2X @ CARRO 262
+       HONDURAS    1,188 u / 33 cajas     <- correcto
+       NICARAGUA   1,908 u / 53 cajas     <- correcto
 
-  C · SIN RESPALDO — hay filas pero NO hay una sola caja física. Borrarlas
-                     sería dar de baja stock que quizá sí existe y perdió su
-                     vínculo. NUNCA se toca automáticamente: se reporta para
+Sólo es duplicado cuando dos filas comparten (style, color, size, location) Y
+la misma firma de lote (país + composición canonicalizada). La composición se
+compara canonicalizada porque los datos traen 83 escrituras distintas
+('58%C 42%P' vs '58% COTTON 42% POLYESTER') para 47 composiciones reales.
+
+Medición del 2026-07-22: de 41 ubicaciones con varias filas, **32 son lotes
+legítimos** y sólo **9 son duplicados**.
+
+TRES CASOS, TRES RIESGOS (dentro de los duplicados reales)
+──────────────────────────────────────────────────────────
+  A · ESTRUCTURAL  — la suma ya coincide con el físico del lote. Fusionar no
+                     cambia cantidades. Riesgo BAJO.
+  B · AJUSTE       — no coincide; se ajusta a lo que hay en piso. Riesgo MEDIO.
+  C · SIN RESPALDO — filas sin una sola caja física. NUNCA automático: requiere
                      conteo cíclico. Riesgo ALTO.
-
-Por defecto procesa A y B. El caso C sólo se reporta.
 
 USO
 ───
     python backend/scripts/reconcile_duplicate_inventory_rows.py              # dry-run
     python backend/scripts/reconcile_duplicate_inventory_rows.py --apply      # ejecuta A+B
-    python backend/scripts/reconcile_duplicate_inventory_rows.py --apply --tiers A
 
-Con --apply respalda las filas afectadas en `wms_inventory_bak_dedupe_<id>`
+Con --apply respalda las filas afectadas en `wms_inventory_bak_dedupe_<lote>`
 antes de tocarlas, y audita cada fusión en `wms_movements` + `wms_incidents`.
 """
 import argparse
 import os
 import sys
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import pymongo
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from services.inventory_ledger import material_keys  # noqa: E402
+from services.inventory_ledger import batch_signature, material_keys, row_signature  # noqa: E402
 
 MONGODB_URL = os.environ.get("MONGODB_URL")
 DB_NAME = os.environ.get("DB_NAME", "mos-system")
-
 
 # La consola de Windows usa cp1252 por defecto y revienta con acentos/flechas.
 if hasattr(sys.stdout, "reconfigure"):
@@ -66,47 +72,56 @@ def gen_id(prefix):
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-def cargar_grupos(db):
-    """Todos los grupos (style,color,size,location) con más de una fila."""
-    grupos = db.wms_inventory.aggregate([
+def cargar_duplicados(db):
+    """Grupos con MÁS DE UNA FILA PARA EL MISMO LOTE.
+
+    Mongo agrupa por (style,color,size,location) —lo que sabe indexar— y aquí se
+    subdivide por firma de lote canonicalizada, que es la comparación que Mongo
+    no puede hacer.
+    """
+    candidatos = [g["_id"] for g in db.wms_inventory.aggregate([
         {"$group": {"_id": {"style": "$style", "color": "$color",
                             "size": "$size", "location": "$location"},
                     "n": {"$sum": 1}}},
         {"$match": {"n": {"$gt": 1}}},
-    ])
-    return [g["_id"] for g in grupos]
+    ])]
+    duplicados, legitimos = [], 0
+    for k in candidatos:
+        rows = list(db.wms_inventory.find(k))
+        por_lote = defaultdict(list)
+        for r in rows:
+            por_lote[row_signature(r)].append(r)
+        for firma, filas in por_lote.items():
+            if len(filas) > 1:
+                duplicados.append((k, firma, filas))
+            else:
+                legitimos += 1
+    return duplicados, legitimos
 
 
-def analizar(db, k):
-    """Clasifica un grupo y elige la fila sobreviviente."""
-    rows = list(db.wms_inventory.find({
-        "style": k["style"], "color": k["color"],
-        "size": k["size"], "location": k["location"],
-    }))
+def analizar(db, k, firma, rows):
+    """Clasifica un duplicado y elige la fila sobreviviente."""
     keys = material_keys(k["style"], "")
-    boxes = list(db.wms_boxes.find({
+    todas = list(db.wms_boxes.find({
         "$or": [{"sku": {"$in": keys}}, {"style": {"$in": keys}}],
         "color": k["color"] or "", "size": k["size"] or "",
         "location": k["location"],
-    }, {"_id": 0, "box_id": 1, "units": 1, "qty": 1, "inventory_id": 1}))
+    }, {"_id": 0, "box_id": 1, "units": 1, "qty": 1, "inventory_id": 1,
+        "country_of_origin": 1, "coo": 1, "fabric_content": 1}))
+    # Sólo las cajas de ESTE lote respaldan estas filas.
+    boxes = [b for b in todas if row_signature(b) == firma]
 
     fisico_u = sum(int(b.get("units") or b.get("qty") or 0) for b in boxes)
     fisico_c = len(boxes)
     sistema_u = sum(int(r.get("units_on_hand") or 0) for r in rows)
     allocated = sum(int(r.get("units_allocated") or 0) for r in rows)
 
-    if fisico_c == 0:
-        tier = "C"
-    elif sistema_u == fisico_u:
-        tier = "A"
-    else:
-        tier = "B"
+    tier = "C" if fisico_c == 0 else ("A" if sistema_u == fisico_u else "B")
 
-    # Sobreviviente: la fila que las cajas ya referencian (menos re-stamping y
-    # menos riesgo de romper vínculos), luego la de sku compuesto (formato
+    # Sobreviviente: la fila que las cajas ya referencian (menos re-vinculación y
+    # menos riesgo de romper enlaces), luego la de sku compuesto (formato
     # mayoritario, 82% de la colección), luego la más antigua.
     ids_cajas = {b.get("inventory_id") for b in boxes if b.get("inventory_id")}
-    referenciadas = [r for r in rows if r.get("inventory_id") in ids_cajas]
 
     def prioridad(r):
         return (
@@ -115,69 +130,67 @@ def analizar(db, k):
             r.get("updated_at") or "",
         )
 
-    survivor = sorted(rows, key=prioridad)[0] if rows else None
     return {
-        "key": k, "rows": rows, "boxes": boxes, "tier": tier,
+        "key": k, "firma": firma, "rows": rows, "boxes": boxes, "tier": tier,
         "fisico_u": fisico_u, "fisico_c": fisico_c,
         "sistema_u": sistema_u, "allocated": allocated,
-        "survivor": survivor,
-        "referenciadas": len(referenciadas),
+        "survivor": sorted(rows, key=prioridad)[0],
     }
 
 
-def etiqueta(k):
-    return f"{k['style']}/{k['color']}/{k['size']} @ {k['location']}"
+def etiqueta(k, firma=None):
+    base = f"{k['style']}/{k['color']}/{k['size']} @ {k['location']}"
+    lote = " · ".join(p for p in (firma or ()) if p)
+    return f"{base}  [{lote}]" if lote else base
 
 
 def aplicar(db, a, lote, dry):
-    """Fusiona el grupo en la fila sobreviviente y ajusta al físico."""
+    """Fusiona el grupo en la fila sobreviviente y ajusta al físico del lote."""
+    if dry:
+        return
     k, survivor, rows = a["key"], a["survivor"], a["rows"]
     perdedoras = [r for r in rows if r["_id"] != survivor["_id"]]
 
-    if not dry:
-        # Respaldo ANTES de tocar nada.
-        db[f"wms_inventory_bak_dedupe_{lote}"].insert_many(
-            [dict(r, _bak_group=etiqueta(k)) for r in rows]
+    db[f"wms_inventory_bak_dedupe_{lote}"].insert_many(
+        [dict(r, _bak_group=etiqueta(k, a["firma"])) for r in rows]
+    )
+    db.wms_inventory.update_one({"_id": survivor["_id"]}, {"$set": {
+        "units_on_hand": a["fisico_u"],
+        "total_boxes": a["fisico_c"],
+        "units_allocated": a["allocated"],
+        "updated_at": now_iso(),
+        "reconciled_dedupe_batch": lote,
+    }})
+    if perdedoras:
+        db.wms_inventory.delete_many({"_id": {"$in": [r["_id"] for r in perdedoras]}})
+
+    box_ids = [b["box_id"] for b in a["boxes"]]
+    if box_ids:
+        db.wms_boxes.update_many(
+            {"box_id": {"$in": box_ids}},
+            {"$set": {"inventory_id": survivor.get("inventory_id")}},
         )
 
-        db.wms_inventory.update_one({"_id": survivor["_id"]}, {"$set": {
-            "units_on_hand": a["fisico_u"],
-            "total_boxes": a["fisico_c"],
-            "units_allocated": a["allocated"],
-            "updated_at": now_iso(),
-            "reconciled_dedupe_batch": lote,
-        }})
-        if perdedoras:
-            db.wms_inventory.delete_many({"_id": {"$in": [r["_id"] for r in perdedoras]}})
-
-        # Todas las cajas del material apuntan a la fila sobreviviente.
-        box_ids = [b["box_id"] for b in a["boxes"]]
-        if box_ids:
-            db.wms_boxes.update_many(
-                {"box_id": {"$in": box_ids}},
-                {"$set": {"inventory_id": survivor.get("inventory_id")}},
-            )
-
-        detalle = {
-            "location": k["location"], "material": etiqueta(k),
-            "tier": a["tier"], "batch": lote,
-            "filas_antes": len(rows), "filas_despues": 1,
-            "units_antes": a["sistema_u"], "units_despues": a["fisico_u"],
-            "delta": a["fisico_u"] - a["sistema_u"],
-            "boxes": a["fisico_c"],
-            "survivor_inventory_id": survivor.get("inventory_id"),
-            "skus_fusionados": [r.get("sku") for r in rows],
-        }
-        db.wms_movements.insert_one({
-            "movement_id": gen_id("mov"), "type": "inventory_row_reconciled",
-            "details": detalle, "user_id": None,
-            "user_name": "script/reconcile_duplicate_inventory_rows",
-            "created_at": now_iso(),
-        })
-        db.wms_incidents.insert_one({
-            "incident_id": gen_id("inc"), "kind": "duplicate_rows_merged",
-            **detalle, "created_at": now_iso(),
-        })
+    detalle = {
+        "location": k["location"], "material": etiqueta(k, a["firma"]),
+        "tier": a["tier"], "batch": lote,
+        "country_of_origin": a["firma"][0], "fabric_canonico": a["firma"][1],
+        "filas_antes": len(rows), "filas_despues": 1,
+        "units_antes": a["sistema_u"], "units_despues": a["fisico_u"],
+        "delta": a["fisico_u"] - a["sistema_u"], "boxes": a["fisico_c"],
+        "survivor_inventory_id": survivor.get("inventory_id"),
+        "skus_fusionados": [r.get("sku") for r in rows],
+    }
+    db.wms_movements.insert_one({
+        "movement_id": gen_id("mov"), "type": "inventory_row_reconciled",
+        "details": detalle, "user_id": None,
+        "user_name": "script/reconcile_duplicate_inventory_rows",
+        "created_at": now_iso(),
+    })
+    db.wms_incidents.insert_one({
+        "incident_id": gen_id("inc"), "kind": "duplicate_rows_merged",
+        **detalle, "created_at": now_iso(),
+    })
 
 
 def main():
@@ -201,25 +214,27 @@ def main():
     dry = not args.apply
     lote = uuid.uuid4().hex[:8]
 
-    grupos = [analizar(db, k) for k in cargar_grupos(db)]
+    duplicados, legitimos = cargar_duplicados(db)
+    grupos = [analizar(db, k, f, rows) for k, f, rows in duplicados]
     grupos.sort(key=lambda a: (a["tier"], -abs(a["fisico_u"] - a["sistema_u"])))
 
-    print(f"{'SIMULACIÓN (dry-run)' if dry else f'APLICANDO · lote {lote}'}")
-    print(f"Grupos duplicados encontrados: {len(grupos)}\n")
+    print(f"{'SIMULACIÓN (dry-run)' if dry else f'APLICANDO · lote {lote}'}\n")
+    print(f"  lotes LEGÍTIMOS (país/composición distintos, NO se tocan): {legitimos}")
+    print(f"  duplicados REALES (mismo lote, más de una fila)         : {len(grupos)}\n")
 
     procesados = omitidos = 0
     delta_total = 0
     for a in grupos:
         k, marca = a["key"], a["tier"]
         cambio = a["fisico_u"] - a["sistema_u"]
-        print(f"[{marca}] {etiqueta(k)}")
+        print(f"[{marca}] {etiqueta(k, a['firma'])}")
         print(f"     filas={len(a['rows'])} skus={[r.get('sku') for r in a['rows']]}")
         print(f"     sistema={a['sistema_u']}  físico={a['fisico_u']} ({a['fisico_c']} cajas)  "
               f"ajuste={cambio:+d}")
         if a["allocated"]:
-            print(f"     !! units_allocated={a['allocated']} — se conserva en la fila sobreviviente")
+            print(f"     !! units_allocated={a['allocated']} - se conserva en la sobreviviente")
         if marca == "C":
-            print("     -> OMITIDO: sin cajas físicas. Requiere conteo cíclico.")
+            print("     -> OMITIDO: sin cajas físicas de este lote. Requiere conteo cíclico.")
             omitidos += 1
             continue
         if marca not in tiers:
@@ -227,7 +242,7 @@ def main():
             omitidos += 1
             continue
         print(f"     -> fusionar en {a['survivor'].get('inventory_id')} "
-              f"(sku '{a['survivor'].get('sku')}'), borrar {len(a['rows'])-1}, "
+              f"(sku '{a['survivor'].get('sku')}'), borrar {len(a['rows']) - 1}, "
               f"re-vincular {a['fisico_c']} cajas")
         aplicar(db, a, lote, dry)
         procesados += 1
@@ -239,12 +254,12 @@ def main():
     print(f"  ajuste neto       : {delta_total:+d} unidades")
 
     if not dry:
-        restantes = [a for a in (analizar(db, k) for k in cargar_grupos(db))
-                     if a["tier"] in tiers]
-        print(f"  duplicados restantes en los casos procesados: {len(restantes)}")
-        if restantes:
-            print("  !! VERIFICACIÓN FALLIDA — revisar el respaldo "
-                  f"wms_inventory_bak_dedupe_{lote}")
+        restantes, _ = cargar_duplicados(db)
+        pendientes = [analizar(db, k, f, r) for k, f, r in restantes]
+        pendientes = [a for a in pendientes if a["tier"] in tiers]
+        print(f"  duplicados restantes en los casos procesados: {len(pendientes)}")
+        if pendientes:
+            print(f"  !! VERIFICACIÓN FALLIDA - revisar wms_inventory_bak_dedupe_{lote}")
             sys.exit(1)
         print(f"  respaldo: wms_inventory_bak_dedupe_{lote}")
     else:

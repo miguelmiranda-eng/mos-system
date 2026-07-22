@@ -187,7 +187,52 @@ async def main():
         check("existe la caja hija", sdb.wms_boxes.count_documents(
             {"location": "NA08-C38", "split_from": {"$ne": None}, "units": 20}) == 1)
 
-        print("\n== 6. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
+        print("\n== 6. Dos paises en la misma ubicacion: lotes SEPARADOS ==")
+        # Caso real: 18000/SAND/2X @ CARRO 262 = HONDURAS + NICARAGUA. Antes los
+        # movimientos los fusionaban, destruyendo trazabilidad aduanera.
+        for coo, n, uid in (("HONDURAS", 3, "hn"), ("NICARAGUA", 2, "ni")):
+            sdb.wms_inventory.insert_one({
+                "inventory_id": f"inv_smoke_{uid}", "sku": "18000-SAND-2X", "style": "18000",
+                "color": "SAND", "size": "2X", "location": "PS07-A25",
+                "country_of_origin": coo, "fabric_content": "100% COTTON",
+                "units_on_hand": 36 * n, "total_boxes": n, "units_allocated": 0,
+            })
+            for i in range(n):
+                sdb.wms_boxes.insert_one({
+                    "box_id": f"SMOKE-{uid.upper()}{i}", "style": "18000", "sku": "18000-SAND-2X",
+                    "color": "SAND", "size": "2X", "location": "PS07-A25", "units": 36,
+                    "country_of_origin": coo, "fabric_content": "100% COTTON",
+                    "inventory_id": f"inv_smoke_{uid}", "status": "located", "state": "located",
+                })
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": ["SMOKE-HN0", "SMOKE-HN1"], "to": "NA08-C38"}, headers=H)
+        check("mueve solo el lote de Honduras", r.status_code == 200, r.text[:160])
+        hn = sdb.wms_inventory.find_one({"location": "PS07-A25", "style": "18000",
+                                         "country_of_origin": "HONDURAS"})
+        ni = sdb.wms_inventory.find_one({"location": "PS07-A25", "style": "18000",
+                                         "country_of_origin": "NICARAGUA"})
+        check("Honduras descontado", hn and hn["units_on_hand"] == 36, f"{hn and hn['units_on_hand']}")
+        check("Nicaragua INTACTO", ni and ni["units_on_hand"] == 72,
+              f"{ni and ni['units_on_hand']} (72 esperado; si bajo, se fusionaron lotes)")
+        check("destino hereda el COO correcto",
+              (sdb.wms_inventory.find_one({"location": "NA08-C38", "style": "18000"}) or {})
+              .get("country_of_origin") == "HONDURAS")
+        check("NO se fusionaron las dos filas de origen",
+              sdb.wms_inventory.count_documents({"location": "PS07-A25", "style": "18000"}) == 2)
+
+        print("\n== 7. /move-units con FIFO que cruza DOS lotes ==")
+        antes = sum(r["units_on_hand"] for r in sdb.wms_inventory.find({"style": "18000"}))
+        r = await c.post("/api/wms/move-units",
+                         json={"from": "PS07-A25", "to": "NA08-C37", "sku": "18000",
+                               "color": "SAND", "size": "2X", "units": 108}, headers=H)
+        check("mueve cruzando lotes", r.status_code == 200, r.text[:160])
+        despues = sum(r["units_on_hand"] for r in sdb.wms_inventory.find({"style": "18000"}))
+        check("conservacion cruzando lotes", antes == despues, f"antes={antes} despues={despues}")
+        dst_rows = list(sdb.wms_inventory.find({"location": "NA08-C37", "style": "18000"}))
+        check("el destino mantiene un lote por pais", len(dst_rows) == 2,
+              f"filas={len(dst_rows)} coos={[x.get('country_of_origin') for x in dst_rows]}")
+
+        print("\n== 8. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
         sdb.wms_inventory.insert_one({
             "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
             "color": "PFD", "size": "M", "location": "PS07-A25",

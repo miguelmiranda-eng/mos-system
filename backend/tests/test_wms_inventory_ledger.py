@@ -43,6 +43,8 @@ from services.inventory_ledger import (  # noqa: E402
     ConservationViolation,
     InventoryRowNotFound,
     assert_conserved,
+    batch_signature,
+    canon_fabric,
     material_keys,
     physical_stock_at,
     resolve_row,
@@ -259,6 +261,111 @@ def test_movimiento_que_destruye_inventario_falla():
         assert e.delta == -384
         return
     raise AssertionError("destruir unidades debe violar la conservación")
+
+
+# ── Lote: país de origen y composición ───────────────────────────────────────
+# 32 de 41 ubicaciones con varias filas del mismo style/color/size son lotes
+# LEGÍTIMOS separados por COO. Fusionarlos destruiría trazabilidad aduanera.
+
+def _lote(sku, style, location, units, boxes=1, coo="", fabric="", color="PFD", size="M"):
+    r = _row(sku, style, location, units, boxes, color, size)
+    r.update({"country_of_origin": coo, "fabric_content": fabric})
+    return r
+
+
+def test_canon_fabric_une_variantes_de_escritura():
+    """83 escrituras distintas en los datos para 47 composiciones reales."""
+    assert canon_fabric("58%C 42%P") == canon_fabric("58% COTTON 42% POLYESTER")
+    assert canon_fabric("60%COMBED COTTON 40%POLYESTER") == canon_fabric("60% COTTON/40% POLY")
+    assert canon_fabric("100% RING-SPUN COMBED COTTON") == canon_fabric("100% COTTON")
+    assert canon_fabric("100% PRE-SHRUNK COMBED COTTON") == "100%COTTON"
+
+
+def test_canon_fabric_no_confunde_composiciones_distintas():
+    """La canonicalización no puede volverse promiscua: 60/40 no es 52/48."""
+    assert canon_fabric("60% COTTON 40% POLYESTER") != canon_fabric("52% COTTON 48% POLYESTER")
+    assert canon_fabric("100% COTTON") != canon_fabric("100% POLYESTER")
+    assert canon_fabric("") == ""
+
+
+def test_dos_paises_en_la_misma_ubicacion_son_lotes_distintos():
+    """Caso real: 18000/SAND/2X @ CARRO 262 = HONDURAS 1188u + NICARAGUA 1908u.
+    El script de reconciliación los habría fusionado; el ledger debe resolver
+    cada uno por separado."""
+    db = FakeDB([
+        _lote("18000", "18000", "CARRO 262", 1188, 33, coo="HONDURAS", color="SAND", size="2X"),
+        _lote("18000", "18000", "CARRO 262", 1908, 53, coo="NICARAGUA", color="SAND", size="2X"),
+    ])
+    hn = _run(resolve_row(db, "18000", "18000", "SAND", "2X", "CARRO 262",
+                          coo="HONDURAS", fabric="", required=True))
+    ni = _run(resolve_row(db, "18000", "18000", "SAND", "2X", "CARRO 262",
+                          coo="NICARAGUA", fabric="", required=True))
+    assert hn["units_on_hand"] == 1188, "resolvió el lote equivocado"
+    assert ni["units_on_hand"] == 1908, "resolvió el lote equivocado"
+
+
+def test_sin_conocer_el_lote_con_varias_filas_se_bloquea():
+    """Adivinar de qué país descontar sería peor que fallar."""
+    db = FakeDB([
+        _lote("18000", "18000", "CARRO 262", 1188, 33, coo="HONDURAS", color="SAND", size="2X"),
+        _lote("18000", "18000", "CARRO 262", 1908, 53, coo="NICARAGUA", color="SAND", size="2X"),
+    ])
+    try:
+        _run(resolve_row(db, "18000", "18000", "SAND", "2X", "CARRO 262", required=True))
+    except AmbiguousInventoryRow:
+        return
+    raise AssertionError("sin lote y con varias filas debe bloquearse")
+
+
+def test_lote_nuevo_en_el_destino_no_es_error():
+    """Llega material de HAITI a una ubicación que sólo tenía HONDURAS: es una
+    fila nueva, no un fallo."""
+    db = FakeDB([_lote("18000", "18000", "NA08-C37", 480, 10, coo="HONDURAS")])
+    assert _run(resolve_row(db, "18000", "18000", "PFD", "M", "NA08-C37",
+                            coo="HAITI", fabric="", required=False)) is None
+
+
+def test_variantes_de_escritura_NO_fragmentan_el_lote():
+    """La fila dice '58% COTTON 42% POLYESTER' y la caja '58%C 42%P': es el mismo
+    material. Comparar el texto crudo crearía una fila duplicada."""
+    db = FakeDB([_lote("CK001-PFD-M", "CK001", "PS07-A25", 1392, 29,
+                       coo="MEXICO", fabric="58% COTTON 42% POLYESTER")])
+    row = _run(resolve_row(db, "CK001", "CK001-PFD-M", "PFD", "M", "PS07-A25",
+                           coo="MEXICO", fabric="58%C 42%P", required=True))
+    assert row is not None, "la variante de escritura fragmentó el lote"
+    assert row["units_on_hand"] == 1392
+
+
+def test_duplicado_real_dentro_del_MISMO_lote_sigue_bloqueando():
+    """CK001: dos filas con idéntico COO y composición. Eso sí es duplicado."""
+    db = FakeDB([
+        _lote("CK001-PFD-M", "CK001", "PS07-A25", 1392, 29, coo="MEXICO", fabric="100% COTTON"),
+        _lote("CK001", "CK001", "PS07-A25", 1392, 29, coo="MEXICO", fabric="100% COTTON"),
+    ])
+    try:
+        _run(resolve_row(db, "CK001", "CK001-PFD-M", "PFD", "M", "PS07-A25",
+                         coo="MEXICO", fabric="100% COTTON", required=True))
+    except AmbiguousInventoryRow as e:
+        assert len(e.rows) == 2
+        return
+    raise AssertionError("dos filas del mismo lote deben bloquearse")
+
+
+def test_stock_fisico_cuenta_solo_las_cajas_del_lote():
+    """Reconstruir una fila mezclando países inventaría trazabilidad falsa."""
+    db = FakeDB([], [
+        _box("B1", "CARRO 262", 36), _box("B2", "CARRO 262", 36),
+        dict(_box("B3", "CARRO 262", 36), country_of_origin="NICARAGUA"),
+    ])
+    for b in db.wms_boxes.docs[:2]:
+        b["country_of_origin"] = "HONDURAS"
+    hn = _run(physical_stock_at(db, "CK001", "CK001-PFD-M", "PFD", "M", "CARRO 262",
+                                coo="HONDURAS", fabric=""))
+    assert hn["boxes"] == 2 and hn["units"] == 72, f"{hn}"
+
+
+def test_batch_signature_normaliza_ambos_campos():
+    assert batch_signature("  honduras ", "58%C 42%P") == batch_signature("HONDURAS", "58% COTTON 42% POLYESTER")
 
 
 # ── Reconciliación de cajas huérfanas (~3.3% del universo de cajas) ──────────
