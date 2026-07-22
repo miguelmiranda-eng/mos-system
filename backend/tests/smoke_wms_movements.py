@@ -153,21 +153,62 @@ async def main():
         check("auditado en wms_movements",
               sdb.wms_movements.count_documents({"type": "inventory_row_reconciled"}) == 1)
 
-        print("\n== 4. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
+        print("\n== 4. /move-units: destino con la fila keyed al OTRO formato ==")
+        # El destino se busca con la cadena que manda el frontend ('CK001', el
+        # style corto). Por eso la fila del destino se siembra keyed COMPUESTO:
+        # es el caso que el find_one({"sku": ...}) viejo NO encontraba, creando
+        # una SEGUNDA fila. Sembrarla en corto haría esta prueba decorativa.
+        sdb.wms_inventory.insert_one({
+            "inventory_id": "inv_smoke_comp", "sku": "CK001-PFD-M", "style": "CK001",
+            "color": "PFD", "size": "M", "location": "NA08-C37",
+            "units_on_hand": 0, "total_boxes": 0, "units_allocated": 0,
+        })
+        antes_total = total("PS07-A25") + total("NA08-C37")
+        r = await c.post("/api/wms/move-units",
+                         json={"from": "PS07-A25", "to": "NA08-C37", "sku": "CK001",
+                               "color": "PFD", "size": "M", "units": 96}, headers=H)
+        check("mueve unidades sin error", r.status_code == 200, r.text[:160])
+        check("UNA sola fila en el destino", filas("NA08-C37", "CK001") == 1,
+              f"filas={filas('NA08-C37', 'CK001')} (2 = volvio el bug)")
+        check("destino con 96", total("NA08-C37") == 96, f"={total('NA08-C37')}")
+        check("conservacion en move-units",
+              total("PS07-A25") + total("NA08-C37") == antes_total,
+              f"antes={antes_total} despues={total('PS07-A25') + total('NA08-C37')}")
+
+        print("\n== 5. /move-units con caja PARTIDA (cantidad no multiplo de 48) ==")
+        antes_total = total("PS07-A25") + total("NA08-C38")
+        r = await c.post("/api/wms/move-units",
+                         json={"from": "PS07-A25", "to": "NA08-C38", "sku": "CK001",
+                               "color": "PFD", "size": "M", "units": 20}, headers=H)
+        check("parte la caja sin error", r.status_code == 200, r.text[:160])
+        check("conservacion con split",
+              total("PS07-A25") + total("NA08-C38") == antes_total,
+              f"antes={antes_total} despues={total('PS07-A25') + total('NA08-C38')}")
+        check("existe la caja hija", sdb.wms_boxes.count_documents(
+            {"location": "NA08-C38", "split_from": {"$ne": None}, "units": 20}) == 1)
+
+        print("\n== 6. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
         sdb.wms_inventory.insert_one({
             "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
             "color": "PFD", "size": "M", "location": "PS07-A25",
             "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
         })
-        antes = total("PS07-A25")
+        # Caja elegida dinámicamente: las pruebas anteriores movieron cajas, así
+        # que fijar un box_id concreto haría este bloque dependiente del orden.
+        cobaya = sdb.wms_boxes.find_one({"location": "PS07-A25", "style": "CK001"})
+        check("hay una caja en PS07-A25 para probar", cobaya is not None)
+        if not cobaya:
+            return
+        antes_src, antes_dst = total("PS07-A25"), total("NA08-C37")
         r = await c.post("/api/wms/boxes/relocate",
-                         json={"box_ids": ["SMOKE-000"], "to": "NA08-C37"}, headers=H)
-        check("responde 409", r.status_code == 409, f"fue {r.status_code}")
+                         json={"box_ids": [cobaya["box_id"]], "to": "NA08-C37"}, headers=H)
+        check("responde 409", r.status_code == 409, f"fue {r.status_code}: {r.text[:120]}")
         check("mensaje accionable", "duplicad" in r.text.lower(), r.text[:120])
-        check("CERO cambios: destino intacto", total("NA08-C37") == 0)
-        check("CERO cambios: origen intacto", total("PS07-A25") == antes)
+        check("CERO cambios: destino intacto", total("NA08-C37") == antes_dst,
+              f"{total('NA08-C37')} != {antes_dst}")
+        check("CERO cambios: origen intacto", total("PS07-A25") == antes_src)
         check("la caja NO se movió",
-              (sdb.wms_boxes.find_one({"box_id": "SMOKE-000"}) or {}).get("location") == "PS07-A25")
+              (sdb.wms_boxes.find_one({"box_id": cobaya["box_id"]}) or {}).get("location") == "PS07-A25")
 
 
 if __name__ == "__main__":

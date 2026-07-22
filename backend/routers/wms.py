@@ -1973,10 +1973,37 @@ async def move_units(request: Request):
     if units > avail:
         raise HTTPException(409, f"No hay suficiente en {src}: pides {units}, disponible {avail}")
 
+    # Consume source boxes FIFO. Se leen ANTES de escribir nada.
+    q = {
+        "$or": [{"sku": sku}, {"style": sku}], "color": color, "size": size,
+        "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"},
+        "units": {"$gt": 0},
+    }
+    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(1000)
+    sample = boxes[0] if boxes else {}
+
+    # Identidad del material TAL COMO ESTÁ GUARDADA. El frontend manda una sola
+    # cadena (`style` primero, si no `sku`), que puede ser el corto 'CK001' o el
+    # compuesto 'CK001-PFD-M'; la caja conoce ambas. Ver inventory_ledger.py.
+    m_style = sample.get("style") or sku
+    m_sku = sample.get("sku") or sku
+    # Nombre canónico del origen: el que traen las cajas, no el que tecleó el
+    # operador (evita el regex case-insensitive que forzaba collection scan).
+    src_name = sample.get("location") or src
+
+    # PRE-ESCRITURA: resolver ambas filas antes de tocar una sola caja, para que
+    # abortar deje la operación en CERO cambios. El destino se buscaba sólo por
+    # `sku`, así que no encontraba la fila equivalente keyed con el otro formato
+    # y creaba una SEGUNDA fila: el mismo defecto que duplicó CK001/PFD/M.
+    src_inv = await _resolve_inventory_row(m_style, m_sku, color, size, src_name,
+                                           required=True, reconcile=True, user=user)
+    dst_inv = await _resolve_inventory_row(m_style, m_sku, color, size, dst_name,
+                                           required=False)
+    scopes = [(m_style, m_sku, color, size, src_name),
+              (m_style, m_sku, color, size, dst_name)]
+    units_before = await ledger.total_units(db, scopes)
+
     # Pre-lookup or pre-generate destination inventory_id
-    dst_inv = await db.wms_inventory.find_one(
-        {"sku": sku, "color": color, "size": size, "location": dst_name}
-    )
     if dst_inv:
         dst_id = dst_inv.get("inventory_id")
         if not dst_id:
@@ -1985,14 +2012,6 @@ async def move_units(request: Request):
     else:
         dst_id = gen_id("inv")
 
-    # Consume source boxes FIFO.
-    q = {
-        "$or": [{"sku": sku}, {"style": sku}], "color": color, "size": size,
-        "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"},
-        "units": {"$gt": 0},
-    }
-    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(1000)
-    sample = boxes[0] if boxes else {}
     remaining = units
     whole_count = 0   # boxes that left the source entirely
     split_count = 0   # boxes split → a new partial box created at the destination
@@ -2039,14 +2058,6 @@ async def move_units(request: Request):
     # by the boxes that physically left it; increment/create the destination row by
     # the units and every box that arrived there (whole + split).
     boxes_added = whole_count + split_count
-    src_inv = await db.wms_inventory.find_one(
-        {"sku": sku, "color": color, "size": size,
-         "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
-    ) or await db.wms_inventory.find_one(
-        {"style": {"$regex": f"^{re.escape(sku)}$", "$options": "i"},
-         "color": color, "size": size,
-         "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
-    )
     if src_inv:
         # Atomic decrement-and-clamp (same race-free pattern as the picking fix):
         # one document op so concurrent moves from the same row can't lose an
@@ -2066,9 +2077,8 @@ async def move_units(request: Request):
                 and int(updated.get("units_allocated", 0) or 0) <= 0):
             await db.wms_inventory.delete_one({"_id": src_inv["_id"]})
 
-    dst_inv = await db.wms_inventory.find_one(
-        {"sku": sku, "color": color, "size": size, "location": dst_name}
-    )
+    # `dst_inv` ya se resolvió antes de escribir (tolerante a ambos formatos de
+    # sku); el loop FIFO sólo toca cajas, así que sigue siendo válido.
     if dst_inv:
         await db.wms_inventory.update_one(
             {"_id": dst_inv["_id"]},
@@ -2078,7 +2088,10 @@ async def move_units(request: Request):
     else:
         await db.wms_inventory.insert_one({
             "inventory_id": dst_id,
-            "sku": sku, "style": sample.get("style") or sku,
+            # Hereda el formato de `sku` del origen: el material conserva la
+            # misma llave todo su recorrido (ver inventory_ledger.py).
+            "sku": (src_inv or {}).get("sku") or m_sku,
+            "style": m_style,
             "color": color, "size": size,
             "customer": sample.get("customer", ""),
             "manufacturer": sample.get("manufacturer", ""),
@@ -2088,6 +2101,14 @@ async def move_units(request: Request):
             "location": dst_name, "total_boxes": boxes_added,
             "units_on_hand": units, "units_allocated": 0, "updated_at": now_iso(),
         })
+
+    # Ley de conservación: origen + destino tienen que sumar lo mismo que antes.
+    await _assert_conserved(units_before, scopes, user=user, operation="move_units",
+                            context={"from": src_name, "to": dst_name,
+                                     "material": ledger.describe(m_style, m_sku, color, size),
+                                     "units_moved": units,
+                                     "boxes_relocated": whole_count,
+                                     "boxes_split": split_count})
 
     await log_movement(user, MovementType.BULK_RELOCATION, {
         "from": src, "to": dst_name, "sku": sku, "color": color, "size": size,
