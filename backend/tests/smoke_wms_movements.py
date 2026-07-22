@@ -272,6 +272,16 @@ async def main():
                          json={"box_ids": [cobaya["box_id"]], "to": "NA08-C37"}, headers=H)
         check("responde 409", r.status_code == 409, f"fue {r.status_code}: {r.text[:120]}")
         check("mensaje accionable", "duplicad" in r.text.lower(), r.text[:120])
+        # ALERTA: el bloqueo debe quedar registrado, no morir en la pantalla.
+        inc = sdb.wms_incidents.find_one({"kind": "material_duplicado"})
+        check("queda INCIDENCIA del bloqueo", inc is not None,
+              "el 409 no dejo rastro en wms_incidents")
+        if inc:
+            check("la incidencia dice el material", "CK001" in str(inc.get("material", "")))
+            check("la incidencia dice la ubicacion", inc.get("location") == "PS07-A25")
+            check("la incidencia dice el endpoint",
+                  "boxes/relocate" in str(inc.get("endpoint") or ""), str(inc.get("endpoint")))
+            check("la incidencia dice el usuario", bool(inc.get("user_name")))
         check("CERO cambios: destino intacto", total("NA08-C37") == antes_dst,
               f"{total('NA08-C37')} != {antes_dst}")
         check("CERO cambios: origen intacto", total("PS07-A25") == antes_src)

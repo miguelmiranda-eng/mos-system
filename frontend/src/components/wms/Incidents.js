@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import {
   ShieldAlert, RefreshCw, CheckCircle2, Filter, Loader2, PackageX,
-  Scale, Copy, ShieldCheck, ChevronDown, ChevronRight,
+  Scale, Copy, ShieldCheck, ChevronDown, ChevronRight, SearchX, ScanBarcode,
 } from "lucide-react";
 import { fetcher, poster, logLoadError } from "./lib";
 
@@ -18,6 +18,39 @@ const TIPOS = {
     label: "Descuadre de inventario",
     detalle: "Un movimiento dejó el inventario descuadrado. Es lo más grave que puede aparecer aquí.",
     icon: Scale, tono: "text-red-400 bg-red-500/10 border-red-500/30", gravedad: 0,
+  },
+  material_no_encontrado: {
+    label: "Material no encontrado",
+    detalle: "El sistema no encontró el inventario del material en esa ubicación y DETUVO la operación. "
+      + "Antes habría seguido de largo e inventado inventario en el destino. Hay que revisar la ubicación.",
+    icon: SearchX, tono: "text-orange-400 bg-orange-500/10 border-orange-500/30", gravedad: 0,
+  },
+  material_duplicado: {
+    label: "Material duplicado en la ubicación",
+    detalle: "Hay más de una fila de inventario para el mismo material y lote. El movimiento se bloqueó "
+      + "para no propagar el duplicado. Requiere reconciliación.",
+    icon: Copy, tono: "text-orange-400 bg-orange-500/10 border-orange-500/30", gravedad: 1,
+  },
+  recepcion_upc_no_coincide: {
+    label: "Recepción · UPC no coincide",
+    detalle: "El UPC escaneado pertenece a otro estilo, color o talla. Se bloqueó la recepción: "
+      + "recibirlo habría metido el material con la identidad equivocada.",
+    icon: ScanBarcode, tono: "text-red-400 bg-red-500/10 border-red-500/30", gravedad: 1,
+  },
+  recepcion_asn_cerrado: {
+    label: "Recepción · ASN cerrado",
+    detalle: "Se intentó recibir contra un ASN que ya cerró su recibo.",
+    icon: PackageX, tono: "text-amber-400 bg-amber-500/10 border-amber-500/30", gravedad: 2,
+  },
+  recon_pending_written_off: {
+    label: "Faltantes dados de baja",
+    detalle: "Cajas no encontradas en el conteo, dadas de baja tras confirmación del segundo conteo.",
+    icon: PackageX, tono: "text-blue-400 bg-blue-500/10 border-blue-500/30", gravedad: 3,
+  },
+  inventory_reprojected: {
+    label: "Inventario reproyectado",
+    detalle: "Las filas de la ubicación se recalcularon desde las cajas físicas.",
+    icon: RefreshCw, tono: "text-cyan-400 bg-cyan-500/10 border-cyan-500/30", gravedad: 3,
   },
   duplicate_blocked_by_index: {
     label: "Duplicado bloqueado",

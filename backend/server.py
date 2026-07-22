@@ -55,6 +55,14 @@ app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shi
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logging.info(f"PROXY_CHECK: Incoming {request.method} {request.url}")
+    # Deja el endpoint disponible para las incidencias que se registren durante
+    # esta petición, para saber QUÉ flujo la disparó sin pasarlo por parámetro
+    # por toda la pila de llamadas.
+    try:
+        from routers.wms import _INCIDENT_CTX
+        _INCIDENT_CTX.set({"endpoint": f"{request.method} {request.url.path}"})
+    except Exception:
+        pass
     try:
         response = await call_next(request)
         logging.info(f"PROXY_CHECK: Outgoing {request.method} {request.url} status={response.status_code}")

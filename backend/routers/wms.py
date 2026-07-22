@@ -12,6 +12,7 @@ from services import inventory_ledger as ledger
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata
+from contextvars import ContextVar
 
 router = APIRouter(prefix="/api/wms")
 logger = logging.getLogger(__name__)
@@ -213,6 +214,40 @@ async def log_movement(user, movement_type, details):
 # encontraban, seguían adelante en silencio duplicando el stock en el destino.
 
 
+_INCIDENT_CTX = ContextVar("wms_incident_ctx", default=None)
+
+
+async def _record_incident(kind, user, mensaje, **campos):
+    """Registra una incidencia del sistema en `wms_incidents`.
+
+    PUNTO ÚNICO DE ALERTA. Antes, cuando un movimiento se detenía porque no
+    encontraba el material, el operador veía un 409 en pantalla y ahí moría: sin
+    rastro, sin forma de saber cuántas veces pasó ni en qué ubicaciones. El
+    error se conocía sólo si alguien lo contaba de palabra.
+
+    Todo lo que impide una operación por integridad de inventario —recepción,
+    movimientos, ajustes, conteos— debe pasar por aquí para que aparezca en el
+    módulo de Incidencias. Nunca revienta la operación que lo llama: si el
+    registro falla, se loguea y se sigue.
+    """
+    try:
+        req = _INCIDENT_CTX.get() or {}
+        doc = {
+            "incident_id": gen_id("inc"),
+            "kind": kind,
+            "mensaje": mensaje,
+            "endpoint": req.get("endpoint"),
+            "user_id": (user or {}).get("user_id"),
+            "user_name": (user or {}).get("name", (user or {}).get("email", "")),
+            "created_at": now_iso(),
+        }
+        doc.update({k: v for k, v in campos.items() if v not in (None, "")})
+        await db.wms_incidents.insert_one(doc)
+        logger.warning("INCIDENCIA [%s] %s · %s", kind, mensaje[:120], req.get("endpoint") or "")
+    except Exception:
+        logger.exception("no se pudo registrar la incidencia %s", kind)
+
+
 def _box_batch(box):
     """Lote de una caja: (país de origen, composición). Es lo que separa dos
     recepciones del mismo style/color/size — y lo que los movimientos ignoraban,
@@ -320,20 +355,28 @@ async def _resolve_inventory_row(style, sku, color, size, location, *, required,
                                                          coo=coo, fabric=fabric)
             if row is not None:
                 return row
-        raise HTTPException(
-            409,
+        detalle = (
             f"Movimiento cancelado: no existe fila de inventario para {e.material} "
             f"en {e.location} y tampoco hay cajas físicas ahí que permitan "
             f"reconstruirla. Continuar habría duplicado el stock en el destino. "
-            f"Reporta esta ubicación a sistemas.",
+            f"Reporta esta ubicación a sistemas."
         )
+        await _record_incident("material_no_encontrado", user, detalle,
+                               material=e.material, location=e.location,
+                               style=style, sku=sku, color=color, size=size,
+                               country_of_origin=coo, fabric_content=fabric)
+        raise HTTPException(409, detalle)
     except ledger.AmbiguousInventoryRow as e:
-        raise HTTPException(
-            409,
+        detalle = (
             f"Movimiento cancelado: {e.material} tiene {len(e.rows)} filas de "
             f"inventario duplicadas en {e.location}. Mover desde ahí propagaría "
-            f"el duplicado. Requiere reconciliación previa por sistemas.",
+            f"el duplicado. Requiere reconciliación previa por sistemas."
         )
+        await _record_incident("material_duplicado", user, detalle,
+                               material=e.material, location=e.location,
+                               filas_duplicadas=len(e.rows),
+                               style=style, sku=sku, color=color, size=size)
+        raise HTTPException(409, detalle)
 
 
 async def _assert_conserved(before_total, scopes, *, user, operation, context):
@@ -2680,17 +2723,29 @@ async def create_receiving(request: Request):
                 if a != b:
                     divergences.append(f"{_upc_labels[k]}: capturaste '{cap}' pero el UPC dice '{upc_val}'")
             if divergences:
-                raise HTTPException(400, (
+                detalle = (
                     f"El UPC {upc_code} corresponde a otro SKU:\n"
                     + "\n".join(f"  - {d}" for d in divergences)
                     + "\n\nEscanea el UPC correcto o corrige el estilo/color/talla."
-                ))
+                )
+                # Recibir material que no coincide con su UPC es el error de
+                # recepción más caro: entra al almacén con la identidad
+                # equivocada y se descubre semanas después en un conteo.
+                await _record_incident("recepcion_upc_no_coincide", user, detalle,
+                                       upc=upc_code, divergencias=divergences,
+                                       style=style, color=color, size=size,
+                                       customer=customer, asn_reference=body.get("asn_reference"))
+                raise HTTPException(400, detalle)
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
     if asn_ref:
         ref_asn = await db.wms_asn.find_one({"asn_id": asn_ref}, {"_id": 0, "closed": 1})
         if ref_asn and ref_asn.get("closed"):
-            raise HTTPException(409, f"El ASN {asn_ref} ya cerró su recibo. Reábrelo para recibir más.")
+            detalle = f"El ASN {asn_ref} ya cerró su recibo. Reábrelo para recibir más."
+            await _record_incident("recepcion_asn_cerrado", user, detalle,
+                                   asn_reference=asn_ref, style=style, color=color, size=size,
+                                   customer=customer)
+            raise HTTPException(409, detalle)
     if not country_of_origin:
         raise HTTPException(400, "País de origen (country_of_origin) es obligatorio")
     if not fabric_content:
