@@ -31,6 +31,18 @@ const TIPOS = {
       + "para no propagar el duplicado. Requiere reconciliación.",
     icon: Copy, tono: "text-orange-400 bg-orange-500/10 border-orange-500/30", gravedad: 1,
   },
+  picking_sin_fila_inventario: {
+    label: "Picking sin fila de inventario",
+    detalle: "Se surtió material de una caja pero no existe la fila de inventario de ese material y lote, "
+      + "así que el saldo de la ubicación no se actualizó. La ubicación quedará mostrando de más.",
+    icon: SearchX, tono: "text-red-400 bg-red-500/10 border-red-500/30", gravedad: 0,
+  },
+  picking_sin_caja_de_respaldo: {
+    label: "Picking sin caja de respaldo",
+    detalle: "Se descontó saldo directo de la fila de inventario, sin ninguna caja detrás (saldo heredado "
+      + "de Excel). La ubicación queda con menos inventario del que sus cajas justifican.",
+    icon: PackageX, tono: "text-amber-400 bg-amber-500/10 border-amber-500/30", gravedad: 1,
+  },
   recepcion_upc_no_coincide: {
     label: "Recepción · UPC no coincide",
     detalle: "El UPC escaneado pertenece a otro estilo, color o talla. Se bloqueó la recepción: "

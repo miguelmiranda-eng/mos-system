@@ -232,7 +232,38 @@ async def main():
         check("el destino mantiene un lote por pais", len(dst_rows) == 2,
               f"filas={len(dst_rows)} coos={[x.get('country_of_origin') for x in dst_rows]}")
 
-        print("\n== 8. BLINDAJE: el indice unico frena a los puntos NO migrados ==")
+        print("\n== 8. PICKING: descuenta la fila correcta y no vacia la ubicacion ==")
+        # El caso PS06-A01: la fila quedaba en 0 mientras las cajas seguian con
+        # material, porque el descuento buscaba la fila con UNA sola forma del sku.
+        sdb.wms_inventory.delete_many({"location": "PS09-A32"})
+        sdb.wms_boxes.delete_many({"location": "PS09-A32"})
+        sdb.wms_locations.update_one({"name": "PS09-A32"}, {"$set": {"name": "PS09-A32"}}, upsert=True)
+        sdb.wms_inventory.insert_one({
+            "inventory_id": "inv_pick", "sku": "5000-BLACK-L", "style": "5000",
+            "color": "BLACK", "size": "L", "location": "PS09-A32",
+            "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
+            "units_on_hand": 208, "total_boxes": 4, "units_allocated": 0,
+        })
+        for i, u in enumerate([51, 13, 72, 72]):
+            sdb.wms_boxes.insert_one({
+                "box_id": f"PICK-{i}", "style": "5000", "sku": "5000-BLACK-L",
+                "color": "BLACK", "size": "L", "location": "PS09-A32", "units": u,
+                "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
+                "inventory_id": "inv_pick", "status": "located", "state": "located",
+            })
+        r = await c.post("/api/wms/move-units",
+                         json={"from": "PS09-A32", "to": "NA08-C37", "sku": "5000",
+                               "color": "BLACK", "size": "L", "units": 51}, headers=H)
+        check("descuento sin error", r.status_code == 200, r.text[:160])
+        fila = sdb.wms_inventory.find_one({"location": "PS09-A32", "style": "5000"})
+        cajas = [b for b in sdb.wms_boxes.find({"location": "PS09-A32"}) if (b.get("units") or 0) > 0]
+        fisico = sum(int(b["units"]) for b in cajas)
+        check("la fila NO se vacia", (fila or {}).get("units_on_hand", 0) > 0,
+              f"fila={(fila or {}).get('units_on_hand')} (0 = volvio el bug de PS06-A01)")
+        check("fila == cajas restantes", (fila or {}).get("units_on_hand") == fisico,
+              f"fila={(fila or {}).get('units_on_hand')} fisico={fisico}")
+
+        print("\n== 9. BLINDAJE: el indice unico frena a los puntos NO migrados ==")
         # Quedan ~47 puntos en wms.py con la llave vieja (conteos ciclicos,
         # ajustes, generar caja...). El indice unico los detiene a TODOS a nivel
         # de base de datos, y el handler traduce el rechazo en un 409 accionable

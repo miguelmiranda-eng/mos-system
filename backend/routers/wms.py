@@ -3946,24 +3946,62 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                 continue
         touched.append({"box_id": box.get("box_id"), "taken": take,
                         "emptied": new_b == 0, "location": box.get("location", location)})
-        # Key the inventory deduct the SAME way _move_box_inventory / receiving
-        # CREATE the row: short style first (e.g. "5000"), composite sku only as
-        # fallback. Boxes carry the composite sku ("5000-BLACK-XL") but shelf
-        # inventory rows are keyed by the short style — deducting by the box's
-        # composite sku missed the row entirely, so the box emptied while the
-        # ledger stayed full (the NA04-A17 ghost-inventory case).
-        inv_id = await _update_inventory_enhanced(
-            box.get("style") or box.get("sku") or style, box.get("color", color), box.get("size", size),
-            take, inv_operation, location=box.get("location", location),
-            customer=box.get("customer", customer),
-        )
-        if new_b == 0:
-            await _adjust_inventory_boxes(inv_id, -1)
+        # Descuento de la fila de inventario vía el ledger: resuelve por style Y
+        # sku (los dos formatos conviven) y por LOTE (país + composición), que es
+        # lo que la caja realmente dice.
+        #
+        # HISTORIA: aquí se elegía UNA sola forma del sku. Elegir la compuesta
+        # no encontraba la fila y la caja se vaciaba mientras el ledger seguía
+        # lleno (caso NA04-A17); elegir la corta produjo el espejo — PS06-A01
+        # quedó con la fila en 0 y 4 cajas con 208 u dentro (2026-07-22). Con la
+        # resolución tolerante ya no hay que apostar por un formato.
+        b_loc = box.get("location", location)
+        b_style = box.get("style") or style
+        b_sku = box.get("sku") or style
+        b_coo, b_fabric = _box_batch(box)
+        inv_row = await _resolve_inventory_row(
+            b_style, b_sku, box.get("color", color), box.get("size", size), b_loc,
+            required=False, coo=b_coo, fabric=b_fabric)
+        if inv_row:
+            nuevo = max(0, int(inv_row.get("units_on_hand") or 0) - take)
+            cajas = int(inv_row.get("total_boxes") or 0) - (1 if new_b == 0 else 0)
+            await db.wms_inventory.update_one({"_id": inv_row["_id"]}, {"$set": {
+                "units_on_hand": nuevo, "total_boxes": max(0, cajas), "updated_at": now_iso()}})
+            inv_id = inv_row.get("inventory_id")
+        else:
+            # Sin fila que descontar: el picking NO puede inventar ni destruir
+            # saldo en silencio. Se registra la incidencia y se sigue con la
+            # caja (el material físico sí salió), para no dejar al picker
+            # atrapado a media orden.
+            inv_id = None
+            await _record_incident(
+                "picking_sin_fila_inventario", user,
+                f"Se descontaron {take} u de la caja {box.get('box_id')} en {b_loc} pero no "
+                f"existe fila de inventario para ese material y lote. El saldo de la "
+                f"ubicación quedó sin actualizar.",
+                material=ledger.describe(b_style, b_sku, box.get("color", color), box.get("size", size)),
+                location=b_loc, box_id=box.get("box_id"), unidades=take,
+                ticket_id=ticket_id, order_number=order_number)
         remaining -= take
     # Leftover with no backing box: deduct straight from inventory (legacy/Excel).
+    #
+    # Esta ruta desincroniza POR DISEÑO: baja la fila sin que ninguna caja
+    # cambie, así que el inventario y las cajas dejan de coincidir en esa
+    # ubicación. Se conserva porque hay saldo heredado de Excel sin cajas
+    # detrás, pero ya no pasa en silencio: cada uso queda como incidencia con
+    # la ubicación y el ticket, para poder medir cuánto saldo sigue sin
+    # respaldo físico y erradicar la ruta cuando llegue a cero.
     if remaining > 0:
         await _update_inventory_enhanced(style, color, size, remaining, inv_operation,
                                          location=location, customer=customer)
+        await _record_incident(
+            "picking_sin_caja_de_respaldo", user,
+            f"Se descontaron {remaining} u de {style}/{color}/{size} en "
+            f"{location or '(sin ubicación)'} SIN ninguna caja que las respalde. "
+            f"El saldo salió de la fila de inventario directamente: a partir de aquí "
+            f"la ubicación tiene menos inventario del que sus cajas justifican.",
+            material=f"{style}/{color}/{size}", location=location or "",
+            unidades=remaining, ticket_id=ticket_id, order_number=order_number)
     # Per-box audit trail. box_ids is the field future sweeps/restores check to
     # tell "picked empty" apart from "lost"; no_box_units flags the portion that
     # left WITHOUT a backing box so it can never be mistaken for still-on-hand.
