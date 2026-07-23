@@ -958,42 +958,52 @@ async def seed_packing_link(request: Request):
     content = f"[file]{display}|{url}[/file]"
     now = datetime.now(timezone.utc).isoformat()
 
-    seeded, not_found, skipped = [], [], []
+    seeded, not_found, skipped, duplicated = [], [], [], []
     for num in numbers:
-        order = await db.orders.find_one(
+        # TODAS las órdenes que respondan a ese número — hay order_number
+        # duplicados en el CRM (p. ej. 2264 dos veces por doble captura, visto
+        # 2026-07-23: find_one sembraba en la gemela muerta y la orden viva que
+        # el usuario abre quedaba sin packing). Sembrar en todas es inocuo; no
+        # sembrar en la viva es el bug.
+        matches = await db.orders.find(
             {"$or": [{"order_id": num}, {"order_number": num}]},
             {"_id": 0, "order_id": 1, "order_number": 1},
-        )
-        if not order:
+        ).to_list(20)
+        if not matches:
             not_found.append(num)
             continue
-        oid = order["order_id"]
-        # Marca la orden como "packing importado" para el indicador (camion) en el
-        # CRM. Se hace para toda orden encontrada, aunque el comentario ya exista.
-        await db.orders.update_one({"order_id": oid}, {"$set": {
-            "packing_link": url, "packing_link_label": label or None, "packing_link_at": now,
-        }})
-        if await db.comments.find_one({"order_id": oid, "content": content}, {"_id": 1}):
-            skipped.append(num)
-            continue
-        cid = f"comment_{uuid.uuid4().hex[:12]}"
-        await db.comments.insert_one({
-            "comment_id": cid, "order_id": oid, "content": content, "parent_id": None,
-            "user_id": user["user_id"], "user_name": user["name"],
-            "user_picture": user.get("picture"), "mentions": [],
-            "created_at": now, "source": "packing_link_seed",
-        })
-        await log_activity(user, "seed_packing_link", {
-            "order_id": oid, "order_number": order.get("order_number"), "url": url, "label": label,
-        })
-        await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": oid})
-        seeded.append(num)
+        if len(matches) > 1:
+            duplicated.append({"number": num, "orders": len(matches)})
+        alguna_nueva = False
+        for order in matches:
+            oid = order["order_id"]
+            # Marca la orden como "packing importado" para el indicador (camion)
+            # en el CRM. Para toda orden encontrada, aunque el comentario exista.
+            await db.orders.update_one({"order_id": oid}, {"$set": {
+                "packing_link": url, "packing_link_label": label or None, "packing_link_at": now,
+            }})
+            if await db.comments.find_one({"order_id": oid, "content": content}, {"_id": 1}):
+                continue
+            cid = f"comment_{uuid.uuid4().hex[:12]}"
+            await db.comments.insert_one({
+                "comment_id": cid, "order_id": oid, "content": content, "parent_id": None,
+                "user_id": user["user_id"], "user_name": user["name"],
+                "user_picture": user.get("picture"), "mentions": [],
+                "created_at": now, "source": "packing_link_seed",
+            })
+            await log_activity(user, "seed_packing_link", {
+                "order_id": oid, "order_number": order.get("order_number"), "url": url, "label": label,
+            })
+            await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": oid})
+            alguna_nueva = True
+        (seeded if alguna_nueva else skipped).append(num)
 
     return {
         "total": len(numbers),
         "seeded": seeded, "seeded_count": len(seeded),
         "not_found": not_found, "not_found_count": len(not_found),
         "skipped_duplicate": skipped, "skipped_count": len(skipped),
+        "duplicated_numbers": duplicated, "duplicated_count": len(duplicated),
     }
 
 @router.put("/{order_id}/comments/{comment_id}")

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useLang } from "../../contexts/LanguageContext";
 import { X, MessageSquare, Send, Camera, Loader2, Link2, Plus, ExternalLink, Trash2, Pencil, Check, AtSign, FileText, File as FileIcon, FileSpreadsheet, Download, Pin, PinOff } from "lucide-react";
 import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -426,6 +426,26 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
     });
   };
 
+  // Packing list de la orden — SIEMPRE visible hasta arriba del modal (pedido
+  // del usuario: el enlace sembrado quedaba enterrado como comentario al fondo
+  // del hilo y "nunca se reflejaba"). Dos fuentes, gana la más fresca:
+  //   1. Los campos packing_link* de la orden (los escribe el sembrador), que
+  //      pueden venir rancios del grid si se sembró después de cargarlo.
+  //   2. El último comentario source=packing_link_seed, que el modal fetchea
+  //      recién al abrir.
+  const packing = useMemo(() => {
+    let label = order?.packing_link_label, url = order?.packing_link, at = order?.packing_link_at || "";
+    const seeds = comments.filter(c => c.source === "packing_link_seed");
+    const last = seeds[seeds.length - 1]; // los comments llegan en orden cronológico
+    if (last) {
+      const m = (last.content || "").match(/\[file\](.*?)\|(.*?)\[\/file\]/);
+      if (m && (!url || (last.created_at || "") >= at)) {
+        label = m[1]; url = m[2]; at = last.created_at;
+      }
+    }
+    return url ? { label: label || "Packing list", url, at } : null;
+  }, [order, comments]);
+
   if (!order) return null;
 
   return (
@@ -441,6 +461,22 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Packing list — SIEMPRE hasta arriba (ver useMemo `packing`). */}
+        {packing && (
+          <div className="mx-6 mt-3 p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center gap-3" data-testid="packing-link-banner">
+            <FileSpreadsheet className="w-5 h-5 text-indigo-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">Packing list</p>
+              <p className="text-sm font-medium truncate" title={packing.label}>{packing.label}</p>
+            </div>
+            <a href={packing.url} target="_blank" rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shrink-0"
+              data-testid="packing-link-open">
+              <ExternalLink className="w-3.5 h-3.5" /> Abrir
+            </a>
+          </div>
+        )}
 
         {/* Links Section */}
         <div className="border-b border-border pb-3" data-testid="links-section">
