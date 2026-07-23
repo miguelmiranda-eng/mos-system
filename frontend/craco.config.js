@@ -39,6 +39,10 @@ const webpackConfig = {
       rules: {
         "react-hooks/rules-of-hooks": "error",
         "react-hooks/exhaustive-deps": "warn",
+        // Una const usada antes de declararse compila pero revienta en runtime
+        // (TDZ) si se evalúa de inmediato en el cuerpo del componente; los
+        // avisos dentro de callbacks/handlers son diferidos e inofensivos.
+        "no-use-before-define": ["warn", { functions: false, classes: false, variables: true }],
       },
     },
   },

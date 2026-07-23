@@ -33,7 +33,11 @@ export default [
       "react/prop-types": "off",
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
-      "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+      "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+      // Una const usada antes de declararse compila pero revienta en runtime (TDZ)
+      // si la referencia se evalúa de inmediato en el cuerpo del componente; los
+      // avisos dentro de callbacks/handlers son diferidos e inofensivos.
+      "no-use-before-define": ["warn", { "functions": false, "classes": false, "variables": true }]
     }
   },
   {

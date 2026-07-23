@@ -105,6 +105,8 @@ export default function WMS() {
     };
   }, []);
 
+  const [currentUser, setCurrentUser] = useState(null);
+
   // ── Alertas push al celular (Web Push) ──────────────────────────────────
   // Campana del sidebar, solo administración: descuadres ROJOS y el resumen
   // del job nocturno llegan como notificación nativa (Android/desktop).
@@ -162,7 +164,6 @@ export default function WMS() {
   };
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
-  const [currentUser, setCurrentUser] = useState(null);
   // Pickers see a simple 2-option launcher (Picking / Putaway) on entry.
   const [pickerHome, setPickerHome] = useState(true);
   const [historyOrder, setHistoryOrder] = useState(null);
