@@ -3185,40 +3185,20 @@ async def update_box(box_id: str, request: Request):
     update_doc["updated_at"] = now_iso()
     update_doc["updated_by"] = user.get("user_id")
 
-    # 1. Inventory rebalance if units changed.
+    # 1. Patch the box FIRST — la caja manda.
     old_units = int(box.get("units") or box.get("qty") or 0)
     new_units = update_doc.get("units", old_units)
     delta = new_units - old_units
-    if delta != 0:
-        sku = box.get("sku") or box.get("style") or ""
-        color = box.get("color", "")
-        size = box.get("size", "")
-        location = box.get("location", "")
-        inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": location,
-        })
-        if inv:
-            new_on_hand = max(0, int(inv.get("units_on_hand", 0)) + delta)
-            # Keep total_boxes in step: this box crossing to/from 0 units adds or
-            # removes exactly one counted box at the slot.
-            box_delta = -1 if (old_units > 0 and new_units == 0) else (1 if (old_units == 0 and new_units > 0) else 0)
-            new_total_boxes = max(0, int(inv.get("total_boxes", 0) or 0) + box_delta)
-            await db.wms_inventory.update_one(
-                {"_id": inv["_id"]},
-                {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
-            )
-            # If the inventory row is empty AND has no other boxes pointing
-            # at it, delete it so it doesn't ghost the Inventory listing.
-            if new_on_hand == 0:
-                still = await db.wms_boxes.count_documents({
-                    "sku": sku, "color": color, "size": size, "location": location,
-                    "box_id": {"$ne": box_id}, "units": {"$gt": 0},
-                })
-                if not still:
-                    await db.wms_inventory.delete_one({"_id": inv["_id"]})
-
-    # 2. Patch the box.
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update_doc})
+
+    # 2. Reescribir el marcador desde las cajas si cambió algo que lo afecta:
+    #    unidades o los campos del LOTE (país/tela mueven la caja de renglón).
+    if delta != 0 or any(k in update_doc for k in ("country_of_origin", "fabric_content")):
+        await _reproject_material_rows(
+            box.get("style") or "", box.get("sku") or "", box.get("color", ""),
+            box.get("size", ""), box.get("location", ""), user=user,
+            moved_sigs={ledger.row_signature(box)},
+            contexto={"via": "box_edited", "box_id": box_id})
 
     # 3. Audit trail.
     await log_movement(user, "box_edited", {
@@ -3251,26 +3231,14 @@ async def delete_box(box_id: str, request: Request):
     size = box.get("size", "")
     location = box.get("location", "")
 
-    if units > 0 and location:
-        inv = await db.wms_inventory.find_one({
-            "sku": sku, "color": color, "size": size, "location": location,
-        })
-        if inv:
-            new_on_hand = max(0, int(inv.get("units_on_hand", 0)) - units)
-            new_total_boxes = max(0, int(inv.get("total_boxes", 0)) - 1)
-            still = await db.wms_boxes.count_documents({
-                "sku": sku, "color": color, "size": size, "location": location,
-                "box_id": {"$ne": box_id}, "units": {"$gt": 0},
-            })
-            if new_on_hand == 0 and new_total_boxes == 0 and not still:
-                await db.wms_inventory.delete_one({"_id": inv["_id"]})
-            else:
-                await db.wms_inventory.update_one(
-                    {"_id": inv["_id"]},
-                    {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
-                )
-
+    # LA CAJA MANDA: borrar la caja primero y reescribir el marcador desde las
+    # que quedan (antes: aritmética espejo de update_box).
     await db.wms_boxes.delete_one({"box_id": box_id})
+    if location:
+        await _reproject_material_rows(
+            box.get("style") or "", sku, color, size, location, user=user,
+            moved_sigs={ledger.row_signature(box)},
+            contexto={"via": "box_deleted", "box_id": box_id})
     await log_movement(user, "box_deleted", {
         "box_id": box_id, "sku": sku, "color": color, "size": size,
         "location": location, "units": units,
@@ -3342,55 +3310,23 @@ async def adjust_box_count(box_id: str, request: Request):
             (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
             or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": location})
         )
-    restored_inv_id = None
-    if inv:
+    # GUARDA de compromisos: no dejar la existencia debajo de lo apartado.
+    # (allocated vive en el renglón — es de las pocas lecturas legítimas que
+    # el modelo caja-manda necesita del marcador antes de mutar cajas.)
+    if inv and delta < 0:
         on_hand = int(inv.get("units_on_hand", 0) or 0)
         allocated = int(inv.get("units_allocated", 0) or 0)
-        new_on_hand = on_hand + delta
-        if new_on_hand < allocated:
+        if on_hand + delta < allocated:
             raise HTTPException(
                 400,
-                f"No puedes dejar {new_on_hand} en existencia: {allocated} unidades están "
+                f"No puedes dejar {on_hand + delta} en existencia: {allocated} unidades están "
                 f"comprometidas (allocated) en esta ubicación. Libera la asignación primero.",
             )
-        new_on_hand = max(0, new_on_hand)
-        # This box crossing to/from 0 units adds or removes one counted box.
-        box_delta = -1 if (old_units > 0 and counted == 0) else (1 if (old_units == 0 and counted > 0) else 0)
-        new_total_boxes = max(0, int(inv.get("total_boxes", 0) or 0) + box_delta)
-        await db.wms_inventory.update_one(
-            {"_id": inv["_id"]},
-            {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_total_boxes, "updated_at": now_iso()}},
-        )
-        # Drop a fully-empty row so an adjusted-to-zero slot doesn't ghost.
-        if new_on_hand == 0:
-            still = await db.wms_boxes.count_documents({
-                "sku": sku, "color": color, "size": size, "location": location,
-                "box_id": {"$ne": real_box_id}, "units": {"$gt": 0},
-            })
-            if not still:
-                await db.wms_inventory.delete_one({"_id": inv["_id"]})
-    elif counted > 0 and location:
-        # NO existe fila de inventario para este SKU/ubicacion: se borro cuando la
-        # caja llego a 0 (limpieza de filas vacias). Sin recrearla, ajustar la
-        # caja hacia arriba deja unidades en la caja pero units_on_hand=0, y el
-        # picker marca "sin stock". La recreamos desde los datos de la caja.
-        restored_inv_id = box.get("inventory_id") or gen_id("inv")
-        await db.wms_inventory.insert_one({
-            "inventory_id": restored_inv_id,
-            "sku": sku, "style": box.get("style") or sku,
-            "color": color, "size": size, "location": location,
-            "customer": box.get("customer", ""),
-            "manufacturer": box.get("manufacturer", ""),
-            "description": box.get("description", ""),
-            "country_of_origin": box.get("country_of_origin", ""),
-            "fabric_content": box.get("fabric_content", ""),
-            "is_bpo": box.get("is_bpo", False),
-            "units_on_hand": counted, "units_allocated": 0, "total_boxes": 1,
-            "updated_at": now_iso(),
-            "restored_by_adjust": real_box_id,
-        })
 
-    # Apply to the box itself: delete when emptied, otherwise set the new count.
+    # LA CAJA MANDA: primero la caja (borrar si quedó en 0, si no fijar el
+    # conteo real), después el marcador se reescribe desde las cajas — crea,
+    # corrige o elimina el renglón según lo que quede, y re-liga inventory_id
+    # (antes: aritmética + recreación manual de la fila).
     if counted == 0:
         await db.wms_boxes.delete_one({"box_id": real_box_id})
     else:
@@ -3401,10 +3337,12 @@ async def adjust_box_count(box_id: str, request: Request):
         # que sea surtible de nuevo.
         if box.get("status") == "depleted":
             box_upd["status"] = "located"
-        # Si recreamos la fila de inventario, ligar la caja a ese inventory_id.
-        if restored_inv_id:
-            box_upd["inventory_id"] = restored_inv_id
         await db.wms_boxes.update_one({"box_id": real_box_id}, {"$set": box_upd})
+    if location:
+        await _reproject_material_rows(
+            box.get("style") or "", sku, color, size, location, user=user,
+            moved_sigs={ledger.row_signature(box)},
+            contexto={"via": "inventory_adjust_box", "box_id": real_box_id})
 
     await log_movement(user, "inventory_adjust_box", {
         "box_id": real_box_id,
@@ -3527,6 +3465,26 @@ async def box_history(box_id: str, request: Request, limit: int = 300):
 
 # ==================== PUTAWAY ====================
 
+async def _reproject_box_move(box, old_loc, new_loc, *, user=None, contexto=None):
+    """Reescribe los marcadores de ORIGEN y DESTINO tras mover UNA caja — la
+    caja manda. Reemplazo de _move_box_inventory (aritmética, ola 2 de la
+    migración un-solo-escritor). El origen va con moved_sigs: si el lote quedó
+    sin cajas, su renglón es residuo del movimiento y se elimina."""
+    if old_loc == new_loc:
+        return
+    style = box.get("style") or ""
+    sku = box.get("sku") or ""
+    color = box.get("color", "")
+    size = box.get("size", "")
+    if old_loc:
+        await _reproject_material_rows(style, sku, color, size, old_loc, user=user,
+                                       moved_sigs={ledger.row_signature(box)},
+                                       contexto=contexto)
+    if new_loc:
+        await _reproject_material_rows(style, sku, color, size, new_loc, user=user,
+                                       contexto=contexto)
+
+
 async def _adjust_inventory_boxes(inv_id, delta):
     """Keep total_boxes in step with a physical box event on a single inventory
     row. Clamped at zero. Deletes the row if it ends up fully empty (no units,
@@ -3549,70 +3507,6 @@ async def _adjust_inventory_boxes(inv_id, delta):
             {"_id": row["_id"]},
             {"$set": {"total_boxes": new_boxes, "updated_at": now_iso()}},
         )
-
-
-async def _move_box_inventory(box, old_loc, new_loc):
-    if old_loc == new_loc:
-        return
-    sku = box.get("style") or box.get("sku")
-    color = box.get("color") or ""
-    size = box.get("size") or ""
-    qty = box.get("units") or 0
-    customer = box.get("customer") or ""
-    is_bpo = box.get("is_bpo", False)
-
-    # 1. Deduct from old location in wms_inventory (units AND the one box we're
-    #    moving out). Only drop the row when it truly empties (no boxes, no units,
-    #    no allocation) — total_boxes alone staying >0 must keep the row alive.
-    if old_loc:
-        old_inv = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": old_loc})
-        if old_inv:
-            new_qty = max(0, old_inv.get("units_on_hand", 0) - qty)
-            new_boxes = max(0, int(old_inv.get("total_boxes", 0) or 0) - 1)
-            if new_qty == 0 and new_boxes == 0 and int(old_inv.get("units_allocated", 0) or 0) <= 0:
-                await db.wms_inventory.delete_one({"_id": old_inv["_id"]})
-            else:
-                await db.wms_inventory.update_one({"_id": old_inv["_id"]}, {"$set": {"units_on_hand": new_qty, "total_boxes": new_boxes, "updated_at": now_iso()}})
-
-    # 2. Add to new location in wms_inventory (units AND the box that arrived).
-    dst_inv = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": new_loc})
-    if dst_inv:
-        dst_id = dst_inv.get("inventory_id")
-        if not dst_id:
-            dst_id = gen_id("inv")
-            await db.wms_inventory.update_one(
-                {"_id": dst_inv["_id"]},
-                {"$inc": {"units_on_hand": qty, "total_boxes": 1},
-                 "$set": {"inventory_id": dst_id, "updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}}
-            )
-        else:
-            await db.wms_inventory.update_one(
-                {"_id": dst_inv["_id"]},
-                {"$inc": {"units_on_hand": qty, "total_boxes": 1},
-                 "$set": {"updated_at": now_iso(), "customer": customer, "is_bpo": is_bpo, "style": sku}}
-            )
-    else:
-        dst_id = gen_id("inv")
-        await db.wms_inventory.insert_one({
-            "inventory_id": dst_id,
-            "sku": sku,
-            "style": sku,
-            "color": color,
-            "size": size,
-            "location": new_loc,
-            "units_on_hand": qty,
-            "total_boxes": 1,
-            "units_allocated": 0,
-            "customer": customer,
-            "is_bpo": is_bpo,
-            "updated_at": now_iso()
-        })
-
-    # 3. Update the moved box's inventory_id to link it correctly.
-    await db.wms_boxes.update_one(
-        {"box_id": box["box_id"]},
-        {"$set": {"inventory_id": dst_id}}
-    )
 
 
 def _ci_eq(v):
@@ -3942,7 +3836,8 @@ async def putaway_box(request: Request):
                 old_loc = b.get("location")
                 await db.wms_boxes.update_one({"box_id": b["box_id"]}, {"$set": {"location": location, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
                 await log_movement(user, "putaway", {"box_id": b["box_id"], "from": old_loc, "to": location, "sku": b.get("sku"), "units": b.get("units")})
-                await _move_box_inventory(b, old_loc, location)
+                await _reproject_box_move(b, old_loc, location, user=user,
+                                          contexto={"via": "putaway"})
             await notify_badge_change("putaway")
             return {"message": f"Se ubicaron exitosamente {len(boxes)} cajas del receiving {box_id} en {location}", "box_id": box_id, "location": location}
         raise HTTPException(404, "Caja no encontrada")
@@ -3951,7 +3846,8 @@ async def putaway_box(request: Request):
     await _assert_not_on_hold(user, old_location)
     await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": location, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
     await log_movement(user, "putaway", {"box_id": box_id, "from": old_location, "to": location, "sku": box.get("sku"), "units": box.get("units")})
-    await _move_box_inventory(box, old_location, location)
+    await _reproject_box_move(box, old_location, location, user=user,
+                              contexto={"via": "putaway"})
     await notify_badge_change("putaway")
     return {"message": f"Caja {box_id} ubicada en {location}", "box_id": box_id, "location": location}
 
@@ -4001,7 +3897,8 @@ async def putaway_bulk(request: Request):
         # Persist the catalog's canonical name so casing stays consistent.
         canonical = dst_loc.get("name", location)
         await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"location": canonical, "status": "stored", "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
-        await _move_box_inventory(box, old_loc, canonical)
+        await _reproject_box_move(box, old_loc, canonical, user=user,
+                                  contexto={"via": "putaway_bulk"})
         results.append({"box_id": box_id, "location": canonical})
 
     await log_movement(user, "putaway_bulk", {
@@ -7155,7 +7052,7 @@ async def audit_self_test(request: Request):
         for b in box_docs:
             await db.wms_boxes.update_one({"box_id": b["box_id"]},
                 {"$set": {"location": _SELFTEST_BIN, "status": "located"}})
-            await _move_box_inventory({**b, "style": _SELFTEST_STYLE}, _SELFTEST_CART, _SELFTEST_BIN)
+            await _reproject_box_move({**b, "style": _SELFTEST_STYLE}, _SELFTEST_CART, _SELFTEST_BIN)
             moved += 1
         bin_row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_BIN})
         cart_row = await db.wms_inventory.find_one({"style": _SELFTEST_STYLE, "location": _SELFTEST_CART})
@@ -10294,19 +10191,10 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
                           "last_transferred_at": now_iso(),
                           "last_transferred_by": user.get("name", user.get("email", ""))}},
             )
-            # LA CAJA MANDA: la caja ya se movió; los marcadores de origen y
-            # destino se REESCRIBEN desde las cajas (antes: _move_box_inventory,
-            # aritmética — ola 1 de la migración de escritores legados).
-            if cur_loc:
-                await _reproject_material_rows(
-                    box.get("style") or "", box.get("sku") or "", box.get("color", ""),
-                    box.get("size", ""), cur_loc, user=user,
-                    moved_sigs={ledger.row_signature(box)},
-                    contexto={"via": "cycle_count", "count_id": count_id})
-            await _reproject_material_rows(
-                box.get("style") or "", box.get("sku") or "", box.get("color", ""),
-                box.get("size", ""), loc, user=user,
-                contexto={"via": "cycle_count", "count_id": count_id})
+            # LA CAJA MANDA: la caja ya se movió; origen y destino se
+            # reescriben desde las cajas (ola 1; helper compartido en ola 2).
+            await _reproject_box_move(box, cur_loc, loc, user=user,
+                                      contexto={"via": "cycle_count", "count_id": count_id})
             await log_movement(user, "cycle_count_move", {
                 "box_id": bx_id, "from": cur_loc, "to": loc,
                 "sku": box.get("sku") or box.get("style"), "units": units,

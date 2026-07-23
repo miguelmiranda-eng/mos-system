@@ -155,6 +155,49 @@ async def main():
               rojo is not None and rojo.get("location") == "PS06-A08",
               f"{rojo and rojo.get('location')}")
 
+        print("\n== OLA 2: ajustar caja, borrar caja y putaway reescriben el marcador ==")
+        sdb.wms_locations.insert_one({"name": "PS06-A09", "location_id": "loc_PS06-A09"})
+        sdb.wms_inventory.insert_one({
+            "inventory_id": "inv_smoke_w2", "sku": "5000-RED-S", "style": "5000",
+            "color": "RED", "size": "S", "location": "PS06-A09",
+            "country_of_origin": "HAITI", "fabric_content": "100% COTTON",
+            "units_on_hand": 100, "total_boxes": 2, "units_allocated": 0,
+        })
+        for bid, u in [("SMK-W1", 60), ("SMK-W2", 40)]:
+            sdb.wms_boxes.insert_one({
+                "box_id": bid, "style": "5000", "sku": "5000-RED-S", "color": "RED",
+                "size": "S", "location": "PS06-A09", "units": u, "qty": u,
+                "status": "located", "country_of_origin": "HAITI",
+                "fabric_content": "100% COTTON",
+            })
+        # 1) Ajuste por caja: conteo real 45 en SMK-W1 -> marcador 85 desde cajas.
+        r = await c.post("/api/wms/boxes/SMK-W1/adjust",
+                         json={"counted_units": 45, "reason": "smoke ola 2"})
+        check("adjust 200", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        fila = sdb.wms_inventory.find_one({"location": "PS06-A09", "style": "5000"})
+        check("marcador reescrito tras ajuste (85u/2c)",
+              fila and fila.get("units_on_hand") == 85 and fila.get("total_boxes") == 2,
+              f"{fila and (fila.get('units_on_hand'), fila.get('total_boxes'))}")
+        # 2) Borrar caja: SMK-W2 fuera -> marcador 45/1c.
+        r = await c.delete("/api/wms/boxes/SMK-W2")
+        check("delete 200", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        fila = sdb.wms_inventory.find_one({"location": "PS06-A09", "style": "5000"})
+        check("marcador reescrito tras borrar (45u/1c)",
+              fila and fila.get("units_on_hand") == 45 and fila.get("total_boxes") == 1,
+              f"{fila and (fila.get('units_on_hand'), fila.get('total_boxes'))}")
+        # 3) Putaway bulk: SMK-W1 a PS06-A06 -> origen se elimina, destino nace.
+        r = await c.post("/api/wms/putaway/bulk",
+                         json={"assignments": [{"box_id": "SMK-W1", "location": "PS06-A06"}]})
+        check("putaway 200", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        check("origen eliminado (sus cajas se fueron)",
+              sdb.wms_inventory.find_one({"location": "PS06-A09", "style": "5000"}) is None)
+        dst = sdb.wms_inventory.find_one({"location": "PS06-A06", "style": "5000",
+                                          "color": "RED"})
+        check("destino nace desde la caja (45u/1c, lote HAITI)",
+              dst and dst.get("units_on_hand") == 45 and dst.get("total_boxes") == 1
+              and dst.get("country_of_origin") == "HAITI",
+              f"{dst and (dst.get('units_on_hand'), dst.get('total_boxes'), dst.get('country_of_origin'))}")
+
 
 try:
     asyncio.run(main())

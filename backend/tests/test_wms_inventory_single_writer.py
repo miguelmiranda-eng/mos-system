@@ -28,30 +28,34 @@ from collections import defaultdict
 
 WMS = os.path.join(os.path.dirname(__file__), "..", "routers", "wms.py")
 
-# Estado congelado tras la OLA 1 (2026-07-23): migrado el conteo cíclico
-# completo (resolución, unidades contadas, modo por líneas, alta manual del
-# supervisor) — 62 sitios/25 funciones -> 55/20.
+# Estado congelado tras la OLA 2 (2026-07-23):
+#   Ola 1 — conteo cíclico completo (62 sitios/25 funciones -> 55/20).
+#   Ola 2 — edición de cajas + putaway: update_box, delete_box,
+#           adjust_box_count y _move_box_inventory (putaway×3, selftest y
+#           conteo) migrados al reescritor vía _reproject_box_move
+#           (55/20 -> 43/16).
 ALLOWLIST = {
     # ── El escritor legítimo y las piezas del modelo nuevo ──
     "_reproject_material_rows": 6,        # EL reescritor (la caja manda)
     "_reconcile_missing_inventory_row": 1,  # crea fila desde cajas (modelo nuevo)
     "_selftest_cleanup": 1,               # limpieza del autotest de Auditoría
     # ── DEUDA (olas pendientes): migrar a cajas-primero + reescritor ──
+    # Ola 3 — el clúster de _update_inventory_enhanced (recepción, picking
+    # legado, neck cutting via pick_to_neck, embarques): cada flujo necesita
+    # su smoke ANTES de migrarse — tienen semánticas propias (p. ej.
+    # pick_to_neck mueve stock a un área virtual, no solo descuenta).
     "_adjust_inventory_boxes": 2,
-    "_move_box_inventory": 5,
     "_update_inventory_enhanced": 9,
+    "delete_receiving": 2,
+    "reconcile_lpn": 4,
+    "recon_commit": 2,
+    # Ola 4 — correcciones y puertas semi-retiradas.
     "add_inventory_manual": 3,
-    "adjust_box_count": 3,
     "bulk_adjust_inventory": 2,
     "correct_upc": 5,
-    "delete_box": 2,
     "delete_inventory_row": 1,
     "delete_location": 1,
-    "delete_receiving": 2,
     "import_inventory": 2,
-    "recon_commit": 2,
-    "reconcile_lpn": 4,
-    "update_box": 2,
     "update_location": 1,
     "update_upc": 1,
 }
