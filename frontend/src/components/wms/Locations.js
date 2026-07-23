@@ -79,6 +79,7 @@ export const LocationsModule = ({ currentUser }) => {
   // Click-to-inspect: shows every SKU + box info inside the selected location.
   const [detailLoc, setDetailLoc] = useState(null);
   const [detailItems, setDetailItems] = useState([]);
+  useEffect(() => { setShowZeroRows(false); }, [detailLoc?.name]);
   const [detailLoading, setDetailLoading] = useState(false);
   // Per-item LPN expansion inside the detail modal. Keys are inventory_id;
   // values are { loading: bool, boxes: [] }. Lazy-fetched on toggle.
@@ -97,6 +98,11 @@ export const LocationsModule = ({ currentUser }) => {
   // conteo que no las vio y siguen fisicamente llenas en el rack — esconderlas
   // taparia justo el material perdido. Un clic las muestra.
   const [showEmptyBoxes, setShowEmptyBoxes] = useState(() => new Set());
+  // Renglones en 0 ocultos por defecto — SOLO en la vista. NO se borran de la
+  // base: el usuario recuerda (y el código lo confirma) que el FIFO viejo
+  // vaciaba cajas EN PAPEL que seguían llenas en el rack; un renglón en 0
+  // puede ser la única pista visible de ese material. Un clic los muestra.
+  const [showZeroRows, setShowZeroRows] = useState(false);
   const [relocateDst, setRelocateDst] = useState('');
   const [relocateSaving, setRelocateSaving] = useState(false);
   // Per-LINE move: relocate a whole inventory line (all its LPNs) to another
@@ -1110,7 +1116,10 @@ export const LocationsModule = ({ currentUser }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {detailItems.map((it, i) => {
+                        {detailItems.filter(it => showZeroRows
+                            || (it.on_hand ?? it.units_on_hand ?? 0) > 0
+                            || (it.allocated ?? it.units_allocated ?? 0) > 0
+                            || (it.total_boxes ?? 0) > 0).map((it, i) => {
                           const isOpen = openDrawers.has(it.inventory_id);
                           const hasBoxes = isOpen; // legacy alias used below for hover/highlight
                           const canExpand = !!it.inventory_id && (it.total_boxes || 0) > 0;
@@ -1423,7 +1432,21 @@ export const LocationsModule = ({ currentUser }) => {
 
             <div className="flex items-center justify-between gap-3 p-5 border-t border-border/20">
               <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
-                {detailItems.length} línea{detailItems.length === 1 ? '' : 's'} en esta ubicación
+                {(() => {
+                  const muertos = detailItems.filter(it => !((it.on_hand ?? it.units_on_hand ?? 0) > 0
+                    || (it.allocated ?? it.units_allocated ?? 0) > 0 || (it.total_boxes ?? 0) > 0)).length;
+                  const vivos = detailItems.length - muertos;
+                  return (<>
+                    {vivos} línea{vivos === 1 ? '' : 's'} en esta ubicación
+                    {muertos > 0 && (
+                      <button onClick={() => setShowZeroRows(v => !v)}
+                        className="ml-2 underline decoration-dotted text-muted-foreground hover:text-foreground"
+                        title="Renglones sin stock. OJO: a veces el material SÍ está físicamente (secuela del FIFO viejo) — si una caja marca 0 teniendo material, usa MOVER → Ajustar caja.">
+                        {showZeroRows ? 'ocultar' : 'ver'} {muertos} en cero
+                      </button>
+                    )}
+                  </>);
+                })()}
               </span>
               <div className="flex items-center gap-2">
                 {detailItems.length > 0 && (
