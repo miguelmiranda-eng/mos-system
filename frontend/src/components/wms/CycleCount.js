@@ -1,18 +1,33 @@
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, Search, BarChart3, FileSpreadsheet, Eye, Clock } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet } from "lucide-react";
 import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { useAuth } from "../../App";
 import { fetcher, poster, putter, deleter, logLoadError } from "./lib";
 import { PrefixLocationInput } from "./PrefixLocationInput";
-import { Btn, Chip, cls } from "./ui";
+import { Btn, Chip, cls, EmptyState, StatCard, Th } from "./ui";
 
 // Tono (Chip de ./ui) por pase/estado del box-scan: cada pestaña conserva su
 // color propio, en versión suave — 1er neutro, 2do azul, 3ro ámbar,
 // supervisor rojo, cuadradas verde.
 const PASS_TONES = { 1: "neutral", 2: "info", 3: "warning", supervisor: "danger", ok: "success" };
+
+// ── Helpers de la pestaña Eficiencia (todo en hora LOCAL del navegador) ──────
+// Fecha local YYYY-MM-DD, formato de <input type="date">.
+const localDateStr = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+// Bucket hora-local "YYYY-MM-DD HH" de un instante ISO UTC.
+const localHourKey = (iso) => {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}`;
+};
+// "YYYY-MM-DD HH" → "dd/mm HH:00" para mostrar.
+const fmtHourKey = (k) => `${k.slice(8, 10)}/${k.slice(5, 7)} ${k.slice(11, 13)}:00`;
 
 export const CycleCountModule = () => {
   const { t } = useLang();
@@ -22,8 +37,8 @@ export const CycleCountModule = () => {
   // admin/supersu = 3; el resto, su inventory_level numérico. Gatea el 3er conteo.
   const invLevel = (user?.role === 'supersu' || user?.role === 'admin')
     ? 3 : (parseInt(user?.inventory_level, 10) || 0);
-  // Quién puede generar/exportar reportes: mismo criterio que la pestaña de
-  // reportes y que el backend (/cycle-counts/{id}/report exige inventory_level 3).
+  // Quién puede generar/exportar reportes: mismo criterio que la pestaña
+  // Eficiencia y que el backend (/cycle-counts/{id}/report exige inventory_level 3).
   const canExportReport = user?.access_level >= 5 || user?.role === 'supersu'
     || user?.role === 'admin' || invLevel >= 3;
   const [counts, setCounts] = useState([]);
@@ -56,90 +71,37 @@ export const CycleCountModule = () => {
   // { title, message, onConfirm } | null
   const [confirmDialog, setConfirmDialog] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'reports' | 'report_detail' | 'timeline'
-  const [reportsSummary, setReportsSummary] = useState(null);
-  const [loadingReports, setLoadingReports] = useState(false);
-  const [reportDetail, setReportDetail] = useState(null);
-  const [loadingReportDetail, setLoadingReportDetail] = useState(false);
-  const [timelineEvents, setTimelineEvents] = useState([]);
-  const [timelineAuditors, setTimelineAuditors] = useState([]);
-  const [timelineTotal, setTimelineTotal] = useState(0);
-  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'efficiency'
 
-  // ── Filter state ────────────────────────────────────────────────────────────
-  const [reportFilters, setReportFilters] = useState({
-    date_from: '', date_to: '', status: 'all', created_by_name: '', approved_by_name: ''
-  });
-  const [timelineFilters, setTimelineFilters] = useState({
-    date_from: '', date_to: '', user_id: ''
-  });
+  // ── Eficiencia (gate nivel 3 en el backend): cierres de ubicación por
+  // contador. El endpoint regresa eventos crudos (un pase cerrado por evento);
+  // TODA la agregación se hace en el frontend, en hora local del navegador.
+  const [effFrom, setEffFrom] = useState(() => localDateStr());
+  const [effTo, setEffTo] = useState(() => localDateStr());
+  const [effEvents, setEffEvents] = useState(null); // null = aún sin cargar
+  const [loadingEff, setLoadingEff] = useState(false);
+  const [effOpen, setEffOpen] = useState(null); // by_name del contador expandido
 
-  const buildQS = (params) => {
-    const qs = Object.entries(params)
-      .filter(([, v]) => v && v !== 'all' && v !== '')
-      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-      .join('&');
-    return qs ? `?${qs}` : '';
-  };
-
-  const loadTimeline = useCallback(async (filters = timelineFilters) => {
-    setLoadingTimeline(true);
+  const loadEfficiency = async () => {
+    if (!effFrom || !effTo) { toast.error('Selecciona ambas fechas'); return; }
+    setLoadingEff(true);
     try {
-      const data = await fetcher(`/cycle-counts/reports/timeline${buildQS(filters)}`);
-      setTimelineEvents(data.timeline || []);
-      setTimelineAuditors(data.auditors || []);
-      setTimelineTotal(data.total || 0);
+      // Fechas locales → instantes UTC: [desde 00:00 local, hasta+1día 00:00 local)
+      const fromUtc = new Date(`${effFrom}T00:00:00`).toISOString();
+      const toMid = new Date(`${effTo}T00:00:00`);
+      toMid.setDate(toMid.getDate() + 1);
+      const data = await fetcher(`/cycle-counts/efficiency?from_utc=${encodeURIComponent(fromUtc)}&to_utc=${encodeURIComponent(toMid.toISOString())}`);
+      setEffEvents(data.events || []);
+      setEffOpen(null);
     } catch {
-      toast.error('Error cargando cronograma');
+      toast.error('Error cargando eficiencia');
     } finally {
-      setLoadingTimeline(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const applyTimelineFilters = () => loadTimeline(timelineFilters);
-  const resetTimelineFilters = () => {
-    const empty = { date_from: '', date_to: '', user_id: '' };
-    setTimelineFilters(empty);
-    loadTimeline(empty);
-  };
-
-  const loadReportsSummary = useCallback(async (filters = reportFilters) => {
-    setLoadingReports(true);
-    try {
-      const data = await fetcher(`/cycle-counts/reports/summary${buildQS(filters)}`);
-      setReportsSummary(data);
-    } catch {
-      toast.error('Error cargando historial de reportes');
-    } finally {
-      setLoadingReports(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const applyReportFilters = () => loadReportsSummary(reportFilters);
-  const resetReportFilters = () => {
-    const empty = { date_from: '', date_to: '', status: 'all', created_by_name: '', approved_by_name: '' };
-    setReportFilters(empty);
-    loadReportsSummary(empty);
-  };
-
-  const openReportDetail = async (countId) => {
-    setLoadingReportDetail(true);
-    try {
-      const data = await fetcher(`/cycle-counts/${countId}/report`);
-      setReportDetail(data);
-      setActiveTab('report_detail');
-    } catch {
-      toast.error('Error cargando reporte detallado');
-    } finally {
-      setLoadingReportDetail(false);
+      setLoadingEff(false);
     }
   };
 
-  // Recibe el reporte como parámetro (sombrea el estado `reportDetail`) para que
-  // se pueda exportar tanto desde el detalle abierto como directo desde la lista
-  // de cada conteo, sin navegar. `exportCountById` hace el fetch y lo llama.
+  // Reporte de UN conteo: `exportCountById` carga /cycle-counts/{id}/report y
+  // llama esto para generar el Excel directo desde la lista de conteos activos.
   const exportExcel = (reportDetail) => {
     if (!reportDetail) return;
     const wb = XLSX.utils.book_new();
@@ -390,177 +352,6 @@ export const CycleCountModule = () => {
       exportExcel(rd);
     } catch { toast.error('No se pudo generar el reporte de este conteo'); }
     finally { setExportingId(null); }
-  };
-
-  const exportGlobalExcel = () => {
-    const wb = XLSX.utils.book_new();
-    const now = new Date().toLocaleString();
-
-    if (activeTab === 'reports' && reportsSummary) {
-      // ── HOJA 1: Portada Global ──────────────────────────────────────────
-      const coverData = [
-        ["REPORTE GLOBAL — CICLOCONTEO", ""],
-        ["Generado el", now],
-        ["", ""],
-        ["=== MÉTRICAS GLOBALES ===", ""],
-        ["Total Conteos Aprobados",     reportsSummary.total_counts],
-        ["Exactitud Global",            `${reportsSummary.overall_accuracy_pct}%`],
-        ["Total Ajustes de Inventario", reportsSummary.total_adjustments],
-        ["Total Líneas Auditadas",      reportsSummary.total_lines_ever],
-      ];
-      const wsCover = XLSX.utils.aoa_to_sheet(coverData);
-      wsCover['!cols'] = [{ wch: 32 }, { wch: 40 }];
-      XLSX.utils.book_append_sheet(wb, wsCover, "Resumen Global");
-
-      // ── HOJA 2: Historial de Conteos ────────────────────────────────────
-      const sumData = reportsSummary.counts.map((c, i) => ({
-        "#":                    i + 1,
-        "ID":                   c.count_id,
-        "Nombre":               c.name,
-        "Tipo":                 c.is_general ? 'General' : 'Filtrado',
-        "Creado por":           c.created_by_name,
-        "Fecha Creación":       c.created_at ? new Date(c.created_at).toLocaleDateString() : '—',
-        "Hora Creación":        c.created_at ? new Date(c.created_at).toLocaleTimeString() : '—',
-        "Aprobado por":         c.approved_by_name,
-        "Fecha Aprobación":     c.approved_at ? new Date(c.approved_at).toLocaleDateString() : '—',
-        "Hora Aprobación":      c.approved_at ? new Date(c.approved_at).toLocaleTimeString() : '—',
-        "Total Líneas":         c.total_lines,
-        "Con Discrepancia":     c.discrepant_lines,
-        "Exactas":              c.exact_lines,
-        "Exactitud %":          `${c.accuracy_pct}%`,
-        "Sobrantes":            c.units_over,
-        "Faltantes":            c.units_short,
-        "Ajustes":              c.adjustments,
-        "Filtro Ubic.": c.location_filter || '—',
-        "Filtro Style": c.style_filter    || '—',
-        "Filtro Color": c.color_filter    || '—',
-        "Filtro Cliente": c.customer_filter || '—',
-      }));
-      if (sumData.length > 0) {
-        const wsHist = XLSX.utils.json_to_sheet(sumData);
-        wsHist['!cols'] = [5,12,24,10,20,14,12,20,14,12,12,14,12,12,12,12,10,14,14,14,14].map(wch => ({ wch }));
-        XLSX.utils.book_append_sheet(wb, wsHist, "Historial Conteos");
-      }
-
-      // ── HOJA 3: Productividad Global ────────────────────────────────────
-      if (reportsSummary.auditor_productivity?.length > 0) {
-        const prodData = reportsSummary.auditor_productivity.map((a, i) => ({
-          "#":                    i + 1,
-          "Auditor":              a.name,
-          "Líneas Contadas":      a.lines_counted,
-          "Unidades Físicas":     a.units_counted,
-          "Errores Detectados":   a.discrepancies_found,
-          "% Precisión":          a.lines_counted > 0
-            ? `${((a.lines_counted - a.discrepancies_found) / a.lines_counted * 100).toFixed(1)}%`
-            : '—',
-        }));
-        const wsProd = XLSX.utils.json_to_sheet(prodData);
-        wsProd['!cols'] = [5,24,16,16,18,12].map(wch => ({ wch }));
-        XLSX.utils.book_append_sheet(wb, wsProd, "Productividad Global");
-      }
-
-      // ── HOJA 4: Ubicaciones Más Problemáticas ───────────────────────────
-      if (reportsSummary.top_discrepant_locations?.length > 0) {
-        const locData = reportsSummary.top_discrepant_locations.map((l, i) => ({
-          "#":                    i + 1,
-          "Ubicación":            l.location,
-          "Veces con Discrepancia": l.discrepancy_count,
-          "Unidades Afectadas":   l.total_delta,
-        }));
-        const wsLoc = XLSX.utils.json_to_sheet(locData);
-        wsLoc['!cols'] = [5,18,22,20].map(wch => ({ wch }));
-        XLSX.utils.book_append_sheet(wb, wsLoc, "Ubicaciones Problemas");
-      }
-
-      // ── HOJA 5: SKUs Más Problemáticos ──────────────────────────────────
-      if (reportsSummary.top_discrepant_skus?.length > 0) {
-        const skuData = reportsSummary.top_discrepant_skus.map((s, i) => ({
-          "#":                    i + 1,
-          "Style":                s.style,
-          "Color":                s.color,
-          "Veces con Discrepancia": s.count,
-          "Unidades Afectadas":   s.total_delta,
-        }));
-        const wsSkus = XLSX.utils.json_to_sheet(skuData);
-        wsSkus['!cols'] = [5,16,16,22,20].map(wch => ({ wch }));
-        XLSX.utils.book_append_sheet(wb, wsSkus, "SKUs Problemas");
-      }
-
-      XLSX.writeFile(wb, `Reporte_Global_CC_${new Date().toISOString().slice(0,10)}.xlsx`);
-
-    } else if (activeTab === 'timeline' && timelineEvents.length > 0) {
-      // ── HOJA 1: Portada Cronograma ──────────────────────────────────────
-      const coverData = [
-        ["CRONOGRAMA GLOBAL DE AUDITORÍAS", ""],
-        ["Generado el", now],
-        ["Total eventos", timelineEvents.length],
-      ];
-      const wsCover = XLSX.utils.aoa_to_sheet(coverData);
-      wsCover['!cols'] = [{ wch: 32 }, { wch: 40 }];
-      XLSX.utils.book_append_sheet(wb, wsCover, "Portada");
-
-      // ── HOJA 2: Feed Cronológico Completo ───────────────────────────────
-      const tData = timelineEvents.map((e, i) => ({
-        "#":                    i + 1,
-        "Fecha":                new Date(e.timestamp).toLocaleDateString(),
-        "Hora":                 new Date(e.timestamp).toLocaleTimeString(),
-        "Fecha y Hora":         new Date(e.timestamp).toLocaleString(),
-        "Auditor":              e.user_name,
-        "Conteo":               e.count_name,
-        "ID Conteo":            e.count_id,
-        "Ubicación":            e.location,
-        "Style":                e.style,
-        "Color":                e.color,
-        "Talla":                e.size,
-        "Cant. Contada":        e.qty,
-        "Diferencia":           e.discrepancy,
-        "¿Discrepancia?":       e.discrepancy !== 0 ? 'SÍ' : 'NO',
-      }));
-      const wsFeed = XLSX.utils.json_to_sheet(tData);
-      wsFeed['!cols'] = [5,12,12,22,22,24,12,14,14,12,8,14,10,12].map(wch => ({ wch }));
-      XLSX.utils.book_append_sheet(wb, wsFeed, "Cronograma Global");
-
-      // ── HOJA 3: Cronograma por Auditor (Global) ──────────────────────────
-      const auditorGroups = {};
-      [...timelineEvents].reverse().forEach(e => {
-        if (!auditorGroups[e.user_name]) auditorGroups[e.user_name] = [];
-        auditorGroups[e.user_name].push(e);
-      });
-      const perAuditorRows = [];
-      Object.entries(auditorGroups).forEach(([name, evts]) => {
-        const times = evts.map(e => new Date(e.timestamp));
-        const start = new Date(Math.min(...times));
-        const end   = new Date(Math.max(...times));
-        const totalMins = Math.round((end - start) / 60000);
-        perAuditorRows.push({ AUDITOR: `>>> ${name}`, FECHA: '', HORA: '', GAP: '', CONTEO: '', UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
-        perAuditorRows.push({ AUDITOR: 'RESUMEN', FECHA: `Inicio: ${start.toLocaleString()}`, HORA: `Fin: ${end.toLocaleString()}`, GAP: `Duración: ${Math.floor(totalMins/60)}h ${totalMins%60}min`, CONTEO: `${evts.length} líneas`, UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
-        const sorted = [...evts].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        sorted.forEach((e, i) => {
-          const gap = i > 0 ? Math.round((new Date(e.timestamp) - new Date(sorted[i-1].timestamp)) / 60000) : null;
-          perAuditorRows.push({
-            AUDITOR: name,
-            FECHA: new Date(e.timestamp).toLocaleDateString(),
-            HORA: new Date(e.timestamp).toLocaleTimeString(),
-            GAP: gap != null ? `+${gap} min` : '—',
-            CONTEO: e.count_name,
-            UBICACION: e.location,
-            STYLE: `${e.style} ${e.color}`,
-            QTY: e.qty,
-            DIFERENCIA: e.discrepancy,
-          });
-        });
-        perAuditorRows.push({ AUDITOR: '', FECHA: '', HORA: '', GAP: '', CONTEO: '', UBICACION: '', STYLE: '', QTY: '', DIFERENCIA: '' });
-      });
-      if (perAuditorRows.length > 0) {
-        const wsPerAud = XLSX.utils.json_to_sheet(perAuditorRows);
-        wsPerAud['!cols'] = [22,12,12,12,24,14,18,10,10].map(wch => ({ wch }));
-        XLSX.utils.book_append_sheet(wb, wsPerAud, "Cronograma x Auditor");
-      }
-
-      XLSX.writeFile(wb, `Cronograma_Global_${new Date().toISOString().slice(0,10)}.xlsx`);
-    } else {
-      toast.error("No hay datos para exportar en esta pestaña");
-    }
   };
 
   const load = useCallback(() => { fetcher('/cycle-counts').then(setCounts).catch(logLoadError('data')); }, []);
@@ -1242,114 +1033,38 @@ export const CycleCountModule = () => {
     );
   }
 
-  if (activeTab === 'report_detail' && reportDetail) {
-    const kpis = reportDetail.kpis;
-    return (
-      <div className="space-y-6" data-testid="cycle-count-report">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setActiveTab('reports')} className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"><ArrowLeft className="w-4 h-4" /></button>
-            <div>
-              <h2 className="text-lg font-bold text-foreground">Reporte: {reportDetail.name}</h2>
-              <span className="text-xs text-muted-foreground">{reportDetail.count_id}</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Btn variant="primary" onClick={() => exportExcel(reportDetail)}>
-              <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
-            </Btn>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-card border border-border px-5 py-4 rounded-lg">
-            <div className="text-xs font-medium text-muted-foreground">Exactitud</div>
-            <div className={`text-2xl font-semibold tracking-tight tabular-nums mt-1 ${kpis.accuracy_pct >= 95 ? 'text-emerald-600 dark:text-emerald-400' : kpis.accuracy_pct >= 85 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>{kpis.accuracy_pct}%</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{kpis.exact_lines} de {kpis.total_lines} líneas exactas</div>
-          </div>
-          <div className="bg-card border border-border px-5 py-4 rounded-lg">
-            <div className="text-xs font-medium text-muted-foreground">Ajustes</div>
-            <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1">{kpis.adjusted_count}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">Filas de inventario</div>
-          </div>
-          <div className="bg-card border border-border px-5 py-4 rounded-lg">
-            <div className="text-xs font-medium text-muted-foreground">Faltantes</div>
-            <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1 text-red-600 dark:text-red-400">{kpis.units_short}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">Unidades perdidas</div>
-          </div>
-          <div className="bg-card border border-border px-5 py-4 rounded-lg">
-            <div className="text-xs font-medium text-muted-foreground">Sobrantes</div>
-            <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1 text-amber-600 dark:text-amber-400">+{kpis.units_over}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">Unidades extra</div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <h3 className="text-sm font-semibold text-muted-foreground">Discrepancias Principales</h3>
-            <div className="bg-card border border-border rounded-lg overflow-hidden">
-              <div className="max-h-[500px] overflow-y-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-muted/50 border-b border-border sticky top-0 z-10">
-                    <tr>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Ubicación</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Item</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Sistema</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Contado</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Diff</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {reportDetail.discrepancy_table.length === 0 ? (
-                      <tr><td colSpan="5" className="p-6 text-center text-muted-foreground italic">No hubo discrepancias en este conteo</td></tr>
-                    ) : (
-                      reportDetail.discrepancy_table.map((row) => (
-                        <tr key={row.line_id} className="hover:bg-muted/40 transition-colors">
-                          <td className="px-3 py-2.5 font-mono text-xs">{row.location}</td>
-                          <td className="px-3 py-2.5">
-                            <div className="font-medium text-foreground text-xs">{row.style}</div>
-                            <div className="text-xs text-muted-foreground">{row.color} / {row.size}</div>
-                          </td>
-                          <td className="px-3 py-2.5 text-center text-muted-foreground font-mono tabular-nums">{row.system_qty}</td>
-                          <td className="px-3 py-2.5 text-center font-medium font-mono tabular-nums">{row.counted_qty}</td>
-                          <td className="px-3 py-2.5 text-center">
-                            <span className={`px-2 py-0.5 rounded-md border font-medium text-xs tabular-nums ${row.discrepancy > 0 ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25'}`}>
-                              {row.discrepancy > 0 ? '+' : ''}{row.discrepancy}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-muted-foreground">Impacto por Ubicación</h3>
-            <div className="bg-card border border-border rounded-lg p-4 space-y-3">
-              {reportDetail.location_breakdown.filter(l => l.discrepant > 0).length === 0 ? (
-                <div className="text-center text-muted-foreground italic py-4">Sin discrepancias</div>
-              ) : (
-                reportDetail.location_breakdown.filter(l => l.discrepant > 0).slice(0, 10).map(loc => (
-                  <div key={loc.location} className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-mono font-medium truncate max-w-[150px]">{loc.location}</span>
-                      <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{loc.discrepant} err</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-red-500" style={{ width: `${Math.min(100, (loc.discrepant / loc.total) * 100)}%` }} />
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // ── Eficiencia: agregación en el frontend (zona horaria local) ────────────
+  // Por contador: ubicaciones = nº de eventos, cajas = Σ boxes, horas activas =
+  // nº de buckets hora-local distintos; ritmos = totales / horas activas.
+  const effList = effEvents || [];
+  const effByCounter = {};
+  effList.forEach(ev => {
+    const name = ev.by_name || ev.by || 'Desconocido';
+    if (!effByCounter[name]) effByCounter[name] = { name, locations: 0, boxes: 0, hours: {} };
+    const agg = effByCounter[name];
+    const hk = localHourKey(ev.at);
+    agg.locations += 1;
+    agg.boxes += (ev.boxes || 0);
+    if (!agg.hours[hk]) agg.hours[hk] = { key: hk, locations: 0, boxes: 0 };
+    agg.hours[hk].locations += 1;
+    agg.hours[hk].boxes += (ev.boxes || 0);
+  });
+  const effCounters = Object.values(effByCounter)
+    .map(c => {
+      const activeHours = Object.keys(c.hours).length;
+      return {
+        name: c.name,
+        locations: c.locations,
+        boxes: c.boxes,
+        activeHours,
+        locPerHour: activeHours > 0 ? c.locations / activeHours : 0,
+        boxesPerHour: activeHours > 0 ? c.boxes / activeHours : 0,
+        // Desglose por hora, cronológico (la clave "YYYY-MM-DD HH" ordena sola).
+        hourRows: Object.values(c.hours).sort((a, b) => a.key.localeCompare(b.key)),
+      };
+    })
+    .sort((a, b) => b.boxes - a.boxes);
+  const effTotalBoxes = effList.reduce((s, ev) => s + (ev.boxes || 0), 0);
 
   return (
     <div className="space-y-4">
@@ -1363,31 +1078,18 @@ export const CycleCountModule = () => {
             ACTIVOS
           </button>
           {(user?.access_level >= 5 || user?.role === 'supersu' || user?.role === 'admin' || (parseInt(user?.inventory_level, 10) || 0) >= 3) && (
-            <>
-              <button
-                onClick={() => { setActiveTab('reports'); if (!reportsSummary) loadReportsSummary(); }}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'reports' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                REPORTES
-              </button>
-              <button
-                onClick={() => { setActiveTab('timeline'); if (timelineEvents.length === 0) loadTimeline(); }}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'timeline' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                <Clock className="w-4 h-4" />
-                CRONOGRAMA
-              </button>
-            </>
+            <button
+              onClick={() => { setActiveTab('efficiency'); if (effEvents === null && !loadingEff) loadEfficiency(); }}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'efficiency' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              data-testid="cc-tab-efficiency"
+            >
+              <BarChart3 className="w-4 h-4" />
+              EFICIENCIA
+            </button>
           )}
         </div>
 
         <div className="flex items-center gap-2">
-          {(activeTab === 'reports' || activeTab === 'timeline') && (
-            <Btn variant="primary" onClick={exportGlobalExcel}>
-              <Download className="w-4 h-4" /> EXPORTAR EXCEL
-            </Btn>
-          )}
           {activeTab === 'active' && (
             <Btn
               variant="primary"
@@ -1588,307 +1290,111 @@ export const CycleCountModule = () => {
         </>
       )}
 
-      {activeTab === 'reports' && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+      {activeTab === 'efficiency' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="cc-efficiency">
 
-          {/* ── Filter Bar ────────────────────────────────────────────── */}
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-2">
-              <Search className="w-3.5 h-3.5" /> Filtros
+          {/* ── Rango de fechas (locales; se mandan como instantes UTC) ───── */}
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="w-40">
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Desde</label>
+              <input type="date" value={effFrom} onChange={e => setEffFrom(e.target.value)}
+                className={cls.input} data-testid="cc-eff-from" />
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Desde</label>
-                <input type="date" value={reportFilters.date_from}
-                  onChange={e => setReportFilters(p => ({ ...p, date_from: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Hasta</label>
-                <input type="date" value={reportFilters.date_to}
-                  onChange={e => setReportFilters(p => ({ ...p, date_to: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Estado</label>
-                <select value={reportFilters.status}
-                  onChange={e => setReportFilters(p => ({ ...p, status: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground">
-                  <option value="all">Todos</option>
-                  <option value="approved">Aprobados</option>
-                  <option value="in_progress">En Progreso</option>
-                  <option value="pending">Pendientes</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Creado por</label>
-                <input placeholder="Nombre..." value={reportFilters.created_by_name}
-                  onChange={e => setReportFilters(p => ({ ...p, created_by_name: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Aprobado por</label>
-                <input placeholder="Nombre..." value={reportFilters.approved_by_name}
-                  onChange={e => setReportFilters(p => ({ ...p, approved_by_name: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
+            <div className="w-40">
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Hasta</label>
+              <input type="date" value={effTo} onChange={e => setEffTo(e.target.value)}
+                className={cls.input} data-testid="cc-eff-to" />
             </div>
-            <div className="flex gap-2 mt-3">
-              <button onClick={applyReportFilters} className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md font-medium text-sm hover:opacity-90 transition-opacity">Aplicar</button>
-              <button onClick={resetReportFilters} className="px-3 py-1.5 bg-card border border-border text-foreground rounded-md font-medium text-sm hover:bg-muted transition-colors">Limpiar</button>
-            </div>
+            <Btn variant="primary" onClick={loadEfficiency} disabled={loadingEff} data-testid="cc-eff-apply">
+              Aplicar
+            </Btn>
           </div>
 
-          {loadingReports ? (
+          {loadingEff ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin mb-4" />
-              <p className="text-sm">Cargando reportes...</p>
+              <p className="text-sm">Cargando eficiencia...</p>
             </div>
-          ) : !reportsSummary || reportsSummary.counts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 rounded-lg border border-dashed border-border">
-              <p className="text-sm font-semibold text-foreground/80">No hay conteos con esos filtros</p>
-              <p className="text-sm text-muted-foreground mt-1">Prueba ajustar los filtros o limpiando la búsqueda.</p>
-            </div>
+          ) : effCounters.length === 0 ? (
+            <EmptyState title="Sin actividad de conteo en el rango."
+              hint="Ajusta las fechas y vuelve a aplicar." />
           ) : (
             <>
-              {/* Aggregated KPIs */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-card border border-border px-5 py-4 rounded-lg">
-                  <div className="text-xs font-medium text-muted-foreground">Conteos Históricos</div>
-                  <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1">{reportsSummary.total_counts}</div>
-                </div>
-                <div className="bg-card border border-border px-5 py-4 rounded-lg">
-                  <div className="text-xs font-medium text-muted-foreground">Exactitud Global</div>
-                  <div className={`text-2xl font-semibold tracking-tight tabular-nums mt-1 ${reportsSummary.overall_accuracy_pct >= 95 ? 'text-emerald-600 dark:text-emerald-400' : reportsSummary.overall_accuracy_pct >= 85 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {reportsSummary.overall_accuracy_pct}%
-                  </div>
-                </div>
-                <div className="bg-card border border-border px-5 py-4 rounded-lg">
-                  <div className="text-xs font-medium text-muted-foreground">Total Ajustes</div>
-                  <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1">{reportsSummary.total_adjustments}</div>
-                </div>
-                <div className="bg-card border border-border px-5 py-4 rounded-lg">
-                  <div className="text-xs font-medium text-muted-foreground">Líneas Auditadas</div>
-                  <div className="text-2xl font-semibold tracking-tight tabular-nums mt-1">{reportsSummary.total_lines_ever}</div>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatCard label="Ubicaciones contadas" value={effList.length} />
+                <StatCard label="Cajas contadas" value={effTotalBoxes} />
+                <StatCard label="Contadores activos" value={effCounters.length} />
               </div>
 
-              {/* List of Counts */}
               <div className="bg-card border border-border rounded-lg overflow-hidden">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-muted/50 border-b border-border">
-                    <tr>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">ID / Nombre</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Estado</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Asignado a</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Creación</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Aprobación</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Líneas</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Exactitud</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-right">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {reportsSummary.counts.map(c => {
-                      const statusLabel = c.status === 'approved' ? 'Aprobado' : c.status === 'in_progress' ? 'En progreso' : c.status === 'pending' ? 'Pendiente' : c.status;
-                      const statusCls = c.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' : c.status === 'in_progress' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' : 'bg-muted text-foreground/70 border-border';
-                      return (
-                      <tr key={c.count_id} className="hover:bg-muted/40 transition-colors group">
-                        <td className="px-3 py-2.5">
-                          <div className="font-medium text-foreground truncate max-w-[180px]">{c.name}</div>
-                          <div className="text-xs text-muted-foreground font-mono">#{c.count_id.slice(-6)}</div>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className={`px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap ${statusCls}`}>{statusLabel}</span>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{c.assigned_to_name || '—'}</td>
-                        <td className="px-3 py-2.5 text-muted-foreground text-xs">
-                          {new Date(c.created_at).toLocaleDateString()}
-                          <div className="text-xs opacity-70">{new Date(c.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · {c.created_by_name}</div>
-                        </td>
-                        <td className="px-3 py-2.5 text-muted-foreground text-xs">
-                          {c.approved_at ? new Date(c.approved_at).toLocaleDateString() : '—'}
-                          {c.approved_by_name && <div className="text-xs opacity-70">{c.approved_by_name}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 text-center font-mono text-xs tabular-nums">{c.total_lines}</td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className={`px-2 py-0.5 rounded-md border font-medium text-xs tabular-nums ${c.accuracy_pct >= 95 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' : c.accuracy_pct >= 85 ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25'}`}>
-                            {c.accuracy_pct}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {c.status === 'approved' ? (
-                            <div className="flex items-center gap-1.5 justify-end">
-                              <button
-                                onClick={() => openReportDetail(c.count_id)}
-                                className="px-3 py-1.5 bg-card border border-border text-foreground rounded-md text-xs font-medium hover:bg-muted transition-colors flex items-center gap-1 opacity-50 group-hover:opacity-100"
-                              >
-                                <Eye className="w-3.5 h-3.5" /> Ver
-                              </button>
-                              <button
-                                onClick={() => exportCountById(c.count_id)}
-                                disabled={exportingId === c.count_id}
-                                title="Exportar reporte Excel"
-                                className="px-3 py-1.5 bg-card border border-border text-foreground rounded-md text-xs font-medium hover:bg-muted transition-colors flex items-center gap-1 opacity-50 group-hover:opacity-100 disabled:opacity-50"
-                                data-testid={`export-hist-${c.count_id}`}
-                              >
-                                {exportingId === c.count_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />} Excel
-                              </button>
-                            </div>
-                          ) : <span className="text-xs text-muted-foreground">—</span>}
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-muted/50 border-b border-border">
+                      <tr>
+                        <Th>Contador</Th>
+                        <Th right>Ubicaciones</Th>
+                        <Th right>Cajas</Th>
+                        <Th right>Horas activas</Th>
+                        <Th right>Ubic./hora</Th>
+                        <Th right>Cajas/hora</Th>
                       </tr>
-                    );})}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Auditor Productivity Leaderboard */}
-              {reportsSummary.auditor_productivity && reportsSummary.auditor_productivity.length > 0 && (
-                <div className="space-y-4 pt-6">
-                  <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    Productividad por Auditor (Leaderboard)
-                  </h3>
-                  <div className="bg-card border border-border rounded-lg overflow-hidden">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-muted/50 border-b border-border">
-                        <tr>
-                          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Posición</th>
-                          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">Auditor</th>
-                          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Líneas Contadas</th>
-                          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Unidades Totales</th>
-                          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground text-center">Errores Detectados</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/60">
-                        {reportsSummary.auditor_productivity.map((auditor, idx) => (
-                          <tr key={auditor.user_id} className="hover:bg-muted/40 transition-colors">
-                            <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">#{idx + 1}</td>
-                            <td className="px-3 py-2.5 font-medium text-foreground">
-                              {auditor.name}
-                              {idx === 0 && <span className="ml-2 px-2 py-0.5 rounded-md border text-xs font-medium bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25">Top 1</span>}
-                            </td>
-                            <td className="px-3 py-2.5 text-center font-mono font-medium tabular-nums">{auditor.lines_counted}</td>
-                            <td className="px-3 py-2.5 text-center font-mono text-muted-foreground tabular-nums">{auditor.units_counted.toLocaleString()}</td>
-                            <td className="px-3 py-2.5 text-center">
-                              <span className="px-2 py-0.5 rounded-md border font-medium text-xs tabular-nums bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25">
-                                {auditor.discrepancies_found}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                    </thead>
+                    <tbody>
+                      {effCounters.map(c => {
+                        const open = effOpen === c.name;
+                        return (
+                          <Fragment key={c.name}>
+                            <tr
+                              onClick={() => setEffOpen(open ? null : c.name)}
+                              className="border-b border-border/60 hover:bg-muted/40 transition-colors cursor-pointer"
+                              data-testid={`cc-eff-row-${c.name}`}
+                            >
+                              <td className="px-3 py-2.5">
+                                <span className="flex items-center gap-2 font-medium text-foreground">
+                                  <ChevronDown className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+                                  {c.name}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">{c.locations}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">{c.boxes}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">{c.activeHours}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">{c.locPerHour.toFixed(1)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">{c.boxesPerHour.toFixed(1)}</td>
+                            </tr>
+                            {open && (
+                              <tr className="border-b border-border/60">
+                                <td colSpan={6} className="px-3 pb-3 pt-1 bg-muted/20">
+                                  {/* Desglose por hora local de este contador */}
+                                  <table className="w-full max-w-md text-sm">
+                                    <thead className="bg-muted/50 border-b border-border">
+                                      <tr>
+                                        <Th>Hora</Th>
+                                        <Th right>Ubicaciones</Th>
+                                        <Th right>Cajas</Th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {c.hourRows.map(h => (
+                                        <tr key={h.key} className="border-b border-border/60 hover:bg-muted/40 transition-colors">
+                                          <td className="px-3 py-2.5 font-mono tabular-nums">{fmtHourKey(h.key)}</td>
+                                          <td className="px-3 py-2.5 text-right tabular-nums">{h.locations}</td>
+                                          <td className="px-3 py-2.5 text-right tabular-nums">{h.boxes}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              )}
+              </div>
             </>
           )}
-        </div>
-      )}
-
-      {activeTab === 'timeline' && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-
-          {/* ── Filter Bar ─────────────────────────────────────────────── */}
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-2">
-              <Search className="w-3.5 h-3.5" /> Filtros de Cronograma
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Desde</label>
-                <input type="date" value={timelineFilters.date_from}
-                  onChange={e => setTimelineFilters(p => ({ ...p, date_from: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Hasta</label>
-                <input type="date" value={timelineFilters.date_to}
-                  onChange={e => setTimelineFilters(p => ({ ...p, date_to: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Auditor</label>
-                <select value={timelineFilters.user_id}
-                  onChange={e => setTimelineFilters(p => ({ ...p, user_id: e.target.value }))}
-                  className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs text-foreground">
-                  <option value="">Todos los auditores</option>
-                  {timelineAuditors.map(a => (
-                    <option key={a.user_id} value={a.user_id}>{a.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col justify-end gap-2">
-                <button onClick={applyTimelineFilters} className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md font-medium text-sm hover:opacity-90 transition-opacity">Aplicar</button>
-                <button onClick={resetTimelineFilters} className="px-3 py-1.5 bg-card border border-border text-foreground rounded-md font-medium text-sm hover:bg-muted transition-colors">Limpiar</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-lg p-6">
-            <h3 className="text-sm font-semibold text-muted-foreground mb-6 flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <Clock className="w-4 h-4" />
-                Línea de Tiempo de Auditorías
-              </span>
-              {timelineTotal > 0 && (
-                <span className="text-xs bg-muted border border-border text-foreground/70 px-2.5 py-0.5 rounded-md font-medium tabular-nums">{timelineTotal} eventos</span>
-              )}
-            </h3>
-
-            {loadingTimeline ? (
-              <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-                <Loader2 className="w-8 h-8 animate-spin mb-4" />
-                <p className="text-sm">Cargando eventos...</p>
-              </div>
-            ) : timelineEvents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 rounded-lg border border-dashed border-border">
-                <p className="text-sm font-semibold text-foreground/80">No hay actividad reciente</p>
-              </div>
-            ) : (
-              <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
-                {timelineEvents.map((evt, idx) => {
-                  const d = new Date(evt.timestamp);
-                  const isError = evt.discrepancy !== 0;
-                  return (
-                    <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                      <div className={`flex items-center justify-center w-10 h-10 rounded-full border-4 border-background shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 ${isError ? 'bg-red-500 text-white' : 'bg-primary text-primary-foreground'}`}>
-                        {isError ? <Search className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
-                      </div>
-
-                      <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-card border border-border p-4 rounded-lg hover:bg-muted/40 transition-colors">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-semibold text-foreground text-sm flex items-center gap-1.5">
-                            <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] text-muted-foreground">
-                              {evt.user_name.charAt(0).toUpperCase()}
-                            </span>
-                            {evt.user_name}
-                          </span>
-                          <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded">
-                            {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground mb-2">
-                          {d.toLocaleDateString()} • Conteo: <span className="font-mono">#{evt.count_id.slice(-6)}</span>
-                        </div>
-                        <div className="bg-muted/40 p-3 rounded-lg border border-border/60 text-sm">
-                          Contó <span className="font-medium text-foreground">{evt.qty} uds</span> de <span className="font-medium text-foreground">{evt.style}</span> en <span className="font-mono font-medium">{evt.location}</span>.
-                          {isError && (
-                            <div className="mt-2 text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                              Discrepancia detectada ({evt.discrepancy > 0 ? '+' : ''}{evt.discrepancy})
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
       )}
     </div>

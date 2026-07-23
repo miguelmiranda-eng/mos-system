@@ -10885,6 +10885,54 @@ async def list_cycle_counts(request: Request):
     counts = await db.wms_cycle_counts.find({}, {"_id": 0, "lines": 0}).sort("created_at", -1).to_list(200)
     return counts
 
+# OJO: esta ruta va ANTES de /cycle-counts/{count_id} — FastAPI matchea en
+# orden de registro y la parametrica se tragaria "efficiency" como id.
+@router.get("/cycle-counts/efficiency")
+async def cycle_counts_efficiency(
+    request: Request,
+    from_utc: str = "",
+    to_utc: str = "",
+):
+    """Eficiencia de contadores (pestaña Eficiencia del módulo Conteo Cíclico).
+
+    Devuelve los EVENTOS crudos de cierre de ubicación en la ventana pedida —
+    uno por cada pase cerrado en `wms_cycle_counts.scan_locations[].history[]`:
+    quién, cuándo, qué ubicación y cuántas cajas escaneó. El frontend agrega
+    (por contador, por hora) en la zona horaria del navegador; por eso la
+    ventana llega como instantes UTC y aquí no se interpreta ninguna fecha
+    local. Fuente: el history es lo que el contador realmente cerró — no los
+    movimientos, que solo registran binds y excepciones.
+    """
+    await require_inventory_level(request, 3)
+    if not from_utc or not to_utc:
+        raise HTTPException(400, "from_utc y to_utc (ISO) son requeridos")
+
+    events = []
+    async for cc in db.wms_cycle_counts.find(
+        {"mode": "box_scan"},
+        {"_id": 0, "count_id": 1, "name": 1, "scan_locations.location": 1,
+         "scan_locations.history": 1},
+    ):
+        for L in cc.get("scan_locations") or []:
+            for h in L.get("history") or []:
+                at = h.get("at") or ""
+                if not (from_utc <= at < to_utc):
+                    continue
+                events.append({
+                    "at": at,
+                    "by": h.get("by"),
+                    "by_name": h.get("by_name") or "(sin nombre)",
+                    "location": L.get("location"),
+                    "boxes": len(h.get("scanned") or []),
+                    "pass": h.get("pass"),
+                    "matched": bool(h.get("matched")),
+                    "count_id": cc.get("count_id"),
+                    "count_name": cc.get("name"),
+                })
+    events.sort(key=lambda e: e["at"])
+    return {"count": len(events), "events": events}
+
+
 @router.get("/cycle-counts/{count_id}")
 async def get_cycle_count(count_id: str, request: Request):
     """Get a cycle count with all lines. For counts created before we started
