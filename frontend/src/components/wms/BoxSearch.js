@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer } from "lucide-react";
 import { fetcher, cleanScan, API } from "./lib";
@@ -84,7 +85,12 @@ export function BoxSearchBar({ compact = false }) {
         )}
       </form>
 
-      {open && (
+      {/* PORTAL al body: la barra vive dentro del header sticky del WMS (z-10),
+          que es un stacking context — ahí adentro el z-[80] del modal compite
+          como z-10 contra los thead sticky z-10 de los módulos, y el que va
+          después en el DOM (la tabla) se pintaba ENCIMA del modal (reportado
+          con el catálogo UPC, 2026-07-23). El portal lo saca a la raíz. */}
+      {open && createPortal(
         <div className="fixed inset-0 z-[80] flex items-start justify-center p-4 pt-20 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
           onClick={close}>
           <div onClick={(e) => e.stopPropagation()}
@@ -182,7 +188,8 @@ export function BoxSearchBar({ compact = false }) {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
