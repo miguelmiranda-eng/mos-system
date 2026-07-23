@@ -12,7 +12,8 @@ import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
+import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms } from "./wms/lib";
+import { TruckLoader } from "./wms/TruckLoader";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxSearchBar } from "./wms/BoxSearch";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
@@ -84,15 +85,6 @@ export default function WMS() {
   // so the content area doesn't look frozen until the new module's first paint.
   const [moduleSwitching, setModuleSwitching] = useState(false);
   const isFirstModuleRender = useRef(true);
-  const httpBusyRaw = useHttpBusy();
-  // Debounce: only show the global progress bar after sustained busy >400ms.
-  // Short requests (badge refreshes, fast polls) shouldn't make it blink.
-  const [httpBusy, setHttpBusy] = useState(false);
-  useEffect(() => {
-    if (!httpBusyRaw) { setHttpBusy(false); return; }
-    const id = setTimeout(() => setHttpBusy(true), 400);
-    return () => clearTimeout(id);
-  }, [httpBusyRaw]);
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
 
   // Tema azulado FIJO dentro del WMS: además del check por ruta que hace
@@ -247,8 +239,8 @@ export default function WMS() {
   // 'home' launcher to a customer before switching them to their dashboard.
   if (!currentUser) {
     return (
-      <div className="h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div className="dark h-screen bg-background flex items-center justify-center">
+        <TruckLoader label="Cargando WMS…" />
       </div>
     );
   }
@@ -471,13 +463,6 @@ export default function WMS() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto custom-scrollbar relative">
-        {/* Global progress bar — always reserves its 2px row to prevent layout
-            shift when HTTP requests start/finish; the inner bar fades in/out. */}
-        <div className="sticky top-0 z-[60] h-0.5 overflow-hidden pointer-events-none">
-          <div
-            className={`h-full w-full bg-gradient-to-r from-primary/0 via-primary to-primary/0 animate-[wms-progress_1.2s_linear_infinite] transition-opacity duration-150 ${(httpBusy || moduleSwitching) ? 'opacity-100' : 'opacity-0'}`}
-          />
-        </div>
         {/* Module Header Overlay */}
         <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-background/95 backdrop-blur-sm border-b border-border/60">
           {(() => {
@@ -515,9 +500,8 @@ export default function WMS() {
         {/* Component Content — key forces remount on module switch, plus fade-in */}
         <div className="p-3 sm:p-6 pt-2">
           {moduleSwitching ? (
-            <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-150">
-              <Loader2 className="w-10 h-10 animate-spin text-muted-foreground" />
-              <span className="text-sm text-muted-foreground mt-3">Cargando módulo…</span>
+            <div className="animate-in fade-in duration-150">
+              <TruckLoader label="Cargando módulo…" />
             </div>
           ) : (
             <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
