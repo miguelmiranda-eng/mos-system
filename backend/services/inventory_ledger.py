@@ -118,6 +118,24 @@ def row_signature(row):
                            row.get("fabric_content"))
 
 
+# Campos del LOTE que TODA consulta de cajas destinada a firmarse debe traer.
+# Bug del 2026-07-23 (/move-location): una proyección hecha a mano omitió estos
+# campos, la firma salió ('','') y nunca casó con la del renglón — el renglón
+# del origen sobrevivió con sus unidades: material duplicado en papel en cada
+# "mover todo el contenido". Si necesitas recortar una proyección de cajas,
+# parte de box_projection() y este bug no puede volver.
+LOTE_FIELDS = ("country_of_origin", "coo", "fabric_content")
+
+
+def box_projection(*extra):
+    """Proyección mínima para cajas que van a compararse por lote (firma)."""
+    proj = {"_id": 0, "box_id": 1, "style": 1, "sku": 1, "color": 1, "size": 1,
+            "units": 1, "qty": 1, "location": 1}
+    for f in (*LOTE_FIELDS, *extra):
+        proj[f] = 1
+    return proj
+
+
 class LedgerError(Exception):
     """Base de los fallos de invariante del inventario."""
 

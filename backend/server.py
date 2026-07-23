@@ -240,6 +240,16 @@ async def startup_event():
     start_report_scheduler()
     # Printavo invoice auto-sync poller (no-op if disabled / unconfigured).
     start_printavo_scheduler()
+    # Job nocturno de salud del inventario: escaneo de stock fantasma a las
+    # 08:00 UTC (~01:00 del almacén). Solo detecta y reporta (cola + incidencia);
+    # nunca reescribe renglones. Ver routers/wms.py::nightly_phantom_scan_loop.
+    try:
+        import asyncio as _asyncio
+        from routers.wms import nightly_phantom_scan_loop
+        _asyncio.create_task(nightly_phantom_scan_loop())
+        logging.info("Job nocturno de stock fantasma programado (08:00 UTC).")
+    except Exception as e:
+        logging.error(f"No se pudo programar el job nocturno de stock fantasma: {e}")
 
 @app.get("/ping")
 async def ping():

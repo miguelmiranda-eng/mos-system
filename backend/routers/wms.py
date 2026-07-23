@@ -361,6 +361,25 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
                     "pending_cycle_count": True,
                     "pending_cycle_count_reason": "saldo sin cajas detectado al recalcular tras una operación",
                 }})
+                # ALARMA ROJA cuando esto brota DURANTE un movimiento: o el
+                # residuo no casó por lote (bug/datos — PS06-A04 2026-07-23,
+                # 194u duplicadas en papel por una firma vacía) o un saldo
+                # legado acaba de quedar al descubierto. En ambos casos alguien
+                # debe ir a contar; la azul de reproyección no basta.
+                if moved_sigs and user is not None:
+                    await _record_incident(
+                        "saldo_sin_cajas_tras_movimiento", user,
+                        f"El renglón {ledger.describe(style, sku, color, size)} "
+                        f"[{ledger.canon_coo(r.get('country_of_origin'))}] en {location} "
+                        f"conservó {int(r.get('units_on_hand') or 0)}u pero quedó SIN cajas "
+                        f"tras un movimiento. Lote del renglón vs lotes movidos: "
+                        f"{ledger.row_signature(r)} vs {sorted(moved_sigs)}. "
+                        "Requiere conteo físico; si el lote de las cajas está vacío, "
+                        "puede ser dato incompleto en las cajas, no material real.",
+                        material=ledger.describe(style, sku, color, size),
+                        location=location,
+                        units=int(r.get("units_on_hand") or 0),
+                        **(contexto or {}))
                 notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
                                 f"con {r.get('units_on_hand')}u sin cajas: marcado para conteo")
 
@@ -1632,8 +1651,11 @@ async def move_location_bulk(request: Request):
     # "viajan" con la ubicación — un renglón sin caja no representa nada
     # movible; se queda en el origen marcado para conteo por la reproyección.
     src_box_filter = {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
-    boxes_src = await db.wms_boxes.find(src_box_filter, {"_id": 0, "box_id": 1, "style": 1,
-        "sku": 1, "color": 1, "size": 1, "units": 1, "qty": 1}).to_list(10000)
+    # OJO: proyección vía ledger.box_projection() — DEBE traer los campos del
+    # lote o la firma sale ('','') y el renglón del origen sobrevive con sus
+    # unidades (PS06-A04, 194u duplicadas en papel, 2026-07-23).
+    boxes_src = await db.wms_boxes.find(
+        src_box_filter, ledger.box_projection()).to_list(10000)
     moved_box_ids = [b["box_id"] for b in boxes_src if b.get("box_id")]
     tocados = {}
     for b in boxes_src:
@@ -7598,14 +7620,13 @@ async def recon_phantom_list(request: Request, status: str = "pendiente", limit:
             "last_scan": (ultimo or {}).get("scanned_at")}
 
 
-@router.post("/recon/phantom/scan")
-async def recon_phantom_scan(request: Request):
-    """Conciliación: recorre TODAS las cajas y renglones y refresca la cola de
-    stock fantasma. Los items que persisten conservan su `registro`; los que ya
-    no aparecen (el conteo/ajuste posterior los cuadró) se cierran solos como
-    'resuelta'. Deja rastro en Ajustes y una incidencia informativa."""
+async def _run_phantom_scan(user):
+    """Núcleo del escaneo de stock fantasma — lo comparten el botón del módulo
+    de Conciliación (POST /recon/phantom/scan) y el JOB NOCTURNO (server.py).
+    SOLO detecta y reporta: nunca reescribe renglones (regla de la casa: el
+    writeoff de cajas de papel va ANTES de reproyectar, y eso pasa por conteo
+    físico, no por un job)."""
     from services.phantom_scan import compute_phantom_items
-    user = await require_supersu(request)
     boxes = await db.wms_boxes.find({}, {
         "_id": 0, "box_id": 1, "location": 1, "style": 1, "color": 1, "size": 1,
         "units": 1, "qty": 1, "country_of_origin": 1, "coo": 1, "fabric_content": 1,
@@ -7664,6 +7685,38 @@ async def recon_phantom_scan(request: Request):
     return {"ok": True, "batch": batch, "count": len(items), "nuevos": nuevos,
             "reabiertos": reabiertos, "resueltos": cerrados.modified_count,
             "por_tipo": por_tipo}
+
+
+@router.post("/recon/phantom/scan")
+async def recon_phantom_scan(request: Request):
+    """Conciliación: recorre TODAS las cajas y renglones y refresca la cola de
+    stock fantasma. Los items que persisten conservan su `registro`; los que ya
+    no aparecen (el conteo/ajuste posterior los cuadró) se cierran solos como
+    'resuelta'. Deja rastro en Ajustes y una incidencia informativa."""
+    user = await require_supersu(request)
+    return await _run_phantom_scan(user)
+
+
+async def nightly_phantom_scan_loop():
+    """Job nocturno de salud (pendiente #3 del saneamiento): corre el escaneo
+    de stock fantasma todas las madrugadas a las 08:00 UTC (~01:00 en el
+    almacén). Lo arranca server.py en el startup. Cualquier descuadre
+    renglones-vs-cajas amanece en la pestaña Stock Fantasma y como incidencia,
+    sin esperar el WhatsApp del piso."""
+    import asyncio as _asyncio
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    while True:
+        ahora = _dt.now(_tz.utc)
+        objetivo = ahora.replace(hour=8, minute=0, second=0, microsecond=0)
+        if objetivo <= ahora:
+            objetivo += _td(days=1)
+        await _asyncio.sleep((objetivo - ahora).total_seconds())
+        try:
+            res = await _run_phantom_scan({"user_id": None, "name": "Sistema (job nocturno)"})
+            logger.info("Job nocturno de stock fantasma: %s pendientes (%s nuevos, %s resueltos)",
+                        res.get("count"), res.get("nuevos"), res.get("resueltos"))
+        except Exception:
+            logger.exception("Job nocturno de stock fantasma falló; reintenta mañana.")
 
 
 @router.post("/recon/phantom/registro")

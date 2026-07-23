@@ -79,9 +79,15 @@ def sembrar():
         sdb[c].delete_many({})
     for name in ["PS07-A25", "NA08-C37", "NA08-C38"]:
         sdb.wms_locations.insert_one({"name": name, "location_id": f"loc_{name}"})
+    # CON LOTE, como los datos reales. El arnés original sembraba sin país ni
+    # composición: las firmas salían ('','') en ambos lados y los 44 checks
+    # fueron CIEGOS al bug de /move-location (2026-07-23, proyección sin campos
+    # de lote -> renglón del origen duplicado en papel). Los fixtures nunca
+    # deben ser más limpios que el almacén.
     sdb.wms_inventory.insert_one({
         "inventory_id": "inv_smoke_ck001", "sku": "CK001-PFD-M", "style": "CK001",
         "color": "PFD", "size": "M", "location": "PS07-A25",
+        "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
         "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
         "customer": "SPEKTRUM", "updated_at": "2026-07-01T00:00:00+00:00",
     })
@@ -89,6 +95,7 @@ def sembrar():
         sdb.wms_boxes.insert_one({
             "box_id": f"SMOKE-{i:03d}", "style": "CK001", "sku": "CK001-PFD-M",
             "color": "PFD", "size": "M", "location": "PS07-A25", "units": 48,
+            "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
             "inventory_id": "inv_smoke_ck001", "status": "located", "state": "located",
         })
     # Caja huérfana: existe físicamente, ninguna fila la respalda (~3.3% del real).
@@ -325,9 +332,13 @@ async def main():
         sdb.wms_inventory.drop_index("uniq_inventory_material_lote")
 
         print("\n== 9. Renglon duplicado del mismo lote: se CONSOLIDA al mover ==")
+        # MISMO lote que la fila base — un "duplicado" sin lote ya no lo sería:
+        # (NICARAGUA,100%COTTON) vs ('','') son DOS lotes legítimos (aduanas) y
+        # la consolidación correctamente no los fusiona.
         sdb.wms_inventory.insert_one({
             "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
             "color": "PFD", "size": "M", "location": "PS07-A25",
+            "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
             "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
         })
         # LA CAJA MANDA: un renglon duplicado del mismo lote ya no bloquea el
