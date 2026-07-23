@@ -10503,11 +10503,34 @@ async def cc_scan_location(count_id: str, request: Request):
         # Sin candidatas: caja realmente desconocida. Se registra tal cual y la
         # resolucion la mandara a supervisor (comportamiento de siempre).
 
+    # Un escaneo físico ES presencia: si la caja seguía `recon_pending` (una
+    # conciliación vieja la dio por faltante), este conteo la acaba de tener en
+    # la mano — se limpia AQUÍ, no en el cierre. El cierre 'ok' del pase 1 no
+    # toca cajas, así que dejarla marcada aquí fue lo que permitió que el
+    # writeoff 339273a1 (2026-07-22) borrara 21 cajas que la pestaña Cuadradas
+    # ya había confirmado físicamente.
+    rescatada = await db.wms_boxes.find_one_and_update(
+        {"box_id": canonical, "status": "recon_pending"},
+        {"$set": {"status": "located", "recon_pending": False,
+                  "recon_missing_from": None,
+                  "recon_cleared_via": "cycle_count_scan",
+                  "recon_cleared_count_id": count_id,
+                  "recon_cleared_at": now_iso(),
+                  "updated_at": now_iso()}},
+        projection={"_id": 0, "recon_missing_from": 1},
+    )
+    if rescatada:
+        await log_movement(user, "cycle_count_recon_cleared", {
+            "box_id": canonical, "location": location,
+            "was_missing_from": rescatada.get("recon_missing_from"),
+            "via": "cycle_count", "count_id": count_id, "pass": L.get("pass"),
+        })
+
     scanned = L.get("scanned_boxes", [])
     dup = canonical in scanned
     set_doc = {"last_updated_at": now_iso()}
     update_doc = {"$set": set_doc}
-    
+
     if not dup:
         scanned.append(canonical)
         L["scanned_boxes"] = scanned
