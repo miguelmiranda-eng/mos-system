@@ -94,6 +94,21 @@ export default function WMS() {
     return () => clearTimeout(id);
   }, [httpBusyRaw]);
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
+
+  // Tema azulado FIJO dentro del WMS: además del check por ruta que hace
+  // ThemeContext (cubre el reload directo a /wms), este efecto cubre la
+  // navegación SPA — clava `dark` en <html> al montar (portales incluidos) y
+  // al salir restaura la preferencia guardada del CRM.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('light');
+    root.classList.add('dark');
+    return () => {
+      const pref = localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'dark';
+      root.classList.remove('light', 'dark');
+      root.classList.add(pref === 'light' ? 'light' : 'dark');
+    };
+  }, []);
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
   const [currentUser, setCurrentUser] = useState(null);
@@ -244,8 +259,8 @@ export default function WMS() {
     const opts = MODULES.filter(m => ['picking', 'transit', 'mover'].includes(m.id));
     const firstName = (currentUser?.name || '').trim().split(' ')[0];
     return (
-      <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
-        <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+      <div className="dark h-screen bg-background text-foreground flex flex-col overflow-hidden">
+        <Toaster position="bottom-right" theme="dark" />
         <header className="flex items-center justify-between p-4 border-b border-border/40">
           <span className="font-barlow font-black text-lg italic flex items-center gap-1.5">
             <Warehouse className="w-5 h-5 text-primary" /> MOS <span className="text-primary not-italic ml-0.5">WMS</span>
@@ -304,8 +319,8 @@ export default function WMS() {
     const firstName = (currentUser?.name || '').trim().split(' ')[0];
     return (
       <WmsContext.Provider value={wmsCtx}>
-        <div className="wms-perf min-h-screen bg-background text-foreground flex flex-col">
-          <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+        <div className="dark wms-perf min-h-screen bg-background text-foreground flex flex-col">
+          <Toaster position="bottom-right" theme="dark" />
           <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 sm:px-8 py-4 border-b border-border/40 bg-background/95 backdrop-blur">
             <div className="flex items-center gap-3 min-w-0">
               <div className="leading-tight min-w-0">
@@ -334,9 +349,9 @@ export default function WMS() {
 
   return (
     <WmsContext.Provider value={wmsCtx}>
-    <div className="wms-perf h-screen bg-background flex flex-col text-foreground overflow-hidden">
+    <div className="dark wms-perf h-screen bg-background flex flex-col text-foreground overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
-        <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
+        <Toaster position="bottom-right" theme="dark" />
       {/* Mobile backdrop when the nav drawer is open */}
       {mobileNav && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />}
       {/* Sidebar — off-canvas drawer on phones/PDAs, static column on md+ */}
