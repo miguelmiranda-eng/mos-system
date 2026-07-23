@@ -12,8 +12,8 @@ import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms } from "./wms/lib";
-import { TruckLoader } from "./wms/TruckLoader";
+import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
+import { DropsLoader } from "./wms/DropsLoader";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxSearchBar } from "./wms/BoxSearch";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
@@ -85,6 +85,9 @@ export default function WMS() {
   // so the content area doesn't look frozen until the new module's first paint.
   const [moduleSwitching, setModuleSwitching] = useState(false);
   const isFirstModuleRender = useRef(true);
+  const switchStartRef = useRef(0);
+  const sawBusyRef = useRef(false);
+  const httpBusyRaw = useHttpBusy();
   const { theme, toggleTheme: toggleAppTheme } = useTheme();
 
   // Tema azulado FIJO dentro del WMS: además del check por ruta que hace
@@ -128,13 +131,32 @@ export default function WMS() {
     }
   }, [currentUser?.role]);
 
-  // Show "switching…" spinner for 200ms whenever the active module changes
+  // Al cambiar de módulo, las gotas se quedan HASTA que el contenido esté
+  // disponible (pedido del usuario): el módulo se monta de inmediato DEBAJO
+  // del overlay (así dispara sus fetches desde el primer instante) y el
+  // overlay se retira cuando su tráfico inicial termina:
+  //   · hubo actividad HTTP y volvió la calma (250ms de silencio), o
+  //   · nunca hubo fetch (módulo estático): 700ms de gracia, o
+  //   · tope duro de 6s — módulos que paginan/pollean en background (p. ej.
+  //     Inventory) nunca "se callan" y ya pintaron contenido usable.
   useEffect(() => {
     if (isFirstModuleRender.current) { isFirstModuleRender.current = false; return; }
     setModuleSwitching(true);
-    const t = setTimeout(() => setModuleSwitching(false), 200);
-    return () => clearTimeout(t);
+    switchStartRef.current = Date.now();
+    sawBusyRef.current = false;
+    const cap = setTimeout(() => setModuleSwitching(false), 6000);
+    return () => clearTimeout(cap);
   }, [activeModule]);
+
+  useEffect(() => {
+    if (!moduleSwitching) return;
+    if (httpBusyRaw) { sawBusyRef.current = true; return; }
+    const espera = sawBusyRef.current
+      ? 250
+      : Math.max(250, 700 - (Date.now() - switchStartRef.current));
+    const t = setTimeout(() => setModuleSwitching(false), espera);
+    return () => clearTimeout(t);
+  }, [moduleSwitching, httpBusyRaw]);
 
   const MODULES = [
     { id: 'home', label: 'Configuración WMS', icon: Settings, color: 'text-primary', desc: 'Catálogos editables para los dropdowns de Receiving / Picking' },
@@ -240,7 +262,7 @@ export default function WMS() {
   if (!currentUser) {
     return (
       <div className="dark h-screen bg-background flex items-center justify-center">
-        <TruckLoader label="Cargando WMS…" />
+        <DropsLoader label="Cargando WMS…" />
       </div>
     );
   }
@@ -497,15 +519,16 @@ export default function WMS() {
           })()}
         </div>
 
-        {/* Component Content — key forces remount on module switch, plus fade-in */}
-        <div className="p-3 sm:p-6 pt-2">
-          {moduleSwitching ? (
-            <div className="animate-in fade-in duration-150">
-              <TruckLoader label="Cargando módulo…" />
-            </div>
-          ) : (
-            <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
-              {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
+        {/* Component Content — key forces remount on module switch. El módulo
+            vive DEBAJO del overlay de carga para que fetchee de inmediato; las
+            gotas tapan hasta que el contenido está disponible. */}
+        <div className="p-3 sm:p-6 pt-2 relative">
+          <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
+            {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
+          </div>
+          {moduleSwitching && (
+            <div className="absolute inset-0 z-20 bg-background flex items-start justify-center animate-in fade-in duration-100">
+              <DropsLoader label="Cargando módulo…" />
             </div>
           )}
         </div>
