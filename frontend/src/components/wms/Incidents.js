@@ -97,11 +97,22 @@ const fecha = (iso) => {
 
 function Detalle({ inc }) {
   // Los campos varían por tipo; se muestran los relevantes y el resto en crudo.
+  // Los OBJETOS se aplanan un nivel (context.to, context.sources…): el descuadre
+  // de conservación guardaba ubicación/cajas dentro de `context` y la pantalla
+  // los ocultaba — "esta falta de información", reclamo literal del usuario.
   const omitir = new Set(["incident_id", "kind", "created_at", "user_id", "user_name",
     "resolved_at", "resolved_by", "resolution_note"]);
-  const campos = Object.entries(inc).filter(([k, v]) =>
-    !omitir.has(k) && v !== null && v !== undefined && v !== "" &&
-    typeof v !== "object");
+  const campos = Object.entries(inc).flatMap(([k, v]) => {
+    if (omitir.has(k) || v === null || v === undefined || v === "") return [];
+    if (Array.isArray(v)) return [[k, v.join(", ")]];
+    if (typeof v === "object") {
+      return Object.entries(v)
+        .filter(([, vv]) => vv !== null && vv !== undefined && vv !== "")
+        .map(([kk, vv]) => [`${k}.${kk}`,
+          Array.isArray(vv) ? vv.join(", ") : (typeof vv === "object" ? JSON.stringify(vv) : vv)]);
+    }
+    return [[k, v]];
+  });
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 px-4 pb-4 pt-1">
       {campos.map(([k, v]) => (

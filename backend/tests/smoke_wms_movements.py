@@ -148,10 +148,12 @@ async def main():
                          json={"box_ids": ["SMOKE-ORPHAN"], "to": "NA08-C38"}, headers=H)
         check("movimiento permitido", r.status_code == 200, r.text[:160])
         check("destino con las 24 u", total("NA08-C38") == 24, f"={total('NA08-C38')}")
-        check("auditado en wms_incidents",
-              sdb.wms_incidents.count_documents({"kind": "orphan_boxes_reconciled"}) == 1)
-        check("auditado en wms_movements",
-              sdb.wms_movements.count_documents({"type": "inventory_row_reconciled"}) == 1)
+        fila_o = sdb.wms_inventory.find_one({"location": "NA08-C38", "style": "9999"})
+        check("el renglon se CREO desde la caja en el destino",
+              fila_o is not None and fila_o.get("units_on_hand") == 24,
+              f"fila={fila_o and fila_o.get('units_on_hand')}")
+        check("queda auditado (inventory_reprojected)",
+              sdb.wms_incidents.count_documents({"kind": "inventory_reprojected"}) >= 1)
 
         print("\n== 4. /move-units: destino con la fila keyed al OTRO formato ==")
         # El destino se busca con la cadena que manda el frontend ('CK001', el
@@ -322,38 +324,31 @@ async def main():
               sdb.wms_inventory.count_documents({"location": "PS07-A25", "style": "CK001"}) == 1)
         sdb.wms_inventory.drop_index("uniq_inventory_material_lote")
 
-        print("\n== 9. Material duplicado: BLOQUEA con 409 sin escribir nada ==")
+        print("\n== 9. Renglon duplicado del mismo lote: se CONSOLIDA al mover ==")
         sdb.wms_inventory.insert_one({
             "inventory_id": "inv_smoke_dup", "sku": "CK001", "style": "CK001",
             "color": "PFD", "size": "M", "location": "PS07-A25",
             "units_on_hand": 480, "total_boxes": 10, "units_allocated": 0,
         })
-        # Caja elegida dinámicamente: las pruebas anteriores movieron cajas, así
-        # que fijar un box_id concreto haría este bloque dependiente del orden.
+        # LA CAJA MANDA: un renglon duplicado del mismo lote ya no bloquea el
+        # movimiento — la reproyeccion lo CONSOLIDA (deja uno, con la verdad de
+        # las cajas) y la operacion procede.
         cobaya = sdb.wms_boxes.find_one({"location": "PS07-A25", "style": "CK001"})
         check("hay una caja en PS07-A25 para probar", cobaya is not None)
         if not cobaya:
             return
-        antes_src, antes_dst = total("PS07-A25"), total("NA08-C37")
         r = await c.post("/api/wms/boxes/relocate",
                          json={"box_ids": [cobaya["box_id"]], "to": "NA08-C37"}, headers=H)
-        check("responde 409", r.status_code == 409, f"fue {r.status_code}: {r.text[:120]}")
-        check("mensaje accionable", "duplicad" in r.text.lower(), r.text[:120])
-        # ALERTA: el bloqueo debe quedar registrado, no morir en la pantalla.
-        inc = sdb.wms_incidents.find_one({"kind": "material_duplicado"})
-        check("queda INCIDENCIA del bloqueo", inc is not None,
-              "el 409 no dejo rastro en wms_incidents")
-        if inc:
-            check("la incidencia dice el material", "CK001" in str(inc.get("material", "")))
-            check("la incidencia dice la ubicacion", inc.get("location") == "PS07-A25")
-            check("la incidencia dice el endpoint",
-                  "boxes/relocate" in str(inc.get("endpoint") or ""), str(inc.get("endpoint")))
-            check("la incidencia dice el usuario", bool(inc.get("user_name")))
-        check("CERO cambios: destino intacto", total("NA08-C37") == antes_dst,
-              f"{total('NA08-C37')} != {antes_dst}")
-        check("CERO cambios: origen intacto", total("PS07-A25") == antes_src)
-        check("la caja NO se movió",
-              (sdb.wms_boxes.find_one({"box_id": cobaya["box_id"]}) or {}).get("location") == "PS07-A25")
+        check("el movimiento PROCEDE (antes: 409)", r.status_code == 200,
+              f"{r.status_code} {r.text[:120]}")
+        filas_d = list(sdb.wms_inventory.find({"location": "PS07-A25", "style": "CK001"}))
+        check("renglones duplicados CONSOLIDADOS en 1", len(filas_d) == 1, f"{len(filas_d)}")
+        fis_d = sum(int(b.get("units") or 0) for b in
+                    sdb.wms_boxes.find({"location": "PS07-A25", "style": "CK001"})
+                    if (b.get("units") or 0) > 0)
+        check("el renglon == cajas restantes",
+              bool(filas_d) and filas_d[0]["units_on_hand"] == fis_d,
+              f"fila={filas_d and filas_d[0]['units_on_hand']} fisico={fis_d}")
 
 
 if __name__ == "__main__":
