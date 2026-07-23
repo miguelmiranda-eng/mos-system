@@ -7570,6 +7570,141 @@ async def recon_second_count_start(request: Request):
     await log_movement(user, "recon_second_count_start", {"locations_count": len(locations), "reopened": reopened.deleted_count})
     return {"ok": True, "count": len(locations), "reopened": reopened.deleted_count, "locations": adj_locations}
 
+
+# ── Stock fantasma ──────────────────────────────────────────────────────────
+# Cola persistente (wms_recon_phantom) de todo lo que el papel dice y el piso
+# quizá no respalda: saldos sin cajas, cajas de papel y cajas sin identidad.
+# El escaneo compara TODA la base (services/phantom_scan.py, misma llave que
+# reproject_inventory_from_boxes.py) y cada item es una tarea de caminata con
+# su campo `registro`. Aquí NUNCA se corrige inventario: primero el conteo
+# físico, después la baja/alta con respaldo — regla de la casa.
+
+@router.get("/recon/phantom")
+async def recon_phantom_list(request: Request, status: str = "pendiente", limit: int = 10000):
+    """Conciliación: lista la cola de stock fantasma (por default lo pendiente)."""
+    await require_supersu(request)
+    q = {}
+    if status and status != "todos":
+        q["status"] = status
+    items = await db.wms_recon_phantom.find(q, {"_id": 0}).sort("delta", -1).to_list(min(limit, 10000))
+    resumen = await db.wms_recon_phantom.aggregate([
+        {"$match": {"status": "pendiente"}},
+        {"$group": {"_id": "$tipo", "n": {"$sum": 1}, "unidades": {"$sum": "$delta"}}},
+    ]).to_list(10)
+    ultimo = await db.wms_recon_phantom.find_one({}, {"_id": 0, "scanned_at": 1},
+                                                 sort=[("scanned_at", -1)])
+    return {"count": len(items), "items": items,
+            "resumen": {r["_id"]: {"n": r["n"], "unidades": r["unidades"]} for r in resumen},
+            "last_scan": (ultimo or {}).get("scanned_at")}
+
+
+@router.post("/recon/phantom/scan")
+async def recon_phantom_scan(request: Request):
+    """Conciliación: recorre TODAS las cajas y renglones y refresca la cola de
+    stock fantasma. Los items que persisten conservan su `registro`; los que ya
+    no aparecen (el conteo/ajuste posterior los cuadró) se cierran solos como
+    'resuelta'. Deja rastro en Ajustes y una incidencia informativa."""
+    from services.phantom_scan import compute_phantom_items
+    user = await require_supersu(request)
+    boxes = await db.wms_boxes.find({}, {
+        "_id": 0, "box_id": 1, "location": 1, "style": 1, "color": 1, "size": 1,
+        "units": 1, "qty": 1, "country_of_origin": 1, "coo": 1, "fabric_content": 1,
+    }).to_list(None)
+    rows = await db.wms_inventory.find({}, {
+        "_id": 0, "location": 1, "style": 1, "color": 1, "size": 1,
+        "units_on_hand": 1, "country_of_origin": 1, "coo": 1, "fabric_content": 1,
+    }).to_list(None)
+    items = compute_phantom_items(boxes, rows)
+
+    batch = gen_id("phs")
+    ahora = now_iso()
+    uname = user.get("name", user.get("email", "?"))
+    vigentes = set()
+    nuevos = reabiertos = 0
+    for it in items:
+        vigentes.add(it["phantom_id"])
+        prev = await db.wms_recon_phantom.find_one_and_update(
+            {"phantom_id": it["phantom_id"]},
+            {"$set": {**it, "status": "pendiente", "scan_batch": batch,
+                      "scanned_at": ahora, "updated_at": ahora},
+             "$setOnInsert": {"registro": "", "created_at": ahora}},
+            upsert=True)
+        if prev is None:
+            nuevos += 1
+        elif prev.get("status") != "pendiente":
+            reabiertos += 1
+    cerrados = await db.wms_recon_phantom.update_many(
+        {"status": "pendiente", "phantom_id": {"$nin": list(vigentes)}},
+        {"$set": {"status": "resuelta", "resolved_at": ahora,
+                  "resolved_by": f"escaneo {batch}", "updated_at": ahora}})
+
+    por_tipo = {}
+    for it in items:
+        t = por_tipo.setdefault(it["tipo"], {"n": 0, "unidades": 0})
+        t["n"] += 1
+        t["unidades"] += it["delta"]
+    await db.wms_recon_adjustments.insert_one({
+        "type": "phantom_scan",
+        "created_at": ahora, "created_by": uname,
+        "count": len(items),
+        "units": sum(it["delta"] for it in items),
+        "reason": (f"Escaneo de stock fantasma {batch}: {len(items)} pendientes "
+                   f"({nuevos} nuevos, {reabiertos} reabiertos, {cerrados.modified_count} resueltos solos). "
+                   + " · ".join(f"{k}: {v['n']} ({v['unidades']:,}u)" for k, v in sorted(por_tipo.items()))),
+        "locations": [], "boxes": [],
+    })
+    await _record_incident(
+        "phantom_scan", user,
+        f"Escaneo de stock fantasma: {len(items)} pendientes en "
+        f"{len({it['location'] for it in items})} ubicaciones "
+        f"({sum(it['delta'] for it in items):,} unidades en duda).",
+        batch=batch, por_tipo=por_tipo)
+    await log_movement(user, "phantom_scan", {"batch": batch, "items": len(items),
+                                              "nuevos": nuevos, "resueltos": cerrados.modified_count})
+    return {"ok": True, "batch": batch, "count": len(items), "nuevos": nuevos,
+            "reabiertos": reabiertos, "resueltos": cerrados.modified_count,
+            "por_tipo": por_tipo}
+
+
+@router.post("/recon/phantom/registro")
+async def recon_phantom_registro(request: Request):
+    """Conciliación: guarda el registro (nota de caminata) de un fantasma.
+    body: { phantom_id, registro }"""
+    user = await require_supersu(request)
+    body = await request.json()
+    pid = str(body.get("phantom_id", "")).strip()
+    registro = str(body.get("registro", "")).strip()
+    r = await db.wms_recon_phantom.update_one(
+        {"phantom_id": pid},
+        {"$set": {"registro": registro, "registro_por": user.get("name", user.get("email", "?")),
+                  "registro_at": now_iso(), "updated_at": now_iso()}})
+    if not r.matched_count:
+        raise HTTPException(404, "Fantasma no encontrado")
+    return {"ok": True, "phantom_id": pid}
+
+
+@router.post("/recon/phantom/atender")
+async def recon_phantom_atender(request: Request):
+    """Conciliación: marca un fantasma como atendido (el conteo ya se hizo y la
+    corrección quedó registrada). No borra: deja rastro, como las incidencias.
+    body: { phantom_id, registro? }"""
+    user = await require_supersu(request)
+    body = await request.json()
+    pid = str(body.get("phantom_id", "")).strip()
+    upd = {"status": "atendida", "atendida_por": user.get("name", user.get("email", "?")),
+           "atendida_at": now_iso(), "updated_at": now_iso()}
+    registro = str(body.get("registro", "") or "").strip()
+    if registro:
+        upd["registro"] = registro
+        upd["registro_por"] = upd["atendida_por"]
+        upd["registro_at"] = upd["atendida_at"]
+    r = await db.wms_recon_phantom.update_one({"phantom_id": pid}, {"$set": upd})
+    if not r.matched_count:
+        raise HTTPException(404, "Fantasma no encontrado")
+    await log_movement(user, "phantom_atendida", {"phantom_id": pid})
+    return {"ok": True, "phantom_id": pid}
+
+
 # ==================== LABELS (PDF) ====================
 
 async def _enrich_box_for_label(box):

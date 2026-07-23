@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
   Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw, Search, X,
+  Ghost, ScanSearch, Save,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import { fetcher, poster } from "./lib";
 
 const TABS = [
   { id: "pending", label: "Por resolver", icon: PackageX },
+  { id: "phantom", label: "Stock fantasma", icon: Ghost },
   { id: "second_count", label: "Segundo conteo", icon: RotateCcw },
   { id: "log", label: "Ubicaciones conciliadas", icon: ListChecks },
   { id: "adjustments", label: "Ajustes de cajas", icon: History },
@@ -21,7 +23,18 @@ const TABS = [
 const ADJ_TYPE_LABELS = {
   lpn_recon_restore: "Restauración de cajas LPN",
   second_count_start: "Segundo conteo — ubicaciones liberadas",
+  phantom_scan: "Escaneo de stock fantasma",
+  recon_creadas_folded: "Cajas creadas en conciliación — a identificación",
 };
+
+// Tipos de stock fantasma (ver services/phantom_scan.py). El delta es siempre
+// "unidades en duda": lo que el papel afirma y el piso quizá no respalda.
+const PHANTOM_TIPOS = {
+  saldo_sin_cajas: { label: "Saldo sin cajas", chip: "bg-red-500/15 text-red-300 border-red-500/30" },
+  cajas_de_papel: { label: "Cajas de papel", chip: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+  sin_identidad: { label: "Sin identidad", chip: "bg-violet-500/15 text-violet-300 border-violet-500/30" },
+};
+const PHANTOM_MAX_ROWS = 500;
 
 const fmt = (iso) => {
   if (!iso) return "-";
@@ -37,6 +50,10 @@ export const ReconciliationModule = () => {
   const [log, setLog] = useState(null);
   const [lpn, setLpn] = useState(null);
   const [adj, setAdj] = useState(null);
+  const [phantom, setPhantom] = useState(null);
+  const [phantomTipo, setPhantomTipo] = useState(null);   // filtro por tipo (chip)
+  const [phantomDrafts, setPhantomDrafts] = useState({}); // registros editados sin guardar
+  const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [locationSearch, setLocationSearch] = useState("");
 
@@ -67,12 +84,60 @@ export const ReconciliationModule = () => {
     finally { setLoading(false); }
   }, []);
 
+  const loadPhantom = useCallback(async () => {
+    setLoading(true);
+    try { setPhantom(await fetcher("/recon/phantom")); }
+    catch { toast.error("Error al cargar stock fantasma"); }
+    finally { setLoading(false); }
+  }, []);
+
   useEffect(() => {
     if ((tab === "pending" || tab === "second_count") && !pending) loadPending();
     if ((tab === "log" || tab === "second_count") && !log) loadLog();
     if (tab === "lpn" && !lpn) loadLpn();
     if ((tab === "adjustments" || tab === "second_count") && !adj) loadAdj();
-  }, [tab, pending, log, lpn, adj, loadPending, loadLog, loadLpn, loadAdj]);
+    if (tab === "phantom" && !phantom) loadPhantom();
+  }, [tab, pending, log, lpn, adj, phantom, loadPending, loadLog, loadLpn, loadAdj, loadPhantom]);
+
+  const runPhantomScan = async () => {
+    if (!window.confirm("¿Escanear toda la base (cajas vs renglones) y refrescar la cola de stock fantasma?\n\nLos registros escritos se conservan; lo que ya cuadró se cierra solo.")) return;
+    setScanning(true);
+    try {
+      const res = await poster("/recon/phantom/scan", {});
+      if (res.ok) {
+        const d = await res.json();
+        toast.success(`${d.count} fantasmas (${d.nuevos} nuevos, ${d.resueltos} resueltos solos)`);
+        loadPhantom(); setAdj(null);
+      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || "Error"); }
+    } catch { toast.error("Error de conexión"); }
+    finally { setScanning(false); }
+  };
+
+  const savePhantomRegistro = async (item) => {
+    const registro = (phantomDrafts[item.phantom_id] ?? "").trim();
+    try {
+      const res = await poster("/recon/phantom/registro", { phantom_id: item.phantom_id, registro });
+      if (res.ok) {
+        toast.success("Registro guardado");
+        setPhantom(p => p && { ...p, items: p.items.map(x => x.phantom_id === item.phantom_id ? { ...x, registro } : x) });
+        setPhantomDrafts(d => { const n = { ...d }; delete n[item.phantom_id]; return n; });
+      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || "Error"); }
+    } catch { toast.error("Error de conexión"); }
+  };
+
+  const atenderPhantom = async (item) => {
+    if (!window.confirm(`¿Marcar como atendido el fantasma de ${item.location}?\n\nHazlo solo si el conteo físico ya se hizo y la corrección quedó registrada.`)) return;
+    try {
+      const res = await poster("/recon/phantom/atender", {
+        phantom_id: item.phantom_id,
+        registro: (phantomDrafts[item.phantom_id] ?? item.registro ?? "").trim(),
+      });
+      if (res.ok) {
+        toast.success(`${item.location} atendida`);
+        setPhantom(p => p && { ...p, items: p.items.filter(x => x.phantom_id !== item.phantom_id) });
+      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || "Error"); }
+    } catch { toast.error("Error de conexión"); }
+  };
 
   // Ubicaciones con cajas faltantes agrupadas — candidatas a segundo conteo,
   // con su estado actual (bloqueada = aun conciliada, liberada = lista para recontar)
@@ -162,10 +227,23 @@ export const ReconciliationModule = () => {
     setExporting(true);
     try {
       // Trae datos frescos para que el export sea completo, sin importar la pestaña.
-      const [pen, lg, lp] = await Promise.all([
+      const [pen, lg, lp, ph] = await Promise.all([
         fetcher("/recon/pending"), fetcher("/recon/log"), fetcher("/recon/lpn-locations"),
+        fetcher("/recon/phantom").catch(() => ({ items: [] })),
       ]);
       const wb = XLSX.utils.book_new();
+
+      // Stock fantasma primero: es la lista de caminata.
+      const fantasmas = (ph.items || []).map(i => ({
+        Ubicacion: i.location, Tipo: PHANTOM_TIPOS[i.tipo]?.label || i.tipo,
+        Transito: i.transito ? "SI" : "", Style: i.style, Color: i.color, Talla: i.size,
+        Lote: [i.lote_coo, i.lote_fabric].filter(Boolean).join(" · "),
+        "Unid. renglon": i.units_renglon, "Unid. cajas": i.units_cajas, Cajas: i.cajas,
+        "En duda": i.delta, Registro: i.registro || "",
+        "Cajas (muestra)": (i.box_ids || []).join(", "),
+        "Conteo fisico": "", "Contado por": "", Fecha: "",
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fantasmas.length ? fantasmas : [{}]), "Stock fantasma");
 
       const conciliadas = (lg.locations || []).map(l => ({
         Ubicacion: l.location, "Conciliada por": l.reconciled_by_name || "",
@@ -250,6 +328,7 @@ export const ReconciliationModule = () => {
         </button>
         <button onClick={() => {
             if (tab === "pending") loadPending();
+            else if (tab === "phantom") loadPhantom();
             else if (tab === "second_count") { loadPending(); loadLog(); }
             else if (tab === "log") loadLog();
             else if (tab === "adjustments") loadAdj();
@@ -264,6 +343,7 @@ export const ReconciliationModule = () => {
         {TABS.map(t => {
           const Icon = t.icon;
           const badge = t.id === "pending" && pending ? (pending.faltantes_count + pending.creadas_count)
+            : t.id === "phantom" && phantom ? phantom.count
             : t.id === "second_count" && pending ? lockedCount
             : t.id === "log" && log ? log.count
             : t.id === "adjustments" && adj ? adj.count
@@ -358,6 +438,128 @@ export const ReconciliationModule = () => {
             </div>
           </section>
         </div>
+      )}
+
+      {/* ── Stock fantasma ── */}
+      {tab === "phantom" && (
+        loading && !phantom ? <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        : phantom && (() => {
+          const filtered = phantom.items
+            .filter(i => !phantomTipo || i.tipo === phantomTipo)
+            .filter(i => !searchQ || i.location.toUpperCase().includes(searchQ));
+          const shown = filtered.slice(0, PHANTOM_MAX_ROWS);
+          return (
+          <div className="space-y-4">
+            <div className="border border-violet-500/30 rounded-xl overflow-hidden">
+              <div className="px-3 py-2 bg-violet-500/10 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 text-violet-300 text-[11px] font-black uppercase tracking-widest">
+                  <Ghost className="w-4 h-4" />
+                  {filtered.length}{(searchQ || phantomTipo) ? ` de ${phantom.count}` : ""} fantasmas pendientes
+                  {phantom.last_scan && <span className="text-muted-foreground font-normal normal-case">· último escaneo {fmt(phantom.last_scan)}</span>}
+                </div>
+                <button onClick={runPhantomScan} disabled={scanning}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 border border-violet-500/30 disabled:opacity-40 text-[11px] font-black uppercase tracking-wider">
+                  {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
+                  Escanear ahora
+                </button>
+              </div>
+              <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
+                Papel que el piso quizá no respalda. Cada fila es una tarea de caminata: cuenta físico, anota lo
+                encontrado en <b className="text-foreground">Registro</b> y márcala atendida cuando la corrección quede hecha.
+                Nada se corrige solo desde aquí — primero el conteo, después la baja/alta con respaldo.
+              </div>
+              <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border">
+                {Object.entries(PHANTOM_TIPOS).map(([k, cfg]) => {
+                  const r = phantom.resumen?.[k];
+                  const active = phantomTipo === k;
+                  return (
+                    <button key={k} onClick={() => setPhantomTipo(active ? null : k)}
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-all ${cfg.chip} ${active ? "ring-2 ring-primary/60" : "opacity-80 hover:opacity-100"}`}>
+                      {cfg.label}: {r?.n ?? 0} · {(r?.unidades ?? 0).toLocaleString()}u en duda
+                    </button>
+                  );
+                })}
+                {phantomTipo && (
+                  <button onClick={() => setPhantomTipo(null)} className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground">
+                    <X className="w-3 h-3 inline" /> quitar filtro
+                  </button>
+                )}
+              </div>
+              <div className="overflow-x-auto max-h-[34rem] overflow-y-auto">
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-card"><tr>
+                    <Th>Ubicación</Th><Th>Tipo</Th><Th>Material</Th><Th>Lote</Th>
+                    <Th right>Renglón</Th><Th right>Cajas</Th><Th right>En duda</Th>
+                    <Th>Registro</Th><Th right>Acción</Th>
+                  </tr></thead>
+                  <tbody>
+                    {shown.map((it) => {
+                      const cfg = PHANTOM_TIPOS[it.tipo] || { label: it.tipo, chip: "bg-secondary text-foreground border-border" };
+                      const draft = phantomDrafts[it.phantom_id];
+                      const dirty = draft !== undefined && draft !== (it.registro || "");
+                      return (
+                        <tr key={it.phantom_id} className="border-t border-border/40 text-xs align-top">
+                          <td className="p-2 font-mono font-bold whitespace-nowrap">
+                            <span className={searchQ && it.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>{it.location}</span>
+                            {it.transito && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 text-[9px] font-black uppercase">tránsito</span>}
+                          </td>
+                          <td className="p-2 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full border text-[10px] font-black uppercase ${cfg.chip}`}>{cfg.label}</span></td>
+                          <td className="p-2">
+                            {it.tipo === "sin_identidad"
+                              ? <span className="text-muted-foreground italic">{it.cajas} caja{it.cajas === 1 ? "" : "s"} sin identificar</span>
+                              : <>{it.style} <span className="text-muted-foreground">{it.color} / {it.size}</span></>}
+                          </td>
+                          <td className="p-2 text-muted-foreground">{[it.lote_coo, it.lote_fabric].filter(Boolean).join(" · ") || "—"}</td>
+                          <td className="p-2 text-right">{(it.units_renglon ?? 0).toLocaleString()}</td>
+                          <td className="p-2 text-right">{(it.units_cajas ?? 0).toLocaleString()} <span className="text-muted-foreground">/{it.cajas}c</span></td>
+                          <td className="p-2 text-right font-bold text-red-400">{(it.delta ?? 0).toLocaleString()}</td>
+                          <td className="p-2 min-w-[14rem]">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={draft ?? it.registro ?? ""}
+                                onChange={e => setPhantomDrafts(d => ({ ...d, [it.phantom_id]: e.target.value }))}
+                                onKeyDown={e => { if (e.key === "Enter" && dirty) savePhantomRegistro(it); }}
+                                placeholder="¿Qué encontró el conteo?"
+                                className="w-full px-2 py-1 text-xs rounded-lg bg-secondary/30 border border-border/50 focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40"
+                              />
+                              {dirty && (
+                                <button onClick={() => savePhantomRegistro(it)} title="Guardar registro"
+                                  className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 shrink-0">
+                                  <Save className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                            {it.registro_por && <div className="mt-0.5 text-[10px] text-muted-foreground">{it.registro_por} · {fmt(it.registro_at)}</div>}
+                          </td>
+                          <td className="p-2 text-right">
+                            <button onClick={() => atenderPhantom(it)} title="Marcar atendida (conteo hecho y corrección registrada)"
+                              className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" /> <span className="text-[10px] font-black uppercase">Atender</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filtered.length === 0 && (
+                      <tr><td colSpan={9} className="p-4 text-xs text-muted-foreground">
+                        {phantom.items.length === 0
+                          ? "La cola está vacía. Corre \"Escanear ahora\" para comparar toda la base (cajas vs renglones)."
+                          : `Sin coincidencias${searchQ ? ` con "${locationSearch}"` : ""}${phantomTipo ? ` del tipo ${PHANTOM_TIPOS[phantomTipo]?.label}` : ""}.`}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {filtered.length > PHANTOM_MAX_ROWS && (
+                <div className="px-3 py-2 text-[11px] text-muted-foreground border-t border-border">
+                  Mostrando los primeros {PHANTOM_MAX_ROWS.toLocaleString()} de {filtered.length.toLocaleString()} (ordenados por unidades en duda) — usa el buscador o los filtros de tipo, o exporta a Excel para la lista completa.
+                </div>
+              )}
+            </div>
+          </div>
+          );
+        })()
       )}
 
       {/* ── Segundo conteo ── */}
