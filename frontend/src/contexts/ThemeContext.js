@@ -4,8 +4,10 @@ const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
-    // Support both keys for backwards compatibility
-    return localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'dark';
+    // Support both keys for backwards compatibility.
+    // Default CLARO (rediseño minimalista 2026-07): quien ya eligió tema
+    // conserva su preferencia guardada; solo cambia el arranque en frío.
+    return localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'light';
   });
 
   useEffect(() => {

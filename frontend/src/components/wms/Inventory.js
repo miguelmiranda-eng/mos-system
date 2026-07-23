@@ -4,6 +4,7 @@ import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, Sc
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError, ALL_SIZES } from "./lib";
+import { ModuleHeader, StatCard, SoftAlert, Btn, cls, tableCls } from "./ui";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
@@ -45,7 +46,7 @@ const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, 
         </PopoverTrigger>
         <PopoverContent align="start" className="w-64 p-2">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+            <span className="text-xs font-medium text-muted-foreground">{label}</span>
             {active && (
               <button onClick={() => onChange('')} className="text-[10px] font-bold text-destructive hover:underline uppercase">
                 Limpiar
@@ -659,7 +660,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           <ChevronRight className={`w-3.5 h-3.5 transition-transform ${expandedBoxes === inv.inventory_id ? 'rotate-90 text-primary' : ''}`} />
         </button>
         <button onClick={() => openBoxes(inv)} title="Ver LPNs en ventana"
-          className="px-2 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 transition-all font-mono font-bold cursor-pointer">
+          className="px-2 py-0.5 rounded-md border border-border bg-card hover:bg-muted transition-colors font-mono font-medium cursor-pointer underline-offset-2 hover:underline">
           {inv.total_boxes.toLocaleString()}
         </button>
       </div>
@@ -671,7 +672,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   // The inline sub-row listing each box (LPN) under an expanded inventory line.
   const renderBoxesSubRow = (inv) => (
     expandedBoxes === inv.inventory_id ? (
-      <tr className="bg-secondary/10 border-b border-border/10">
+      <tr className="bg-muted/30 border-b border-border/60">
         <td colSpan="14" className="px-6 py-2.5">
           {boxesRowLoading === inv.inventory_id ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
@@ -679,16 +680,15 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
             </div>
           ) : (boxesCache[inv.inventory_id]?.length ? (
             <div className="space-y-1.5">
-              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+              <div className="text-xs font-medium text-muted-foreground">
                 {boxesCache[inv.inventory_id].length} caja(s) en {inv.inv_location || inv.location || '—'}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {boxesCache[inv.inventory_id].map((b, i) => (
-                  <span key={b.box_id || i} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-card border border-border/40 text-[11px]"
+                  <span key={b.box_id || i} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-card border border-border text-xs"
                     title={`${b.state || b.status || ''}`}>
-                    <Package className="w-3 h-3 text-primary/70" />
-                    <span className="font-mono font-bold text-primary">{b.box_id || '—'}</span>
-                    <span className="font-mono text-emerald-400 font-black">{(b.units || b.qty || 0).toLocaleString()}u</span>
+                    <span className="font-mono">{b.box_id || '—'}</span>
+                    <span className="font-mono font-semibold">{(b.units || b.qty || 0).toLocaleString()}u</span>
                   </span>
                 ))}
               </div>
@@ -703,11 +703,10 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          {t('wms_stock_monitor')}
-        </div>
+      <ModuleHeader
+        title="Inventory"
+        subtitle={t('wms_stock_monitor')}
+        right={
         <div className="flex items-center gap-2">
           {/* RETIRADOS 2026-07-22 (pedido del usuario): "Agregar Manual" e
               "Importar Excel". Ambos creaban renglones de inventario SIN cajas
@@ -717,97 +716,87 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               por Recepcion, que SI genera cajas; nunca por renglon suelto.
               Handlers y modales quedan por si se rehabilitan con candado
               supersu. */}
-          <label className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
+          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
             <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk" />
             Excluir HOLD
           </label>
-          <button onClick={exportExcel} className="p-2 bg-secondary/80 text-foreground border border-border/40 rounded-xl hover:bg-secondary flex items-center gap-1.5 transition-all" data-testid="export-inv-btn">
-            <Download className="w-4 h-4 text-primary" />
-          </button>
+          <Btn onClick={exportExcel} data-testid="export-inv-btn">
+            <Download className="w-4 h-4" /> Export
+          </Btn>
         </div>
-      </div>
+        }
+      />
 
       {/* Low Stock Alert */}
       {summary.low_stock_items > 0 && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-center gap-4 animate-in fade-in slide-in-from-top-2 duration-500 shadow-lg shadow-red-500/5">
-          <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
-            <Tag className="w-5 h-5 text-red-400" />
-          </div>
-          <div className="flex-1">
-            <div className="text-sm font-black uppercase tracking-wider text-red-300 leading-tight">{t('wms_critical_alert')}</div>
-            <div className="text-xs text-red-400/80 font-medium">{t('wms_critical_msg', { count: summary.low_stock_items })}</div>
-          </div>
-          <button onClick={() => { setSearch(''); setShowFilters(true); setCategoryFilter('LOW_STOCK'); }} className="px-3 py-1 bg-red-500 text-white text-[10px] font-black uppercase rounded-lg hover:bg-red-600 transition-colors">
-            {t('wms_view_now')}
-          </button>
-        </div>
+        <SoftAlert
+          tone="warning"
+          title={t('wms_critical_alert')}
+          action={
+            <Btn onClick={() => { setSearch(''); setShowFilters(true); setCategoryFilter('LOW_STOCK'); }}>
+              {t('wms_view_now')}
+            </Btn>
+          }
+        >
+          {t('wms_critical_msg', { count: summary.low_stock_items })}
+        </SoftAlert>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
-          { key: 'wms_total_skus', value: summary.total_skus || 0, color: 'text-purple-400', bg: 'bg-purple-500/10', icon: Tag },
-          { key: 'wms_on_hand', value: summary.total_on_hand || 0, color: 'text-blue-400', bg: 'bg-blue-500/10', icon: Package },
-          { key: 'wms_allocated', value: summary.total_allocated || 0, color: 'text-orange-400', bg: 'bg-orange-500/10', icon: Link2 },
-          { key: 'wms_available', value: summary.total_available || 0, color: 'text-emerald-400', bg: 'bg-emerald-500/10', icon: CheckCircle },
-          { key: 'wms_locations', value: summary.total_locations || 0, color: 'text-cyan-400', bg: 'bg-cyan-500/10', icon: MapPin },
-        ].map(s => {
-          const Icon = s.icon;
-          return (
-            <div key={s.key} className="border border-border/40 rounded-3xl p-4 bg-card/60 backdrop-blur-sm shadow-xl flex flex-col items-center group hover:scale-[1.02] transition-all">
-              <div className={`w-10 h-10 rounded-2xl ${s.bg} flex items-center justify-center mb-3 group-hover:rotate-12 transition-transform`}>
-                <Icon className={`w-5 h-5 ${s.color}`} />
-              </div>
-              <div className={`text-2xl font-black tabular-nums tracking-tighter ${s.color}`}>{(s.value || 0).toLocaleString()}</div>
-              <div className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mt-1 opacity-60">{t(s.key)}</div>
-            </div>
-          );
-        })}
+          { key: 'wms_total_skus', value: summary.total_skus || 0 },
+          { key: 'wms_on_hand', value: summary.total_on_hand || 0 },
+          { key: 'wms_allocated', value: summary.total_allocated || 0 },
+          { key: 'wms_available', value: summary.total_available || 0 },
+          { key: 'wms_locations', value: summary.total_locations || 0 },
+        ].map(s => (
+          <StatCard key={s.key} label={t(s.key)} value={(s.value || 0).toLocaleString()} />
+        ))}
       </div>
 
-      <div className="flex gap-2 flex-wrap items-center bg-card/40 p-2 rounded-2xl border border-border/20 backdrop-blur-md">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground opacity-50" />
+      <div className="flex gap-2 flex-wrap items-center">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
           <input
             placeholder={t('wms_search_inv')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 bg-background/50 border border-border/40 rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/20 transition-all font-medium"
+            className={`${cls.input} pl-9`}
             data-testid="inv-search"
           />
         </div>
-        <button
+        <div className="flex-1" />
+        <Btn
+          variant={showFilters || customerFilter || categoryFilter ? "primary" : "default"}
           onClick={() => setShowFilters(!showFilters)}
-          className={`px-4 py-2.5 border border-border/40 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center gap-2 transition-all ${showFilters || customerFilter || categoryFilter ? 'bg-primary text-black shadow-[0_0_10px_rgba(255,193,7,0.4)]' : 'bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
           data-testid="inv-toggle-filters"
         >
-          <ScanLine className="w-4 h-4" />
           {t('filters')}
           {(customerFilter || categoryFilter) && (
-            <span className="bg-black/10 px-2 py-0.5 rounded-lg text-[10px]">
+            <span className="bg-black/10 px-1.5 py-0.5 rounded text-xs">
               {[customerFilter, categoryFilter].filter(Boolean).length}
             </span>
           )}
-        </button>
-        <button
+        </Btn>
+        <Btn
+          variant={groupByCustomer ? "primary" : "default"}
           onClick={() => setGroupByCustomer(!groupByCustomer)}
-          className={`px-4 py-2.5 border border-border/40 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center gap-2 transition-all ${groupByCustomer ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
           data-testid="inv-toggle-group"
         >
-          <Package className="w-4 h-4" />
           {groupByCustomer ? t('wms_ungroup') || 'Desagrupar' : t('wms_group_cust') || 'Agrupar Cliente'}
-        </button>
+        </Btn>
       </div>
       {showFilters && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 border border-border rounded-lg bg-secondary/30" data-testid="inv-filters-panel">
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('client')}</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">{t('client')}</label>
             <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-filter-customer">
               <option value="">{t('all')}</option>
               {filters.customers.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('category')}</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">{t('category')}</label>
             <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-filter-category">
               <option value="">{t('all')}</option>
               {filters.categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -818,80 +807,74 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           </div>
         </div>
       )}
-      <div className="border border-border/20 rounded-2xl bg-card/40 backdrop-blur-sm overflow-hidden shadow-2xl">
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
         <div className="overflow-auto max-h-[600px] custom-scrollbar">
           <table className="w-full text-sm">
-            <thead className="bg-secondary/80 backdrop-blur-md sticky top-0 z-10 border-b border-border/40">
+            <thead className="bg-muted/50 sticky top-0 z-10 border-b border-border">
               <tr>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={facets.customers.length ? facets.customers : filters.customers} />
                 </th>
                 {/* Style y SKU son dos identidades distintas (negocio vs. etiqueta
                     física): columnas separadas. El filtro busca en ambos campos. */}
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label="Style" value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={facets.styles.length ? facets.styles : filters.styles} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">SKU</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">SKU</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label="Color" value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" options={facets.colors} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label="Talla" value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder="Talla…" options={facetSizes} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder="Descripción…" />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder="Ubicación…" mono options={facets.locations} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={facets.countries.length ? facets.countries : filters.countries} />
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder="ej. 100% cotton" options={facets.fabrics.length ? facets.fabrics : filters.fabrics} />
                 </th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_boxes')}</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_on_hand')}</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_allocated')}</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_available')}</th>
-                <th className="p-3 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Historial</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_boxes')}</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_on_hand')}</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_allocated')}</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_available')}</th>
+                <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground whitespace-nowrap">Historial</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/10">
               {groupByCustomer ? (
                 groupedInventory.map(([customer, items]) => (
                   <Fragment key={customer}>
-                    <tr className="bg-secondary/30">
-                      <td colSpan="14" className="p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,193,7,0.5)]" />
-                          <span className="text-xs font-black uppercase tracking-widest text-foreground">{customer}</span>
-                          <span className="text-[10px] font-bold text-muted-foreground ml-2">({items.length} SKUs)</span>
-                        </div>
+                    <tr className="bg-muted/40 border-b border-border">
+                      <td colSpan="14" className="px-3 py-2">
+                        <span className="text-xs font-semibold">{customer}</span>
+                        <span className="text-xs text-muted-foreground ml-2">({items.length} SKUs)</span>
                       </td>
                     </tr>
                     {items.map((inv, i) => (
                       <Fragment key={inv.inventory_id || i}>
-                      <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
-                        <td className="p-4 text-[11px] font-bold text-muted-foreground/80 opacity-40">{inv.customer}</td>
-                        <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || '-'}</td>
-                        <td className="p-4 font-mono text-[11px] text-muted-foreground uppercase truncate max-w-[170px]" title={inv.sku}>{inv.sku || '-'}</td>
-                        <td className="p-4 text-[11px] font-bold text-foreground">{inv.color || '-'}</td>
-                        <td className="p-4 text-[11px] font-bold text-primary">{inv.size || '-'}</td>
-                        <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
-                        <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
-                          {inv.inv_location || '-'}
-                        </td>
-                        <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
-                        <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
-                        <td className="p-4 text-right font-mono font-bold">{renderCajasCell(inv)}</td>
-                        <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
-                        <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
-                        <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
+                      <tr className="group border-b border-border/60 hover:bg-muted/40 transition-colors">
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground/60">{inv.customer}</td>
+                        <td className="px-3 py-2.5 font-mono font-medium text-foreground text-xs">{inv.style || '-'}</td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground truncate max-w-[170px]" title={inv.sku}>{inv.sku || '-'}</td>
+                        <td className="px-3 py-2.5 text-xs">{inv.color || '-'}</td>
+                        <td className="px-3 py-2.5 text-xs">{inv.size || '-'}</td>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
+                        <td className="px-3 py-2.5 font-mono text-xs">{inv.inv_location || '-'}</td>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.country_of_origin || '-'}</td>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{renderCajasCell(inv)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-medium">{(inv.on_hand || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{(inv.allocated || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
                           {(inv.available || 0).toLocaleString()}
                         </td>
-                        <td className="p-4 text-center">
+                        <td className="px-3 py-2.5 text-center">
                           <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
                             <History className="w-3.5 h-3.5" />
                           </button>
@@ -905,26 +888,23 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               ) : (
                 inventory.map((inv, i) => (
                   <Fragment key={inv.inventory_id || i}>
-                  <tr className="group border-b border-border/5 hover:bg-primary/5 transition-colors">
-                    <td className="p-4 text-[11px] font-bold text-muted-foreground/80">{inv.customer}</td>
-                    <td className="p-4 font-mono font-black text-primary text-xs uppercase group-hover:scale-105 transition-transform origin-left">{inv.style || '-'}</td>
-                        <td className="p-4 font-mono text-[11px] text-muted-foreground uppercase truncate max-w-[170px]" title={inv.sku}>{inv.sku || '-'}</td>
-                    <td className="p-4 text-[11px] font-bold text-foreground">{inv.color || '-'}</td>
-                    <td className="p-4 text-[11px] font-bold text-primary">{inv.size || '-'}</td>
-                    <td className="p-4 text-[11px] font-medium text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
-                    <td className="p-4 font-mono text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
-                      {inv.inv_location || '-'}
-                    </td>
-                    <td className="p-4 text-[11px] font-mono text-muted-foreground/80 uppercase">{inv.country_of_origin || '-'}</td>
-                    <td className="p-4 text-[11px] text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
-                    <td className="p-4 text-right font-mono font-bold">{renderCajasCell(inv)}</td>
-                    <td className="p-4 text-right font-mono font-black text-blue-400">{(inv.on_hand || 0).toLocaleString()}</td>
-                    <td className="p-4 text-right font-mono font-black text-orange-400">{(inv.allocated || 0).toLocaleString()}</td>
-                    <td className="p-4 text-right font-mono font-black text-emerald-400 bg-emerald-500/5">
+                  <tr className="group border-b border-border/60 hover:bg-muted/40 transition-colors">
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.customer}</td>
+                    <td className="px-3 py-2.5 font-mono font-medium text-foreground text-xs">{inv.style || '-'}</td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground truncate max-w-[170px]" title={inv.sku}>{inv.sku || '-'}</td>
+                    <td className="px-3 py-2.5 text-xs">{inv.color || '-'}</td>
+                    <td className="px-3 py-2.5 text-xs">{inv.size || '-'}</td>
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground truncate max-w-[150px]" title={inv.description}>{inv.description}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">{inv.inv_location || '-'}</td>
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv.country_of_origin || '-'}</td>
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground truncate max-w-[180px]" title={inv.fabric_content}>{inv.fabric_content || '-'}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{renderCajasCell(inv)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium">{(inv.on_hand || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{(inv.allocated || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
                       {(inv.available || 0).toLocaleString()}
                     </td>
-                    <td className="p-4 text-center">
+                    <td className="px-3 py-2.5 text-center">
                       <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
                         <History className="w-3.5 h-3.5" />
                       </button>
@@ -939,20 +919,18 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           {inventory.length === 0 && !loadingMore && (() => {
             if (!hasAnyFilter) {
               return (
-                <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-                  <Search className="w-16 h-16 mb-4 stroke-[1px] opacity-40" />
-                  <p className="font-bold uppercase tracking-widest text-sm">Busca un producto para empezar</p>
-                  <p className="text-xs mt-2 opacity-60 max-w-md text-center">
-                    Para no cargar miles de registros de un golpe, escribe un Style/SKU arriba o aplica un filtro de Cliente/Categoría.
+                <div className="flex flex-col items-center justify-center py-20">
+                  <p className="text-sm font-semibold text-foreground/80">Busca un producto para empezar</p>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-md text-center">
+                    Escribe un Style o SKU para consultar el inventario.
                   </p>
                 </div>
               );
             }
             return (
-              <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
-                <BarChart3 className="w-16 h-16 mb-4 stroke-[1px]" />
-                <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_inv')}</p>
-                <p className="text-xs mt-1">{t('wms_import_hint')}</p>
+              <div className="flex flex-col items-center justify-center py-20">
+                <p className="text-sm font-semibold text-foreground/80">{t('wms_no_inv')}</p>
+                <p className="text-sm text-muted-foreground mt-1">{t('wms_import_hint')}</p>
               </div>
             );
           })()}
@@ -960,19 +938,19 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       </div>
       <div className="flex items-center justify-end gap-3 mt-2">
         {loadingMore && totalRows > 0 && (
-          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-500">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="w-3 h-3 animate-spin" />
             Cargando {inventory.length.toLocaleString()} / {totalRows.toLocaleString()}
-            <div className="w-24 h-1 bg-secondary/60 rounded-full overflow-hidden">
-              <div className="h-full bg-emerald-500 transition-all" style={{ width: `${totalRows > 0 ? (inventory.length / totalRows) * 100 : 0}%` }} />
+            <div className="w-24 h-1 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary transition-all" style={{ width: `${totalRows > 0 ? (inventory.length / totalRows) * 100 : 0}%` }} />
             </div>
           </div>
         )}
-        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">
+        <div className="text-xs text-muted-foreground/70">
           {t('wms_showing_records', { count: inventory.length.toLocaleString() })}
         </div>
         {capped && (
-          <div className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-500">
+          <div className="text-xs text-amber-600 dark:text-amber-400">
             Mostrando los primeros {MAX_GRID_ROWS.toLocaleString()} de {totalRows.toLocaleString()} — refina la búsqueda o usa Exportar para ver todo
           </div>
         )}
@@ -981,21 +959,16 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       {/* Boxes (LPN) modal — opened from the "Cajas" cell in the inventory table */}
       {boxesFor && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Package className="w-5 h-5 text-primary" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-black uppercase tracking-widest text-muted-foreground">Cajas / LPNs</div>
-                  <div className="font-bold text-foreground truncate">{boxesFor.label}</div>
-                  {boxesFor.location && (
-                    <div className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 mt-0.5">
-                      <MapPin className="w-3 h-3" /> {boxesFor.location}
-                    </div>
-                  )}
-                </div>
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-muted-foreground">Cajas / LPNs</div>
+                <div className="font-semibold text-foreground truncate">{boxesFor.label}</div>
+                {boxesFor.location && (
+                  <div className="text-xs font-mono text-muted-foreground flex items-center gap-1 mt-0.5">
+                    <MapPin className="w-3 h-3" /> {boxesFor.location}
+                  </div>
+                )}
               </div>
               <button onClick={() => setBoxesFor(null)} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
                 <X className="w-5 h-5 text-muted-foreground" />
@@ -1005,38 +978,37 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               {boxesLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  <p className="text-xs uppercase tracking-widest font-bold text-muted-foreground">Cargando cajas…</p>
+                  <p className="text-sm text-muted-foreground">Cargando cajas…</p>
                 </div>
               ) : boxesList.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Package className="w-12 h-12 mx-auto opacity-30 mb-2" />
-                  <p className="text-sm font-bold uppercase tracking-widest">Sin cajas registradas</p>
+                <div className="text-center py-12">
+                  <p className="text-sm font-semibold text-foreground/80">Sin cajas registradas</p>
                 </div>
               ) : (
                 <>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">
+                  <div className="text-xs font-medium text-muted-foreground mb-2">
                     {boxesList.length} {boxesList.length === 1 ? 'caja' : 'cajas'} · {boxesList.reduce((s, b) => s + (Number(b.units) || 0), 0).toLocaleString()} unidades
                   </div>
                   <table className="w-full text-sm">
-                    <thead className="bg-secondary/40 sticky top-0">
+                    <thead className="bg-muted/50 sticky top-0 border-b border-border">
                       <tr>
-                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">LPN</th>
-                        <th className="p-2 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
-                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
-                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
-                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Transferido</th>
-                        <th className="p-2 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Por</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">LPN</th>
+                        <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Ubicación</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Estado</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Transferido</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Por</th>
                       </tr>
                     </thead>
                     <tbody>
                       {boxesList.map((b, i) => (
-                        <tr key={b.box_id || i} className="border-b border-border/10 hover:bg-primary/5">
-                          <td className="p-2 font-mono text-[11px] font-bold text-primary">{b.box_id || '—'}</td>
-                          <td className="p-2 text-right font-mono font-black text-emerald-400">{(b.units || b.qty || 0).toLocaleString()}</td>
-                          <td className="p-2 font-mono text-[11px] text-emerald-400">{b.location || '—'}</td>
-                          <td className="p-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{b.state || b.status || '—'}</td>
-                          <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{b.last_transferred_at ? new Date(b.last_transferred_at).toLocaleString() : '—'}</td>
-                          <td className="p-2 text-[10px] font-bold text-muted-foreground">{b.last_transferred_by || '—'}</td>
+                        <tr key={b.box_id || i} className="border-b border-border/60 hover:bg-muted/40">
+                          <td className="p-2 font-mono text-xs font-medium">{b.box_id || '—'}</td>
+                          <td className="p-2 text-right tabular-nums font-semibold">{(b.units || b.qty || 0).toLocaleString()}</td>
+                          <td className="p-2 font-mono text-xs">{b.location || '—'}</td>
+                          <td className="p-2 text-xs text-muted-foreground">{b.state || b.status || '—'}</td>
+                          <td className="p-2 text-xs text-muted-foreground whitespace-nowrap">{b.last_transferred_at ? new Date(b.last_transferred_at).toLocaleString() : '—'}</td>
+                          <td className="p-2 text-xs text-muted-foreground">{b.last_transferred_by || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1051,21 +1023,16 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       {/* History Modal */}
       {historyFor && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-                  <History className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm truncate">Historial de movimientos</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold truncate">
-                    <span className="text-primary font-mono">{historyFor.style}</span>
-                    {historyFor.color && <> · {historyFor.color}</>}
-                    {historyFor.size && <> · {historyFor.size}</>}
-                    {historyData && <> · {historyData.count} movimientos</>}
-                  </p>
-                </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-sm truncate">Historial de movimientos</h3>
+                <p className="text-xs text-muted-foreground truncate">
+                  <span className="font-mono">{historyFor.style}</span>
+                  {historyFor.color && <> · {historyFor.color}</>}
+                  {historyFor.size && <> · {historyFor.size}</>}
+                  {historyData && <> · {historyData.count} movimientos</>}
+                </p>
               </div>
               <button onClick={() => setHistoryFor(null)} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
                 <X className="w-5 h-5" />
@@ -1075,22 +1042,22 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
             <div className="flex-1 overflow-auto custom-scrollbar">
               {historyLoading ? (
                 <div className="flex items-center justify-center py-20">
-                  <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                 </div>
               ) : !historyData?.movements?.length ? (
-                <div className="text-center py-20 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                <div className="text-center py-20 text-sm text-muted-foreground">
                   Sin movimientos registrados para este SKU
                 </div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="bg-secondary/40 sticky top-0">
+                  <thead className="bg-muted/50 sticky top-0 border-b border-border">
                     <tr>
-                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
-                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tipo</th>
-                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Detalles</th>
-                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
-                      <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cantidad</th>
-                      <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Usuario</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Fecha</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Tipo</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Detalles</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Ubicación</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Cantidad</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Usuario</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/10">
@@ -1107,17 +1074,17 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                             {new Date(m.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                           </td>
                           <td className="p-3">
-                            <span className="text-[10px] font-black uppercase bg-secondary/60 px-2 py-1 rounded text-foreground tracking-widest whitespace-nowrap">
+                            <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded-md text-foreground/80 whitespace-nowrap">
                               {m.type?.replace(/_/g, ' ')}
                             </span>
                           </td>
                           <td className="p-3 text-[11px] text-foreground/80 font-mono truncate max-w-[200px]">
                             {d.box_id || d.ticket_id || d.receiving_id || d.count_id || d.order_number || '—'}
                           </td>
-                          <td className="p-3 text-[11px] font-mono text-emerald-400">
+                          <td className="p-3 text-xs font-mono">
                             {d.to || d.location || d.inv_location || '—'}
                           </td>
-                          <td className={`p-3 text-right font-mono font-black tabular-nums ${sign === '-' ? 'text-red-400' : sign === '+' ? 'text-emerald-400' : 'text-foreground'}`}>
+                          <td className={`p-3 text-right font-semibold tabular-nums ${sign === '-' ? 'text-red-600 dark:text-red-400' : sign === '+' ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
                             {qty !== '' ? `${sign}${qty}` : '—'}
                           </td>
                           <td className="p-3 text-[11px] text-muted-foreground truncate max-w-[120px]">{m.user_name || '—'}</td>
