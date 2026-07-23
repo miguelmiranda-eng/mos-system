@@ -10192,59 +10192,6 @@ async def _cc_recover_box(box_id: str) -> Optional[dict]:
     return None
 
 
-async def _cc_add_inventory(sku, color, size, loc, qty, customer, box_id):
-    """Suma qty unidades + 1 caja a la fila de inventario de (sku,color,size,loc),
-    creándola si no existe, y re-enlaza la caja. Espejo del paso 'destino' de
-    _move_box_inventory — usado por el camino 3 (revivir una caja ajustada)."""
-    if qty <= 0:
-        return
-    dst = await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": loc})
-    if dst:
-        dst_id = dst.get("inventory_id") or gen_id("inv")
-        await db.wms_inventory.update_one(
-            {"_id": dst["_id"]},
-            {"$inc": {"units_on_hand": qty, "total_boxes": 1},
-             "$set": {"inventory_id": dst_id, "updated_at": now_iso(), "style": sku}},
-        )
-    else:
-        dst_id = gen_id("inv")
-        await db.wms_inventory.insert_one({
-            "inventory_id": dst_id, "sku": sku, "style": sku,
-            "color": color, "size": size, "location": loc,
-            "units_on_hand": qty, "total_boxes": 1, "units_allocated": 0,
-            "customer": customer or "", "updated_at": now_iso(),
-        })
-    if box_id:
-        await db.wms_boxes.update_one({"box_id": box_id}, {"$set": {"inventory_id": dst_id}})
-
-
-async def _cc_remove_inventory(box, units):
-    """Resta units unidades y 1 caja de la fila de inventario de la caja agotada.
-    Espejo del ajuste a la baja de adjust_box_count — usado por el camino 2. El
-    `box` debe traer sus campos PRE-agotamiento (location/sku/units)."""
-    if units <= 0:
-        return
-    sku = box.get("sku") or box.get("style") or ""
-    color = box.get("color", "")
-    size = box.get("size", "")
-    loc = box.get("location", "")
-    inv = (
-        (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
-        or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": loc})
-    )
-    if not inv:
-        return
-    new_on_hand = max(0, int(inv.get("units_on_hand", 0) or 0) - units)
-    new_boxes = max(0, int(inv.get("total_boxes", 0) or 0) - 1)
-    if new_on_hand == 0 and new_boxes == 0 and int(inv.get("units_allocated", 0) or 0) <= 0:
-        await db.wms_inventory.delete_one({"_id": inv["_id"]})
-    else:
-        await db.wms_inventory.update_one(
-            {"_id": inv["_id"]},
-            {"$set": {"units_on_hand": new_on_hand, "total_boxes": new_boxes, "updated_at": now_iso()}},
-        )
-
-
 async def _cc_bind_candidates(location: str, sku: str = ""):
     """Cajas VIVAS en `location` que todavia no tienen un LPN fisico atado.
 
@@ -10284,11 +10231,14 @@ async def _cc_apply_counted_units(box: dict, new_units: int, user: dict,
         {"$set": {"units": int(new_units), "qty": int(new_units),
                   "updated_at": now_iso(), "updated_by": user.get("user_id")}},
     )
-    await db.wms_inventory.update_one(
-        {"sku": box.get("sku"), "color": box.get("color"),
-         "size": box.get("size"), "location": box.get("location")},
-        {"$inc": {"units_on_hand": delta}, "$set": {"updated_at": now_iso()}},
-    )
+    # LA CAJA MANDA: la caja ya trae sus unidades REALES; el marcador se
+    # reescribe desde las cajas (antes: $inc del delta, aritmética que se
+    # desfasaba si la fila no casaba por llave).
+    await _reproject_material_rows(
+        box.get("style") or "", box.get("sku") or "", box.get("color", ""),
+        box.get("size", ""), box.get("location", ""), user=user,
+        moved_sigs={ledger.row_signature(box)},
+        contexto={"via": "cycle_count", "count_id": count_id})
     await log_movement(user, "cycle_count_units_fix", {
         "box_id": box.get("box_id"), "location": box.get("location"),
         "sku": box.get("sku"), "old_units": cur, "new_units": int(new_units),
@@ -10344,7 +10294,19 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
                           "last_transferred_at": now_iso(),
                           "last_transferred_by": user.get("name", user.get("email", ""))}},
             )
-            await _move_box_inventory(box, cur_loc, loc)
+            # LA CAJA MANDA: la caja ya se movió; los marcadores de origen y
+            # destino se REESCRIBEN desde las cajas (antes: _move_box_inventory,
+            # aritmética — ola 1 de la migración de escritores legados).
+            if cur_loc:
+                await _reproject_material_rows(
+                    box.get("style") or "", box.get("sku") or "", box.get("color", ""),
+                    box.get("size", ""), cur_loc, user=user,
+                    moved_sigs={ledger.row_signature(box)},
+                    contexto={"via": "cycle_count", "count_id": count_id})
+            await _reproject_material_rows(
+                box.get("style") or "", box.get("sku") or "", box.get("color", ""),
+                box.get("size", ""), loc, user=user,
+                contexto={"via": "cycle_count", "count_id": count_id})
             await log_movement(user, "cycle_count_move", {
                 "box_id": bx_id, "from": cur_loc, "to": loc,
                 "sku": box.get("sku") or box.get("style"), "units": units,
@@ -10377,7 +10339,11 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
                 "created_at": now_iso(), "updated_at": now_iso(),
                 "updated_by": user.get("user_id"),
             })
-        await _cc_add_inventory(sku, color, size, loc, restore_units, customer, bx_id)
+        # LA CAJA MANDA: la caja ya quedó viva en `loc`; el marcador se
+        # reescribe desde las cajas (antes: _cc_add_inventory, aritmética).
+        await _reproject_material_rows(
+            sku, sku, color, size, loc, user=user,
+            contexto={"via": "cycle_count", "count_id": count_id})
         await log_movement(user, "cycle_count_restore", {
             "box_id": bx_id, "location": loc,
             "sku": sku, "color": color, "size": size,
@@ -10407,7 +10373,14 @@ async def _cc_resolve_location(count: dict, L: dict, confirmed: set, user: dict)
             {"$set": {"units": 0, "qty": 0, "status": "depleted",
                       "updated_at": now_iso(), "updated_by": user.get("user_id")}},
         )
-        await _cc_remove_inventory(box, units)
+        # LA CAJA MANDA: la caja ya quedó en 0; el marcador se reescribe desde
+        # las cajas que quedan (antes: _cc_remove_inventory, aritmética). Con
+        # moved_sigs, si el lote quedó sin cajas el renglón se ELIMINA — es un
+        # conteo físico confirmado, el único camino legítimo para borrar.
+        await _reproject_material_rows(
+            box.get("style") or "", sku, color, size, loc, user=user,
+            moved_sigs={ledger.row_signature(box)},
+            contexto={"via": "cycle_count", "count_id": count_id})
         await log_movement(user, "cycle_count_shrink", {
             "box_id": box_id, "location": loc,
             "sku": sku, "color": color, "size": size,
@@ -10900,7 +10873,11 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
                     "created_at": now_iso(), "updated_at": now_iso(),
                     "updated_by": user.get("user_id"),
                 })
-            await _cc_add_inventory(sku, color, size, loc, units, customer, real_id)
+            # LA CAJA MANDA: la caja ya quedó viva arriba; el marcador se
+            # reescribe desde las cajas (antes: _cc_add_inventory, aritmética).
+            await _reproject_material_rows(
+                sku, sku, color, size, loc, user=user,
+                contexto={"via": "cycle_count", "count_id": count_id})
             await log_movement(user, "cycle_count_manual_create", {
                 "box_id": real_id, "location": loc, "sku": sku, "color": color, "size": size,
                 "old_units": 0, "new_units": units, "delta_units": units,
@@ -11127,14 +11104,22 @@ async def save_count_progress(count_id: str, request: Request):
                         "from": cur, "to": qty, "delta": delta,
                     })
                 else:
-                    await db.wms_inventory.update_one(
-                        {"_id": inv_row["_id"]},
-                        {"$set": {"units_on_hand": qty, "updated_at": now_iso()}},
-                    )
-                    # Reconcile the backing boxes to the new on-hand so the box
-                    # mirror agrees — otherwise _available_units' max(box,inv)
-                    # silently undoes a count-down.
-                    await _reconcile_line_boxes(inv_row, delta)
+                    # LA CAJA MANDA (orden invertido vs. el modelo viejo): las
+                    # CAJAS absorben primero el conteo — el delta se calcula
+                    # contra la SUMA física de sus cajas, no contra el renglón,
+                    # para que una línea sin cajas materialice su caja de
+                    # ajuste — y después el marcador se reescribe desde ellas.
+                    fis = sum(int(b.get("units") or b.get("qty") or 0)
+                              for b in await _line_boxes(inv_row)
+                              if int(b.get("units") or b.get("qty") or 0) > 0)
+                    if qty != fis:
+                        await _reconcile_line_boxes(inv_row, qty - fis)
+                    await _reproject_material_rows(
+                        inv_row.get("style") or "", inv_row.get("sku") or "",
+                        inv_row.get("color", ""), inv_row.get("size", ""),
+                        inv_row.get("location", ""), user=user,
+                        moved_sigs={ledger.row_signature(inv_row)},
+                        contexto={"via": "cycle_count", "count_id": count_id})
                     line["held_for_review"] = False
                     line["adjusted"] = True
                     line["adjusted_at"] = now_iso()
@@ -11214,11 +11199,20 @@ async def approve_cycle_count(count_id: str, request: Request):
             delta = tgt - cur
             if delta == 0:
                 continue
-            await db.wms_inventory.update_one(
-                {"_id": inv_row["_id"]},
-                {"$set": {"units_on_hand": tgt, "updated_at": now_iso()}}
-            )
-            await _reconcile_line_boxes(inv_row, delta)
+            # LA CAJA MANDA (mismo orden que save_count_progress): cajas
+            # primero — delta contra la suma FÍSICA — y el marcador se
+            # reescribe desde ellas.
+            fis = sum(int(b.get("units") or b.get("qty") or 0)
+                      for b in await _line_boxes(inv_row)
+                      if int(b.get("units") or b.get("qty") or 0) > 0)
+            if tgt != fis:
+                await _reconcile_line_boxes(inv_row, tgt - fis)
+            await _reproject_material_rows(
+                inv_row.get("style") or "", inv_row.get("sku") or "",
+                inv_row.get("color", ""), inv_row.get("size", ""),
+                inv_row.get("location", ""), user=user,
+                moved_sigs={ledger.row_signature(inv_row)},
+                contexto={"via": "cycle_count", "count_id": count_id})
             line["adjusted"] = True
             line["held_for_review"] = False
             line["adjusted_at"] = now_iso()

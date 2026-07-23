@@ -101,6 +101,34 @@ def sembrar():
         "total_scan_locations": 1,
         "created_at": "2026-07-23T00:00:00+00:00",
     })
+    # Escenario 2 (ola 1 de un-solo-escritor): merma confirmada por doble
+    # conteo — el marcador debe REESCRIBIRSE desde las cajas, no restarse.
+    sdb.wms_locations.insert_one({"name": "PS05-B01", "location_id": "loc_PS05-B01"})
+    sdb.wms_inventory.insert_one({
+        "inventory_id": "inv_smoke_merma", "sku": "3001-GREY-M", "style": "3001",
+        "color": "GREY", "size": "M", "location": "PS05-B01",
+        "country_of_origin": "BANGLADESH", "fabric_content": "60% COTTON 40% POLYESTER",
+        "units_on_hand": 194, "total_boxes": 2, "units_allocated": 0,
+    })
+    for bid, u in [("BOX-M1", 122), ("BOX-M2", 72)]:
+        sdb.wms_boxes.insert_one({
+            "box_id": bid, "style": "3001", "sku": "3001-GREY-M", "color": "GREY",
+            "size": "M", "location": "PS05-B01", "units": u, "qty": u, "status": "located",
+            "country_of_origin": "BANGLADESH", "fabric_content": "60% COTTON 40% POLYESTER",
+        })
+    sdb.wms_cycle_counts.insert_one({
+        "count_id": "cc_smoke_merma", "name": "merma", "status": "pending",
+        "mode": "box_scan", "is_general": False,
+        "scan_locations": [{
+            "loc_id": "ccl_merma", "location": "PS05-B01", "pass": 1,
+            "status": "pending", "expected_boxes": ["BOX-M1", "BOX-M2"],
+            "scanned_boxes": [], "missing": [], "extra": [],
+            "counted_by": None, "counted_by_name": None, "counted_at": None,
+            "history": [],
+        }],
+        "total_scan_locations": 1,
+        "created_at": "2026-07-23T00:00:00+00:00",
+    })
     sdb.users.insert_one({
         "user_id": "u_smoke", "email": "smoke@test.local", "name": "Smoke Tester",
         "password_hash": bcrypt.hash("smoke123"),
@@ -158,6 +186,37 @@ async def main():
         check("ubicación cuadra (matched)", d.get("matched") is True, f"{d}")
         check("cero recon_pending al final",
               sdb.wms_boxes.count_documents({"status": "recon_pending"}) == 0)
+
+        print("\n== Merma por doble conteo: el marcador se REESCRIBE desde cajas ==")
+        # Pase 1: solo aparece BOX-M1 -> discrepancia -> pase 2.
+        r = await c.post("/api/wms/cycle-counts/cc_smoke_merma/scan-location",
+                         json={"location": "PS05-B01", "box_id": "BOX-M1"})
+        check("pase 1: scan BOX-M1", r.status_code == 200, f"{r.status_code}")
+        r = await c.post("/api/wms/cycle-counts/cc_smoke_merma/close-location",
+                         json={"location": "PS05-B01"})
+        d = r.json() if r.status_code == 200 else {}
+        check("pase 1 no cuadra -> va al 2do conteo",
+              r.status_code == 200 and not d.get("matched"), f"{r.status_code} {d}")
+        # Pase 2: el segundo contador ve lo mismo -> discrepancia CONFIRMADA.
+        r = await c.post("/api/wms/cycle-counts/cc_smoke_merma/scan-location",
+                         json={"location": "PS05-B01", "box_id": "BOX-M1"})
+        check("pase 2: scan BOX-M1", r.status_code == 200, f"{r.status_code}")
+        r = await c.post("/api/wms/cycle-counts/cc_smoke_merma/close-location",
+                         json={"location": "PS05-B01"})
+        d = r.json() if r.status_code == 200 else {}
+        check("pase 2 confirma y resuelve", r.status_code == 200 and d.get("resolution") is not None,
+              f"{r.status_code} {d}")
+        check("1 caja mermada", (d.get("resolution") or {}).get("shrunk") == 1, f"{d.get('resolution')}")
+        b2 = sdb.wms_boxes.find_one({"box_id": "BOX-M2"}, {"_id": 0, "units": 1, "status": 1})
+        check("BOX-M2 agotada (0u, depleted)",
+              b2 and b2.get("units") == 0 and b2.get("status") == "depleted", f"{b2}")
+        fila = sdb.wms_inventory.find_one({"location": "PS05-B01", "style": "3001"}, {"_id": 0})
+        check("marcador REESCRITO == caja restante (122u/1c)",
+              fila and fila.get("units_on_hand") == 122 and fila.get("total_boxes") == 1,
+              f"{fila and (fila.get('units_on_hand'), fila.get('total_boxes'))}")
+        check("lote del marcador preservado (BANGLADESH)",
+              fila and fila.get("country_of_origin") == "BANGLADESH",
+              f"{fila and fila.get('country_of_origin')}")
 
 
 try:
