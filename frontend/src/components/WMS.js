@@ -5,14 +5,14 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert,
+  LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Bell, BellOff,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { API, AUTH_API, fetcher, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
+import { API, AUTH_API, fetcher, poster, logLoadError, WmsContext, useWms, useHttpBusy } from "./wms/lib";
 import { DropsLoader } from "./wms/DropsLoader";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxSearchBar } from "./wms/BoxSearch";
@@ -104,6 +104,62 @@ export default function WMS() {
       root.classList.add(pref === 'light' ? 'light' : 'dark');
     };
   }, []);
+
+  // ── Alertas push al celular (Web Push) ──────────────────────────────────
+  // Campana del sidebar, solo administración: descuadres ROJOS y el resumen
+  // del job nocturno llegan como notificación nativa (Android/desktop).
+  const canPush = ['admin', 'supersu', 'ceo'].includes(currentUser?.role)
+    || (parseInt(currentUser?.admin_level, 10) || 0) >= 2;
+  const [pushOn, setPushOn] = useState(null);   // null = sin soporte / aún no se sabe
+  const [pushBusy, setPushBusy] = useState(false);
+  useEffect(() => {
+    if (!canPush || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    navigator.serviceWorker.ready
+      .then(reg => reg.pushManager.getSubscription())
+      .then(sub => setPushOn(!!sub))
+      .catch(() => {});
+  }, [canPush]);
+
+  const _b64ToU8 = (s) => {
+    const pad = '='.repeat((4 - (s.length % 4)) % 4);
+    const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  };
+
+  const togglePush = async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        await poster('/push/unsubscribe', { endpoint: existing.endpoint });
+        await existing.unsubscribe();
+        setPushOn(false);
+        toast.success('Alertas desactivadas en este dispositivo');
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        toast.error('Permiso de notificaciones denegado por el navegador');
+        return;
+      }
+      const { public_key } = await fetcher('/push/vapid-public-key');
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _b64ToU8(public_key),
+      });
+      const res = await poster('/push/subscribe', { subscription: sub.toJSON() });
+      if (!res.ok) throw new Error('subscribe failed');
+      setPushOn(true);
+      toast.success('Alertas activadas — te mandé una notificación de prueba');
+      await poster('/push/test', {});
+    } catch (e) {
+      toast.error('No se pudieron activar las alertas en este dispositivo');
+    } finally {
+      setPushBusy(false);
+    }
+  };
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
   const [currentUser, setCurrentUser] = useState(null);
@@ -470,6 +526,21 @@ export default function WMS() {
         </nav>
 
         <div className="p-3 border-t border-border/40 space-y-2">
+          {canPush && pushOn !== null && (
+            <button
+              onClick={togglePush}
+              disabled={pushBusy}
+              data-testid="wms-push-toggle"
+              title={pushOn ? "Alertas activas en este dispositivo — clic para desactivar"
+                            : "Recibir alertas de descuadre en este dispositivo"}
+              className={`w-full flex items-center justify-center gap-2 p-2 rounded-md border text-xs font-medium transition-colors disabled:opacity-50
+                ${pushOn ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
+                         : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
+            >
+              {pushOn ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+              {!sidebarCollapsed && <span>{pushOn ? 'Alertas: activas' : 'Alertas al celular'}</span>}
+            </button>
+          )}
           {!sidebarCollapsed && (
             <div className="rounded-md p-3 border border-border">
               <div className="flex items-center gap-2 mb-1.5">

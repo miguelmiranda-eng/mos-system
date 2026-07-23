@@ -51,3 +51,33 @@ self.addEventListener("fetch", (event) => {
       })
   );
 });
+
+/* ── Alertas push del WMS (Web Push/VAPID) ──────────────────────────────────
+   El backend manda {title, body, url, tag} en incidencias ROJAS de stock y en
+   el resumen del job nocturno. Tocar la notificación enfoca/abre el WMS. */
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { /* texto plano */ }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "MOS WMS", {
+      body: data.body || "",
+      tag: data.tag || "wms-alerta",
+      icon: "/prosper_logo.jpg",
+      badge: "/prosper_logo.jpg",
+      data: { url: data.url || "/wms" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/wms";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ("focus" in c) { c.navigate(url); return c.focus(); }
+      }
+      return clients.openWindow(url);
+    })
+  );
+});

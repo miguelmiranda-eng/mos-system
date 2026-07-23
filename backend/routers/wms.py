@@ -216,6 +216,16 @@ async def log_movement(user, movement_type, details):
 
 _INCIDENT_CTX = ContextVar("wms_incident_ctx", default=None)
 
+# Incidencias que son ALARMA (rojas): además del tablero, disparan una
+# notificación push real al celular de los suscritos (services/push_notify).
+RED_INCIDENT_KINDS = {
+    "inventory_conservation_violation",
+    "saldo_sin_cajas_tras_movimiento",
+    "material_no_encontrado",
+    "material_duplicado",
+    "duplicate_blocked_by_index",
+}
+
 
 async def _record_incident(kind, user, mensaje, **campos):
     """Registra una incidencia del sistema en `wms_incidents`.
@@ -244,6 +254,13 @@ async def _record_incident(kind, user, mensaje, **campos):
         doc.update({k: v for k, v in campos.items() if v not in (None, "")})
         await db.wms_incidents.insert_one(doc)
         logger.warning("INCIDENCIA [%s] %s · %s", kind, mensaje[:120], req.get("endpoint") or "")
+        # Alarma real al celular para las ROJAS. Fire-and-forget: la push jamás
+        # detiene ni retrasa la operación que registró la incidencia.
+        if kind in RED_INCIDENT_KINDS:
+            from services.push_notify import send_push_to_all
+            asyncio.create_task(send_push_to_all(
+                db, "⚠ Descuadre de stock",
+                f"{kind}: {mensaje[:140]}", url="/wms", tag=f"inc-{kind}"))
     except Exception:
         logger.exception("no se pudo registrar la incidencia %s", kind)
 
@@ -7612,6 +7629,14 @@ async def nightly_phantom_scan_loop():
             res = await _run_phantom_scan({"user_id": None, "name": "Sistema (job nocturno)"})
             logger.info("Job nocturno de stock fantasma: %s pendientes (%s nuevos, %s resueltos)",
                         res.get("count"), res.get("nuevos"), res.get("resueltos"))
+            # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
+            if res.get("nuevos"):
+                from services.push_notify import send_push_to_all
+                await send_push_to_all(
+                    db, "🌙 Job nocturno: fantasmas nuevos",
+                    f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
+                    f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
+                    url="/wms", tag="job-nocturno")
         except Exception:
             logger.exception("Job nocturno de stock fantasma falló; reintenta mañana.")
 
@@ -7653,6 +7678,61 @@ async def recon_phantom_atender(request: Request):
         raise HTTPException(404, "Fantasma no encontrado")
     await log_movement(user, "phantom_atendida", {"phantom_id": pid})
     return {"ok": True, "phantom_id": pid}
+
+
+# ── Alertas push al celular ─────────────────────────────────────────────────
+# Web Push (VAPID): el dispositivo se suscribe desde la campana del sidebar
+# del WMS. Solo administración (nivel 2+): las alarmas son de supervisión.
+
+@router.get("/push/vapid-public-key")
+async def push_vapid_public_key(request: Request):
+    await require_admin_level(request, 2)
+    from services.push_notify import ensure_vapid_keys, push_disponible
+    if not push_disponible():
+        raise HTTPException(503, "pywebpush no está instalado en el servidor")
+    cfg = await ensure_vapid_keys(db)
+    return {"public_key": cfg["public_key_b64url"]}
+
+
+@router.post("/push/subscribe")
+async def push_subscribe(request: Request):
+    """body: { subscription: <PushSubscription.toJSON()> }"""
+    user = await require_admin_level(request, 2)
+    body = await request.json()
+    sub = body.get("subscription") or {}
+    endpoint = (sub.get("endpoint") or "").strip()
+    if not endpoint or not sub.get("keys"):
+        raise HTTPException(400, "Suscripción push inválida")
+    await db.wms_push_subs.update_one(
+        {"subscription.endpoint": endpoint},
+        {"$set": {"subscription": sub, "user_id": user.get("user_id"),
+                  "user_name": user.get("name", ""), "updated_at": now_iso()},
+         "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True)
+    return {"ok": True}
+
+
+@router.post("/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    """body: { endpoint }"""
+    await require_admin_level(request, 2)
+    body = await request.json()
+    endpoint = (body.get("endpoint") or "").strip()
+    r = await db.wms_push_subs.delete_many({"subscription.endpoint": endpoint})
+    return {"ok": True, "removed": r.deleted_count}
+
+
+@router.post("/push/test")
+async def push_test(request: Request):
+    """Manda una notificación de prueba a TODOS los suscritos — para validar
+    el canal de punta a punta desde el propio celular."""
+    user = await require_admin_level(request, 2)
+    from services.push_notify import send_push_to_all
+    enviadas, muertas = await send_push_to_all(
+        db, "✅ Prueba de alertas WMS",
+        f"Canal funcionando. Saludos, {user.get('name', '')}.",
+        url="/wms", tag="push-test")
+    return {"ok": True, "enviadas": enviadas, "suscripciones_muertas": muertas}
 
 
 # ==================== LABELS (PDF) ====================
