@@ -257,13 +257,13 @@ export default function WMS() {
             </button>
             <button onClick={handleLogout} title="Cerrar Sesión"
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20">
-              <LogOut className="w-4 h-4" /> <span className="text-[11px] font-bold uppercase tracking-wider">Salir</span>
+              <LogOut className="w-4 h-4" /> <span className="text-xs font-medium">Salir</span>
             </button>
           </div>
         </header>
         <div className="flex-1 overflow-y-auto p-6">
           <div className="min-h-full flex flex-col items-center justify-center gap-8 sm:gap-10">
-            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-center">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-center">
               {firstName ? `Hola, ${firstName}` : 'Hola'} — ¿Qué vas a hacer?
             </h1>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6 w-full max-w-3xl">
@@ -273,16 +273,14 @@ export default function WMS() {
                 return (
                   <button key={m.id} onClick={() => { if (m.id === 'picking') { navigate('/pda'); } else { setActiveModule(m.id); setPickerHome(false); } }}
                     data-testid={`picker-launch-${m.id}`}
-                    className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
+                    className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
                     {badgeCount > 0 && (
-                      <span className="absolute top-4 right-4 min-w-[26px] h-[26px] px-2 rounded-full bg-primary text-primary-foreground text-xs font-black flex items-center justify-center">
+                      <span className="absolute top-4 right-4 min-w-[26px] h-[26px] px-2 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
                         {badgeCount}
                       </span>
                     )}
-                    <div className="p-4 sm:p-6 rounded-2xl bg-primary/10">
-                      <Icon className={`w-12 h-12 sm:w-16 sm:h-16 ${m.color}`} />
-                    </div>
-                    <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">{m.label}</span>
+                    <Icon className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                    <span className="text-xl sm:text-2xl font-semibold text-center">{m.label}</span>
                     <span className="text-xs text-muted-foreground text-center max-w-[220px]">{m.desc}</span>
                   </button>
                 );
@@ -291,11 +289,9 @@ export default function WMS() {
                   también rechaza (403) a cualquier otro rol. */}
               {currentUser?.role === 'supersu' && (
               <button onClick={() => navigate('/pda-recon')} data-testid="picker-launch-recon"
-                className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-3xl border border-border bg-card/60 hover:bg-card hover:border-emerald-500/50 hover:scale-[1.02] active:scale-95 transition-all shadow-xl">
-                <div className="p-4 sm:p-6 rounded-2xl bg-emerald-500/10">
-                  <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-emerald-400" />
-                </div>
-                <span className="text-xl sm:text-2xl font-black uppercase tracking-wide text-center">Conciliación</span>
+                className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
+                <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                <span className="text-xl sm:text-2xl font-semibold text-center">Conciliación</span>
                 <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
               </button>
               )}
@@ -326,8 +322,8 @@ export default function WMS() {
                 {isDark ? <Sun className="w-6 h-6 text-primary" /> : <Moon className="w-6 h-6 text-indigo-400" />}
               </button>
               <div className="leading-tight min-w-0">
-                <h1 className="text-lg sm:text-2xl font-black italic uppercase tracking-tight whitespace-nowrap pr-1">My Inventory</h1>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-60 truncate">
+                <h1 className="text-lg sm:text-2xl font-bold tracking-tight whitespace-nowrap pr-1">My Inventory</h1>
+                <p className="text-xs text-muted-foreground truncate">
                   {associatedCustomer || (firstName ? `Hi, ${firstName}` : 'Customer Portal')}
                 </p>
               </div>
@@ -338,7 +334,7 @@ export default function WMS() {
               title="Sign out"
             >
               <LogOut className="w-4 h-4" />
-              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Sign out</span>
+              <span className="text-xs font-medium hidden sm:inline">Sign out</span>
             </button>
           </header>
           <main className="flex-1 overflow-auto custom-scrollbar p-3 sm:p-6">
@@ -392,7 +388,7 @@ export default function WMS() {
               data-testid="wms-theme-toggle"
             >
               {isDark ? <Sun className="w-4 h-4 text-primary animate-spin-slow" /> : <Moon className="w-4 h-4 text-indigo-400" />}
-              {!sidebarCollapsed && <span className="text-[10px] font-bold uppercase tracking-wider">{isDark ? t('light_mode') : t('dark_mode')}</span>}
+              {!sidebarCollapsed && <span className="text-xs font-medium">{isDark ? t('light_mode') : t('dark_mode')}</span>}
             </button>
 
             <button
@@ -401,7 +397,7 @@ export default function WMS() {
               title="Cerrar Sesión"
             >
               <LogOut className="w-4 h-4" />
-              {!sidebarCollapsed && <span className="text-[10px] font-bold uppercase tracking-wider">Salir</span>}
+              {!sidebarCollapsed && <span className="text-xs font-medium">Salir</span>}
             </button>
           </div>
         </div>
@@ -442,42 +438,35 @@ export default function WMS() {
                   if (currentUser?.role === 'picker' && m.id === 'picking') { navigate('/pda'); return; }
                   setActiveModule(m.id); setMobileNav(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all relative group
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors relative group
                   ${isActive
-                    ? 'bg-primary/10 text-primary shadow-[0_0_15px_rgba(255,193,7,0.1)]'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
                 data-testid={`wms-nav-${m.id}`}
                 title={m.label}
               >
-                <div className={`p-1.5 rounded-lg transition-all ${isActive ? 'bg-primary/20 shadow-inner' : 'group-hover:bg-secondary'}`}>
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
-                </div>
+                <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-foreground' : 'text-muted-foreground'}`} />
 
                 {!sidebarCollapsed && (
                   <div className="flex flex-col items-start min-w-0 flex-1">
-                    <span className={`text-[13px] font-bold uppercase tracking-wide leading-none ${isActive ? 'text-primary' : ''}`}>
+                    <span className={`text-sm leading-none ${isActive ? 'font-semibold' : 'font-medium'}`}>
                       {m.label}
                     </span>
-                    {isActive && (
-                      <span className="text-[10px] text-muted-foreground truncate w-full mt-0.5 font-medium italic opacity-70">
-                        {t('wms_viewing_now')}
-                      </span>
-                    )}
                   </div>
                 )}
 
                 {!sidebarCollapsed && badgeCount > 0 && (
-                  <span className="bg-primary text-black text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[20px] shadow-[0_0_10px_rgba(255,193,7,0.5)]">
+                  <span className="bg-primary text-primary-foreground text-xs font-semibold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
                     {badgeCount}
                   </span>
                 )}
 
                 {sidebarCollapsed && badgeCount > 0 && (
-                  <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-primary rounded-full shadow-[0_0_5px_rgba(255,193,7,0.8)] border-2 border-card" />
+                  <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-primary rounded-full border-2 border-card" />
                 )}
 
                 {isActive && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-2/3 bg-primary rounded-r-full shadow-[2px_0_10px_rgba(255,193,7,0.5)]" />
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-2/3 bg-primary rounded-r-full" />
                 )}
               </button>
             );
@@ -486,13 +475,13 @@ export default function WMS() {
 
         <div className="p-3 border-t border-border/40 space-y-2">
           {!sidebarCollapsed && (
-            <div className="bg-secondary/30 rounded-xl p-3 border border-border/20 backdrop-blur-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_5px_rgba(34,197,94,0.5)]" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t('wms_status')}</span>
+            <div className="rounded-md p-3 border border-border">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="text-xs font-medium text-muted-foreground">{t('wms_status')}</span>
               </div>
-              <div className="text-[11px] font-medium text-foreground opacity-80">{t('wms_terminal')}</div>
-              <div className="text-[11px] font-medium text-foreground opacity-80 uppercase">{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+              <div className="text-xs text-muted-foreground">{t('wms_terminal')}</div>
+              <div className="text-xs text-muted-foreground">{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
             </div>
           )}
         </div>
@@ -508,25 +497,20 @@ export default function WMS() {
           />
         </div>
         {/* Module Header Overlay */}
-        <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-gradient-to-b from-background via-background/95 to-transparent backdrop-blur-sm">
+        <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-background/95 backdrop-blur-sm border-b border-border/60">
           {(() => {
             const m = MODULES.find(mod => mod.id === (currentUser.role === 'customer' ? 'dashboard' : activeModule));
-            const Icon = m?.icon || Package;
             return (
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
-                  <button onClick={() => setMobileNav(true)} className="md:hidden p-2 rounded-xl bg-card border border-border/40 text-muted-foreground active:bg-secondary shrink-0" title="Menú">
+                  <button onClick={() => setMobileNav(true)} className="md:hidden p-2 rounded-md bg-card border border-border text-muted-foreground active:bg-muted shrink-0" title="Menú">
                     <Menu className="w-6 h-6" />
                   </button>
-                  <div className={`hidden sm:block p-3 rounded-2xl bg-card border border-border/40 shadow-xl ${m?.color || 'text-primary'}`}>
-                    <Icon className="w-8 h-8" />
-                  </div>
                   <div className="min-w-0">
-                    <h1 className="text-xl sm:text-3xl font-black italic uppercase tracking-tighter leading-none mb-1 truncate">
+                    <h1 className="text-xl sm:text-2xl font-bold tracking-tight leading-none mb-1 truncate">
                       {m?.label}
                     </h1>
-                    <p className="hidden sm:flex text-sm text-muted-foreground font-medium items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    <p className="hidden sm:block text-sm text-muted-foreground truncate">
                       {m?.desc}
                     </p>
                   </div>
@@ -535,8 +519,8 @@ export default function WMS() {
                 <div className="flex items-center gap-4">
                   <BoxSearchBar />
                   <div className="hidden lg:flex flex-col items-end">
-                    <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground opacity-50 mb-1">{t('wms_mgmt')}</div>
-                    <div className="text-lg font-mono font-black text-foreground/80 tabular-nums">
+                    <div className="text-xs font-medium text-muted-foreground mb-0.5">{t('wms_mgmt')}</div>
+                    <div className="text-lg font-mono font-semibold text-foreground/80 tabular-nums">
                       {new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
                     </div>
                   </div>
@@ -550,8 +534,8 @@ export default function WMS() {
         <div className="p-3 sm:p-6 pt-2">
           {moduleSwitching ? (
             <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-150">
-              <Loader2 className="w-10 h-10 animate-spin text-primary" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-3">Cargando módulo…</span>
+              <Loader2 className="w-10 h-10 animate-spin text-muted-foreground" />
+              <span className="text-sm text-muted-foreground mt-3">Cargando módulo…</span>
             </div>
           ) : (
             <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">

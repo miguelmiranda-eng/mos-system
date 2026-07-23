@@ -7,6 +7,7 @@ import {
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
+import { ModuleHeader, SoftAlert, Btn, Chip } from "./ui";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
 // Handheld scanners type the code + Enter into the focused box. We also show up
@@ -27,7 +28,7 @@ function LocationInput({ value, onChange, onPick, onSubmit, locations, placehold
         className="flex items-center gap-2"
       >
         <div className="relative flex-1">
-          <ScanLine className="w-5 h-5 text-primary absolute left-3 top-1/2 -translate-y-1/2" />
+          <ScanLine className="w-5 h-5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             autoFocus={autoFocus}
             value={value}
@@ -35,7 +36,7 @@ function LocationInput({ value, onChange, onPick, onSubmit, locations, placehold
             onFocus={() => setOpen(true)}
             placeholder={placeholder}
             data-testid={testid}
-            className="w-full h-14 pl-11 pr-10 bg-secondary/30 border-2 border-border rounded-2xl text-lg font-mono font-bold tracking-wide focus:outline-none focus:border-primary"
+            className="w-full h-14 pl-11 pr-10 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
           />
           {value && (
             <button type="button" onClick={() => { onChange(""); setOpen(false); }}
@@ -45,18 +46,18 @@ function LocationInput({ value, onChange, onPick, onSubmit, locations, placehold
           )}
         </div>
         <button type="submit"
-          className="h-14 px-5 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm tracking-wide active:scale-95 transition-transform">
+          className="h-14 px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-colors">
           OK
         </button>
       </form>
       {open && matches.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-xl overflow-hidden">
           {matches.map(n => (
             <button key={n} type="button"
               onClick={() => { onChange(n); setOpen(false); onPick ? onPick(n) : onSubmit?.(n); }}
-              className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-primary/10 border-b border-border/40 last:border-0">
-              <MapPin className="w-4 h-4 text-cyan-400 flex-shrink-0" />
-              <span className="font-mono font-bold">{n}</span>
+              className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-muted border-b border-border/60 last:border-0 transition-colors">
+              <MapPin className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <span className="font-mono font-medium">{n}</span>
             </button>
           ))}
         </div>
@@ -69,10 +70,10 @@ function LocationInput({ value, onChange, onPick, onSubmit, locations, placehold
 function ModeButton({ icon: Icon, title, subtitle, color, onClick, testid }) {
   return (
     <button onClick={onClick} data-testid={testid}
-      className="w-full flex items-center gap-4 p-5 rounded-2xl border border-border bg-card/60 hover:bg-card hover:border-primary/50 active:scale-[0.98] transition-all text-left">
-      <div className={`p-3 rounded-2xl bg-primary/10 ${color}`}><Icon className="w-8 h-8" /></div>
+      className="w-full flex items-center gap-4 p-5 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
+      <Icon className="w-6 h-6 text-muted-foreground flex-shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-lg font-black uppercase tracking-wide">{title}</div>
+        <div className="text-base font-semibold">{title}</div>
         <div className="text-xs text-muted-foreground">{subtitle}</div>
       </div>
       <ArrowRight className="w-5 h-5 text-muted-foreground" />
@@ -357,51 +358,44 @@ export function MoverModule({ currentUser }) {
     <div className="h-full overflow-y-auto bg-background text-foreground">
       <div className="max-w-2xl mx-auto p-4 sm:p-6 space-y-5">
         {/* Title */}
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-2xl bg-primary/10"><Move className="w-7 h-7 text-primary" /></div>
-          <div>
-            <h1 className="text-xl font-black uppercase tracking-tight">
-              {topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {topMode === "bulk"
-                ? "Sube el Excel para ajustar inventario en bloque"
-                : topMode === "adjust"
-                  ? "Escanea una caja y captura su conteo real"
-                  : topMode === "generate"
-                    ? "Crea un número de caja para material de producción e imprímelo"
-                    : "Escanea una ubicación y elige qué mover"}
-            </p>
-          </div>
-        </div>
+        <ModuleHeader
+          title={topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
+          subtitle={topMode === "bulk"
+            ? "Sube el Excel para ajustar inventario en bloque"
+            : topMode === "adjust"
+              ? "Escanea una caja y captura su conteo real"
+              : topMode === "generate"
+                ? "Crea un número de caja para material de producción e imprímelo"
+                : "Escanea una ubicación y elige qué mover"}
+        />
 
         {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
-        <div className={`grid ${topTabsGridClass} gap-2 p-1 rounded-2xl bg-secondary/30 border border-border`}>
+        <div className={`grid ${topTabsGridClass} gap-2 p-1 rounded-lg bg-muted/50 border border-border`}>
           <button
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
             data-testid="mover-top-move"
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "move" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "move" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Move className="w-4 h-4" /> Mover
           </button>
           {canAdjust && (
           <button
             onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
             data-testid="mover-top-adjust"
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "adjust" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "adjust" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Scale className="w-4 h-4" /> Ajustar caja
           </button>
           )}
           <button
             onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
             data-testid="mover-top-generate"
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "generate" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+            className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "generate" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Tag className="w-4 h-4" /> Generar caja
           </button>
           {canBulk && (
             <button
               onClick={() => { if (topMode !== "bulk") { resetAll(); resetAdjust(); setTopMode("bulk"); } }}
               data-testid="mover-top-bulk"
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${topMode === "bulk" ? "bg-primary text-primary-foreground shadow-md" : "text-muted-foreground hover:text-foreground"}`}>
+              className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "bulk" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               <Boxes className="w-4 h-4" /> Ajuste masivo
             </button>
           )}
@@ -411,11 +405,11 @@ export function MoverModule({ currentUser }) {
         {topMode === "bulk" ? (
           <BulkInventoryAdjust />
         ) : topMode === "generate" ? (
-          <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-            <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-              <Tag className="w-5 h-5 text-primary" /> Generar caja para material de producción
+          <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+            <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Tag className="w-5 h-5 text-muted-foreground" /> Generar caja para material de producción
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Material que llega de producción sin etiqueta: crea su número de caja (LPN), imprímelo y pégalo en la caja física. Después podrás moverla o ajustarla normalmente.
             </p>
             <div className="grid grid-cols-2 gap-3">
@@ -430,7 +424,7 @@ export function MoverModule({ currentUser }) {
                 placeholder="Talla (solo catálogo)" testId="gen-size" allowCreate={false} />
               <input type="number" min="1" value={genForm.units} onChange={e => setGenForm(f => ({ ...f, units: e.target.value }))}
                 placeholder="Unidades *" data-testid="gen-units"
-                className="h-12 px-3 bg-secondary/30 border-2 border-border rounded-xl font-black text-lg focus:outline-none focus:border-primary" />
+                className="h-12 px-3 bg-card border border-input rounded-md text-lg font-medium tabular-nums focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
               <SearchableSelect options={genCustomerOptions} value={genForm.customer}
                 onChange={v => setGenForm(f => ({ ...f, customer: v }))}
                 placeholder="Cliente (solo catálogo)" testId="gen-customer" allowCreate={false} />
@@ -439,24 +433,28 @@ export function MoverModule({ currentUser }) {
                 placeholder="Ubicación * (existente)" testId="gen-location" allowCreate={false} />
             </div>
             <button onClick={handleGenerateBox} disabled={genSubmitting} data-testid="gen-submit"
-              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm flex items-center justify-center gap-2 disabled:opacity-40 active:scale-95 transition-transform">
+              className="w-full h-14 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
               {genSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
               Generar e imprimir etiqueta
             </button>
             {genLastBox && (
-              <div className="flex items-center justify-between gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-2.5">
-                <span className="text-xs font-bold">Última caja: <span className="font-mono text-emerald-400">{genLastBox}</span></span>
-                <button onClick={() => printBox(genLastBox)} className="flex items-center gap-1 text-xs font-black uppercase text-primary hover:underline">
-                  <Printer className="w-3.5 h-3.5" /> Reimprimir
-                </button>
-              </div>
+              <SoftAlert
+                tone="success"
+                action={
+                  <button onClick={() => printBox(genLastBox)} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                    <Printer className="w-3.5 h-3.5" /> Reimprimir
+                  </button>
+                }
+              >
+                Última caja: <span className="font-mono font-medium text-foreground">{genLastBox}</span>
+              </SoftAlert>
             )}
           </div>
         ) : topMode === "adjust" ? (
           !adjBox ? (
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-              <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                <ScanLine className="w-5 h-5 text-primary" /> Escanea el número de caja
+            <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+              <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <ScanLine className="w-5 h-5 text-muted-foreground" /> Escanea el número de caja
               </div>
               <form onSubmit={(e) => { e.preventDefault(); lookupAdjBox(adjScan); }} className="flex items-center gap-2">
                 <input
@@ -464,76 +462,76 @@ export function MoverModule({ currentUser }) {
                   onChange={(e) => setAdjScan(e.target.value.toUpperCase())}
                   placeholder="Ej. BOX-000143 · LPN…"
                   data-testid="mover-adjust-scan"
-                  className="flex-1 h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-lg font-mono font-bold tracking-wide focus:outline-none focus:border-primary" />
+                  className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                 <button type="submit" disabled={adjLookup || !adjScan.trim()}
-                  className="h-14 px-5 rounded-2xl bg-primary text-primary-foreground font-black uppercase text-sm disabled:opacity-40 active:scale-95 transition-transform">
+                  className="h-14 px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-colors">
                   {adjLookup ? <Loader2 className="w-5 h-5 animate-spin" /> : "Buscar"}
                 </button>
               </form>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 El ajuste queda enlazado al número de caja y se registra en su historial de movimientos.
               </p>
             </div>
           ) : (
             <div className="space-y-4">
               {/* Box summary */}
-              <div className="bg-card border border-primary/30 rounded-2xl p-4 space-y-3">
+              <div className="bg-card border border-border rounded-lg p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-black">Caja</div>
-                    <div className="text-lg font-mono font-black truncate">{adjBox.box_id}</div>
+                    <div className="text-xs font-medium text-muted-foreground">Caja</div>
+                    <div className="text-lg font-mono font-semibold truncate">{adjBox.box_id}</div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate">
                       {(adjBox.style || adjBox.sku)} · {adjBox.color} · {adjBox.size}
                     </div>
-                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-1">
-                      <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                    <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                      <MapPin className="w-3.5 h-3.5 text-muted-foreground" />
                       {adjBox.location || "sin ubicación"}
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <div className="text-2xl font-black leading-none">{adjBox.units ?? adjBox.qty ?? 0}</div>
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">u actuales</div>
+                    <div className="text-2xl font-semibold tabular-nums leading-none">{adjBox.units ?? adjBox.qty ?? 0}</div>
+                    <div className="text-xs text-muted-foreground">u actuales</div>
                   </div>
                 </div>
-                <button onClick={resetAdjust} className="text-xs font-bold text-primary flex items-center gap-1">
+                <button onClick={resetAdjust} className="text-xs font-medium text-primary flex items-center gap-1">
                   <RotateCcw className="w-3.5 h-3.5" /> Cambiar caja
                 </button>
               </div>
 
               {/* Counted units + reason */}
-              <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+              <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                 <div>
-                  <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                  <label className="text-xs font-medium text-muted-foreground">
                     Unidades reales contadas
                   </label>
                   <input type="number" min="0" value={adjCount}
                     onChange={(e) => setAdjCount(e.target.value)}
                     data-testid="mover-adjust-count"
-                    className="mt-1 w-full h-16 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-3xl font-black text-center focus:outline-none focus:border-primary" />
+                    className="mt-1 w-full h-16 px-4 bg-card border border-input rounded-lg text-3xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                   {adjCount !== "" && !Number.isNaN(parseInt(adjCount, 10)) && (() => {
                     const d = parseInt(adjCount, 10) - (adjBox.units ?? adjBox.qty ?? 0);
-                    if (d === 0) return <p className="text-[11px] text-muted-foreground mt-1 text-center">Sin cambio</p>;
+                    if (d === 0) return <p className="text-xs text-muted-foreground mt-1 text-center">Sin cambio</p>;
                     return (
-                      <p className={`text-xs font-black mt-1 text-center ${d > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <p className={`text-xs font-medium mt-1 text-center ${d > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                         {d > 0 ? "+" : ""}{d} unidades{parseInt(adjCount, 10) === 0 ? " · la caja se eliminará" : ""}
                       </p>
                     );
                   })()}
                 </div>
                 <div>
-                  <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
-                    Motivo del ajuste <span className="text-red-400">*</span>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Motivo del ajuste <span className="text-red-600 dark:text-red-400">*</span>
                   </label>
                   <textarea value={adjReason} onChange={(e) => setAdjReason(e.target.value)}
                     rows={2} placeholder="Ej. Conteo físico, caja dañada, error de captura…"
                     data-testid="mover-adjust-reason"
-                    className="mt-1 w-full px-4 py-3 bg-secondary/30 border-2 border-border rounded-2xl text-sm focus:outline-none focus:border-primary resize-none" />
+                    className="mt-1 w-full px-4 py-3 bg-card border border-input rounded-lg text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors resize-none" />
                 </div>
                 <button onClick={submitAdjust}
                   disabled={adjSubmitting || adjCount === "" || !adjReason.trim()
                     || parseInt(adjCount, 10) === (adjBox.units ?? adjBox.qty ?? 0)}
                   data-testid="mover-adjust-confirm"
-                  className="w-full h-14 rounded-2xl bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black uppercase tracking-wide flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+                  className="w-full h-14 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center justify-center gap-2 transition-colors">
                   {adjSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scale className="w-5 h-5" />}
                   Confirmar ajuste
                 </button>
@@ -542,9 +540,9 @@ export function MoverModule({ currentUser }) {
           )
         ) : /* STEP 1 — origin */
         !origin ? (
-          <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-            <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-black">1</span>
+          <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+            <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">1</span>
               Escanea la ubicación de origen
             </div>
             <LocationInput
@@ -557,21 +555,21 @@ export function MoverModule({ currentUser }) {
         ) : (
           <>
             {/* Origin summary header */}
-            <div className="bg-card border border-primary/30 rounded-2xl p-4 flex items-center justify-between">
+            <div className="bg-card border border-border rounded-lg p-4 flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
-                <MapPin className="w-6 h-6 text-cyan-400 flex-shrink-0" />
+                <MapPin className="w-6 h-6 text-muted-foreground flex-shrink-0" />
                 <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-black">Origen</div>
-                  <div className="text-lg font-mono font-black truncate">{origin}</div>
+                  <div className="text-xs font-medium text-muted-foreground">Origen</div>
+                  <div className="text-lg font-mono font-semibold truncate">{origin}</div>
                 </div>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
-                  <div className="text-lg font-black leading-none">{loading ? "…" : totalUnits}</div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">unidades</div>
+                  <div className="text-lg font-semibold tabular-nums leading-none">{loading ? "…" : totalUnits}</div>
+                  <div className="text-xs text-muted-foreground">unidades</div>
                 </div>
                 <button onClick={resetAll}
-                  className="p-2.5 rounded-xl bg-secondary/40 hover:bg-secondary text-muted-foreground hover:text-foreground"
+                  className="p-2.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                   title="Cambiar ubicación" data-testid="mover-reset">
                   <RotateCcw className="w-5 h-5" />
                 </button>
@@ -581,16 +579,15 @@ export function MoverModule({ currentUser }) {
             {loading ? (
               <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
             ) : contents.boxes.length === 0 && contents.lines.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p className="font-bold">Esta ubicación está vacía</p>
-                <p className="text-xs mt-1">No hay cajas ni inventario en {origin}.</p>
+              <div className="py-16 text-center">
+                <p className="text-sm font-semibold text-foreground/80">Esta ubicación está vacía</p>
+                <p className="text-sm text-muted-foreground mt-1">No hay cajas ni inventario en {origin}.</p>
               </div>
             ) : !mode ? (
               /* STEP 2 — choose mode */
               <div className="space-y-3">
-                <div className="text-sm font-black uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-black">2</span>
+                <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">2</span>
                   ¿Qué quieres mover?
                 </div>
                 <ModeButton icon={Layers} color="text-amber-400" testid="mover-mode-all"
@@ -614,15 +611,15 @@ export function MoverModule({ currentUser }) {
               /* STEP 3 — per-mode selection + destination */
               <div className="space-y-4">
                 <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
-                  className="text-xs font-bold text-primary flex items-center gap-1">
+                  className="text-xs font-medium text-primary flex items-center gap-1">
                   <X className="w-3.5 h-3.5" /> Cambiar tipo de movimiento
                 </button>
 
                 {/* MODE: ALL */}
                 {mode === "all" && (
-                  <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                  <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                     <p className="text-sm">
-                      Vas a mover <strong>todo</strong> el contenido de <span className="font-mono font-bold text-primary">{origin}</span>
+                      Vas a mover <strong>todo</strong> el contenido de <span className="font-mono font-medium">{origin}</span>
                       {" "}({contents.boxes.length} cajas, {totalUnits} unidades) a otra ubicación.
                     </p>
                     <DestAndGo
@@ -635,16 +632,16 @@ export function MoverModule({ currentUser }) {
                 {/* MODE: BOX */}
                 {mode === "box" && (
                   <div className="space-y-3">
-                    <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
-                        <ScanLine className="w-4 h-4 text-primary" /> Escanea una caja para seleccionarla
+                    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+                      <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                        <ScanLine className="w-4 h-4 text-muted-foreground" /> Escanea una caja para seleccionarla
                       </div>
                       <input ref={boxScanRef} autoFocus placeholder="Escanea BOX-…"
                         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onBoxScan(e.currentTarget.value); } }}
                         data-testid="mover-box-scan"
-                        className="w-full h-12 px-4 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary" />
+                        className="w-full h-12 px-4 bg-card border border-input rounded-md font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                       {scanLookup && (
-                        <div className="text-[11px] text-muted-foreground flex items-center gap-2">
+                        <div className="text-xs text-muted-foreground flex items-center gap-2">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando caja…
                         </div>
                       )}
@@ -652,29 +649,31 @@ export function MoverModule({ currentUser }) {
 
                     {/* Foreign box: scanned from a DIFFERENT location — confirm before moving */}
                     {pendingForeign && (
-                      <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 space-y-3" data-testid="mover-foreign-confirm">
+                      <div className="border border-l-4 rounded-lg px-4 py-3 space-y-3 bg-amber-50 border-amber-200/70 border-l-amber-500 dark:bg-amber-500/10 dark:border-amber-500/25 dark:border-l-amber-500" data-testid="mover-foreign-confirm">
                         <div className="flex items-start gap-3">
-                          <ScanLine className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <ScanLine className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                           <div className="min-w-0 text-sm">
-                            La caja <span className="font-mono font-black">{pendingForeign.box_id}</span> no está en{" "}
-                            <span className="font-mono font-bold">{origin}</span>.
+                            La caja <span className="font-mono font-semibold">{pendingForeign.box_id}</span> no está en{" "}
+                            <span className="font-mono font-medium">{origin}</span>.
                             <div className="mt-1">
-                              Pertenece a <span className="font-mono font-black text-amber-300">{pendingForeign.location || "ubicación desconocida"}</span>
+                              Pertenece a <span className="font-mono font-semibold text-amber-700 dark:text-amber-300">{pendingForeign.location || "ubicación desconocida"}</span>
                               {" · "}{pendingForeign.style || pendingForeign.sku} · {pendingForeign.color} · {pendingForeign.size}
                               {" · "}{pendingForeign.units ?? pendingForeign.qty ?? 0} u
                             </div>
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => addForeignBox(pendingForeign)}
+                          <Btn
+                            variant="primary"
+                            onClick={() => addForeignBox(pendingForeign)}
                             data-testid="mover-foreign-yes"
-                            className="flex-1 h-12 rounded-xl bg-amber-500 text-black font-black uppercase tracking-wide text-sm active:scale-[0.98] transition-transform">
+                            className="flex-1"
+                          >
                             Sí, moverla
-                          </button>
-                          <button onClick={() => setPendingForeign(null)}
-                            className="px-5 h-12 rounded-xl bg-secondary/60 text-muted-foreground font-bold uppercase text-sm">
+                          </Btn>
+                          <Btn onClick={() => setPendingForeign(null)}>
                             Cancelar
-                          </button>
+                          </Btn>
                         </div>
                       </div>
                     )}
@@ -684,25 +683,25 @@ export function MoverModule({ currentUser }) {
                         const on = selectedBoxes.includes(b.box_id);
                         return (
                           <button key={b.box_id} onClick={() => toggleBox(b.box_id)}
-                            className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${on ? "border-primary bg-primary/10 ring-1 ring-primary" : "border-border bg-card hover:border-primary/40"}`}>
-                            <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${on ? "bg-primary text-primary-foreground" : "bg-secondary"}`}>
+                            className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${on ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40"}`}>
+                            <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${on ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
                               {on && <CheckCircle2 className="w-4 h-4" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="font-mono font-bold text-sm flex items-center gap-2">
+                              <div className="font-mono font-medium text-sm flex items-center gap-2">
                                 {b.box_id}
                                 {b._foreign && (
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded">
+                                  <Chip tone="warning">
                                     de {b.location}
-                                  </span>
+                                  </Chip>
                                 )}
                               </div>
-                              <div className="text-[11px] text-muted-foreground truncate">
+                              <div className="text-xs text-muted-foreground truncate">
                                 {b.style || b.sku} · {b.color} · {b.size}
                               </div>
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <div className="font-black">{b.units ?? b.qty ?? 0}</div>
+                              <div className="font-semibold tabular-nums">{b.units ?? b.qty ?? 0}</div>
                               <div className="text-[10px] text-muted-foreground">u</div>
                             </div>
                           </button>
@@ -710,7 +709,7 @@ export function MoverModule({ currentUser }) {
                       })}
                     </div>
                     {selectedBoxes.length > 0 && (
-                      <div className="bg-card border border-border rounded-2xl p-4">
+                      <div className="bg-card border border-border rounded-lg p-4">
                         <DestAndGo
                           dest={dest} setDest={setDest} locations={locNames}
                           disabled={submitting} onGo={moveBoxes}
@@ -725,45 +724,45 @@ export function MoverModule({ currentUser }) {
                   <div className="space-y-3">
                     {!selectedLine ? (
                       <div className="space-y-2">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
+                        <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
                           <Search className="w-4 h-4" /> Elige el SKU a mover
                         </div>
                         {contents.lines.map((r, i) => (
                           <button key={i} onClick={() => { setSelectedLine(r); setQty(String(r.units_on_hand || "")); }}
                             data-testid={`mover-units-line-${i}`}
-                            className="w-full flex items-center justify-between p-3 rounded-xl border border-border bg-card hover:border-primary/40 text-left">
+                            className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
                             <div className="min-w-0">
-                              <div className="font-mono font-bold text-sm truncate">{r.style || r.sku}</div>
-                              <div className="text-[11px] text-muted-foreground truncate">{r.color} · {r.size}</div>
+                              <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
+                              <div className="text-xs text-muted-foreground truncate">{r.color} · {r.size}</div>
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <div className="font-black text-emerald-400">{r.units_on_hand}</div>
+                              <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
                               <div className="text-[10px] text-muted-foreground">disp.</div>
                             </div>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="min-w-0">
-                            <div className="font-mono font-black">{selectedLine.style || selectedLine.sku}</div>
+                            <div className="font-mono font-semibold">{selectedLine.style || selectedLine.sku}</div>
                             <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
                           </div>
                           <button onClick={() => { setSelectedLine(null); setQty(""); }}
-                            className="text-xs font-bold text-primary">Cambiar</button>
+                            className="text-xs font-medium text-primary">Cambiar</button>
                         </div>
                         <div>
-                          <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                          <label className="text-xs font-medium text-muted-foreground">
                             Cantidad a mover (máx {selectedLine.units_on_hand})
                           </label>
                           <div className="flex items-center gap-2 mt-1">
                             <input type="number" min="1" max={selectedLine.units_on_hand}
                               value={qty} onChange={(e) => setQty(e.target.value)}
                               data-testid="mover-units-qty"
-                              className="flex-1 h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-xl font-black text-center focus:outline-none focus:border-primary" />
+                              className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                             <button onClick={() => setQty(String(selectedLine.units_on_hand))}
-                              className="h-14 px-4 rounded-2xl bg-primary/15 text-primary font-black text-sm uppercase">Todo</button>
+                              className="h-14 px-4 rounded-md bg-primary/10 text-primary text-sm font-medium hover:bg-primary/15 transition-colors">Todo</button>
                           </div>
                         </div>
                         <DestAndGo
@@ -781,66 +780,66 @@ export function MoverModule({ currentUser }) {
                   <div className="space-y-3">
                     {!selectedLine ? (
                       <div className="space-y-2">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
+                        <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
                           <Search className="w-4 h-4" /> Elige el producto a reconciliar
                         </div>
                         {contents.lines.map((r, i) => (
                           <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
                             data-testid={`mover-reconcile-line-${i}`}
-                            className="w-full flex items-center justify-between p-3 rounded-xl border border-border bg-card hover:border-primary/40 text-left">
+                            className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
                             <div className="min-w-0">
-                              <div className="font-mono font-bold text-sm truncate">{r.style || r.sku}</div>
-                              <div className="text-[11px] text-muted-foreground truncate">
+                              <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
+                              <div className="text-xs text-muted-foreground truncate">
                                 {r.color} · {r.size}{r.description ? ` · ${r.description}` : ""}
                               </div>
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <div className="font-black text-emerald-400">{r.units_on_hand}</div>
+                              <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
                               <div className="text-[10px] text-muted-foreground">disp.</div>
                             </div>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                         {/* Product validation header */}
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="font-mono font-black">{selectedLine.style || selectedLine.sku}</div>
+                            <div className="font-mono font-semibold">{selectedLine.style || selectedLine.sku}</div>
                             <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
                             {selectedLine.description && (
                               <div className="text-xs text-muted-foreground mt-0.5">{selectedLine.description}</div>
                             )}
                             {(selectedLine.customer || selectedLine.manufacturer) && (
-                              <div className="text-[11px] text-muted-foreground">
+                              <div className="text-xs text-muted-foreground">
                                 {selectedLine.customer}{selectedLine.manufacturer ? ` · ${selectedLine.manufacturer}` : ""}
                               </div>
                             )}
                           </div>
                           <button onClick={() => { setSelectedLine(null); setQty(""); setPhysicalLpn(""); }}
-                            className="text-xs font-bold text-primary flex-shrink-0">Cambiar</button>
+                            className="text-xs font-medium text-primary flex-shrink-0">Cambiar</button>
                         </div>
 
                         {/* Physical LPN scan */}
                         <div>
-                          <label className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
-                            <ScanLine className="w-4 h-4 text-primary" /> Escanea el LPN físico de la caja
+                          <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                            <ScanLine className="w-4 h-4 text-muted-foreground" /> Escanea el LPN físico de la caja
                           </label>
                           <input autoFocus value={physicalLpn}
                             onChange={(e) => setPhysicalLpn(e.target.value.toUpperCase())}
                             placeholder="Ej. A2600510001"
                             data-testid="mover-reconcile-lpn"
-                            className="mt-1 w-full h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-lg font-mono font-bold tracking-wide focus:outline-none focus:border-primary" />
+                            className="mt-1 w-full h-14 px-4 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                         </div>
 
                         {/* Quantity (default 72, editable) */}
                         <div>
-                          <label className="text-xs uppercase tracking-wide text-muted-foreground font-black">
+                          <label className="text-xs font-medium text-muted-foreground">
                             Cantidad en la caja (default 72)
                           </label>
                           <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)}
                             data-testid="mover-reconcile-qty"
-                            className="mt-1 w-full h-14 px-4 bg-secondary/30 border-2 border-border rounded-2xl text-xl font-black text-center focus:outline-none focus:border-primary" />
+                            className="mt-1 w-full h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                         </div>
 
                         <DestAndGo
@@ -865,8 +864,8 @@ export function MoverModule({ currentUser }) {
 function DestAndGo({ dest, setDest, locations, disabled, onGo, label }) {
   return (
     <div className="space-y-3">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground font-black flex items-center gap-2">
-        <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-black">3</span>
+      <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+        <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-semibold">3</span>
         Escanea la ubicación DESTINO
       </div>
       <LocationInput
@@ -875,7 +874,7 @@ function DestAndGo({ dest, setDest, locations, disabled, onGo, label }) {
       />
       <button onClick={onGo} disabled={disabled || !dest.trim()}
         data-testid="mover-confirm"
-        className="w-full h-14 rounded-2xl bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black uppercase tracking-wide flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+        className="w-full h-14 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center justify-center gap-2 transition-colors">
         <Move className="w-5 h-5" /> {label} {dest ? <span className="font-mono">{dest}</span> : ""}
       </button>
     </div>

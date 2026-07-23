@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo } from "react";
+import { cls } from "./ui";
 
 export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
   const [query, setQuery] = useState(value || '');
@@ -53,18 +54,18 @@ export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="Ej: RP03, RP10..."
-          className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono font-bold uppercase placeholder:font-normal placeholder:normal-case"
+          className={`${cls.input} font-mono uppercase placeholder:font-normal placeholder:normal-case`}
           autoComplete="off"
         />
         {query && matchCount > 0 && (
-          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-black">
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium bg-muted text-muted-foreground px-1.5 py-0.5 rounded-md">
             {matchCount} ubic.
           </span>
         )}
       </div>
       {open && suggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
-          <div className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground border-b border-border bg-secondary/30">
+        <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-lg shadow-md overflow-hidden max-h-48 overflow-y-auto">
+          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground border-b border-border bg-muted/50">
             Prefijos disponibles
           </div>
           {suggestions.map(prefix => {
@@ -73,10 +74,10 @@ export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
               <button
                 key={prefix}
                 onMouseDown={() => handleSelect(prefix)}
-                className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-primary/10 hover:text-primary transition-colors text-left"
+                className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
               >
-                <span className="font-mono font-black">{prefix}</span>
-                <span className="text-[10px] text-muted-foreground">{cnt} ubicaciones</span>
+                <span className="font-mono font-medium">{prefix}</span>
+                <span className="text-xs text-muted-foreground">{cnt} ubicaciones</span>
               </button>
             );
           })}

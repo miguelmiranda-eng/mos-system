@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  ClipboardCheck, Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
+  Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
   Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw, Search, X,
   Ghost, ScanSearch, Save,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
+import { ModuleHeader, Btn, Chip, Th } from "./ui";
 
 // Panel PC de conciliación (admin): cajas faltantes + creadas para resolver, y
 // el registro de ubicaciones ya conciliadas (con opción de reabrir).
@@ -30,9 +31,9 @@ const ADJ_TYPE_LABELS = {
 // Tipos de stock fantasma (ver services/phantom_scan.py). El delta es siempre
 // "unidades en duda": lo que el papel afirma y el piso quizá no respalda.
 const PHANTOM_TIPOS = {
-  saldo_sin_cajas: { label: "Saldo sin cajas", chip: "bg-red-500/15 text-red-300 border-red-500/30" },
-  cajas_de_papel: { label: "Cajas de papel", chip: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
-  sin_identidad: { label: "Sin identidad", chip: "bg-violet-500/15 text-violet-300 border-violet-500/30" },
+  saldo_sin_cajas: { label: "Saldo sin cajas", chip: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25" },
+  cajas_de_papel: { label: "Cajas de papel", chip: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25" },
+  sin_identidad: { label: "Sin identidad", chip: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/25" },
 };
 const PHANTOM_MAX_ROWS = 500;
 
@@ -41,8 +42,6 @@ const fmt = (iso) => {
   const d = new Date(iso);
   return isNaN(d) ? String(iso).slice(0, 16) : d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 };
-
-const Th = ({ children, right }) => <th className={`p-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground ${right ? "text-right" : "text-left"}`}>{children}</th>;
 
 export const ReconciliationModule = () => {
   const [tab, setTab] = useState("pending");
@@ -292,52 +291,49 @@ export const ReconciliationModule = () => {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
-          <ClipboardCheck className="w-6 h-6 text-emerald-400" />
-        </div>
-        <div className="flex-1">
-          <h2 className="text-xl font-black uppercase tracking-wide">Conciliación</h2>
-          <p className="text-[11px] text-muted-foreground">Cajas por resolver y registro de ubicaciones conciliadas</p>
-        </div>
+      <ModuleHeader
+        title="Conciliación"
+        subtitle="Cajas por resolver y registro de ubicaciones conciliadas"
+        right={
+          <>
+            {/* Buscador de locaciones */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                id="recon-location-search"
+                type="text"
+                value={locationSearch}
+                onChange={e => setLocationSearch(e.target.value)}
+                placeholder="Buscar locación…"
+                className="pl-8 pr-7 py-1.5 text-sm font-mono rounded-md bg-card border border-input focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors w-44 placeholder:text-muted-foreground/60"
+              />
+              {locationSearch && (
+                <button
+                  onClick={() => setLocationSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
 
-        {/* Buscador de locaciones */}
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            id="recon-location-search"
-            type="text"
-            value={locationSearch}
-            onChange={e => setLocationSearch(e.target.value)}
-            placeholder="Buscar locación…"
-            className="pl-8 pr-7 py-1.5 text-xs font-mono rounded-xl bg-secondary/30 border border-border/50 focus:outline-none focus:border-primary/50 focus:bg-secondary/50 transition-all w-44 placeholder:text-muted-foreground/50"
-          />
-          {locationSearch && (
-            <button
-              onClick={() => setLocationSearch("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="w-3 h-3" />
+            <Btn onClick={exportExcel} disabled={exporting}>
+              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
+            </Btn>
+            <button onClick={() => {
+                if (tab === "pending") loadPending();
+                else if (tab === "phantom") loadPhantom();
+                else if (tab === "second_count") { loadPending(); loadLog(); }
+                else if (tab === "log") loadLog();
+                else if (tab === "adjustments") loadAdj();
+                else loadLpn();
+              }}
+              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
             </button>
-          )}
-        </div>
-
-        <button onClick={exportExcel} disabled={exporting}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-50 text-xs font-black uppercase tracking-wider">
-          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
-        </button>
-        <button onClick={() => {
-            if (tab === "pending") loadPending();
-            else if (tab === "phantom") loadPhantom();
-            else if (tab === "second_count") { loadPending(); loadLog(); }
-            else if (tab === "log") loadLog();
-            else if (tab === "adjustments") loadAdj();
-            else loadLpn();
-          }}
-          className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40">
-          <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </div>
+          </>
+        }
+      />
 
       <div className="flex gap-1 border-b border-border">
         {TABS.map(t => {
@@ -350,10 +346,10 @@ export const ReconciliationModule = () => {
             : t.id === "lpn" && lpn ? lpn.count : null;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-colors
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
                 ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
               <Icon className="w-4 h-4" /> {t.label}
-              {badge != null && <span className="px-1.5 py-0.5 rounded-full bg-secondary text-[10px]">{badge}</span>}
+              {badge != null && <span className="px-1.5 py-0.5 rounded-full bg-muted text-xs tabular-nums">{badge}</span>}
             </button>
           );
         })}
@@ -362,15 +358,15 @@ export const ReconciliationModule = () => {
       {/* ── Por resolver ── */}
       {tab === "pending" && pending && (
         <div className="space-y-5">
-          <section className="border border-red-500/30 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-red-500/10 text-[11px] font-black uppercase tracking-widest text-red-300 flex items-center gap-2">
-              <PackageX className="w-4 h-4" />
+          <section className="border border-border rounded-lg bg-card overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold flex items-center gap-2">
+              <PackageX className="w-4 h-4 text-red-600 dark:text-red-400" />
               Faltantes ({searchQ ? pending.faltantes.filter(b => (b.recon_missing_from || "").toUpperCase().includes(searchQ)).length : pending.faltantes_count}) — esperadas y no encontradas
-              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 bg-card"><tr>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                   <Th>Caja</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th><Th right>Unid.</Th>
                   <Th>Esperada en</Th><Th>Marcada por</Th><Th right>Acción</Th>
                 </tr></thead>
@@ -378,61 +374,61 @@ export const ReconciliationModule = () => {
                   {pending.faltantes
                     .filter(b => !searchQ || (b.recon_missing_from || "").toUpperCase().includes(searchQ))
                     .map((b, i) => (
-                    <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono">{b.box_id}</td>
-                      <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td><td className="p-2">{b.size}</td>
-                      <td className="p-2 text-right">{b.units}</td>
-                      <td className="p-2 font-mono">
-                        <span className={searchQ && (b.recon_missing_from || "").toUpperCase().includes(searchQ) ? "text-primary font-bold" : ""}>
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                      <td className="px-3 py-2 font-mono">{b.box_id}</td>
+                      <td className="px-3 py-2">{b.style}</td><td className="px-3 py-2">{b.color}</td><td className="px-3 py-2">{b.size}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{b.units}</td>
+                      <td className="px-3 py-2 font-mono">
+                        <span className={searchQ && (b.recon_missing_from || "").toUpperCase().includes(searchQ) ? "text-primary font-semibold" : ""}>
                           {b.recon_missing_from}
                         </span>
                       </td>
-                      <td className="p-2">{b.recon_flagged_by}</td>
-                      <td className="p-2 text-right whitespace-nowrap">
-                        <button onClick={() => resolve(b.box_id, "assign")} title="Asignar a ubicación" className="p-1.5 rounded-lg text-sky-400 hover:bg-sky-500/10"><MapPin className="w-4 h-4" /></button>
-                        <button onClick={() => resolve(b.box_id, "delete")} title="Borrar (perdida)" className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></button>
+                      <td className="px-3 py-2">{b.recon_flagged_by}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <button onClick={() => resolve(b.box_id, "assign")} title="Asignar a ubicación" className="p-1.5 rounded-md text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"><MapPin className="w-4 h-4" /></button>
+                        <button onClick={() => resolve(b.box_id, "delete")} title="Borrar (perdida)" className="p-1.5 rounded-md text-red-600 dark:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></button>
                       </td>
                     </tr>
                   ))}
                   {pending.faltantes.filter(b => !searchQ || (b.recon_missing_from || "").toUpperCase().includes(searchQ)).length === 0 &&
-                    <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin faltantes en locaciones que coincidan con "${locationSearch}".` : "Sin faltantes."}</td></tr>}
+                    <tr><td colSpan={8} className="px-3 py-3 text-xs text-muted-foreground">{searchQ ? `Sin faltantes en locaciones que coincidan con "${locationSearch}".` : "Sin faltantes."}</td></tr>}
                 </tbody>
               </table>
             </div>
           </section>
 
-          <section className="border border-amber-500/30 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-amber-500/10 text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
-              <PackagePlus className="w-4 h-4" />
+          <section className="border border-border rounded-lg bg-card overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold flex items-center gap-2">
+              <PackagePlus className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               Creadas en conciliación ({searchQ ? pending.creadas.filter(b => (b.location || "").toUpperCase().includes(searchQ)).length : pending.creadas_count}) — escaneadas sin existir
-              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="overflow-x-auto max-h-80 overflow-y-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 bg-card"><tr>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                   <Th>Caja</Th><Th>Ubicación</Th><Th right>Unid.</Th><Th>Creada por</Th><Th>Fecha</Th><Th right>Acción</Th>
                 </tr></thead>
                 <tbody>
                   {pending.creadas
                     .filter(b => !searchQ || (b.location || "").toUpperCase().includes(searchQ))
                     .map((b, i) => (
-                    <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono">{b.box_id}</td>
-                      <td className="p-2 font-mono">
-                        <span className={searchQ && (b.location || "").toUpperCase().includes(searchQ) ? "text-primary font-bold" : ""}>
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                      <td className="px-3 py-2 font-mono">{b.box_id}</td>
+                      <td className="px-3 py-2 font-mono">
+                        <span className={searchQ && (b.location || "").toUpperCase().includes(searchQ) ? "text-primary font-semibold" : ""}>
                           {b.location}
                         </span>
                       </td>
-                      <td className="p-2 text-right">{b.units}</td>
-                      <td className="p-2">{b.recon_counted_by}</td>
-                      <td className="p-2">{fmt(b.recon_counted_at)}</td>
-                      <td className="p-2 text-right">
-                        <button onClick={() => resolve(b.box_id, "delete")} title="Borrar" className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></button>
+                      <td className="px-3 py-2 text-right tabular-nums">{b.units}</td>
+                      <td className="px-3 py-2">{b.recon_counted_by}</td>
+                      <td className="px-3 py-2">{fmt(b.recon_counted_at)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => resolve(b.box_id, "delete")} title="Borrar" className="p-1.5 rounded-md text-red-600 dark:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></button>
                       </td>
                     </tr>
                   ))}
                   {pending.creadas.filter(b => !searchQ || (b.location || "").toUpperCase().includes(searchQ)).length === 0 &&
-                    <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin creadas en locaciones que coincidan con "${locationSearch}".` : "Sin cajas creadas."}</td></tr>}
+                    <tr><td colSpan={6} className="px-3 py-3 text-xs text-muted-foreground">{searchQ ? `Sin creadas en locaciones que coincidan con "${locationSearch}".` : "Sin cajas creadas."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -450,18 +446,17 @@ export const ReconciliationModule = () => {
           const shown = filtered.slice(0, PHANTOM_MAX_ROWS);
           return (
           <div className="space-y-4">
-            <div className="border border-violet-500/30 rounded-xl overflow-hidden">
-              <div className="px-3 py-2 bg-violet-500/10 flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 text-violet-300 text-[11px] font-black uppercase tracking-widest">
-                  <Ghost className="w-4 h-4" />
+            <div className="border border-border rounded-lg bg-card overflow-hidden">
+              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <Ghost className="w-4 h-4 text-violet-600 dark:text-violet-400" />
                   {filtered.length}{(searchQ || phantomTipo) ? ` de ${phantom.count}` : ""} fantasmas pendientes
-                  {phantom.last_scan && <span className="text-muted-foreground font-normal normal-case">· último escaneo {fmt(phantom.last_scan)}</span>}
+                  {phantom.last_scan && <span className="text-muted-foreground font-normal">· último escaneo {fmt(phantom.last_scan)}</span>}
                 </div>
-                <button onClick={runPhantomScan} disabled={scanning}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 border border-violet-500/30 disabled:opacity-40 text-[11px] font-black uppercase tracking-wider">
+                <Btn onClick={runPhantomScan} disabled={scanning}>
                   {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
                   Escanear ahora
-                </button>
+                </Btn>
               </div>
               <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
                 Papel que el piso quizá no respalda. Cada fila es una tarea de caminata: cuenta físico, anota lo
@@ -474,20 +469,20 @@ export const ReconciliationModule = () => {
                   const active = phantomTipo === k;
                   return (
                     <button key={k} onClick={() => setPhantomTipo(active ? null : k)}
-                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-all ${cfg.chip} ${active ? "ring-2 ring-primary/60" : "opacity-80 hover:opacity-100"}`}>
+                      className={`px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${cfg.chip} ${active ? "ring-2 ring-primary/60" : "opacity-80 hover:opacity-100"}`}>
                       {cfg.label}: {r?.n ?? 0} · {(r?.unidades ?? 0).toLocaleString()}u en duda
                     </button>
                   );
                 })}
                 {phantomTipo && (
-                  <button onClick={() => setPhantomTipo(null)} className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground">
+                  <button onClick={() => setPhantomTipo(null)} className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground">
                     <X className="w-3 h-3 inline" /> quitar filtro
                   </button>
                 )}
               </div>
               <div className="overflow-x-auto max-h-[34rem] overflow-y-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-card"><tr>
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                     <Th>Ubicación</Th><Th>Tipo</Th><Th>Material</Th><Th>Lote</Th>
                     <Th right>Renglón</Th><Th right>Cajas</Th><Th right>En duda</Th>
                     <Th>Registro</Th><Th right>Acción</Th>
@@ -498,22 +493,22 @@ export const ReconciliationModule = () => {
                       const draft = phantomDrafts[it.phantom_id];
                       const dirty = draft !== undefined && draft !== (it.registro || "");
                       return (
-                        <tr key={it.phantom_id} className="border-t border-border/40 text-xs align-top">
-                          <td className="p-2 font-mono font-bold whitespace-nowrap">
+                        <tr key={it.phantom_id} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs align-top">
+                          <td className="px-3 py-2 font-mono font-medium whitespace-nowrap">
                             <span className={searchQ && it.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>{it.location}</span>
-                            {it.transito && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 text-[9px] font-black uppercase">tránsito</span>}
+                            {it.transito && <span className="ml-1.5 px-1.5 py-0.5 rounded-md border bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25 text-[10px] font-medium">tránsito</span>}
                           </td>
-                          <td className="p-2 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full border text-[10px] font-black uppercase ${cfg.chip}`}>{cfg.label}</span></td>
-                          <td className="p-2">
+                          <td className="px-3 py-2 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-md border text-xs font-medium ${cfg.chip}`}>{cfg.label}</span></td>
+                          <td className="px-3 py-2">
                             {it.tipo === "sin_identidad"
                               ? <span className="text-muted-foreground italic">{it.cajas} caja{it.cajas === 1 ? "" : "s"} sin identificar</span>
                               : <>{it.style} <span className="text-muted-foreground">{it.color} / {it.size}</span></>}
                           </td>
-                          <td className="p-2 text-muted-foreground">{[it.lote_coo, it.lote_fabric].filter(Boolean).join(" · ") || "—"}</td>
-                          <td className="p-2 text-right">{(it.units_renglon ?? 0).toLocaleString()}</td>
-                          <td className="p-2 text-right">{(it.units_cajas ?? 0).toLocaleString()} <span className="text-muted-foreground">/{it.cajas}c</span></td>
-                          <td className="p-2 text-right font-bold text-red-400">{(it.delta ?? 0).toLocaleString()}</td>
-                          <td className="p-2 min-w-[14rem]">
+                          <td className="px-3 py-2 text-muted-foreground">{[it.lote_coo, it.lote_fabric].filter(Boolean).join(" · ") || "—"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{(it.units_renglon ?? 0).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{(it.units_cajas ?? 0).toLocaleString()} <span className="text-muted-foreground">/{it.cajas}c</span></td>
+                          <td className="px-3 py-2 text-right tabular-nums font-medium text-red-600 dark:text-red-400">{(it.delta ?? 0).toLocaleString()}</td>
+                          <td className="px-3 py-2 min-w-[14rem]">
                             <div className="flex items-center gap-1">
                               <input
                                 type="text"
@@ -521,28 +516,28 @@ export const ReconciliationModule = () => {
                                 onChange={e => setPhantomDrafts(d => ({ ...d, [it.phantom_id]: e.target.value }))}
                                 onKeyDown={e => { if (e.key === "Enter" && dirty) savePhantomRegistro(it); }}
                                 placeholder="¿Qué encontró el conteo?"
-                                className="w-full px-2 py-1 text-xs rounded-lg bg-secondary/30 border border-border/50 focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40"
+                                className="w-full px-2 py-1 text-xs rounded-md bg-card border border-input focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors placeholder:text-muted-foreground/60"
                               />
                               {dirty && (
                                 <button onClick={() => savePhantomRegistro(it)} title="Guardar registro"
-                                  className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 shrink-0">
+                                  className="p-1.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 shrink-0">
                                   <Save className="w-4 h-4" />
                                 </button>
                               )}
                             </div>
-                            {it.registro_por && <div className="mt-0.5 text-[10px] text-muted-foreground">{it.registro_por} · {fmt(it.registro_at)}</div>}
+                            {it.registro_por && <div className="mt-0.5 text-xs text-muted-foreground">{it.registro_por} · {fmt(it.registro_at)}</div>}
                           </td>
-                          <td className="p-2 text-right">
+                          <td className="px-3 py-2 text-right">
                             <button onClick={() => atenderPhantom(it)} title="Marcar atendida (conteo hecho y corrección registrada)"
-                              className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 inline-flex items-center gap-1">
-                              <CheckCircle2 className="w-4 h-4" /> <span className="text-[10px] font-black uppercase">Atender</span>
+                              className="p-1.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" /> <span className="text-xs font-medium">Atender</span>
                             </button>
                           </td>
                         </tr>
                       );
                     })}
                     {filtered.length === 0 && (
-                      <tr><td colSpan={9} className="p-4 text-xs text-muted-foreground">
+                      <tr><td colSpan={9} className="px-3 py-4 text-xs text-muted-foreground">
                         {phantom.items.length === 0
                           ? "La cola está vacía. Corre \"Escanear ahora\" para comparar toda la base (cajas vs renglones)."
                           : `Sin coincidencias${searchQ ? ` con "${locationSearch}"` : ""}${phantomTipo ? ` del tipo ${PHANTOM_TIPOS[phantomTipo]?.label}` : ""}.`}
@@ -552,7 +547,7 @@ export const ReconciliationModule = () => {
                 </table>
               </div>
               {filtered.length > PHANTOM_MAX_ROWS && (
-                <div className="px-3 py-2 text-[11px] text-muted-foreground border-t border-border">
+                <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border">
                   Mostrando los primeros {PHANTOM_MAX_ROWS.toLocaleString()} de {filtered.length.toLocaleString()} (ordenados por unidades en duda) — usa el buscador o los filtros de tipo, o exporta a Excel para la lista completa.
                 </div>
               )}
@@ -568,58 +563,57 @@ export const ReconciliationModule = () => {
         : pending && (() => {
           const filteredSC = secondCountLocations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
           return (
-          <div className="border border-fuchsia-500/30 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-fuchsia-500/10 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-fuchsia-300 text-[11px] font-black uppercase tracking-widest">
-                <RotateCcw className="w-4 h-4" />
+          <div className="border border-border rounded-lg bg-card overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <RotateCcw className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400" />
                 {filteredSC.length}{searchQ ? ` de ${secondCountLocations.length}` : ""} ubicaciones con faltantes — {filteredSC.filter(l => l.locked).length} aún bloqueadas
-                {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
+                {searchQ && <span className="ml-1 text-muted-foreground font-normal">· filtrado: "{locationSearch}"</span>}
               </div>
-              <button onClick={startSecondCount} disabled={startingSecondCount || lockedCount === 0}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-fuchsia-500/20 text-fuchsia-200 hover:bg-fuchsia-500/30 border border-fuchsia-500/30 disabled:opacity-40 text-[11px] font-black uppercase tracking-wider">
+              <Btn onClick={startSecondCount} disabled={startingSecondCount || lockedCount === 0}>
                 {startingSecondCount ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
                 Liberar {lockedCount > 0 ? `${lockedCount} ` : ""}para segundo conteo
-              </button>
+              </Btn>
             </div>
             <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
               Estas ubicaciones ya se conciliaron una vez y quedaron cajas esperadas sin encontrar. Al liberarlas, se
               reabren en el PDA para que el operador las vuelva a contar físicamente; queda registro en "Ajustes de cajas".
             </div>
             <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 bg-card"><tr>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                   <Th>Ubicación</Th><Th right>Conteo anterior</Th><Th right>Conteo nuevo</Th><Th right>Diferencia</Th>
                   <Th right>Unidades</Th><Th>Estado</Th>
                 </tr></thead>
                 <tbody>
                   {filteredSC.map((l, i) => (
-                    <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono font-bold">
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                      <td className="px-3 py-2 font-mono font-medium">
                         <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
                           {l.location}
                         </span>
                       </td>
-                      <td className="p-2 text-right text-red-400">{l.anterior}</td>
-                      <td className="p-2 text-right">
+                      <td className="px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{l.anterior}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
                         {l.nuevo === null ? <span className="text-muted-foreground">—</span> : l.nuevo}
                       </td>
-                      <td className="p-2 text-right font-bold">
+                      <td className="px-3 py-2 text-right tabular-nums font-medium">
                         {l.diff === null ? <span className="text-muted-foreground font-normal">—</span>
-                          : l.diff > 0 ? <span className="text-emerald-400">-{l.diff}</span>
+                          : l.diff > 0 ? <span className="text-emerald-600 dark:text-emerald-400">-{l.diff}</span>
                           : l.diff === 0 ? <span className="text-muted-foreground">0</span>
-                          : <span className="text-red-400">+{-l.diff}</span>}
+                          : <span className="text-red-600 dark:text-red-400">+{-l.diff}</span>}
                       </td>
-                      <td className="p-2 text-right">{l.unidades.toLocaleString()}</td>
-                      <td className="p-2">
+                      <td className="px-3 py-2 text-right tabular-nums">{l.unidades.toLocaleString()}</td>
+                      <td className="px-3 py-2">
                         {l.nuevo !== null
-                          ? <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 text-[10px] font-black uppercase">Recontada</span>
+                          ? <Chip tone="info">Recontada</Chip>
                           : l.locked
-                          ? <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-black uppercase">Bloqueada</span>
-                          : <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-black uppercase">Liberada — lista para recontar</span>}
+                          ? <Chip tone="warning">Bloqueada</Chip>
+                          : <Chip tone="success">Liberada — lista para recontar</Chip>}
                       </td>
                     </tr>
                   ))}
-                  {filteredSC.length === 0 && <tr><td colSpan={6} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin ubicaciones que coincidan con "${locationSearch}".` : "No hay ubicaciones con faltantes pendientes."}</td></tr>}
+                  {filteredSC.length === 0 && <tr><td colSpan={6} className="px-3 py-3 text-xs text-muted-foreground">{searchQ ? `Sin ubicaciones que coincidan con "${locationSearch}".` : "No hay ubicaciones con faltantes pendientes."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -632,40 +626,40 @@ export const ReconciliationModule = () => {
       {tab === "log" && log && (() => {
         const filteredLog = log.locations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
         return (
-        <div className="border border-border rounded-xl overflow-hidden">
-          <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="border border-border rounded-lg bg-card overflow-hidden">
+          <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             {filteredLog.length}{searchQ ? ` de ${log.count}` : ""} ubicaciones conciliadas
-            {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
+            {searchQ && <span className="ml-1 text-muted-foreground font-normal">· filtrado: "{locationSearch}"</span>}
           </div>
           <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
-            <table className="w-full">
-              <thead className="sticky top-0 bg-card"><tr>
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                 <Th>Ubicación</Th><Th>Conciliada por</Th><Th>Fecha</Th>
                 <Th right>Confirm.</Th><Th right>Movidas</Th><Th right>Creadas</Th><Th right>Faltantes</Th><Th right>Acción</Th>
               </tr></thead>
               <tbody>
                 {filteredLog.map((l, i) => (
-                  <tr key={i} className="border-t border-border/40 text-xs">
-                    <td className="p-2 font-mono font-bold">
+                  <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                    <td className="px-3 py-2 font-mono font-medium">
                       <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
                         {l.location}
                       </span>
                     </td>
-                    <td className="p-2">{l.reconciled_by_name}</td>
-                    <td className="p-2">{fmt(l.reconciled_at)}</td>
-                    <td className="p-2 text-right">{l.counts?.confirmadas ?? "-"}</td>
-                    <td className="p-2 text-right">{l.counts?.movidas ?? "-"}</td>
-                    <td className="p-2 text-right text-amber-400">{l.counts?.creadas ?? "-"}</td>
-                    <td className="p-2 text-right text-red-400">{l.counts?.faltantes ?? "-"}</td>
-                    <td className="p-2 text-right">
-                      <button onClick={() => reopen(l.location)} title="Reabrir" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 inline-flex items-center gap-1">
-                        <Unlock className="w-4 h-4" /> <span className="text-[10px] font-black uppercase">Reabrir</span>
+                    <td className="px-3 py-2">{l.reconciled_by_name}</td>
+                    <td className="px-3 py-2">{fmt(l.reconciled_at)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{l.counts?.confirmadas ?? "-"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{l.counts?.movidas ?? "-"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-amber-600 dark:text-amber-400">{l.counts?.creadas ?? "-"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{l.counts?.faltantes ?? "-"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => reopen(l.location)} title="Reabrir" className="p-1.5 rounded-md text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 inline-flex items-center gap-1">
+                        <Unlock className="w-4 h-4" /> <span className="text-xs font-medium">Reabrir</span>
                       </button>
                     </td>
                   </tr>
                 ))}
-                {filteredLog.length === 0 && <tr><td colSpan={8} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Aún no se ha conciliado ninguna ubicación."}</td></tr>}
+                {filteredLog.length === 0 && <tr><td colSpan={8} className="px-3 py-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Aún no se ha conciliado ninguna ubicación."}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -680,10 +674,10 @@ export const ReconciliationModule = () => {
           adj.count === 0 ? <p className="text-center text-muted-foreground py-10">Sin ajustes de cajas registrados.</p>
           : <div className="space-y-4">
             {adj.adjustments.map((a, i) => (
-              <div key={i} className="border border-sky-500/30 rounded-xl overflow-hidden">
-                <div className="px-3 py-2 bg-sky-500/10 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-sky-300 text-[11px] font-black uppercase tracking-widest">
-                    <PackageCheck className="w-4 h-4" /> {ADJ_TYPE_LABELS[a.type] || a.type}
+              <div key={i} className="border border-border rounded-lg bg-card overflow-hidden">
+                <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold">
+                    <PackageCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" /> {ADJ_TYPE_LABELS[a.type] || a.type}
                   </div>
                   <div className="text-xs text-muted-foreground">{fmt(a.created_at)} · {a.created_by}</div>
                 </div>
@@ -693,7 +687,7 @@ export const ReconciliationModule = () => {
                 {a.type !== "second_count_start" && (
                   <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border">
                     {(a.locations || []).map((l, j) => (
-                      <span key={j} className="px-2 py-1 rounded-lg bg-secondary/60 text-xs font-mono">
+                      <span key={j} className="px-2 py-1 rounded-md bg-muted border border-border text-xs font-mono">
                         {l.location}: {l.cajas}c / {l.unidades}u
                       </span>
                     ))}
@@ -701,24 +695,24 @@ export const ReconciliationModule = () => {
                 )}
                 {a.type === "second_count_start" ? (
                   <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                    <table className="w-full">
-                      <thead className="sticky top-0 bg-card"><tr>
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                         <Th>Ubicación</Th><Th right>Faltantes</Th><Th right>Unid.</Th>
                         <Th>1er conteo (conf./mov./cre./falt.)</Th><Th>Conciliada por</Th><Th>Fecha 1er conteo</Th>
                       </tr></thead>
                       <tbody>
                         {(a.locations || []).map((l, j) => (
-                          <tr key={j} className="border-t border-border/40 text-xs">
-                            <td className="p-2 font-mono font-bold">{l.location}</td>
-                            <td className="p-2 text-right text-red-400">{l.cajas}</td>
-                            <td className="p-2 text-right">{l.unidades}</td>
-                            <td className="p-2 font-mono">
+                          <tr key={j} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                            <td className="px-3 py-2 font-mono font-medium">{l.location}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{l.cajas}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{l.unidades}</td>
+                            <td className="px-3 py-2 font-mono">
                               {l.first_count
                                 ? `${l.first_count.confirmadas ?? 0} / ${l.first_count.movidas ?? 0} / ${l.first_count.creadas ?? 0} / ${l.first_count.faltantes ?? 0}`
                                 : "-"}
                             </td>
-                            <td className="p-2">{l.first_count_by || "-"}</td>
-                            <td className="p-2">{fmt(l.first_count_at)}</td>
+                            <td className="px-3 py-2">{l.first_count_by || "-"}</td>
+                            <td className="px-3 py-2">{fmt(l.first_count_at)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -726,17 +720,17 @@ export const ReconciliationModule = () => {
                   </div>
                 ) : (
                   <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                    <table className="w-full">
-                      <thead className="sticky top-0 bg-card"><tr>
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr>
                         <Th>Caja (LPN)</Th><Th>Ubicación</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th><Th right>Unid.</Th>
                       </tr></thead>
                       <tbody>
                         {(a.boxes || []).map((b, k) => (
-                          <tr key={k} className="border-t border-border/40 text-xs">
-                            <td className="p-2 font-mono">{b.box_id}</td>
-                            <td className="p-2 font-mono">{b.location}</td>
-                            <td className="p-2">{b.style}</td><td className="p-2">{b.color}</td>
-                            <td className="p-2">{b.size}</td><td className="p-2 text-right">{b.units}</td>
+                          <tr key={k} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                            <td className="px-3 py-2 font-mono">{b.box_id}</td>
+                            <td className="px-3 py-2 font-mono">{b.location}</td>
+                            <td className="px-3 py-2">{b.style}</td><td className="px-3 py-2">{b.color}</td>
+                            <td className="px-3 py-2">{b.size}</td><td className="px-3 py-2 text-right tabular-nums">{b.units}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -755,31 +749,31 @@ export const ReconciliationModule = () => {
         : lpn && (() => {
           const filteredLpn = lpn.locations.filter(l => !searchQ || l.location.toUpperCase().includes(searchQ));
           return (
-          <div className="border border-amber-500/30 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-amber-500/10 text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
-              <Ban className="w-4 h-4" />
+          <div className="border border-border rounded-lg bg-card overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold flex items-center gap-2">
+              <Ban className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               {filteredLpn.length}{searchQ ? ` de ${lpn.count}` : ""} ubicaciones con cajas LPN — NO se pueden conciliar en el PDA
-              {searchQ && <span className="ml-1 text-muted-foreground font-normal normal-case">· filtrado: "{locationSearch}"</span>}
+              {searchQ && <span className="ml-1 text-muted-foreground font-normal">· filtrado: "{locationSearch}"</span>}
             </div>
             <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
               Estas ubicaciones tienen cajas con licencia física (LPN, sin prefijo BOX). Avísale a los contadores que las omitan.
             </div>
             <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 bg-card"><tr><Th>Ubicación</Th><Th right>Cajas LPN</Th><Th right>Unidades</Th></tr></thead>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 border-b border-border sticky top-0 z-10"><tr><Th>Ubicación</Th><Th right>Cajas LPN</Th><Th right>Unidades</Th></tr></thead>
                 <tbody>
                   {filteredLpn.map((l, i) => (
-                    <tr key={i} className="border-t border-border/40 text-xs">
-                      <td className="p-2 font-mono font-bold">
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors text-xs">
+                      <td className="px-3 py-2 font-mono font-medium">
                         <span className={searchQ && l.location.toUpperCase().includes(searchQ) ? "text-primary" : ""}>
                           {l.location}
                         </span>
                       </td>
-                      <td className="p-2 text-right">{l.cajas.toLocaleString()}</td>
-                      <td className="p-2 text-right">{(l.unidades || 0).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{l.cajas.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{(l.unidades || 0).toLocaleString()}</td>
                     </tr>
                   ))}
-                  {filteredLpn.length === 0 && <tr><td colSpan={3} className="p-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Ninguna ubicación tiene cajas LPN."}</td></tr>}
+                  {filteredLpn.length === 0 && <tr><td colSpan={3} className="px-3 py-3 text-xs text-muted-foreground">{searchQ ? `Sin coincidencias con "${locationSearch}".` : "Ninguna ubicación tiene cajas LPN."}</td></tr>}
                 </tbody>
               </table>
             </div>

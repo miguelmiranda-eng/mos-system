@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Edit3, X, Loader2, ClipboardCheck } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, putter, logLoadError } from "./lib";
+import { Btn, Chip, cls } from "./ui";
 
 export const FinishedGoodsModule = () => {
   const { t } = useLang();
@@ -38,7 +39,7 @@ export const FinishedGoodsModule = () => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex items-center bg-secondary/30 p-1 rounded-xl border border-border/20">
+        <div className="flex items-center bg-muted p-1 rounded-lg">
           {[
             { id: 'ALL', label: t('all') || 'Todos' },
             { id: 'REGULAR', label: 'Regular' },
@@ -47,7 +48,7 @@ export const FinishedGoodsModule = () => {
             <button
               key={tab.id}
               onClick={() => setBpoFilter(tab.id)}
-              className={`px-4 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${bpoFilter === tab.id ? 'bg-primary text-black shadow' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${bpoFilter === tab.id ? 'bg-card text-foreground border-border' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >
               {tab.label}
             </button>
@@ -56,32 +57,32 @@ export const FinishedGoodsModule = () => {
         <div className="text-xs text-muted-foreground">{boxes.length} {t('wms_boxes')} {t('wms_prod_finished').toLowerCase()} / {boxes.reduce((s, b) => s + (b.units || 0), 0)} {t('wms_units')}</div>
       </div>
 
-      <div className="overflow-auto max-h-[500px] border border-border/40 rounded-2xl bg-card/40 backdrop-blur-sm shadow-xl">
+      <div className="overflow-auto max-h-[500px] border border-border rounded-lg bg-card">
         <table className="w-full text-sm">
-          <thead className="bg-secondary/80 sticky top-0 backdrop-blur-md">
+          <thead className="bg-muted/50 sticky top-0 border-b border-border">
             <tr>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Box ID</th>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_sku')}</th>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_color')}</th>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_label_size')}</th>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('wms_units')}</th>
-              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('location')}</th>
-              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('actions')}</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Box ID</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_sku')}</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_color')}</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_size')}</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_units')}</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('location')}</th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('actions')}</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border/10">
+          <tbody>
             {boxes.map(b => (
-              <tr key={b.box_id} className="border-b border-border/5 hover:bg-primary/5 transition-all group">
-                <td className="p-3 font-mono font-black text-primary group-hover:scale-105 transition-transform origin-left">{b.box_id}</td>
-                <td className="p-3 font-bold">{b.sku}</td>
-                <td className="p-3 text-xs uppercase text-muted-foreground">{b.color}</td>
-                <td className="p-3 font-bold text-primary">{b.size}</td>
-                <td className="p-3 font-mono font-black tracking-tighter">{b.units}</td>
-                <td className="p-3 text-xs text-muted-foreground font-mono italic">
+              <tr key={b.box_id} className="border-b border-border/60 hover:bg-muted/40 transition-colors">
+                <td className="px-3 py-2.5 font-mono font-medium">{b.box_id}</td>
+                <td className="px-3 py-2.5 font-medium">{b.sku}</td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground">{b.color}</td>
+                <td className="px-3 py-2.5 font-medium">{b.size}</td>
+                <td className="px-3 py-2.5 tabular-nums font-medium">{b.units}</td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground font-mono">
                   {b.location || '-'}
-                  {b.is_bpo && <span className="ml-2 bg-amber-500/10 text-amber-500 text-[8px] px-1 rounded border border-amber-500/20">B.O.</span>}
+                  {b.is_bpo && <Chip tone="warning" className="ml-2">B.O.</Chip>}
                 </td>
-                <td className="p-3 text-right">
+                <td className="px-3 py-2.5 text-right">
                   <button onClick={() => setEditingBox(b)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all">
                     <Edit3 className="w-4 h-4" />
                   </button>
@@ -95,9 +96,9 @@ export const FinishedGoodsModule = () => {
 
       {editingBox && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-card border border-border rounded-lg w-full max-w-lg shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <h3 className="font-black uppercase tracking-widest text-sm text-primary flex items-center gap-2">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
                 <Edit3 className="w-4 h-4" />
                 {t('wms_edit_box') || 'Editar Caja'} {editingBox.box_id}
               </h3>
@@ -106,45 +107,46 @@ export const FinishedGoodsModule = () => {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU</label>
-                <input value={editingBox.sku} onChange={e => setEditingBox(p => ({ ...p, sku: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">SKU</label>
+                <input value={editingBox.sku} onChange={e => setEditingBox(p => ({ ...p, sku: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('color')}</label>
-                <input value={editingBox.color} onChange={e => setEditingBox(p => ({ ...p, color: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('color')}</label>
+                <input value={editingBox.color} onChange={e => setEditingBox(p => ({ ...p, color: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('size')}</label>
-                <input value={editingBox.size} onChange={e => setEditingBox(p => ({ ...p, size: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('size')}</label>
+                <input value={editingBox.size} onChange={e => setEditingBox(p => ({ ...p, size: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('units')}</label>
-                <input type="number" value={editingBox.units} onChange={e => setEditingBox(p => ({ ...p, units: parseInt(e.target.value) || 0 }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold" />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('units')}</label>
+                <input type="number" value={editingBox.units} onChange={e => setEditingBox(p => ({ ...p, units: parseInt(e.target.value) || 0 }))} className={`${cls.input} tabular-nums`} />
               </div>
               <div className="col-span-2">
-                <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">{t('location')}</label>
-                <input value={editingBox.location || ''} onChange={e => setEditingBox(p => ({ ...p, location: e.target.value }))} className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold font-mono" />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('location')}</label>
+                <input value={editingBox.location || ''} onChange={e => setEditingBox(p => ({ ...p, location: e.target.value }))} className={`${cls.input} font-mono`} />
               </div>
               <div className="col-span-2">
-                <label className="flex items-center gap-2 cursor-pointer p-2 bg-secondary/50 rounded-xl">
+                <label className="flex items-center gap-2 cursor-pointer p-2 bg-muted rounded-md">
                   <input type="checkbox" checked={editingBox.is_bpo} onChange={e => setEditingBox(p => ({ ...p, is_bpo: e.target.checked }))} className="w-4 h-4 rounded border-border text-primary" />
-                  <span className="text-xs font-black uppercase tracking-widest">BACK ORDER (B.O.)</span>
+                  <span className="text-xs font-medium">BACK ORDER (B.O.)</span>
                 </label>
               </div>
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button
+              <Btn
+                variant="primary"
                 onClick={handleSaveBox}
-                className="flex-1 bg-primary text-black font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1"
                 disabled={saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
                 {t('save') || 'Guardar'}
-              </button>
-              <button onClick={() => setEditingBox(null)} className="flex-1 bg-secondary text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all">
+              </Btn>
+              <Btn onClick={() => setEditingBox(null)} className="flex-1">
                 {t('cancel') || 'Cancelar'}
-              </button>
+              </Btn>
             </div>
           </div>
         </div>

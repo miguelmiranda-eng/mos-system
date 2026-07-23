@@ -6,6 +6,7 @@ import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
+import { Btn, StatCard, cls } from "./ui";
 
 const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -25,7 +26,7 @@ const mergeUnique = (...lists) => {
 
 // Deadline urgency color for a pre-ticket's cancel_date chip.
 function deadlineInfo(dateStr) {
-  const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-secondary/60 text-muted-foreground border-border/30' };
+  const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-muted text-muted-foreground border-border' };
   if (!dateStr) return none;
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return none;
@@ -33,10 +34,10 @@ function deadlineInfo(dateStr) {
   const dd = new Date(d); dd.setHours(0, 0, 0, 0);
   const days = Math.round((dd - today) / 86400000);
   const fmt = dd.toLocaleDateString();
-  if (days < 0) return { bucket: 'overdue', order: 0, label: `Vencida · ${fmt}`, cls: 'bg-red-500/15 text-red-400 border-red-500/40' };
-  if (days === 0) return { bucket: 'today', order: 1, label: `Hoy · ${fmt}`, cls: 'bg-orange-500/15 text-orange-400 border-orange-500/40' };
-  if (days <= 7) return { bucket: 'week', order: 2, label: `${days}d · ${fmt}`, cls: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/40' };
-  return { bucket: 'later', order: 3, label: fmt, cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
+  if (days < 0) return { bucket: 'overdue', order: 0, label: `Vencida · ${fmt}`, cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25' };
+  if (days === 0) return { bucket: 'today', order: 1, label: `Hoy · ${fmt}`, cls: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25' };
+  if (days <= 7) return { bucket: 'week', order: 2, label: `${days}d · ${fmt}`, cls: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' };
+  return { bucket: 'later', order: 3, label: fmt, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' };
 }
 
 export const PickingModule = ({ currentUser } = {}) => {
@@ -608,39 +609,39 @@ export const PickingModule = ({ currentUser } = {}) => {
     const currentStatus = ticket.picking_status === PickingStatus.COMPLETED ? PickingStatus.COMPLETED : ticket.picking_status || PickingStatus.PENDING;
 
     return (
-      <div key={ticket.ticket_id} className={`group border border-border/40 rounded-xl transition-all relative shadow-sm flex flex-col md:flex-row md:items-center justify-between p-3 gap-4 ${ticket.is_virtual ? 'bg-secondary/20 border-dashed hover:bg-secondary/30' : 'bg-card/40 hover:bg-card'}`} data-testid={`pick-${ticket.ticket_id}`}>
+      <div key={ticket.ticket_id} className={`group border border-border rounded-lg transition-colors relative flex flex-col md:flex-row md:items-center justify-between p-3 gap-4 ${ticket.is_virtual ? 'bg-muted/30 border-dashed hover:bg-muted/50' : 'bg-card hover:bg-muted/40'}`} data-testid={`pick-${ticket.ticket_id}`}>
         {/* Left Status Bar */}
-        <div className={`absolute left-0 top-0 bottom-0 w-1 ${ticket.is_virtual ? 'bg-slate-400 opacity-30' : (currentStatus === PickingStatus.COMPLETED ? 'bg-emerald-500' : currentStatus === PickingStatus.IN_PROGRESS ? 'bg-yellow-500' : 'bg-blue-500')}`} />
+        <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-lg ${ticket.is_virtual ? 'bg-muted-foreground/30' : (currentStatus === PickingStatus.COMPLETED ? 'bg-emerald-500' : currentStatus === PickingStatus.IN_PROGRESS ? 'bg-amber-500' : 'bg-blue-500')}`} />
 
         {/* Main Info */}
         <div className="flex-1 min-w-0 pl-2">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono font-black text-primary text-sm uppercase tracking-tighter truncate max-w-[120px]" title={ticket.ticket_id}>
+            <span className="font-mono font-medium text-sm truncate max-w-[120px]" title={ticket.ticket_id}>
               {ticket.ticket_id.split('_')[1] || ticket.ticket_id}
             </span>
-            <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest min-w-[50px] text-center">
+            <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded-md text-muted-foreground min-w-[50px] text-center">
               #{ticket.order_number}
             </span>
             {ticket.cancel_date && (() => {
               const di = deadlineInfo(ticket.cancel_date);
               return (
-                <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 ${di.cls}`} title="Fecha límite (cancel date)">
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${di.cls}`} title="Fecha límite (cancel date)">
                   <Calendar className="w-2.5 h-2.5" /> {di.label}
                 </span>
               );
             })()}
             {ticket.is_virtual && (
-              <span className="text-[9px] font-black uppercase bg-primary text-black px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
+              <span className="text-xs font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25 flex items-center gap-1">
                 <Plus className="w-2 h-2" /> {t('wms_new_pick') || 'NEW'}
               </span>
             )}
             {!hasSizes && !ticket.is_virtual && (
-              <span className="text-[10px] font-black uppercase bg-amber-500/20 px-2 py-0.5 rounded text-amber-400 tracking-widest border border-amber-500/20 animate-pulse">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25">
                 {t('draft')}
               </span>
             )}
             {ticket.partial_closed && !ticket.is_virtual && (
-              <span className="text-[9px] font-black uppercase bg-orange-500/20 px-2 py-0.5 rounded text-orange-400 tracking-widest border border-orange-500/30"
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25"
                 title="Cerrado parcial — esperando más material. Reasigna el ticket cuando llegue stock.">
                 Parcial · espera material
               </span>
@@ -648,7 +649,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <select
               value={ticket.blank_status || ''}
               onChange={(e) => handleQuickStatus(ticket.ticket_id, e.target.value)}
-              className={`bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest leading-none border-none focus:ring-0 cursor-pointer text-center text-ellipsis max-w-[120px] shadow-sm hover:shadow active:scale-95 transition-all ${!ticket.blank_status ? 'opacity-50' : ''}`}
+              className={`bg-muted text-foreground/80 px-1.5 py-0.5 rounded-md text-xs font-medium leading-none border-none focus:ring-0 cursor-pointer text-center text-ellipsis max-w-[120px] transition-colors ${!ticket.blank_status ? 'opacity-50' : ''}`}
               onClick={e => e.stopPropagation()}
             >
               <option value="">- {t('status')} -</option>
@@ -657,12 +658,12 @@ export const PickingModule = ({ currentUser } = {}) => {
               ))}
             </select>
           </div>
-          <div className="text-xs font-bold text-foreground flex items-center gap-2 truncate">
+          <div className="text-xs font-medium text-foreground flex items-center gap-2 truncate">
             {ticket.customer || t('no_client')}
             <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
-            <span className="text-muted-foreground uppercase text-[10px] tracking-widest truncate">{ticket.style}</span>
+            <span className="text-muted-foreground text-xs truncate">{ticket.style}</span>
             <span className="w-1 h-1 rounded-full bg-muted-foreground/30 flex-shrink-0" />
-            <span className="text-[10px] text-muted-foreground whitespace-nowrap">{new Date(ticket.created_at).toLocaleDateString()}</span>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(ticket.created_at).toLocaleDateString()}</span>
           </div>
           {(() => {
             const renderJobLink = (jt, label) => {
@@ -677,18 +678,18 @@ export const PickingModule = ({ currentUser } = {}) => {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-[9px] bg-primary/5 text-primary px-1.5 py-0.5 rounded border border-primary/20 hover:bg-primary/10 transition-colors group/link truncate max-w-[120px]"
+                    className="flex items-center gap-1 text-xs bg-card text-foreground/80 px-1.5 py-0.5 rounded-md border border-border hover:bg-muted transition-colors group/link truncate max-w-[120px]"
                     title={text}
                     onClick={e => e.stopPropagation()}
                   >
-                    <span className="font-bold opacity-60">{label}:</span>
+                    <span className="font-medium text-muted-foreground">{label}:</span>
                     <span className="truncate">{text}</span>
                     <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover/link:opacity-100 transition-opacity" />
                   </a>
                 );
               }
               return (
-                <span className="text-[9px] bg-slate-500/10 text-slate-400 px-1.5 py-0.5 rounded border border-slate-500/20 truncate max-w-[100px]" title={text}>
+                <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded-md border border-border truncate max-w-[100px]" title={text}>
                   {label}: {text}
                 </span>
               );
@@ -705,25 +706,25 @@ export const PickingModule = ({ currentUser } = {}) => {
 
         {/* Progress */}
         <div className="hidden md:block w-32 shrink-0">
-          <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-1">
+          <div className="flex items-center justify-between text-xs font-medium text-muted-foreground mb-1">
             <span>{currentStatus.replace('_', ' ')}</span>
             <span>{pct}%</span>
           </div>
-          <div className="h-1.5 bg-black/20 rounded-full overflow-hidden shadow-inner">
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
             <div className={`h-full rounded-full transition-all duration-1000 ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
           </div>
-          <div className="text-[10px] font-bold text-center mt-1">
+          <div className="text-xs text-muted-foreground tabular-nums text-center mt-1">
             {totalPkd} / {totalReq} {t('units')}
           </div>
         </div>
 
         {/* Assignee */}
-        <div className="hidden md:flex w-32 shrink-0 text-[10px] font-black bg-secondary/50 rounded-lg justify-center items-center overflow-hidden border border-transparent hover:border-border/30 transition-all group/assign shadow-inner hover:shadow-md">
-          <Package className="w-3 h-3 text-indigo-400 ml-2 flex-shrink-0" />
+        <div className="hidden md:flex w-32 shrink-0 text-xs bg-muted/50 rounded-md justify-center items-center overflow-hidden border border-transparent hover:border-border transition-colors group/assign">
+          <Package className="w-3 h-3 text-muted-foreground ml-2 flex-shrink-0" />
           <select
             value={ticket.assigned_to || ''}
             onChange={(e) => handleQuickAssign(ticket.ticket_id, e.target.value)}
-            className="w-full bg-transparent border-none text-[10px] font-black uppercase text-indigo-400 focus:ring-0 p-1.5 cursor-pointer truncate"
+            className="w-full bg-transparent border-none text-xs font-medium text-foreground/80 focus:ring-0 p-1.5 cursor-pointer truncate"
             onClick={e => e.stopPropagation()}
           >
             <option value="" className="text-muted-foreground">{t('unassigned')}</option>
@@ -741,25 +742,25 @@ export const PickingModule = ({ currentUser } = {}) => {
             <>
               <button
                 onClick={() => openIncident(ticket)}
-                className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
                 title={t('wms_report_incident') || 'Reportar Problema'}
               >
                 <AlertTriangle className="w-4 h-4" />
               </button>
-              <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title={t('print')}><Printer className="w-4 h-4" /></button>
+              <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors" title={t('print')}><Printer className="w-4 h-4" /></button>
               <button
                 onClick={(e) => { e.stopPropagation(); handlePrioritize(ticket.ticket_id); }}
-                className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-lg transition-all group/hot"
+                className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
                 title="Marcar como HOT / RUSH"
               >
-                <Zap className="w-4 h-4 group-hover/hot:scale-125 transition-transform" />
+                <Zap className="w-4 h-4" />
               </button>
             </>
           )}
           {ticket.is_virtual && isAdmin && (
             <button
               onClick={() => handleDismissPreticket(ticket.order_number)}
-              className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-xl transition-all mr-1"
+              className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors mr-1"
               title="Eliminar Pre-Ticket (Admin)"
             >
               <Trash2 className="w-4 h-4" />
@@ -768,7 +769,7 @@ export const PickingModule = ({ currentUser } = {}) => {
           {showEdit && currentStatus !== PickingStatus.COMPLETED && (
             <button
               onClick={() => openEdit(ticket)}
-              className={`p-1.5 rounded-lg transition-all flex items-center gap-1 ${ticket.is_virtual ? 'bg-primary text-black px-3 font-black text-[10px] uppercase hover:scale-105' : 'text-muted-foreground hover:text-primary hover:bg-primary/10'}`}
+              className={`p-1.5 rounded-md transition-colors flex items-center gap-1 ${ticket.is_virtual ? 'bg-primary text-primary-foreground px-3 font-medium text-xs hover:opacity-90' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
               title={ticket.is_virtual ? "Crear Ticket" : "Editar / Ver Tallas"}
             >
               {ticket.is_virtual ? (
@@ -779,7 +780,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </button>
           )}
           {ticket.status === TicketStatus.PENDING && !ticket.is_virtual && (
-            <button onClick={() => handleConfirm(ticket)} className="px-2 py-1 bg-emerald-500 text-black text-[9px] font-black uppercase rounded hover:bg-emerald-400 transition-all shadow-sm ml-1">OK</button>
+            <button onClick={() => handleConfirm(ticket)} className="px-2.5 py-1 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 dark:hover:bg-emerald-500/20 transition-colors ml-1">OK</button>
           )}
         </div>
       </div>
@@ -789,7 +790,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 bg-secondary/30 p-1 rounded-2xl border border-border/20">
+        <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-lg border border-border">
           {[
             { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
             { id: 'tickets', label: 'TICKETS (ACTIVOS)', icon: ClipboardCheck, count: activeTickets.length },
@@ -803,13 +804,13 @@ export const PickingModule = ({ currentUser } = {}) => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all
-                  ${active ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+                  ${active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
                 {tab.count !== undefined && (
-                  <span className={`px-1.5 py-0.5 rounded-md text-[9px] ${active ? 'bg-black/10' : 'bg-secondary'}`}>
+                  <span className={`px-1.5 py-0.5 rounded text-xs ${active ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>
                     {tab.count}
                   </span>
                 )}
@@ -817,7 +818,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })}
         </div>
-        <button
+        <Btn
+          variant="primary"
           onClick={() => {
             setEditingTicket(null);
             setForm(emptyForm);
@@ -826,43 +828,43 @@ export const PickingModule = ({ currentUser } = {}) => {
             setShowForm(true);
             setActiveTab('tickets');
           }}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-black text-xs font-black uppercase tracking-wider rounded-xl hover:scale-105 transition-all shadow-lg shadow-primary/20 whitespace-nowrap"
+          className="whitespace-nowrap"
         >
           <Plus className="w-4 h-4" />
           Nuevo Pick Ticket
-        </button>
+        </Btn>
       </div>
 
       {/* Progressive load indicator */}
       {loadingMoreTickets && ticketsTotal > 0 && (
-        <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 px-3 py-2 rounded-xl">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground bg-card border border-border px-3 py-2 rounded-lg">
           <Loader2 className="w-3 h-3 animate-spin" />
           Cargando tickets {tickets.length.toLocaleString()} / {ticketsTotal.toLocaleString()}
-          <div className="flex-1 h-1 bg-secondary/60 rounded-full overflow-hidden max-w-xs">
-            <div className="h-full bg-indigo-400 transition-all" style={{ width: `${ticketsTotal > 0 ? (tickets.length / ticketsTotal) * 100 : 0}%` }} />
+          <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden max-w-xs">
+            <div className="h-full bg-primary transition-all" style={{ width: `${ticketsTotal > 0 ? (tickets.length / ticketsTotal) * 100 : 0}%` }} />
           </div>
         </div>
       )}
       {ticketsCapped && (
-        <div className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-500 bg-amber-500/5 border border-amber-500/20 px-3 py-2 rounded-xl">
+        <div className="text-xs text-amber-600 dark:text-amber-400">
           Mostrando los primeros {MAX_TICKETS.toLocaleString()} de {ticketsTotal.toLocaleString()} tickets — usa la búsqueda para acotar
         </div>
       )}
 
       {/* Search Bar */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground opacity-50" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
         <input
           placeholder={t('wms_search_pick_hint') || "Buscar por N° de orden, cliente, estilo o color…"}
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 bg-card/40 border border-border/20 rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/20 transition-all font-medium backdrop-blur-sm shadow-inner"
+          className={`${cls.input} pl-9 pr-10`}
           data-testid="pick-search-input"
         />
         {search && (
           <button
             onClick={() => setSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-secondary rounded-full transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded-full transition-colors"
           >
             <X className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
@@ -872,13 +874,13 @@ export const PickingModule = ({ currentUser } = {}) => {
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="pick-form">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-bold text-foreground">{editingTicket ? `${t('wms_editing')} ${editingTicket.ticket_id}` : t('wms_new_pick')}</span>
+            <span className="text-sm font-semibold text-foreground">{editingTicket ? `${t('wms_editing')} ${editingTicket.ticket_id}` : t('wms_new_pick')}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">PO / {t('order')}</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">PO / {t('order')}</label>
               {editingTicket ? (
-                <input value={form.order_number} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" data-testid="pick-order-select" />
+                <input value={form.order_number} readOnly className="w-full px-3 py-2 bg-muted/50 border border-border rounded-md text-sm text-foreground font-mono cursor-not-allowed" data-testid="pick-order-select" />
               ) : (
                 <SearchableSelect
                   options={orders.map(o => `${o.order_number}${o.client ? ` - ${o.client}` : ''}`)}
@@ -890,19 +892,19 @@ export const PickingModule = ({ currentUser } = {}) => {
                 />
               )}
               {!editingTicket && (
-                <div className="text-[11px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   {form.order_number && !orders.some(o => o.order_number === form.order_number)
-                    ? <span className="text-amber-500 font-bold">⚠ Orden manual (no está en el sistema) — llena Customer / Style / tallas</span>
+                    ? <span className="text-amber-600 dark:text-amber-400 font-medium">⚠ Orden manual (no está en el sistema) — llena Customer / Style / tallas</span>
                     : '¿No aparece la orden? Escríbela y elige «Agregar …» para crear un ticket manual.'}
                 </div>
               )}
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Customer</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Customer</label>
               <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_assign_op')}</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_assign_op')}</label>
               <select value={form.assigned_to} onChange={e => {
                 const op = operators.find(o => o.user_id === e.target.value || o.email === e.target.value);
                 setForm(p => ({ ...p, assigned_to: e.target.value, assigned_to_name: op ? (op.name || op.email) : '' }));
@@ -914,22 +916,22 @@ export const PickingModule = ({ currentUser } = {}) => {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_qty_auto')}</label>
-              <input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="pick-qty" />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_qty_auto')}</label>
+              <input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground" data-testid="pick-qty" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-pink-500 font-black block mb-1">Destino</label>
-              <select value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} className="w-full px-3 py-2 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded text-sm font-bold focus:ring-1 focus:ring-pink-500">
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Destino</label>
+              <select value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border text-foreground rounded-md text-sm">
                 <option value={PickDestination.PRODUCTION}>Producción Directa</option>
                 <option value={PickDestination.NECK_CUTTING}>Corte de Neck</option>
               </select>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-indigo-400 font-black block mb-1">Estrategia de picking</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Estrategia de picking</label>
               <select
                 value={form.strategy}
                 onChange={e => setForm(p => ({ ...p, strategy: e.target.value }))}
-                className="w-full px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded text-sm font-bold focus:ring-1 focus:ring-indigo-500"
+                className="w-full px-3 py-2 bg-background border border-border text-foreground rounded-md text-sm"
                 data-testid="pick-strategy"
                 title="Cómo ordenar las ubicaciones que ve el operador"
               >
@@ -941,41 +943,41 @@ export const PickingModule = ({ currentUser } = {}) => {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Manufacturer</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Manufacturer</label>
               <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="pick-manufacturer" allowCreate={false} />
               {!form.customer && <div className="text-xs text-muted-foreground mt-0.5">{t('select_order_first')}</div>}
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Style</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Style</label>
               <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">Color</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Color</label>
               <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
               {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('select_color_to_see_locs')}</div>}
             </div>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('wms_size_locs')}</div>
+          <div className="text-xs font-medium text-muted-foreground">{t('wms_size_locs')}</div>
           <div className="overflow-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-xs uppercase text-muted-foreground"><th className="p-1 text-center w-16">{t('size')}</th><th className="p-1 text-center w-20">{t('qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('available')}</th></tr></thead>
+              <thead><tr className="text-xs font-semibold text-muted-foreground"><th className="p-1 text-center w-16">{t('size')}</th><th className="p-1 text-center w-20">{t('qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('available')}</th></tr></thead>
               <tbody>
                 {gridSizes.map(sz => (
-                  <tr key={sz} className="border-b border-border/50">
-                    <td className="p-1 text-center font-bold">{sz}</td>
-                    <td className="p-1"><input type="number" min="0" value={form.sizes[sz]} onChange={e => updateSize(sz, e.target.value)} placeholder="0" className="w-full px-2 py-1.5 bg-background border border-border rounded text-center text-sm font-mono text-foreground" data-testid={`pick-size-${sz}`} /></td>
+                  <tr key={sz} className="border-b border-border/60">
+                    <td className="p-1 text-center font-medium">{sz}</td>
+                    <td className="p-1"><input type="number" min="0" value={form.sizes[sz]} onChange={e => updateSize(sz, e.target.value)} placeholder="0" className="w-full px-2 py-1.5 bg-background border border-border rounded-md text-center text-sm font-mono text-foreground" data-testid={`pick-size-${sz}`} /></td>
                     <td className="p-1">
                       {getSizeLocs(sz).length > 0 ? (
                         <div className="flex flex-wrap gap-2">
                           {getSizeLocs(sz).slice(0, 4).map((l, i) => (
-                            <div key={i} className="flex flex-col bg-background border border-border/40 px-2 py-1 rounded-md shadow-sm" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
+                            <div key={i} className="flex flex-col bg-card border border-border px-2 py-1 rounded-md" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
                               <div className="flex items-center gap-2">
-                                <span className="text-foreground font-bold text-xs">{l.location}</span>
-                                <span className="text-emerald-500 font-black text-xs tabular-nums bg-emerald-500/10 px-1 rounded">{l.available}</span>
+                                <span className="text-foreground font-medium text-xs">{l.location}</span>
+                                <span className="font-semibold text-xs tabular-nums">{l.available}</span>
                               </div>
                               <div className="flex items-center justify-between mt-0.5 gap-2">
-                                {l.country_of_origin && <span className="text-[9px] text-muted-foreground uppercase tracking-widest">{l.country_of_origin}</span>}
-                                {l.percentage !== undefined && <span className="text-[9px] text-yellow-500 font-black">{l.percentage}%</span>}
+                                {l.country_of_origin && <span className="text-[10px] text-muted-foreground">{l.country_of_origin}</span>}
+                                {l.percentage !== undefined && <span className="text-[10px] text-muted-foreground tabular-nums">{l.percentage}%</span>}
                               </div>
                             </div>
                           ))}
@@ -983,13 +985,13 @@ export const PickingModule = ({ currentUser } = {}) => {
                         </div>
                       ) : (<span className="text-xs text-muted-foreground">{form.style ? t('wms_no_loc') : '-'}</span>)}
                     </td>
-                    <td className="p-1 text-right font-mono text-xs text-green-400">{getTotalAvail(sz) > 0 ? getTotalAvail(sz).toLocaleString() : '-'}</td>
+                    <td className="p-1 text-right text-xs tabular-nums font-medium">{getTotalAvail(sz) > 0 ? getTotalAvail(sz).toLocaleString() : '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="text-right font-bold text-sm">{t('wms_total_pick', { count: totalPick })}</div>
+          <div className="text-right font-semibold text-sm">{t('wms_total_pick', { count: totalPick })}</div>
           {/* Comodín 2%: opcional. Al activarlo, se REPARTE en las tallas
               (base + 2% por talla) para que el sistema lo descuente. Se ofrece en
               TODA creación: form manual (!editingTicket) Y al generar un ticket
@@ -1000,30 +1002,30 @@ export const PickingModule = ({ currentUser } = {}) => {
               const b = parseInt(v) || 0; return s + (b > 0 ? Math.ceil(b * 0.02) : 0);
             }, 0);
             return (
-              <label className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 cursor-pointer select-none">
+              <label className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200/70 dark:bg-amber-500/10 dark:border-amber-500/25 cursor-pointer select-none">
                 <input type="checkbox" checked={!!form.include_comodin}
                   onChange={e => setForm(p => ({ ...p, include_comodin: e.target.checked }))}
                   className="w-4 h-4 accent-amber-500" data-testid="pick-comodin" />
                 <div className="flex-1">
-                  <div className="text-xs font-black uppercase tracking-wider text-amber-500">Incluir comodín 2%</div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">Incluir comodín 2%</div>
+                  <div className="text-xs text-muted-foreground">
                     Reparte el 2% en las tallas (redondeo hacia arriba por talla) para descontarlo del sistema.
                   </div>
                 </div>
                 {form.include_comodin && comodinExtra > 0 && (
                   <div className="text-right">
-                    <div className="text-amber-500 font-black tabular-nums">+{comodinExtra}</div>
-                    <div className="text-[9px] text-muted-foreground uppercase">→ {totalPick + comodinExtra} total</div>
+                    <div className="text-amber-700 dark:text-amber-300 font-semibold tabular-nums">+{comodinExtra}</div>
+                    <div className="text-xs text-muted-foreground">→ {totalPick + comodinExtra} total</div>
                   </div>
                 )}
               </label>
             );
           })()}
           <div className="flex gap-2">
-            <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="pick-submit">
+            <Btn variant="primary" onClick={handleSubmit} disabled={loading} data-testid="pick-submit">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {editingTicket ? t('save_view') : t('wms_new_pick')}
-            </button>
-            <button onClick={resetForm} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
+            </Btn>
+            <Btn onClick={resetForm}>{t('cancel')}</Btn>
           </div>
         </div>
       )}
@@ -1054,7 +1056,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                 <div className="flex flex-wrap items-center gap-1.5">
                   {years.length > 1 && (
                     <select value={pretkYear} onChange={e => setPretkYear(Number(e.target.value))}
-                      className="text-xs font-black bg-secondary/40 border border-border/30 rounded-lg px-2 py-1.5 mr-1 cursor-pointer">
+                      className="text-xs font-medium bg-card border border-border rounded-md px-2 py-1.5 mr-1 cursor-pointer">
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   )}
@@ -1063,17 +1065,17 @@ export const PickingModule = ({ currentUser } = {}) => {
                     const active = pretkMonth === m;
                     return (
                       <button key={m} onClick={() => setPretkMonth(m)}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all
-                          ${active ? 'bg-primary text-black shadow' : c ? 'bg-secondary/40 hover:bg-secondary/70' : 'bg-secondary/20 text-muted-foreground/50'}`}>
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors
+                          ${active ? 'bg-primary text-primary-foreground' : c ? 'bg-muted hover:bg-muted/70' : 'bg-muted/40 text-muted-foreground/50'}`}>
                         {mn}
-                        {c > 0 && <span className={`px-1 rounded text-[9px] ${active ? 'bg-black/10' : 'bg-primary/20 text-primary'}`}>{c}</span>}
+                        {c > 0 && <span className={`px-1 rounded text-[10px] ${active ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{c}</span>}
                       </button>
                     );
                   })}
                   {noDate.length > 0 && (
                     <button onClick={() => setPretkMonth('none')}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${pretkMonth === 'none' ? 'bg-primary text-black shadow' : 'bg-secondary/40 hover:bg-secondary/70'}`}>
-                      Sin fecha <span className="px-1 rounded text-[9px] bg-primary/20 text-primary">{noDate.length}</span>
+                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${pretkMonth === 'none' ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/70'}`}>
+                      Sin fecha <span className={`px-1 rounded text-[10px] ${pretkMonth === 'none' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{noDate.length}</span>
                     </button>
                   )}
                 </div>
@@ -1083,12 +1085,12 @@ export const PickingModule = ({ currentUser } = {}) => {
                   return (
                     <div key={wk} className="space-y-2">
                       <div className="flex items-center gap-2 px-1">
-                        <Calendar className="w-3.5 h-3.5 text-primary" />
-                        <span className="text-xs font-black uppercase tracking-widest">
+                        <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-semibold">
                           {wk === 0 ? 'Sin día' : `Semana ${wk}`}
                         </span>
-                        {wk > 0 && <span className="text-[10px] text-muted-foreground">días {(wk - 1) * 7 + 1}–{wk * 7}</span>}
-                        <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{items.length}</span>
+                        {wk > 0 && <span className="text-xs text-muted-foreground">días {(wk - 1) * 7 + 1}–{wk * 7}</span>}
+                        <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{items.length}</span>
                       </div>
                       <div className="flex flex-col gap-2">
                         {items.map(ticket => renderTicket(ticket))}
@@ -1097,9 +1099,8 @@ export const PickingModule = ({ currentUser } = {}) => {
                   );
                 })}
                 {inSel.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-16 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-60">
-                    <Calendar className="w-12 h-12 mb-3 stroke-[1px]" />
-                    <p className="font-bold uppercase tracking-widest text-sm italic">
+                  <div className="py-16 text-center">
+                    <p className="text-sm font-semibold text-foreground/80">
                       Sin órdenes en {pretkMonth === 'none' ? 'esta categoría' : `${PRETK_MONTHS[pretkMonth]} ${pretkYear}`}
                     </p>
                   </div>
@@ -1108,10 +1109,9 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })()}
           {preTickets.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-              <ClipboardList className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">NO HAY PRE-TICKETS PENDIENTES</p>
-              <p className="text-xs mt-1">Todas las órdenes en MOS ya tienen tickets generados.</p>
+            <div className="py-16 text-center">
+              <p className="text-sm font-semibold text-foreground/80">NO HAY PRE-TICKETS PENDIENTES</p>
+              <p className="text-sm text-muted-foreground mt-1">Todas las órdenes en MOS ya tienen tickets generados.</p>
             </div>
           )}
         </div>
@@ -1122,9 +1122,9 @@ export const PickingModule = ({ currentUser } = {}) => {
           {inProgressTickets.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
-                <span className="w-2 h-2 rounded-full bg-yellow-500" />
-                <span className="text-xs font-black uppercase tracking-widest text-yellow-500">En avance</span>
-                <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{inProgressTickets.length}</span>
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">En avance</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{inProgressTickets.length}</span>
               </div>
               <div className="flex flex-col gap-2" data-testid="pick-inprogress-list">
                 {inProgressTickets.map(ticket => renderTicket(ticket))}
@@ -1135,8 +1135,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="text-xs font-black uppercase tracking-widest text-blue-400">Sin iniciar</span>
-                <span className="text-[10px] font-black text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{notStartedTickets.length}</span>
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Sin iniciar</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{notStartedTickets.length}</span>
               </div>
               <div className="flex flex-col gap-2" data-testid="pick-notstarted-list">
                 {notStartedTickets.map(ticket => renderTicket(ticket))}
@@ -1144,10 +1144,9 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           )}
           {activeTickets.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-              <ClipboardCheck className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">NO HAY TICKETS ACTIVOS</p>
-              <p className="text-xs mt-1">Inicia un Pre-Ticket para comenzar a trabajar.</p>
+            <div className="py-16 text-center">
+              <p className="text-sm font-semibold text-foreground/80">NO HAY TICKETS ACTIVOS</p>
+              <p className="text-sm text-muted-foreground mt-1">Inicia un Pre-Ticket para comenzar a trabajar.</p>
             </div>
           )}
         </div>
@@ -1155,36 +1154,32 @@ export const PickingModule = ({ currentUser } = {}) => {
       {activeTab === 'completed' && (
         <div className="space-y-6">
           {!completedLoaded ? (
-            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-center">
-              <CheckCircle className="w-14 h-14 mb-4 text-muted-foreground/40 stroke-[1px]" />
-              <p className="text-sm font-bold text-muted-foreground mb-1">Las completadas no se cargan automáticamente</p>
-              <p className="text-[11px] text-muted-foreground/70 mb-5 max-w-sm">Para ahorrar recursos en los equipos del almacén. Cárgalas solo cuando las necesites.</p>
-              <button
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <p className="text-sm font-semibold text-foreground/80 mb-1">Las completadas no se cargan automáticamente</p>
+              <p className="text-sm text-muted-foreground mb-5 max-w-sm">Para ahorrar recursos en los equipos del almacén. Cárgalas solo cuando las necesites.</p>
+              <Btn
+                variant="primary"
                 onClick={loadCompletedTickets}
                 disabled={loadingCompleted}
-                className="flex items-center gap-2 px-5 py-2.5 bg-primary text-black text-xs font-black uppercase tracking-wider rounded-xl hover:scale-105 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
               >
                 {loadingCompleted ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                 {loadingCompleted ? 'Cargando…' : 'Cargar completadas'}
-              </button>
+              </Btn>
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 bg-card p-4 rounded-2xl border border-border/20 shadow-lg">
-                <div className="p-2 bg-indigo-500/10 rounded-xl">
-                  <Plus className="w-5 h-5 text-indigo-400" />
-                </div>
+              <div className="flex items-center gap-3 bg-card p-3 rounded-lg border border-border">
                 <div className="flex-1 min-w-0">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1 block">{t('wms_filter_op')}</label>
-                  <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0" data-testid="pick-filter-operator">
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">{t('wms_filter_op')}</label>
+                  <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="w-full bg-transparent border-none text-sm font-medium text-foreground focus:ring-0 p-0" data-testid="pick-filter-operator">
                     <option value="">{t('wms_all_ops')}</option>
                     {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
                   </select>
                 </div>
-                <button onClick={loadCompletedTickets} disabled={loadingCompleted} className="px-3 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground hover:text-foreground uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50" title="Refrescar completadas">
+                <Btn onClick={loadCompletedTickets} disabled={loadingCompleted} title="Refrescar completadas">
                   {loadingCompleted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />} Refrescar
-                </button>
-                <div className="px-4 py-2 bg-secondary/50 rounded-xl text-xs font-black text-muted-foreground uppercase tracking-widest">
+                </Btn>
+                <div className="px-3 py-1.5 bg-muted rounded-md text-xs font-medium text-muted-foreground">
                   {filteredCompleted.length} {t('completed')}
                 </div>
               </div>
@@ -1192,9 +1187,8 @@ export const PickingModule = ({ currentUser } = {}) => {
                 {filteredCompleted.map(ticket => renderTicket(ticket, false))}
               </div>
               {filteredCompleted.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-                  <CheckCircle className="w-16 h-16 mb-4 stroke-[1px]" />
-                  <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_completed_tickets')}</p>
+                <div className="py-16 text-center">
+                  <p className="text-sm font-semibold text-foreground/80">{t('wms_no_completed_tickets')}</p>
                 </div>
               )}
             </>
@@ -1203,34 +1197,31 @@ export const PickingModule = ({ currentUser } = {}) => {
       )}
       {activeTab === 'workload' && (
         <div className="space-y-4" data-testid="pick-workload">
-          <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
             <Users className="w-4 h-4" />
             Carga de trabajo por operador — reasigna o retira tickets según la carga de cada uno.
           </div>
           {selectedWorkload.length > 0 && (
-            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-primary/15 border border-primary/40 rounded-xl shadow-lg">
-              <span className="text-xs font-black uppercase tracking-wider">{selectedWorkload.length} seleccionado(s)</span>
+            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-card border border-border rounded-lg shadow-xl">
+              <span className="text-sm font-medium">{selectedWorkload.length} seleccionado(s)</span>
               <select
                 value=""
                 onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); }}
-                className="text-xs font-bold bg-background border border-border/40 rounded-lg px-2 py-1.5 cursor-pointer"
+                className="text-sm bg-background border border-border rounded-md px-2 py-1.5 cursor-pointer"
                 title="Reasignar todos los seleccionados"
               >
                 <option value="">Reasignar a…</option>
                 {operators.map(o => <option key={o.user_id} value={o.user_id}>{o.name || o.email}</option>)}
               </select>
-              <button
-                onClick={() => handleBulkAssign("")}
-                className="flex items-center gap-1 text-xs font-black uppercase text-red-400 hover:text-white hover:bg-red-500 border border-red-500/40 rounded-lg px-3 py-1.5 transition-all"
-              >
+              <Btn variant="danger" onClick={() => handleBulkAssign("")}>
                 <UserMinus className="w-3.5 h-3.5" /> Retirar
-              </button>
-              <button onClick={() => setSelectedWorkload([])} className="text-xs font-bold text-muted-foreground hover:text-foreground ml-auto">Limpiar</button>
+              </Btn>
+              <button onClick={() => setSelectedWorkload([])} className="text-sm font-medium text-muted-foreground hover:text-foreground ml-auto">Limpiar</button>
             </div>
           )}
           {workloadByOperator.map(group => (
-            <div key={group.id} className="rounded-2xl border border-border/30 bg-card/20 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-secondary/20 border-b border-border/30">
+            <div key={group.id} className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-muted/50 border-b border-border">
                 <div className="flex items-center gap-2 min-w-0">
                   {group.tickets.length > 0 && (() => {
                     const groupIds = group.tickets.map(t => t.ticket_id);
@@ -1243,39 +1234,39 @@ export const PickingModule = ({ currentUser } = {}) => {
                     );
                   })()}
                   <span className={`w-2 h-2 rounded-full ${group.id === UNASSIGNED_KEY ? 'bg-red-500' : group.tickets.length === 0 ? 'bg-muted-foreground/40' : 'bg-emerald-500'}`} />
-                  <span className="font-black uppercase tracking-wider text-sm truncate">{group.name}</span>
+                  <span className="font-semibold text-sm truncate">{group.name}</span>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] font-black">
-                  <span className="px-2 py-0.5 rounded-full bg-secondary/60">{group.tickets.length} tickets</span>
-                  <span className="px-2 py-0.5 rounded-full bg-secondary/60">{group.units.toLocaleString()} pzs</span>
+                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <span className="px-2 py-0.5 rounded-md bg-muted">{group.tickets.length} tickets</span>
+                  <span className="px-2 py-0.5 rounded-md bg-muted">{group.units.toLocaleString()} pzs</span>
                 </div>
               </div>
               {group.tickets.length === 0 ? (
-                <div className="px-4 py-3 text-[11px] text-muted-foreground italic">Sin tickets asignados — disponible.</div>
+                <div className="px-4 py-3 text-xs text-muted-foreground italic">Sin tickets asignados — disponible.</div>
               ) : (
-                <div className="divide-y divide-border/10">
+                <div className="divide-y divide-border/60">
                   {group.tickets.map(tk => (
-                    <div key={tk.ticket_id} className={`flex items-center gap-2 px-4 py-2 hover:bg-secondary/40 transition-colors group/wrow ${selectedWorkload.includes(tk.ticket_id) ? 'bg-primary/10' : ''}`}>
+                    <div key={tk.ticket_id} className={`flex items-center gap-2 px-4 py-2 hover:bg-muted/40 transition-colors group/wrow ${selectedWorkload.includes(tk.ticket_id) ? 'bg-muted/60' : ''}`}>
                       <input type="checkbox" checked={selectedWorkload.includes(tk.ticket_id)}
                         onChange={() => toggleWorkloadSelect(tk.ticket_id)}
                         className="w-4 h-4 rounded border-border accent-primary cursor-pointer shrink-0"
                         title="Seleccionar ticket" />
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm font-bold truncate">
+                        <div className="flex items-center gap-2 text-sm font-medium truncate">
                           <span className="font-mono">{tk.order_number}</span>
                           <span className="text-muted-foreground truncate font-normal">{tk.style} {tk.color}</span>
                         </div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{(tk.total_pick_qty || 0).toLocaleString()} pzs · {tk.picking_status}</div>
+                        <div className="text-xs text-muted-foreground">{(tk.total_pick_qty || 0).toLocaleString()} pzs · {tk.picking_status}</div>
                       </div>
                       {/* Dotted leader line tying each ticket to its own controls
                           (the big empty gap made it easy to act on the wrong row).
                           Highlights on row hover so it's obvious which ticket. */}
-                      <div className="flex-1 self-center border-b border-dotted border-border/40 group-hover/wrow:border-primary/70 min-w-[16px] transition-colors" />
+                      <div className="flex-1 self-center border-b border-dotted border-border/40 group-hover/wrow:border-foreground/40 min-w-[16px] transition-colors" />
                       <div className="flex items-center gap-2 shrink-0">
                         <select
                           value=""
                           onChange={(e) => { if (e.target.value) handleQuickAssign(tk.ticket_id, e.target.value); }}
-                          className="text-[10px] font-bold bg-secondary/40 border border-border/30 rounded-lg px-2 py-1 cursor-pointer hover:border-border/60 transition-all"
+                          className="text-xs bg-card border border-border rounded-md px-2 py-1 cursor-pointer hover:bg-muted transition-colors"
                           title="Reasignar a otro operador"
                         >
                           <option value="">Reasignar…</option>
@@ -1286,7 +1277,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                         {group.id !== UNASSIGNED_KEY && (
                           <button
                             onClick={() => handleQuickAssign(tk.ticket_id, "")}
-                            className="flex items-center gap-1 text-[10px] font-black uppercase text-red-400 hover:text-white hover:bg-red-500 border border-red-500/30 rounded-lg px-2 py-1 transition-all whitespace-nowrap"
+                            className="flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 border border-border rounded-md px-2 py-1 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors whitespace-nowrap"
                             title="Retirar del operador (queda sin asignar)"
                           >
                             <UserMinus className="w-3 h-3" /> Retirar
@@ -1300,67 +1291,55 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           ))}
           {workloadByOperator.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 bg-secondary/10 rounded-3xl border border-dashed border-border/40 text-muted-foreground opacity-50">
-              <Users className="w-16 h-16 mb-4 stroke-[1px]" />
-              <p className="font-bold uppercase tracking-widest text-sm italic">Sin operadores ni tickets activos</p>
+            <div className="py-16 text-center">
+              <p className="text-sm font-semibold text-foreground/80">Sin operadores ni tickets activos</p>
             </div>
           )}
         </div>
       )}
       {activeTab === 'dashboard' && stats && (
         <div className="space-y-8" data-testid="pick-dashboard">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { key: 'wms_kpi_total_tickets', val: stats.total_tickets, color: 'text-indigo-400', bg: 'bg-indigo-500/10', icon: ClipboardList },
-              { key: 'wms_kpi_completed', val: stats.completed, color: 'text-emerald-400', bg: 'bg-emerald-500/10', icon: CheckCircle },
-              { key: 'wms_kpi_in_progress', val: stats.in_progress, color: 'text-yellow-400', bg: 'bg-yellow-500/10', icon: Loader2 },
-              { key: 'wms_kpi_pending', val: stats.pending, color: 'text-blue-400', bg: 'bg-blue-500/10', icon: History },
-            ].map(s => {
-              const Icon = s.icon;
-              return (
-                <div key={s.key} className="bg-card/60 backdrop-blur-sm border border-border/40 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
-                  <div className={`absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity`}>
-                    <Icon className="w-16 h-16" />
-                  </div>
-                  <div className={`w-10 h-10 rounded-2xl ${s.bg} flex items-center justify-center mb-4`}>
-                    <Icon className={`w-5 h-5 ${s.color} ${s.key.includes('progress') ? 'animate-spin-slow' : ''}`} />
-                  </div>
-                  <div className={`text-3xl font-black tabular-nums tracking-tighter ${s.color}`}>{s.val}</div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mt-1">{t(s.key)}</div>
-                </div>
-              );
-            })}
+              { key: 'wms_kpi_total_tickets', val: stats.total_tickets },
+              { key: 'wms_kpi_completed', val: stats.completed },
+              { key: 'wms_kpi_in_progress', val: stats.in_progress },
+              { key: 'wms_kpi_pending', val: stats.pending },
+            ].map(s => (
+              <StatCard key={s.key} label={t(s.key)} value={s.val} />
+            ))}
           </div>
-          <h3 className="text-sm font-bold text-foreground uppercase">{t('wms_prod_per_op')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t('wms_prod_per_op')}</h3>
           {stats.operators.length > 0 ? (
-            <div className="overflow-auto">
+            <div className="border border-border rounded-lg bg-card overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-secondary">
+                <thead className="bg-muted/50 border-b border-border">
                   <tr>
-                    <th className="p-2 text-left text-xs uppercase text-muted-foreground">{t('name')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_completed')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_progress')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_assigned')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_total_pcs')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_picked_pcs')}</th>
-                    <th className="p-2 text-center text-xs uppercase text-muted-foreground">{t('wms_op_efficiency')}</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('name')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_completed')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_progress')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_assigned')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_total_pcs')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_picked_pcs')}</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_op_efficiency')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stats.operators.map(op => {
                     const eff = op.total_pieces > 0 ? Math.round((op.picked_pieces / op.total_pieces) * 100) : 0;
                     return (
-                      <tr key={op.name} className="border-b border-border hover:bg-secondary/50">
-                        <td className="p-2 font-bold">{op.name}</td>
-                        <td className="p-2 text-center text-green-400 font-bold">{op.completed}</td>
-                        <td className="p-2 text-center text-yellow-400">{op.in_progress}</td>
-                        <td className="p-2 text-center text-blue-400">{op.assigned}</td>
-                        <td className="p-2 text-center font-mono">{op.total_pieces.toLocaleString()}</td>
-                        <td className="p-2 text-center font-mono text-green-400">{op.picked_pieces.toLocaleString()}</td>
-                        <td className="p-2 text-center">
+                      <tr key={op.name} className="border-b border-border/60 hover:bg-muted/40 transition-colors">
+                        <td className="px-3 py-2.5 font-medium">{op.name}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{op.completed}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums text-amber-600 dark:text-amber-400">{op.in_progress}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums text-blue-600 dark:text-blue-400">{op.assigned}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums">{op.total_pieces.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums text-emerald-600 dark:text-emerald-400">{op.picked_pieces.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            <div className="w-16 h-2 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full ${eff === 100 ? 'bg-green-500' : eff > 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${eff}%` }} /></div>
-                            <span className="text-xs font-bold">{eff}%</span>
+                            <div className="w-16 h-2 bg-muted rounded-full overflow-hidden"><div className={`h-full rounded-full ${eff === 100 ? 'bg-emerald-500' : eff > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${eff}%` }} /></div>
+                            <span className="text-xs font-medium tabular-nums">{eff}%</span>
                           </div>
                         </td>
                       </tr>
@@ -1368,6 +1347,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           ) : (
             <div className="text-center text-muted-foreground text-sm py-8">{t('no_operator_data')}</div>
@@ -1377,16 +1357,16 @@ export const PickingModule = ({ currentUser } = {}) => {
 
       {incidentTicket && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-red-500">
+              <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-black uppercase tracking-widest text-sm">{t('wms_report_incident') || 'Reportar Problema'}</h3>
+                <h3 className="font-semibold text-sm">{t('wms_report_incident') || 'Reportar Problema'}</h3>
               </div>
-              <button onClick={() => setIncidentTicket(null)} className="p-1 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
+              <button onClick={() => setIncidentTicket(null)} className="p-1 hover:bg-muted rounded-md transition-colors"><X className="w-5 h-5" /></button>
             </div>
 
-            <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider">
+            <p className="text-xs text-muted-foreground">
               {t('wms_incident_ticket') || 'Ticket'}: <span className="text-foreground">{incidentTicket.ticket_id}</span>
             </p>
 
@@ -1394,11 +1374,11 @@ export const PickingModule = ({ currentUser } = {}) => {
               {/* SKU + Talla */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">SKU / ITEM</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">SKU / ITEM</label>
                   <select
                     value={incidentDraft.sku}
                     onChange={e => setIncidentDraft(p => ({ ...p, sku: e.target.value }))}
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm transition-colors"
                   >
                     <option value={incidentTicket.style}>{incidentTicket.style}</option>
                     {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
@@ -1407,11 +1387,11 @@ export const PickingModule = ({ currentUser } = {}) => {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Talla</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Talla</label>
                   <select
                     value={incidentDraft.size}
                     onChange={e => setIncidentDraft(p => ({ ...p, size: e.target.value }))}
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold focus:ring-2 focus:ring-red-500/20 transition-all"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm transition-colors"
                   >
                     <option value="">— Todas —</option>
                     {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
@@ -1424,20 +1404,20 @@ export const PickingModule = ({ currentUser } = {}) => {
               {/* Qty + Razón */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Cant. afectada</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cant. afectada</label>
                   <input
                     type="number" min="1"
                     value={incidentDraft.qty}
                     onChange={e => setIncidentDraft(p => ({ ...p, qty: e.target.value }))}
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm tabular-nums"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Razón</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Razón</label>
                   <select
                     value={incidentDraft.reason}
                     onChange={e => setIncidentDraft(p => ({ ...p, reason: e.target.value }))}
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm font-bold"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
                   >
                     <option value="Dañado">Dañado</option>
                     <option value="Manchado">Manchado</option>
@@ -1450,8 +1430,8 @@ export const PickingModule = ({ currentUser } = {}) => {
               </div>
 
               {/* Reposición */}
-              <div className="border-t border-border/30 pt-3 space-y-3">
-                <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Prendas a reponer por talla</p>
+              <div className="border-t border-border/60 pt-3 space-y-3">
+                <p className="text-xs font-medium text-red-600 dark:text-red-400">Prendas a reponer por talla</p>
 
                 {/* Size grid */}
                 {(() => {
@@ -1462,20 +1442,20 @@ export const PickingModule = ({ currentUser } = {}) => {
                       <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(ticketSizes.length, 6)}, minmax(0,1fr))` }}>
                         {ticketSizes.map(sz => (
                           <div key={sz} className="flex flex-col items-center gap-1">
-                            <span className="text-[10px] font-black uppercase text-muted-foreground">{sz}</span>
-                            <span className="text-[9px] text-muted-foreground/50">({incidentTicket.sizes[sz]})</span>
+                            <span className="text-xs font-medium text-muted-foreground">{sz}</span>
+                            <span className="text-xs text-muted-foreground/60">({incidentTicket.sizes[sz]})</span>
                             <input
                               type="number" min="0"
                               value={incidentDraft.replacement_sizes[sz] || ''}
                               onChange={e => setIncidentDraft(p => ({ ...p, replacement_sizes: { ...p.replacement_sizes, [sz]: e.target.value } }))}
                               placeholder="0"
-                              className="w-full text-center bg-background border border-border rounded-lg p-1.5 text-sm font-bold text-red-400 focus:ring-2 focus:ring-red-500/20 focus:border-red-500/50 transition-all"
+                              className="w-full text-center bg-background border border-border rounded-md p-1.5 text-sm tabular-nums transition-colors"
                             />
                           </div>
                         ))}
                       </div>
                       {totalRep > 0 && (
-                        <div className="mt-2 text-right text-xs font-black text-red-400">
+                        <div className="mt-2 text-right text-xs font-medium text-red-600 dark:text-red-400">
                           Total a reponer: <span className="text-foreground">{totalRep} prendas</span>
                         </div>
                       )}
@@ -1484,23 +1464,23 @@ export const PickingModule = ({ currentUser } = {}) => {
                 })()}
 
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Descripción / Contenido a reponer</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción / Contenido a reponer</label>
                   <input
                     type="text"
                     value={incidentDraft.replacement_description}
                     onChange={e => setIncidentDraft(p => ({ ...p, replacement_description: e.target.value }))}
                     placeholder="Ej: Camiseta 5000 Blanca"
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm"
+                    className={cls.input}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase text-muted-foreground block mb-1">Notas</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Notas</label>
                   <input
                     type="text"
                     value={incidentDraft.notes}
                     onChange={e => setIncidentDraft(p => ({ ...p, notes: e.target.value }))}
                     placeholder="Observaciones adicionales..."
-                    className="w-full bg-background border border-border rounded-xl p-2.5 text-sm"
+                    className={cls.input}
                   />
                 </div>
               </div>
@@ -1510,14 +1490,14 @@ export const PickingModule = ({ currentUser } = {}) => {
               <button
                 onClick={submitIncident}
                 disabled={incidentSaving}
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-red-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {incidentSaving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {t('confirm') || 'Confirmar'}
               </button>
-              <button onClick={() => setIncidentTicket(null)} disabled={incidentSaving} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
+              <Btn onClick={() => setIncidentTicket(null)} disabled={incidentSaving} className="flex-1">
                 {t('cancel') || 'Cancelar'}
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
@@ -1525,27 +1505,27 @@ export const PickingModule = ({ currentUser } = {}) => {
 
       {dupWarning && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-amber-500/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-500">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-black uppercase tracking-widest text-sm">Posible Duplicado</h3>
+                <h3 className="font-semibold text-sm">Posible Duplicado</h3>
               </div>
-              <button onClick={() => setDupWarning(null)} disabled={loading} className="p-1 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+              <button onClick={() => setDupWarning(null)} disabled={loading} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
 
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-sm text-foreground">
+            <div className="bg-amber-50 border border-amber-200/70 dark:bg-amber-500/10 dark:border-amber-500/25 rounded-lg p-4 text-sm text-foreground">
               <p className="mb-2 font-medium">{dupWarning.message}</p>
               {dupWarning.existing && Object.keys(dupWarning.existing).length > 0 && (
-                <div className="space-y-1 text-xs text-muted-foreground bg-black/20 p-2 rounded-lg font-mono mt-3">
-                  <div><span className="text-amber-400/70">Ticket:</span> {dupWarning.existing.ticket_id}</div>
-                  <div><span className="text-amber-400/70">Status:</span> {dupWarning.existing.status} / {dupWarning.existing.picking_status}</div>
-                  <div><span className="text-amber-400/70">Creado por:</span> {dupWarning.existing.created_by_name}</div>
-                  <div><span className="text-amber-400/70">Fecha:</span> {new Date(dupWarning.existing.created_at).toLocaleString()}</div>
-                  <div><span className="text-amber-400/70">Qty:</span> {dupWarning.existing.total_pick_qty} unid.</div>
+                <div className="space-y-1 text-xs text-muted-foreground bg-background/60 border border-border/60 p-2 rounded-md font-mono mt-3">
+                  <div><span className="text-muted-foreground/70">Ticket:</span> {dupWarning.existing.ticket_id}</div>
+                  <div><span className="text-muted-foreground/70">Status:</span> {dupWarning.existing.status} / {dupWarning.existing.picking_status}</div>
+                  <div><span className="text-muted-foreground/70">Creado por:</span> {dupWarning.existing.created_by_name}</div>
+                  <div><span className="text-muted-foreground/70">Fecha:</span> {new Date(dupWarning.existing.created_at).toLocaleString()}</div>
+                  <div><span className="text-muted-foreground/70">Qty:</span> {dupWarning.existing.total_pick_qty} unid.</div>
                 </div>
               )}
-              <p className="mt-3 text-xs italic opacity-80">
+              <p className="mt-3 text-xs italic text-muted-foreground">
                 Si solo necesitas hacer un ajuste, deberías <strong>editar el ticket existente</strong>. ¿Estás seguro que quieres crear uno nuevo adicional para esta orden?
               </p>
             </div>
@@ -1554,14 +1534,14 @@ export const PickingModule = ({ currentUser } = {}) => {
               <button
                 onClick={handleForceDuplicate}
                 disabled={loading}
-                className="flex-1 bg-amber-500 hover:bg-amber-600 text-black font-black uppercase tracking-widest text-[10px] py-3 rounded-xl transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                 Crear de todos modos
               </button>
-              <button onClick={() => setDupWarning(null)} disabled={loading} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
+              <Btn onClick={() => setDupWarning(null)} disabled={loading} className="flex-1">
                 Cancelar
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
@@ -1569,20 +1549,20 @@ export const PickingModule = ({ currentUser } = {}) => {
 
       {confirmTicket && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-emerald-500">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                 <CheckCircle className="w-5 h-5" />
-                <h3 className="font-black uppercase tracking-widest text-sm">{t('confirm') || 'Confirmar'}</h3>
+                <h3 className="font-semibold text-sm">{t('confirm') || 'Confirmar'}</h3>
               </div>
-              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="p-1 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
+              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
 
             <p className="text-sm text-muted-foreground">
               {t('confirm_ticket') || '¿Confirmar este pick ticket? Se descontará el inventario.'}
             </p>
-            <div className="bg-secondary/40 rounded-xl p-3 border border-border/20 text-xs font-bold font-mono">
-              <span className="text-primary">{confirmTicket.ticket_id}</span>
+            <div className="bg-muted/40 rounded-lg p-3 border border-border text-xs font-mono">
+              <span className="text-foreground font-medium">{confirmTicket.ticket_id}</span>
               <span className="text-muted-foreground"> · #{confirmTicket.order_number} · {confirmTicket.customer || ''} · {confirmTicket.style || ''}</span>
             </div>
 
@@ -1590,14 +1570,14 @@ export const PickingModule = ({ currentUser } = {}) => {
               <button
                 onClick={doConfirm}
                 disabled={confirmSaving}
-                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {confirmSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                 {t('confirm') || 'Confirmar'}
               </button>
-              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-all disabled:opacity-50">
+              <Btn onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="flex-1">
                 {t('cancel') || 'Cancelar'}
-              </button>
+              </Btn>
             </div>
           </div>
         </div>

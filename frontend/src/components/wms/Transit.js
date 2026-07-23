@@ -7,6 +7,7 @@ import {
 import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
 import { useAuth } from "../../App";
 import { PutawayWizard } from "./PutawayWizard";
+import { ModuleHeader, SoftAlert, Btn } from "./ui";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -327,41 +328,33 @@ export const TransitModule = () => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
-            <Truck className="w-5 h-5 text-amber-500" />
+      <ModuleHeader
+        title="Putaway 2.0"
+        subtitle="Carros de tránsito — selecciona un carro para asignar ubicación física a sus cajas"
+        right={
+          <div className="flex items-center gap-3">
+            {isAdmin && (
+              <Btn
+                onClick={() => { setCartQty(10); setShowCreateCarts(true); }}
+                data-testid="putaway2-create-carts"
+              >
+                <Plus className="w-3.5 h-3.5" /> Crear carros
+              </Btn>
+            )}
+            <div className="text-xs font-mono text-muted-foreground tabular-nums">
+              {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
+            </div>
           </div>
-          <div>
-            <h2 className="font-black uppercase tracking-widest text-foreground">Putaway 2.0</h2>
-            <p className="text-[11px] text-muted-foreground">
-              Carros de tránsito — selecciona un carro para asignar ubicación física a sus cajas
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {isAdmin && (
-            <button
-              onClick={() => { setCartQty(10); setShowCreateCarts(true); }}
-              className="px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border border-amber-500/40 text-amber-600 hover:bg-amber-500/10 transition-all flex items-center gap-1.5"
-              data-testid="putaway2-create-carts"
-            >
-              <Plus className="w-3.5 h-3.5" /> Crear carros
-            </button>
-          )}
-          <div className="text-[11px] font-mono font-bold text-muted-foreground">
-            {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
-          </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Bulk create carts modal */}
       {showCreateCarts && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !creating && setShowCreateCarts(false)}>
-          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+          <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-black uppercase tracking-widest text-sm flex items-center gap-2">
-                <Truck className="w-4 h-4 text-amber-500" /> Crear carros
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Truck className="w-4 h-4 text-muted-foreground" /> Crear carros
               </h3>
               {!creating && <button onClick={() => setShowCreateCarts(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-5 h-5" /></button>}
             </div>
@@ -370,37 +363,37 @@ export const TransitModule = () => {
               Los que ya existan se omiten. Funcionan como ubicaciones de tránsito: reciben material,
               descuentan inventario al surtir y aparecen en las tareas de surtido.
             </p>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">¿Cuántos carros? (máx. 50)</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">¿Cuántos carros? (máx. 50)</label>
             <input
               type="number" min="1" max="50" value={cartQty}
               onChange={e => setCartQty(e.target.value)}
               disabled={creating}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-lg font-mono font-bold mb-3 disabled:opacity-50"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-lg font-mono mb-3 disabled:opacity-50"
               data-testid="create-carts-qty"
             />
             {creating && (
               <div className="mb-3">
-                <div className="flex justify-between text-[11px] font-bold text-muted-foreground mb-1">
+                <div className="flex justify-between text-xs font-medium text-muted-foreground mb-1">
                   <span>Creando…</span>
                   <span className="font-mono">{createDone} / {Math.max(1, Math.min(50, parseInt(cartQty) || 0))}</span>
                 </div>
-                <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
-                  <div className="h-full bg-amber-500 transition-all duration-150"
+                <div className="w-full h-3 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary transition-all duration-150"
                     style={{ width: `${Math.round((createDone / Math.max(1, Math.min(50, parseInt(cartQty) || 1))) * 100)}%` }} />
                 </div>
               </div>
             )}
             <div className="flex justify-end gap-2">
-              {!creating && <button onClick={() => setShowCreateCarts(false)} className="px-4 py-2 rounded-lg text-xs font-bold text-muted-foreground hover:bg-secondary">Cancelar</button>}
-              <button
+              {!creating && <Btn variant="ghost" onClick={() => setShowCreateCarts(false)}>Cancelar</Btn>}
+              <Btn
+                variant="primary"
                 onClick={handleCreateCarts}
                 disabled={creating}
-                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 flex items-center gap-2"
                 data-testid="create-carts-confirm"
               >
                 {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                 {creating ? 'Creando…' : 'Crear'}
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
@@ -415,10 +408,10 @@ export const TransitModule = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveCart("")}
-              className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+              className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors flex items-center gap-1.5 ${
                 activeCart === ""
-                  ? "bg-amber-500 text-white border-amber-500"
-                  : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground"
               }`}
             >
               Todos
@@ -434,10 +427,10 @@ export const TransitModule = () => {
                 <button
                   key={c.name}
                   onClick={() => setActiveCart(c.name)}
-                  className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors flex items-center gap-1.5 ${
                     activeCart === c.name
-                      ? "bg-amber-500 text-white border-amber-500"
-                      : "bg-card/40 text-muted-foreground border-border/40 hover:border-amber-500/40 hover:text-foreground"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground"
                   }`}
                   data-testid={`putaway2-tab-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
                 >
@@ -450,10 +443,10 @@ export const TransitModule = () => {
               {legacyCount > 0 && (
                 <button
                   onClick={() => setActiveCart(TRANSIT_LEGACY)}
-                  className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors flex items-center gap-1.5 ${
                     activeCart === TRANSIT_LEGACY
-                      ? "bg-amber-500 text-white border-amber-500"
-                      : "bg-card/40 text-muted-foreground border-amber-500/30 hover:border-amber-500/60 hover:text-foreground"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground"
                   }`}
                   title="Cajas recibidas antes de los carros — siguen aquí hasta que las reubiques."
                 >
@@ -468,7 +461,7 @@ export const TransitModule = () => {
               value={activeCart && activeCart !== TRANSIT_LEGACY ? activeCart : ""}
               onChange={e => setActiveCart(e.target.value)}
               title="Ir a cualquier carro"
-              className="flex-shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest border border-dashed border-border/60 bg-card/40 text-muted-foreground hover:border-amber-500/40 hover:text-foreground transition-all cursor-pointer focus:outline-none focus:border-amber-500/50"
+              className="flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium border border-dashed border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus:outline-none focus:border-ring"
             >
               <option value="">Ir a carro…</option>
               {cartInfo.map(c => (
@@ -478,7 +471,7 @@ export const TransitModule = () => {
               ))}
             </select>
 
-            <span className="flex-shrink-0 text-[10px] font-mono text-muted-foreground/60">
+            <span className="flex-shrink-0 text-xs font-mono text-muted-foreground/60">
               {withStock}/{cartInfo.length} carros con stock
             </span>
           </div>
@@ -512,19 +505,19 @@ export const TransitModule = () => {
       </div>
 
       {/* Putaway control panel — location first, then scan boxes, then finish */}
-      <div className="rounded-2xl bg-amber-500/5 border border-amber-500/30 p-4 space-y-3">
+      <div className="rounded-lg bg-card border border-border p-4 space-y-3">
         {!lockedLocation ? (
           /* STEP 1 — pick / scan the destination location */
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-black">1</span>
-              <span className="text-[11px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">1</span>
+              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                 <MapPin className="w-4 h-4" /> Escanea o selecciona la ubicación destino
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex-1 min-w-[240px] relative" ref={destRef}>
-                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" />
+                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
                   ref={destInputRef}
                   type="text"
@@ -533,7 +526,7 @@ export const TransitModule = () => {
                   onFocus={() => setShowLocDrop(true)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmLocation(); } }}
                   placeholder="Ubicación destino (ej. RP10-A26) — Enter para confirmar"
-                  className="w-full pl-9 pr-3 py-2 bg-background border border-amber-500/40 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  className="w-full pl-9 pr-3 py-2 bg-background border border-input rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
                   data-testid="putaway2-loc-scan"
                 />
                 {showLocDrop && filteredLocations.length > 0 && (
@@ -544,21 +537,21 @@ export const TransitModule = () => {
                         onClick={() => { setDestination(l.name); setShowLocDrop(false); requestAnimationFrame(() => destInputRef.current?.focus()); }}
                         className="w-full text-left px-3 py-2 text-sm hover:bg-secondary flex items-center justify-between"
                       >
-                        <span className="font-mono font-bold">{l.name}</span>
-                        {l.zone && <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{l.zone}</span>}
+                        <span className="font-mono font-medium">{l.name}</span>
+                        {l.zone && <span className="text-xs text-muted-foreground">{l.zone}</span>}
                       </button>
                     ))}
                   </div>
                 )}
               </div>
-              <button
+              <Btn
+                variant="primary"
                 onClick={confirmLocation}
                 disabled={!destination.trim()}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
                 data-testid="putaway2-loc-confirm"
               >
                 <MapPin className="w-4 h-4" /> Confirmar ubicación
-              </button>
+              </Btn>
             </div>
           </div>
         ) : (
@@ -566,10 +559,10 @@ export const TransitModule = () => {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-amber-500/70">Ubicación destino</div>
-                  <div className="font-mono font-black text-emerald-500 text-lg flex items-center gap-2">
+                  <div className="text-xs font-medium text-muted-foreground">Ubicación destino</div>
+                  <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400 text-lg flex items-center gap-2">
                     <MapPin className="w-4 h-4" /> {lockedLocation}
                   </div>
                 </div>
@@ -577,22 +570,22 @@ export const TransitModule = () => {
               <button
                 onClick={changeLocation}
                 disabled={moving}
-                className="text-[10px] font-black uppercase tracking-widest text-amber-500 hover:underline disabled:opacity-50"
+                className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
               >
                 Cambiar ubicación
               </button>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-black">2</span>
-              <span className="text-[11px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">2</span>
+              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                 <ScanLine className="w-4 h-4" /> Escanea las cajas para esta ubicación
               </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <form onSubmit={handleBoxScan} className="flex-1 min-w-[240px] relative">
-                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" />
+                <ScanLine className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
                   ref={boxScanRef}
                   type="text"
@@ -600,33 +593,33 @@ export const TransitModule = () => {
                   onChange={e => setBoxScan(e.target.value.toUpperCase())}
                   placeholder="Escanea LPN de la caja (Enter)"
                   autoComplete="off"
-                  className="w-full pl-9 pr-3 py-2 bg-background border border-amber-500/40 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  className="w-full pl-9 pr-3 py-2 bg-background border border-input rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
                   data-testid="putaway2-box-scan"
                 />
               </form>
-              <div className="text-[11px] font-bold text-amber-500 uppercase tracking-widest">
+              <div className="text-xs font-medium text-muted-foreground tabular-nums">
                 {selected.size} caja(s) · {totalSelectedUnits.toLocaleString()} und
               </div>
-              <button
+              <Btn
+                variant="primary"
                 onClick={handleFinish}
                 disabled={moving || selected.size === 0}
-                className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
                 data-testid="putaway2-finish"
               >
                 {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
                 Terminar ({selected.size})
-              </button>
+              </Btn>
               {selected.size > 0 && (
-                <button
+                <Btn
+                  variant="ghost"
                   onClick={() => setSelected(new Set())}
                   disabled={moving}
-                  className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground"
                 >
                   Limpiar
-                </button>
+                </Btn>
               )}
             </div>
-            <p className="text-[10px] text-muted-foreground/70 italic">
+            <p className="text-xs text-muted-foreground/70">
               También puedes hacer clic en las filas de abajo para agregar o quitar cajas del lote.
             </p>
           </div>
@@ -634,25 +627,25 @@ export const TransitModule = () => {
       </div>
 
       {/* Table */}
-      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
         <div className="overflow-x-auto max-h-[600px]">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-secondary/80 backdrop-blur-md border-b border-border/40">
+            <thead className="sticky top-0 z-10 bg-muted/50 border-b border-border">
               <tr>
                 <th className="w-10 p-3">
                   <button onClick={toggleAll} className="text-muted-foreground hover:text-foreground" title="Seleccionar todo">
-                    {allSelected ? <CheckSquare className="w-4 h-4 text-amber-500" /> : someSelected ? <CheckSquare className="w-4 h-4 text-amber-500/50" /> : <Square className="w-4 h-4" />}
+                    {allSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : someSelected ? <CheckSquare className="w-4 h-4 text-primary/50" /> : <Square className="w-4 h-4" />}
                   </button>
                 </th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">LPN</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">LPN</th>
                 {!activeCart && (
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Carro</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Carro</th>
                 )}
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estilo / SKU</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibida</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Cliente</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Estilo / SKU</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color · Talla</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Recibida</th>
                 <th className="p-3 w-10"></th>
               </tr>
             </thead>
@@ -665,12 +658,11 @@ export const TransitModule = () => {
                 </tr>
               ) : boxes.length === 0 ? (
                 <tr>
-                  <td colSpan={activeCart ? 8 : 9} className="py-20 text-center">
-                    <Truck className="w-12 h-12 mx-auto opacity-20 mb-2 text-amber-500" />
-                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                  <td colSpan={activeCart ? 8 : 9} className="py-16 text-center">
+                    <p className="text-sm font-semibold text-foreground/80">
                       {activeCart ? `${activeCart} vacío` : "Sin cajas en Putaway 2.0"}
                     </p>
-                    <p className="text-xs text-muted-foreground/70 mt-2 max-w-md mx-auto">
+                    <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
                       Cuando recibas mercancía con el botón "Recibir a Carro" en Receiving, las cajas aparecerán aquí esperando una ubicación física.
                     </p>
                   </td>
@@ -682,36 +674,36 @@ export const TransitModule = () => {
                     <tr
                       key={b.box_id}
                       onClick={() => toggleOne(b.box_id)}
-                      className={`border-b border-border/10 cursor-pointer transition-colors ${isSel ? 'bg-amber-500/10 hover:bg-amber-500/20' : 'hover:bg-primary/5'}`}
+                      className={`border-b border-border/60 cursor-pointer transition-colors ${isSel ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/40'}`}
                     >
                       <td className="p-3" onClick={e => { e.stopPropagation(); toggleOne(b.box_id); }}>
-                        {isSel ? <CheckSquare className="w-4 h-4 text-amber-500" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                        {isSel ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4 text-muted-foreground" />}
                       </td>
-                      <td className="p-3 font-mono font-bold text-primary text-[11px]">{b.box_id}</td>
+                      <td className="px-3 py-2.5 font-mono font-medium text-xs">{b.box_id}</td>
                       {!activeCart && (
-                        <td className="p-3">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 border border-amber-500/30 font-mono">
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono text-muted-foreground bg-muted border border-border">
                             {b.location === TRANSIT_LEGACY ? "⏸" : <Truck className="w-3 h-3" />}
                             {b.location || '—'}
                           </span>
                         </td>
                       )}
-                      <td className="p-3 text-[11px] font-bold truncate max-w-[160px]" title={b.customer}>{b.customer || '—'}</td>
-                      <td className="p-3 font-mono text-[11px] font-bold">
-                        <div className="text-primary">{b.style || '—'}</div>
-                        <div className="text-muted-foreground text-[10px] truncate max-w-[160px]" title={b.description}>{b.description || ''}</div>
+                      <td className="px-3 py-2.5 text-xs truncate max-w-[160px]" title={b.customer}>{b.customer || '—'}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">
+                        <div className="font-medium text-foreground">{b.style || '—'}</div>
+                        <div className="text-muted-foreground text-xs truncate max-w-[160px]" title={b.description}>{b.description || ''}</div>
                       </td>
-                      <td className="p-3 font-mono text-[11px] font-bold">
+                      <td className="px-3 py-2.5 font-mono text-xs">
                         <span className="text-foreground">{b.color || '—'}</span>
                         <ChevronRight className="w-3 h-3 inline mx-1 opacity-30" />
-                        <span className="text-primary">{b.size || '—'}</span>
+                        <span className="text-foreground">{b.size || '—'}</span>
                       </td>
-                      <td className="p-3 text-right font-mono font-black text-emerald-500">{(b.units || b.qty || 0).toLocaleString()}</td>
-                      <td className="p-3 font-mono text-[10px] text-muted-foreground">{(b.created_at || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{(b.units || b.qty || 0).toLocaleString()}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{(b.created_at || '').slice(0, 19).replace('T', ' ')}</td>
                       <td className="p-3" onClick={e => e.stopPropagation()}>
                         <button
                           onClick={() => openEdit(b)}
-                          className="p-1.5 rounded text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 transition-all"
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                           title="Editar caja"
                           data-testid={`transit-edit-${b.box_id}`}
                         >
@@ -730,34 +722,31 @@ export const TransitModule = () => {
       {/* Warning shown before locating the material */}
       {showWarning && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-amber-500/40 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-500">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-black uppercase tracking-widest text-sm">Confirmar ubicación</h3>
+                <h3 className="font-semibold text-sm">Confirmar ubicación</h3>
               </div>
               <button onClick={() => setShowWarning(false)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={moving}>
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-xs text-amber-200/90 font-bold leading-relaxed flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-              <span>
-                Estás por ubicar <span className="font-black text-amber-400">{selected.size} caja(s)</span> ({totalSelectedUnits.toLocaleString()} unidades)
-                en <span className="font-black text-amber-400">{lockedLocation}</span>. Verifica que el material físico coincide antes de continuar — esta acción mueve el inventario.
-              </span>
-            </div>
+            <SoftAlert tone="warning">
+              Estás por ubicar <span className="font-semibold">{selected.size} caja(s)</span> ({totalSelectedUnits.toLocaleString()} unidades)
+              en <span className="font-semibold">{lockedLocation}</span>. Verifica que el material físico coincide antes de continuar — esta acción mueve el inventario.
+            </SoftAlert>
 
-            <div className="bg-secondary/40 rounded-2xl p-4 space-y-2 border border-border/20">
+            <div className="bg-muted/30 rounded-lg p-4 space-y-2 border border-border/60">
               <div className="flex items-center justify-between">
-                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest">Ubicación destino</div>
-                <div className="font-mono font-black text-emerald-500">{lockedLocation}</div>
+                <div className="text-xs font-medium text-muted-foreground">Ubicación destino</div>
+                <div className="font-mono font-semibold">{lockedLocation}</div>
               </div>
-              <div className="border-t border-border/20 pt-2 max-h-[160px] overflow-auto custom-scrollbar space-y-1.5 font-mono">
+              <div className="border-t border-border/60 pt-2 max-h-[160px] overflow-auto custom-scrollbar space-y-1.5 font-mono">
                 {boxes.filter(b => selected.has(b.box_id)).map(b => (
-                  <div key={b.box_id} className="flex items-center justify-between text-[11px]">
-                    <span className="font-black text-foreground">{b.box_id}</span>
+                  <div key={b.box_id} className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-foreground">{b.box_id}</span>
                     <span className="text-muted-foreground">{b.style || b.sku || '—'} · {(b.units || b.qty || 0)} UN</span>
                   </div>
                 ))}
@@ -765,22 +754,23 @@ export const TransitModule = () => {
             </div>
 
             <div className="flex gap-2">
-              <button
+              <Btn
+                variant="primary"
                 onClick={handleRelocate}
                 disabled={moving}
-                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1"
                 data-testid="putaway2-confirm"
               >
                 {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
                 Confirmar y ubicar
-              </button>
-              <button
+              </Btn>
+              <Btn
                 onClick={() => setShowWarning(false)}
                 disabled={moving}
-                className="flex-1 py-3 bg-secondary text-foreground font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-secondary/80 transition-all disabled:opacity-50"
+                className="flex-1"
               >
                 Cancelar
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
@@ -789,18 +779,13 @@ export const TransitModule = () => {
       {/* Edit-box modal */}
       {editBox && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center">
-                  <Edit3 className="w-5 h-5 text-amber-500" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Editar caja</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold font-mono truncate">
-                    {editBox.box_id} · {editBox.style} · {editBox.color} / {editBox.size}
-                  </p>
-                </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-sm">Editar caja</h3>
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {editBox.box_id} · {editBox.style} · {editBox.color} / {editBox.size}
+                </p>
               </div>
               <button onClick={closeEdit} disabled={editSaving} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50">
                 <X className="w-5 h-5" />
@@ -808,41 +793,41 @@ export const TransitModule = () => {
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
-              <p className="text-[10px] text-muted-foreground italic">
-                Los campos <span className="font-mono font-bold">style / sku / color / size / ubicación</span> no se editan aquí: usa el botón "Mover" para relocate, o elimina y vuelve a recibir si cambia el producto.
+              <p className="text-xs text-muted-foreground">
+                Los campos <span className="font-mono font-medium">style / sku / color / size / ubicación</span> no se editan aquí: usa el botón "Mover" para relocate, o elimina y vuelve a recibir si cambia el producto.
               </p>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cliente</label>
                   <input value={editDraft.customer} onChange={e => setDraft('customer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabricante</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Fabricante</label>
                   <input value={editDraft.manufacturer} onChange={e => setDraft('manufacturer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Lote</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Lote</label>
                   <input value={editDraft.lot_number} onChange={e => setDraft('lot_number', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción</label>
                 <input value={editDraft.description} onChange={e => setDraft('description', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">País de origen</label>
                   <input value={editDraft.country_of_origin} onChange={e => setDraft('country_of_origin', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fabric / Contenido</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Fabric / Contenido</label>
                   <input value={editDraft.fabric_content} onChange={e => setDraft('fabric_content', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-amber-500 block mb-1">
+                  <label className="text-xs font-medium text-amber-600 dark:text-amber-400 block mb-1">
                     Unidades <span title="Si cambias las unidades, el inventario se rebalancea automáticamente.">⚠</span>
                   </label>
                   <input
@@ -850,12 +835,12 @@ export const TransitModule = () => {
                     min="0"
                     value={editDraft.units}
                     onChange={e => setDraft('units', e.target.value)}
-                    className="w-full px-3 py-2 bg-background border border-amber-500/40 rounded text-sm font-mono font-black text-right"
+                    className="w-full px-3 py-2 bg-background border border-amber-500/40 rounded text-sm font-mono font-medium tabular-nums text-right"
                   />
-                  <p className="text-[9px] text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Actual: {editBox.units ?? editBox.qty ?? 0}
                     {Number(editDraft.units) !== (editBox.units ?? editBox.qty ?? 0) && (
-                      <span className="text-amber-500 font-bold ml-1">
+                      <span className="text-amber-600 dark:text-amber-400 font-medium ml-1">
                         → {editDraft.units} ({Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0) >= 0 ? '+' : ''}{Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0)})
                       </span>
                     )}
@@ -865,22 +850,22 @@ export const TransitModule = () => {
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">
-              <button
+              <Btn
+                variant="primary"
                 onClick={handleSaveEdit}
                 disabled={editSaving}
-                className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1"
                 data-testid="transit-edit-save"
               >
                 {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Guardar
-              </button>
-              <button
+              </Btn>
+              <Btn
                 onClick={closeEdit}
                 disabled={editSaving}
-                className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
               >
                 Cancelar
-              </button>
+              </Btn>
             </div>
           </div>
         </div>

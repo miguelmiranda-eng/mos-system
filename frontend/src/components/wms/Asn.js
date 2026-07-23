@@ -6,11 +6,12 @@ import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
+import { ModuleHeader, StatCard, Btn } from "./ui";
 
 const STATUS_STYLES = {
-  [AsnStatus.PENDING]:  { label: "PENDIENTE",  cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",         tabCls: "bg-blue-500 text-white",    dot: "bg-blue-400" },
-  [AsnStatus.PARTIAL]:  { label: "EN PROCESO", cls: "bg-amber-500/10 text-amber-400 border-amber-500/20",      tabCls: "bg-amber-500 text-white",   dot: "bg-amber-400" },
-  [AsnStatus.RECEIVED]: { label: "COMPLETADO", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", tabCls: "bg-emerald-500 text-white", dot: "bg-emerald-400" },
+  [AsnStatus.PENDING]:  { label: "PENDIENTE",  cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25",             tabCls: "bg-card text-foreground shadow-sm",    dot: "bg-blue-500" },
+  [AsnStatus.PARTIAL]:  { label: "EN PROCESO", cls: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25",       tabCls: "bg-card text-foreground shadow-sm",   dot: "bg-amber-500" },
+  [AsnStatus.RECEIVED]: { label: "COMPLETADO", cls: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25", tabCls: "bg-card text-foreground shadow-sm", dot: "bg-emerald-500" },
 };
 
 const TABS = [
@@ -358,94 +359,91 @@ export const AsnModule = ({ currentUser }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-black uppercase tracking-tighter">Gestion de ASN</h2>
-          <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">Pre-recibo y reconciliacion de packing list</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              placeholder="Buscar ASN / PO / Vendor"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              className="pl-9 pr-3 py-2 bg-background border border-border rounded-xl text-sm text-foreground w-64 focus:outline-none focus:border-primary"
-            />
-          </div>
-          <button
-            onClick={handleExport}
-            disabled={filteredAsns.length === 0}
-            className="flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
-            title="Exportar la lista actual (respeta tab + buscador)"
-            data-testid="asn-export"
-          >
-            <FileUp className="w-4 h-4" />
-            Exportar
-          </button>
-          <button
-            onClick={() => { setShowTrace(true); setTraceResults(null); setTraceQuery(""); }}
-            className="flex items-center gap-2 px-6 py-3 bg-secondary/60 hover:bg-secondary text-foreground rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg border border-border"
-            title="Rastrear de qué ASN proviene un SKU"
-          >
-            <Search className="w-4 h-4" />
-            Rastrear SKU
-          </button>
-          <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls,.pdf" className="hidden" onChange={handleFilePick} />
-          <label htmlFor="asn-import" className={`flex items-center gap-2 px-6 py-3 bg-indigo-500 text-white rounded-2xl cursor-pointer text-xs font-black uppercase tracking-widest hover:scale-105 transition-all shadow-lg ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
+      <ModuleHeader
+        title="Gestion de ASN"
+        subtitle="Pre-recibo y reconciliacion de packing list"
+        right={
+          <>
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                placeholder="Buscar ASN / PO / Vendor"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                className="pl-9 pr-3 py-2 bg-card border border-input rounded-md text-sm text-foreground w-64 placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
+              />
+            </div>
+            <Btn
+              onClick={handleExport}
+              disabled={filteredAsns.length === 0}
+              title="Exportar la lista actual (respeta tab + buscador)"
+              data-testid="asn-export"
+            >
+              <FileUp className="w-4 h-4" />
+              Exportar
+            </Btn>
+            <Btn
+              onClick={() => { setShowTrace(true); setTraceResults(null); setTraceQuery(""); }}
+              title="Rastrear de qué ASN proviene un SKU"
+            >
+              <Search className="w-4 h-4" />
+              Rastrear SKU
+            </Btn>
+            <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls,.pdf" className="hidden" onChange={handleFilePick} />
+            <label htmlFor="asn-import" className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground border border-transparent rounded-md cursor-pointer text-sm font-medium hover:opacity-90 transition-colors ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
             Importar ASN (Excel / PDF)
           </label>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Status tabs */}
-      <div className="flex flex-wrap gap-2 p-1 bg-secondary/20 rounded-2xl w-fit border border-border/40">
+      <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg w-fit border border-border">
         {TABS.map(tab => {
           const isActive = activeTab === tab.id;
           const sd = STATUS_STYLES[tab.id];
           const count = tabCounts[tab.id] ?? 0;
           const baseCls = isActive
-            ? (sd?.tabCls || 'bg-primary text-primary-foreground')
-            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40';
+            ? (sd?.tabCls || 'bg-card text-foreground shadow-sm')
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted';
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${baseCls} ${isActive ? 'shadow-lg' : ''}`}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${baseCls}`}
               data-testid={`asn-tab-${tab.id}`}
             >
               {sd && <span className={`w-1.5 h-1.5 rounded-full ${sd.dot}`} />}
               {tab.label}
-              <span className={`text-[10px] tabular-nums ${isActive ? 'opacity-90' : 'opacity-60'}`}>{count}</span>
+              <span className={`text-xs tabular-nums ${isActive ? 'opacity-90' : 'opacity-60'}`}>{count}</span>
             </button>
           );
         })}
       </div>
 
       {/* List view */}
-      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-secondary/40 border-b border-border/30">
+            <thead className="bg-muted/50 border-b border-border">
               <tr>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">ASN</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Vendor</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">PO</th>
-                <th className="p-3 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Líneas</th>
-                <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido / Esperado</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-40">Avance</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Registrado</th>
-                <th className="p-3 w-10"></th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">ASN</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Vendor</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">PO</th>
+                <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">Estado</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Líneas</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Recibido / Esperado</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-40">Avance</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Registrado</th>
+                <th className="px-3 py-2.5 w-10"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/10">
+            <tbody className="divide-y divide-border/60">
               {filteredAsns.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-20 text-center">
-                    <FileDown className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-                    <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">
+                  <td colSpan={9} className="py-16 text-center">
+                    <p className="text-sm font-semibold text-foreground/80">
                       {asns.length === 0 ? 'No hay ASNs registrados' : 'Sin coincidencias en esta pestaña'}
                     </p>
                   </td>
@@ -460,39 +458,39 @@ export const AsnModule = ({ currentUser }) => {
                     <tr
                       key={a.asn_id}
                       onClick={() => openDetail(a.asn_id)}
-                      className="hover:bg-primary/5 cursor-pointer transition-colors"
+                      className="hover:bg-muted/40 cursor-pointer transition-colors"
                       data-testid={`asn-row-${a.asn_id}`}
                     >
-                      <td className="p-3 font-mono font-black text-primary text-[12px]">{a.asn_id}</td>
-                      <td className="p-3 text-[12px] font-bold truncate max-w-[220px]" title={a.vendor}>{a.vendor || '—'}</td>
-                      <td className="p-3 text-[11px] font-mono text-muted-foreground">{a.po_number || '—'}</td>
-                      <td className="p-3 text-center">
-                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${sd.cls}`}>
+                      <td className="px-3 py-2.5 font-mono font-medium text-foreground text-xs">{a.asn_id}</td>
+                      <td className="px-3 py-2.5 text-xs truncate max-w-[220px]" title={a.vendor}>{a.vendor || '—'}</td>
+                      <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{a.po_number || '—'}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium whitespace-nowrap border ${sd.cls}`}>
                           {sd.label}
                         </span>
                       </td>
-                      <td className="p-3 text-right tabular-nums font-mono font-bold text-[11px]">{a.items?.length || 0}</td>
-                      <td className="p-3 text-right tabular-nums font-mono font-bold text-[11px]">
-                        <span className={pct >= 100 ? 'text-emerald-400' : totalRcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium">{a.items?.length || 0}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium">
+                        <span className={pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : totalRcv > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
                           {totalRcv.toLocaleString()}
                         </span>
                         <span className="text-muted-foreground"> / {totalExp.toLocaleString()}</span>
                       </td>
-                      <td className="p-3">
+                      <td className="px-3 py-2.5">
                         <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-secondary/40 rounded-full overflow-hidden min-w-[60px]">
+                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden min-w-[60px]">
                             <div className={`h-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
                           </div>
-                          <span className="text-[10px] font-mono font-black tabular-nums w-9 text-right">{pct}%</span>
+                          <span className="text-xs font-mono font-medium tabular-nums w-9 text-right">{pct}%</span>
                         </div>
                       </td>
-                      <td className="p-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
                         {a.created_at ? new Date(a.created_at).toLocaleDateString() : '—'}
                       </td>
-                      <td className="p-3">
+                      <td className="px-3 py-2.5">
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDelete(a.asn_id); }}
-                          className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all"
+                          className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
                           title="Eliminar ASN"
                           data-testid={`asn-delete-${a.asn_id}`}
                         >
@@ -511,11 +509,11 @@ export const AsnModule = ({ currentUser }) => {
       {/* Sheet picker dialog (Phase 1 → Phase 2) */}
       {sheetChoices && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-lg shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="min-w-0">
-                <h3 className="font-black uppercase tracking-tighter text-sm">Selecciona la hoja</h3>
-                <p className="text-[11px] text-muted-foreground font-bold truncate">{sheetChoices.filename}</p>
+                <h3 className="font-semibold text-sm">Selecciona la hoja</h3>
+                <p className="text-xs text-muted-foreground truncate">{sheetChoices.filename}</p>
               </div>
               <button onClick={() => { setSheetChoices(null); setPendingFile(null); }} className="p-2 hover:bg-secondary rounded-lg transition-all">
                 <X className="w-5 h-5" />
@@ -523,7 +521,7 @@ export const AsnModule = ({ currentUser }) => {
             </div>
             <div className="p-5 space-y-3">
               {sheetChoices.sheets.map(s => (
-                <label key={s.name} className={`block p-4 rounded-2xl border cursor-pointer transition-all ${chosenSheet === s.name ? 'border-primary bg-primary/5' : 'border-border/40 hover:border-border'}`}>
+                <label key={s.name} className={`block p-4 rounded-lg border cursor-pointer transition-colors ${chosenSheet === s.name ? 'border-primary bg-primary/5' : 'border-border/60 hover:border-border'}`}>
                   <div className="flex items-start gap-3">
                     <input
                       type="radio"
@@ -534,29 +532,29 @@ export const AsnModule = ({ currentUser }) => {
                       className="mt-1"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="font-mono text-sm font-bold truncate">{s.name}</div>
-                      <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-                        <span className="uppercase tracking-wider">tipo: {s.kind}</span>
+                      <div className="font-mono text-sm font-medium truncate">{s.name}</div>
+                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
+                        <span>tipo: {s.kind}</span>
                         <span>ASN: <b className="text-foreground">{s.detected_asn_id || '—'}</b></span>
                         <span>cliente: <b className="text-foreground">{s.detected_customer || '—'}</b></span>
                         <span>líneas: <b className="text-foreground">{s.row_count}</b></span>
                       </div>
                       {s.detected_columns && Object.keys(s.detected_columns).length > 0 && (
-                        <div className="text-[10px] text-muted-foreground/80 mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono">
+                        <div className="text-xs text-muted-foreground/80 mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono">
                           {Object.entries(s.detected_columns).map(([f, col]) => (
                             <span key={f}>
-                              <span className="uppercase">{f}</span>=<b className="text-foreground">{col}</b>
+                              <span>{f}</span>=<b className="text-foreground">{col}</b>
                             </span>
                           ))}
                         </div>
                       )}
                       {(s.missing_required || []).length > 0 && (
-                        <div className="flex items-center gap-1 text-[10px] text-red-400 mt-1">
+                        <div className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400 mt-1">
                           <AlertTriangle className="w-3 h-3" /> Faltan columnas: {(s.missing_required || []).join(', ')}
                         </div>
                       )}
                       {!s.detected_asn_id && (
-                        <div className="flex items-center gap-1 text-[10px] text-amber-400 mt-1">
+                        <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
                           <AlertTriangle className="w-3 h-3" /> No se detectó número de ASN en esta hoja
                         </div>
                       )}
@@ -565,20 +563,21 @@ export const AsnModule = ({ currentUser }) => {
                 </label>
               ))}
               <div className="flex gap-2 pt-2">
-                <button
+                <Btn
+                  variant="primary"
                   onClick={handleConfirmImport}
                   disabled={!chosenSheet || loading}
-                  className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 py-2.5"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
                   Importar
-                </button>
-                <button
+                </Btn>
+                <Btn
                   onClick={() => { setSheetChoices(null); setPendingFile(null); }}
-                  className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase"
+                  className="py-2.5"
                 >
                   Cancelar
-                </button>
+                </Btn>
               </div>
             </div>
           </div>
@@ -588,22 +587,22 @@ export const AsnModule = ({ currentUser }) => {
       {/* Detail modal */}
       {detailFor && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-5xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-5xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-                  <Package className="w-5 h-5 text-indigo-400" />
+                <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                  <Package className="w-5 h-5 text-muted-foreground" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm truncate flex items-center gap-2">
+                  <h3 className="font-semibold text-sm truncate flex items-center gap-2">
                     ASN {detailFor}
                     {detailData?.asn?.closed && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] tracking-widest"><Lock className="w-3 h-3" /> CERRADO</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25"><Lock className="w-3 h-3" /> CERRADO</span>
                     )}
                   </h3>
                   {detailData?.asn && (
-                    <p className="text-[11px] text-muted-foreground font-bold truncate">
-                      <span className="text-primary">{detailData.asn.vendor || '—'}</span>
+                    <p className="text-xs text-muted-foreground truncate">
+                      <span className="text-foreground">{detailData.asn.vendor || '—'}</span>
                       {detailData.asn.po_number && <> · PO {detailData.asn.po_number}</>}
                       {detailData.asn.source_sheet && <> · {detailData.asn.source_sheet}</>}
                     </p>
@@ -623,38 +622,37 @@ export const AsnModule = ({ currentUser }) => {
                 )}
                 {editing && (
                   <>
-                    <button
+                    <Btn
+                      variant="primary"
                       onClick={saveEdit}
                       disabled={savingEdit}
-                      className="px-3 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Guardar
-                    </button>
-                    <button onClick={cancelEdit} className="px-3 py-2 text-muted-foreground hover:bg-secondary rounded-lg text-[11px] font-black uppercase tracking-widest">
+                    </Btn>
+                    <Btn variant="ghost" onClick={cancelEdit}>
                       Cancelar
-                    </button>
+                    </Btn>
                   </>
                 )}
                 {!editing && detailData && !detailData.asn?.closed && (
-                  <button
+                  <Btn
+                    variant="primary"
                     onClick={closeReceiving}
                     disabled={closing}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
                     title="Terminar el proceso de recibo"
                     data-testid="asn-close-receiving"
                   >
                     {closing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Terminar recibo
-                  </button>
+                  </Btn>
                 )}
                 {!editing && detailData?.asn?.closed && isSupersu && (
-                  <button
+                  <Btn
                     onClick={reopenReceiving}
                     disabled={closing}
-                    className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 disabled:opacity-50"
                     title="Reabrir recibo (Super Usuario)"
                   >
                     {closing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reabrir
-                  </button>
+                  </Btn>
                 )}
                 {!editing && (
                   <button
@@ -675,34 +673,21 @@ export const AsnModule = ({ currentUser }) => {
             <div className="flex-1 overflow-auto custom-scrollbar">
               {detailLoading ? (
                 <div className="flex items-center justify-center py-20">
-                  <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                 </div>
               ) : detailData ? (
                 <div className="p-5 space-y-6">
                   {/* Trazabilidad: summary cards + recepciones agregadas */}
                   {detailData.summary && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Recibido</div>
-                        <div className="text-2xl font-black tabular-nums text-blue-400">{(detailData.summary.units_received ?? detailData.summary.total_units ?? 0).toLocaleString()}</div>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">En inventario</div>
-                        <div className="text-2xl font-black tabular-nums text-emerald-400">{(detailData.summary.units_in_stock || 0).toLocaleString()}</div>
-                        <div className="text-[9px] font-bold text-muted-foreground/70 mt-0.5">{(detailData.summary.boxes_in_stock || 0)} cajas</div>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Salido / consumido</div>
-                        <div className="text-2xl font-black tabular-nums text-amber-400">{(detailData.summary.units_out || 0).toLocaleString()}</div>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/20">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Ubicaciones</div>
-                        <div className="text-2xl font-black tabular-nums text-purple-400">{(detailData.summary.by_location || detailData.summary.distinct_locations || []).length}</div>
-                      </div>
+                      <StatCard label="Recibido" value={(detailData.summary.units_received ?? detailData.summary.total_units ?? 0).toLocaleString()} />
+                      <StatCard label="En inventario" value={(detailData.summary.units_in_stock || 0).toLocaleString()} sub={`${(detailData.summary.boxes_in_stock || 0)} cajas`} />
+                      <StatCard label="Salido / consumido" value={(detailData.summary.units_out || 0).toLocaleString()} />
+                      <StatCard label="Ubicaciones" value={(detailData.summary.by_location || detailData.summary.distinct_locations || []).length} />
                       {detailData.summary.first_received_at && (
-                        <div className="md:col-span-2 p-3 rounded-xl bg-secondary/30 border border-border/30">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-0.5">Periodo de recepción</div>
-                          <div className="text-[11px] font-mono">
+                        <div className="md:col-span-2 p-3 rounded-lg bg-card border border-border">
+                          <div className="text-xs font-medium text-muted-foreground mb-0.5">Periodo de recepción</div>
+                          <div className="text-xs font-mono">
                             {new Date(detailData.summary.first_received_at).toLocaleString()}
                             {' → '}
                             {new Date(detailData.summary.last_received_at).toLocaleString()}
@@ -710,11 +695,11 @@ export const AsnModule = ({ currentUser }) => {
                         </div>
                       )}
                       {(detailData.summary.receivers || []).length > 0 && (
-                        <div className="md:col-span-2 p-3 rounded-xl bg-secondary/30 border border-border/30">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-0.5">Receptores</div>
-                          <div className="text-[11px] font-bold flex flex-wrap gap-1.5">
+                        <div className="md:col-span-2 p-3 rounded-lg bg-card border border-border">
+                          <div className="text-xs font-medium text-muted-foreground mb-0.5">Receptores</div>
+                          <div className="text-xs flex flex-wrap gap-1.5">
                             {(detailData.summary.receivers || []).map(r => (
-                              <span key={r} className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[10px] uppercase tracking-wider">
+                              <span key={r} className="px-2 py-0.5 bg-muted border border-border rounded-md text-xs font-medium">
                                 {r}
                               </span>
                             ))}
@@ -727,22 +712,22 @@ export const AsnModule = ({ currentUser }) => {
                   {/* Inventario restante por ubicación (trazabilidad) */}
                   {(detailData.summary?.by_location || []).length > 0 && (
                     <div>
-                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">Inventario restante por ubicación</h4>
-                      <div className="border border-border/30 rounded-2xl overflow-hidden">
+                      <h4 className="text-xs font-semibold text-muted-foreground mb-2">Inventario restante por ubicación</h4>
+                      <div className="border border-border rounded-lg overflow-hidden">
                         <table className="w-full text-sm">
-                          <thead className="bg-secondary/40">
+                          <thead className="bg-muted/50 border-b border-border">
                             <tr>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
-                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
-                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Ubicación</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Cajas</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-border/10">
+                          <tbody className="divide-y divide-border/60">
                             {detailData.summary.by_location.map(l => (
-                              <tr key={l.location} className="hover:bg-secondary/30">
-                                <td className="p-3 text-xs font-mono text-emerald-400">{l.location}</td>
-                                <td className="p-3 text-xs text-right tabular-nums">{(l.boxes || 0).toLocaleString()}</td>
-                                <td className="p-3 text-xs text-right tabular-nums font-bold">{(l.units || 0).toLocaleString()}</td>
+                              <tr key={l.location} className="hover:bg-muted/40">
+                                <td className="px-3 py-2.5 text-xs font-mono">{l.location}</td>
+                                <td className="px-3 py-2.5 text-xs text-right tabular-nums">{(l.boxes || 0).toLocaleString()}</td>
+                                <td className="px-3 py-2.5 text-xs text-right tabular-nums font-bold">{(l.units || 0).toLocaleString()}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -754,38 +739,38 @@ export const AsnModule = ({ currentUser }) => {
                   {/* Eventos de recepción (1 row por receiving_id) */}
                   {detailData.receivings && detailData.receivings.length > 0 && (
                     <div>
-                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">
+                      <h4 className="text-xs font-semibold text-muted-foreground mb-2">
                         Eventos de recepción ({detailData.receivings.length})
                       </h4>
-                      <div className="border border-border/30 rounded-2xl overflow-hidden">
+                      <div className="border border-border rounded-lg overflow-hidden">
                         <table className="w-full text-sm">
-                          <thead className="bg-secondary/40">
+                          <thead className="bg-muted/50 border-b border-border">
                             <tr>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Receiving ID</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style / SKU</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Lote</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
-                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cajas</th>
-                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido por</th>
-                              <th className="p-3 w-10"></th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Fecha</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Receiving ID</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Style / SKU</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color · Talla</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Lote</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Ubicación</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Cajas</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Recibido por</th>
+                              <th className="px-3 py-2.5 w-10"></th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-border/10">
+                          <tbody className="divide-y divide-border/60">
                             {detailData.receivings.map(r => (
-                              <tr key={r.receiving_id} className="hover:bg-secondary/30">
-                                <td className="p-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
-                                <td className="p-3 text-[11px] font-mono font-bold text-primary">{r.receiving_id}</td>
-                                <td className="p-3 text-[11px] font-mono">{r.style || r.sku || '—'}</td>
-                                <td className="p-3 text-[11px]">{r.color || '—'} · {r.size || '—'}</td>
-                                <td className="p-3 text-[11px] font-mono text-muted-foreground">{r.lot_number || '—'}</td>
-                                <td className="p-3 text-[11px] font-mono text-emerald-400">{r.inv_location || '—'}</td>
-                                <td className="p-3 text-right text-[11px] tabular-nums font-bold">{(r.boxes || []).length}</td>
-                                <td className="p-3 text-right text-[11px] tabular-nums font-bold text-emerald-400">{(r.total_units || 0).toLocaleString()}</td>
-                                <td className="p-3 text-[11px] text-muted-foreground">{r.received_by_name || '—'}</td>
-                                <td className="p-3 text-right">
+                              <tr key={r.receiving_id} className="hover:bg-muted/40">
+                                <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono font-bold text-primary">{r.receiving_id}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono">{r.style || r.sku || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs">{r.color || '—'} · {r.size || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{r.lot_number || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono">{r.inv_location || '—'}</td>
+                                <td className="px-3 py-2.5 text-right text-xs tabular-nums font-medium">{(r.boxes || []).length}</td>
+                                <td className="px-3 py-2.5 text-right text-xs tabular-nums font-medium">{(r.total_units || 0).toLocaleString()}</td>
+                                <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.received_by_name || '—'}</td>
+                                <td className="px-3 py-2.5 text-right">
                                   {isSupersu && !detailData?.asn?.closed && (
                                     <button
                                       onClick={async (e) => {
@@ -818,19 +803,19 @@ export const AsnModule = ({ currentUser }) => {
                   {editing && editDraft && (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Proveedor</label>
+                        <label className="text-xs font-medium text-muted-foreground">Proveedor</label>
                         <input value={editDraft.vendor} onChange={e => setEditDraft(d => ({ ...d, vendor: e.target.value }))}
-                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                          className="w-full mt-1 h-9 px-3 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                       </div>
                       <div>
-                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">PO #</label>
+                        <label className="text-xs font-medium text-muted-foreground">PO #</label>
                         <input value={editDraft.po_number} onChange={e => setEditDraft(d => ({ ...d, po_number: e.target.value }))}
-                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                          className="w-full mt-1 h-9 px-3 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                       </div>
                       <div>
-                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Fecha esperada</label>
+                        <label className="text-xs font-medium text-muted-foreground">Fecha esperada</label>
                         <input value={editDraft.expected_date} onChange={e => setEditDraft(d => ({ ...d, expected_date: e.target.value }))}
-                          className="w-full mt-1 h-9 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary" />
+                          className="w-full mt-1 h-9 px-3 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                       </div>
                     </div>
                   )}
@@ -847,44 +832,44 @@ export const AsnModule = ({ currentUser }) => {
                     return (
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground">
-                            Registro de discrepancias {asn.closed ? '' : <span className="text-amber-400/70 normal-case tracking-normal">(en vivo)</span>}
+                          <h4 className="text-xs font-semibold text-muted-foreground">
+                            Registro de discrepancias {asn.closed ? '' : <span className="text-amber-600/80 dark:text-amber-400/80 font-normal">(en vivo)</span>}
                           </h4>
-                          {disc.length > 0 && <span className="text-[10px] font-black text-amber-400">{disc.length} línea(s)</span>}
+                          {disc.length > 0 && <span className="text-xs font-medium text-amber-600 dark:text-amber-400">{disc.length} línea(s)</span>}
                         </div>
                         {asn.closed && (
-                          <div className="mb-2 text-[11px] text-muted-foreground bg-secondary/30 border border-border/30 rounded-xl p-3">
+                          <div className="mb-2 text-xs text-muted-foreground bg-muted/40 border border-border rounded-lg p-3">
                             Cerrado por <b className="text-foreground/80">{asn.closed_by_name || '—'}</b>
                             {asn.closed_at && <> · {new Date(asn.closed_at).toLocaleString()}</>}
                             {asn.closure_note && <div className="mt-1 italic">“{asn.closure_note}”</div>}
                           </div>
                         )}
                         {disc.length === 0 ? (
-                          <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">
-                            <CheckCircle2 className="w-4 h-4" /><span className="text-xs font-bold">Sin discrepancias — recibido coincide con lo esperado.</span>
+                          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/70 dark:border-emerald-500/25 rounded-lg p-3">
+                            <CheckCircle2 className="w-4 h-4" /><span className="text-xs font-medium">Sin discrepancias — recibido coincide con lo esperado.</span>
                           </div>
                         ) : (
-                          <div className="border border-amber-500/20 rounded-2xl overflow-hidden">
+                          <div className="border border-border rounded-lg overflow-hidden">
                             <table className="w-full text-sm">
-                              <thead className="bg-amber-500/10">
+                              <thead className="bg-muted/50 border-b border-border">
                                 <tr>
-                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">#</th>
-                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Part Number</th>
-                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Esperado</th>
-                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido</th>
-                                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Diferencia</th>
-                                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tipo</th>
+                                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">#</th>
+                                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Part Number</th>
+                                  <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Esperado</th>
+                                  <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Recibido</th>
+                                  <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Diferencia</th>
+                                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Tipo</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-border/10">
+                              <tbody className="divide-y divide-border/60">
                                 {disc.map((d, i) => (
-                                  <tr key={i} className="hover:bg-secondary/30">
-                                    <td className="p-3 text-xs font-mono text-muted-foreground">{d.line_no}</td>
-                                    <td className="p-3 text-xs font-mono font-black text-primary">{d.part_number}</td>
-                                    <td className="p-3 text-xs text-right tabular-nums">{(d.qty_expected || 0).toLocaleString()}</td>
-                                    <td className="p-3 text-xs text-right tabular-nums">{(d.qty_received || 0).toLocaleString()}</td>
-                                    <td className={`p-3 text-xs text-right tabular-nums font-black ${d.difference > 0 ? 'text-amber-400' : 'text-red-400'}`}>{d.difference > 0 ? '+' : ''}{d.difference.toLocaleString()}</td>
-                                    <td className="p-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${d.difference > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>{d.type}</span></td>
+                                  <tr key={i} className="hover:bg-muted/40">
+                                    <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{d.line_no}</td>
+                                    <td className="px-3 py-2.5 text-xs font-mono font-medium">{d.part_number}</td>
+                                    <td className="px-3 py-2.5 text-xs text-right tabular-nums">{(d.qty_expected || 0).toLocaleString()}</td>
+                                    <td className="px-3 py-2.5 text-xs text-right tabular-nums">{(d.qty_received || 0).toLocaleString()}</td>
+                                    <td className={`px-3 py-2.5 text-xs text-right tabular-nums font-medium ${d.difference > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>{d.difference > 0 ? '+' : ''}{d.difference.toLocaleString()}</td>
+                                    <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap ${d.difference > 0 ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25'}`}>{d.type}</span></td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -898,38 +883,38 @@ export const AsnModule = ({ currentUser }) => {
                   {/* Expected vs received table */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground">Líneas del packing list</h4>
+                      <h4 className="text-xs font-semibold text-muted-foreground">Líneas del packing list</h4>
                       {editing && (
-                        <button onClick={addItem} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary border border-primary/30 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary/20">
+                        <Btn onClick={addItem}>
                           <Plus className="w-3.5 h-3.5" /> Agregar línea
-                        </button>
+                        </Btn>
                       )}
                     </div>
-                    <div className="border border-border/30 rounded-2xl overflow-hidden">
+                    <div className="border border-border rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
-                        <thead className="bg-secondary/40">
+                        <thead className="bg-muted/50 border-b border-border">
                           <tr>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">#</th>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Part Number</th>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Descripción</th>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">País</th>
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Marca</th>
-                            <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Esperado</th>
-                            <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibido</th>
-                            {!editing && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">En inventario</th>}
-                            <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground w-32">{editing ? '' : 'Progreso'}</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">#</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Part Number</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Descripción</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">País</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Marca</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Esperado</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Recibido</th>
+                            {!editing && <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">En inventario</th>}
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-32">{editing ? '' : 'Progreso'}</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-border/10">
+                        <tbody className="divide-y divide-border/60">
                           {editing && editDraft ? (
                             editDraft.items.map((it, i) => (
-                              <tr key={i} className="hover:bg-secondary/30">
+                              <tr key={i} className="hover:bg-muted/40">
                                 <td className="p-2 text-xs font-mono text-muted-foreground">{i + 1}</td>
-                                <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-secondary/60 border border-border rounded text-xs font-mono focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full h-8 px-2 bg-secondary/60 border border-border rounded text-xs focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-secondary/60 border border-border rounded text-xs font-mono focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-secondary/60 border border-border rounded text-xs focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input type="number" min="0" value={it.qty_expected} onChange={e => setItem(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-secondary/60 border border-border rounded text-xs text-right tabular-nums focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input type="number" min="0" value={it.qty_expected} onChange={e => setItem(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2 text-xs text-right tabular-nums text-muted-foreground">{(it.qty_received || 0).toLocaleString()}</td>
                                 <td className="p-2 text-center">
                                   <button onClick={() => removeItem(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded" title="Quitar línea"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -943,20 +928,20 @@ export const AsnModule = ({ currentUser }) => {
                               const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
                               const done = rcv >= exp;
                               return (
-                                <tr key={it.line_no} className="hover:bg-secondary/30">
-                                  <td className="p-3 text-xs font-mono text-muted-foreground">{it.line_no}</td>
-                                  <td className="p-3 text-xs font-mono font-black text-primary">{it.part_number}</td>
-                                  <td className="p-3 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
-                                  <td className="p-3 text-xs font-mono">{it.country || '—'}</td>
-                                  <td className="p-3 text-xs">{it.brand || '—'}</td>
-                                  <td className="p-3 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
-                                  <td className={`p-3 text-xs text-right tabular-nums font-bold ${done ? 'text-emerald-400' : rcv > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
-                                  <td className="p-3 text-xs text-right tabular-nums font-bold text-emerald-400">{((detailData.summary?.by_line || []).find(l => l.line_no === it.line_no)?.qty_in_stock ?? 0).toLocaleString()}</td>
-                                  <td className="p-3">
-                                    <div className="h-1.5 bg-secondary/40 rounded-full overflow-hidden">
+                                <tr key={it.line_no} className="hover:bg-muted/40">
+                                  <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{it.line_no}</td>
+                                  <td className="px-3 py-2.5 text-xs font-mono font-medium">{it.part_number}</td>
+                                  <td className="px-3 py-2.5 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
+                                  <td className="px-3 py-2.5 text-xs font-mono">{it.country || '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs">{it.brand || '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
+                                  <td className={`px-3 py-2.5 text-xs text-right tabular-nums font-medium ${done ? 'text-emerald-600 dark:text-emerald-400' : rcv > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
+                                  <td className="px-3 py-2.5 text-xs text-right tabular-nums font-medium">{((detailData.summary?.by_line || []).find(l => l.line_no === it.line_no)?.qty_in_stock ?? 0).toLocaleString()}</td>
+                                  <td className="px-3 py-2.5">
+                                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                                       <div className={`h-full ${done ? 'bg-emerald-500' : rcv > 0 ? 'bg-amber-500' : 'bg-blue-500/40'}`} style={{ width: `${pct}%` }} />
                                     </div>
-                                    <div className="text-[10px] font-bold text-muted-foreground mt-0.5">{pct}%</div>
+                                    <div className="text-xs text-muted-foreground mt-0.5">{pct}%</div>
                                   </td>
                                 </tr>
                               );
@@ -965,42 +950,42 @@ export const AsnModule = ({ currentUser }) => {
                         </tbody>
                       </table>
                     </div>
-                    {editing && <p className="text-[10px] text-muted-foreground/60 mt-2 italic">La columna "Recibido" no se edita: refleja el material realmente recibido. El estatus se recalcula al guardar.</p>}
+                    {editing && <p className="text-xs text-muted-foreground/60 mt-2 italic">La columna "Recibido" no se edita: refleja el material realmente recibido. El estatus se recalcula al guardar.</p>}
                   </div>
 
                   {/* Received boxes */}
                   <div>
-                    <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">
+                    <h4 className="text-xs font-semibold text-muted-foreground mb-2">
                       Cajas recibidas ({detailData.boxes?.length || 0})
                     </h4>
                     {(!detailData.boxes || detailData.boxes.length === 0) ? (
-                      <div className="text-center py-10 text-xs text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                      <div className="text-center py-10 text-sm text-muted-foreground">
                         Aún no se ha recibido material para este ASN
                       </div>
                     ) : (
-                      <div className="border border-border/30 rounded-2xl overflow-hidden">
+                      <div className="border border-border rounded-lg overflow-hidden">
                         <table className="w-full text-sm">
-                          <thead className="bg-secondary/40">
+                          <thead className="bg-muted/50 border-b border-border">
                             <tr>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Box ID</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style / SKU</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color / Size</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ubicación</th>
-                              <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Unidades</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Estado</th>
-                              <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Box ID</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Style / SKU</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color / Size</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Ubicación</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Estado</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Fecha</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-border/10">
+                          <tbody className="divide-y divide-border/60">
                             {detailData.boxes.map(b => (
-                              <tr key={b.box_id} className="hover:bg-secondary/30">
-                                <td className="p-3 text-xs font-mono font-bold">{b.box_id}</td>
-                                <td className="p-3 text-xs font-mono">{b.style || b.sku}</td>
-                                <td className="p-3 text-xs">{b.color || '—'} / {b.size || '—'}</td>
-                                <td className="p-3 text-xs font-mono">{b.location || '—'}</td>
-                                <td className="p-3 text-xs text-right tabular-nums font-bold">{(b.units || 0).toLocaleString()}</td>
-                                <td className="p-3 text-xs">{b.status || '—'}</td>
-                                <td className="p-3 text-xs text-muted-foreground">{b.created_at ? new Date(b.created_at).toLocaleString() : '—'}</td>
+                              <tr key={b.box_id} className="hover:bg-muted/40">
+                                <td className="px-3 py-2.5 text-xs font-mono font-medium">{b.box_id}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono">{b.style || b.sku}</td>
+                                <td className="px-3 py-2.5 text-xs">{b.color || '—'} / {b.size || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono">{b.location || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs text-right tabular-nums font-medium">{(b.units || 0).toLocaleString()}</td>
+                                <td className="px-3 py-2.5 text-xs">{b.status || '—'}</td>
+                                <td className="px-3 py-2.5 text-xs text-muted-foreground">{b.created_at ? new Date(b.created_at).toLocaleString() : '—'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1018,15 +1003,15 @@ export const AsnModule = ({ currentUser }) => {
       {/* SKU → ASN trace modal (Fase 2) */}
       {showTrace && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
-                  <Search className="w-5 h-5 text-indigo-400" />
+                <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                  <Search className="w-5 h-5 text-muted-foreground" />
                 </div>
                 <div>
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Rastrear SKU → ASN</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold">¿De qué ASN vino y cuánto queda en inventario?</p>
+                  <h3 className="font-semibold text-sm">Rastrear SKU → ASN</h3>
+                  <p className="text-xs text-muted-foreground">¿De qué ASN vino y cuánto queda en inventario?</p>
                 </div>
               </div>
               <button onClick={() => setShowTrace(false)} className="p-2 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
@@ -1039,46 +1024,46 @@ export const AsnModule = ({ currentUser }) => {
                 onChange={(e) => setTraceQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') runTrace(); }}
                 placeholder="SKU, estilo o UPC (ej. 103-HEATHER DUST-XL)"
-                className="flex-1 h-11 px-4 bg-secondary/60 border border-border rounded-xl text-sm focus:outline-none focus:border-primary"
+                className="flex-1 h-10 px-3 bg-card border border-input rounded-md text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
               />
-              <button onClick={runTrace} disabled={traceLoading || !traceQuery.trim()} className="px-6 h-11 bg-indigo-500 text-white rounded-xl text-[11px] font-black uppercase tracking-widest disabled:opacity-50 flex items-center gap-2">
+              <Btn variant="primary" onClick={runTrace} disabled={traceLoading || !traceQuery.trim()} className="px-6 h-10">
                 {traceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Buscar
-              </button>
+              </Btn>
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar p-5">
               {traceLoading ? (
-                <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-indigo-400" /></div>
+                <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-muted-foreground" /></div>
               ) : !traceResults ? (
-                <div className="text-center py-16 text-xs text-muted-foreground/50 font-bold uppercase tracking-widest italic">Escribe un SKU y busca</div>
+                <div className="text-center py-16 text-sm text-muted-foreground">Escribe un SKU y busca</div>
               ) : traceResults.groups.length === 0 ? (
-                <div className="text-center py-16 text-xs text-muted-foreground/50 font-bold uppercase tracking-widest italic">Sin coincidencias para “{traceResults.query}”</div>
+                <div className="text-center py-16 text-sm text-muted-foreground">Sin coincidencias para “{traceResults.query}”</div>
               ) : (
                 <div className="space-y-3">
-                  <div className="text-[11px] font-bold text-muted-foreground">{traceResults.total_boxes} caja(s) encontradas en {traceResults.groups.length} grupo(s)</div>
+                  <div className="text-xs font-medium text-muted-foreground">{traceResults.total_boxes} caja(s) encontradas en {traceResults.groups.length} grupo(s)</div>
                   {traceResults.groups.map(g => (
-                    <div key={g.asn_reference} className="border border-border/30 rounded-2xl p-4">
+                    <div key={g.asn_reference} className="border border-border rounded-lg p-4">
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-black uppercase tracking-tighter text-sm text-primary">{g.asn_reference}</span>
-                          {g.vendor && <span className="text-[11px] text-muted-foreground font-bold truncate">· {g.vendor}</span>}
-                          {!g.exists && g.asn_reference !== '(SIN ASN)' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 uppercase">ASN borrado</span>}
+                          <span className="font-semibold text-sm">{g.asn_reference}</span>
+                          {g.vendor && <span className="text-xs text-muted-foreground truncate">· {g.vendor}</span>}
+                          {!g.exists && g.asn_reference !== '(SIN ASN)' && <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25">ASN borrado</span>}
                         </div>
                         <div className="flex items-center gap-4 text-right">
                           <div>
-                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">En inventario</div>
-                            <div className="text-lg font-black tabular-nums text-emerald-400">{(g.units_in_stock || 0).toLocaleString()}</div>
+                            <div className="text-xs font-medium text-muted-foreground">En inventario</div>
+                            <div className="text-lg font-semibold tracking-tight tabular-nums">{(g.units_in_stock || 0).toLocaleString()}</div>
                           </div>
                           <div>
-                            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Total cajas</div>
-                            <div className="text-lg font-black tabular-nums text-blue-400">{g.boxes_in_stock || 0}/{g.boxes || 0}</div>
+                            <div className="text-xs font-medium text-muted-foreground">Total cajas</div>
+                            <div className="text-lg font-semibold tracking-tight tabular-nums">{g.boxes_in_stock || 0}/{g.boxes || 0}</div>
                           </div>
                         </div>
                       </div>
                       {(g.locations || []).length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {g.locations.map(l => (
-                            <span key={l} className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[10px] font-mono">{l}</span>
+                            <span key={l} className="px-2 py-0.5 bg-muted border border-border rounded-md text-xs font-mono">{l}</span>
                           ))}
                         </div>
                       )}

@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, useWmsSizes } from "./lib";
+import { Btn, Chip, cls, tableCls } from "./ui";
 
 const TABS = [
   { id: 'movements', label: 'Movimientos',       icon: History },
@@ -122,21 +123,18 @@ const MovementRow = ({ m, dim }) => {
   const [open, setOpen] = useState(false);
   const entries = detailEntries(m.details);
   return (
-    <div className={`border-b border-border/10 last:border-0 ${dim ? 'opacity-70' : ''}`}>
+    <div className={`border-b border-border/60 last:border-0 ${dim ? 'opacity-70' : ''}`}>
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-3 py-3 text-left">
-        <div className="w-9 h-9 rounded-xl border border-border/20 bg-secondary/40 flex items-center justify-center flex-shrink-0">
-          <History className="w-4 h-4 text-muted-foreground" />
-        </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-foreground flex items-center gap-2 flex-wrap">
-            <span className="uppercase tracking-tight">{MV_TYPE_LABELS[m.type] || m.type?.replace(/_/g, ' ')}</span>
+          <div className="text-sm flex items-center gap-2 flex-wrap">
+            <Chip>{MV_TYPE_LABELS[m.type] || m.type?.replace(/_/g, ' ')}</Chip>
             {summarizeMovement(m) && (
-              <span className="text-[11px] font-bold text-muted-foreground font-mono normal-case tracking-normal">
+              <span className="text-xs text-muted-foreground font-mono">
                 {summarizeMovement(m)}
               </span>
             )}
           </div>
-          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mt-0.5">
+          <div className="text-xs text-muted-foreground mt-0.5">
             {new Date(m.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
             {' · '}{m.user_name || m.user_id || 'Sistema'}
           </div>
@@ -146,16 +144,16 @@ const MovementRow = ({ m, dim }) => {
         )}
       </button>
       {open && entries.length > 0 && (
-        <div className="ml-12 mb-3 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 bg-secondary/20 border border-border/20 rounded-xl p-3">
+        <div className="mb-3 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 bg-muted/40 border border-border rounded-lg p-3">
           {entries.map(([k, v]) => (
             <div key={k} className="contents">
-              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground py-0.5">
+              <div className="text-xs font-medium text-muted-foreground py-0.5">
                 {DETAIL_LABELS[k] || k}
               </div>
               <div className="text-xs font-mono text-foreground break-all py-0.5">{fmtDetailVal(k, v)}</div>
             </div>
           ))}
-          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground py-0.5">ID mov.</div>
+          <div className="text-xs font-medium text-muted-foreground py-0.5">ID mov.</div>
           <div className="text-xs font-mono text-muted-foreground/60 break-all py-0.5">{m.movement_id || '—'}</div>
         </div>
       )}
@@ -202,17 +200,16 @@ const MovementsTab = () => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+        <div className="text-sm font-medium text-muted-foreground">
           {t('wms_audit_log')}
         </div>
-        <div className="flex gap-1.5 flex-wrap p-1 bg-secondary/30 rounded-xl border border-border/10">
+        <div className="flex gap-1 flex-wrap p-1 bg-muted rounded-lg">
           {types.map(type => (
             <button
               key={type}
               onClick={() => setTypeFilter(type)}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all
-                ${typeFilter === type ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors
+                ${typeFilter === type ? 'bg-card text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               {type ? (typeLabels[type] || type) : t('all')}
             </button>
@@ -220,40 +217,29 @@ const MovementsTab = () => {
         </div>
       </div>
 
-      <div className="space-y-3 bg-card/60 backdrop-blur-sm border border-border/20 rounded-3xl p-6 shadow-2xl max-h-[600px] overflow-auto custom-scrollbar">
+      <div className="space-y-3 bg-card border border-border rounded-lg p-4 max-h-[600px] overflow-auto custom-scrollbar">
         {movements.map((m, i) => {
-          const typeColors = {
-            'receiving': 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-            'putaway': 'text-purple-400 bg-purple-500/10 border-purple-500/20',
-            'allocation': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-            'pick_confirmed': 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-            'shipment': 'text-rose-400 bg-rose-500/10 border-rose-500/20'
-          };
-
           return (
-            <div key={m.movement_id || i} className="flex items-center justify-between py-3 border-b border-border/10 last:border-0 group hover:translate-x-1 transition-transform">
+            <div key={m.movement_id || i} className="flex items-center justify-between py-3 border-b border-border/60 last:border-0">
               <div className="flex items-center gap-4 min-w-0">
-                <div className={`w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0 transition-colors ${typeColors[m.type] || 'bg-secondary/50 text-muted-foreground border-border/10'}`}>
-                  <History className="w-5 h-5" />
-                </div>
                 <div className="min-w-0">
-                  <div className="text-sm font-black text-foreground mb-0.5 flex items-center gap-2">
-                    <span className="text-primary font-mono">{m.box_id}</span>
-                    <span className="uppercase tracking-tighter text-[10px] opacity-40">{t('wms_moved_to_label')}</span>
-                    <span className="text-emerald-400 font-mono italic">{m.to_loc || '-'}</span>
+                  <div className="text-sm mb-0.5 flex items-center gap-2">
+                    <span className="font-mono font-medium text-foreground">{m.box_id}</span>
+                    <span className="text-xs text-muted-foreground">{t('wms_moved_to_label')}</span>
+                    <span className="font-mono text-foreground">{m.to_loc || '-'}</span>
                   </div>
-                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
-                    {typeLabels[m.type] || m.type?.replace('_', ' ')}
+                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                    <Chip>{typeLabels[m.type] || m.type?.replace('_', ' ')}</Chip>
                     <span className="w-1 h-1 rounded-full bg-border" />
                     {t('by_label')}: {m.user_name || m.user || t('wms_mv_system')}
                   </div>
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
-                <div className="text-xs font-black text-foreground tabular-nums opacity-60">
+                <div className="text-xs text-muted-foreground tabular-nums">
                   {new Date(m.created_at).toLocaleDateString()}
                 </div>
-                <div className="text-[10px] font-bold text-muted-foreground opacity-40 uppercase">
+                <div className="text-xs text-muted-foreground/70 tabular-nums">
                   {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                 </div>
               </div>
@@ -261,13 +247,12 @@ const MovementsTab = () => {
           );
         })}
         {movements.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50">
-            <History className="w-16 h-16 mb-4 stroke-[1px]" />
-            <p className="font-bold uppercase tracking-widest text-sm italic">{t('wms_no_movements')}</p>
+          <div className="flex flex-col items-center justify-center py-20">
+            <p className="text-sm font-semibold text-foreground/80">{t('wms_no_movements')}</p>
           </div>
         )}
         {movements.length >= MOVEMENTS_LIMIT && (
-          <div className="pt-3 text-center text-[10px] font-black uppercase tracking-[0.15em] text-amber-500">
+          <div className="pt-3 text-center text-xs text-amber-600 dark:text-amber-400">
             Mostrando los {MOVEMENTS_LIMIT.toLocaleString()} movimientos más recientes — usa los filtros para acotar
           </div>
         )}
@@ -384,12 +369,12 @@ const InOutTab = () => {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex gap-1.5 p-1 bg-secondary/30 rounded-xl border border-border/10">
+        <div className="flex gap-1 p-1 bg-muted rounded-lg">
           {dirTabs.map(d => (
             <button
               key={d.id}
               onClick={() => setDir(d.id)}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${dir === d.id ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${dir === d.id ? 'bg-card text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               {d.label}
             </button>
@@ -401,7 +386,7 @@ const InOutTab = () => {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar style / color / ubicación / motivo / usuario…"
-            className="w-full pl-9 pr-9 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/40"
+            className={`${cls.input} pl-9 pr-9`}
           />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -409,27 +394,23 @@ const InOutTab = () => {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-3 text-[11px] font-mono font-bold">
-          <span className="text-emerald-500">+{totals.in.toLocaleString()}</span>
-          <span className="text-rose-500">-{totals.out.toLocaleString()}</span>
+        <div className="flex items-center gap-3 text-xs font-mono tabular-nums font-medium">
+          <span className="text-emerald-600 dark:text-emerald-400">+{totals.in.toLocaleString()}</span>
+          <span className="text-red-600 dark:text-red-400">-{totals.out.toLocaleString()}</span>
           <span className="text-muted-foreground">{filtered.length.toLocaleString()} reg.</span>
         </div>
-        <button
-          onClick={exportExcel}
-          data-testid="inout-export-btn"
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-black uppercase tracking-wider transition-all"
-        >
+        <Btn onClick={exportExcel} data-testid="inout-export-btn">
           <Download className="w-4 h-4" /> Exportar Excel
-        </button>
+        </Btn>
       </div>
 
-      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
         <div className="overflow-auto max-h-[600px] custom-scrollbar">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-secondary/80 backdrop-blur-md border-b border-border/40">
+            <thead className={tableCls.thead}>
               <tr>
                 {['Fecha', 'Tipo', 'Motivo', 'Style / SKU', 'Color · Talla', 'Ubicación', 'Unidades', 'Cajas', 'Usuario'].map(h => (
-                  <th key={h} className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground whitespace-nowrap">{h}</th>
+                  <th key={h} className={cls.th}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -439,31 +420,30 @@ const InOutTab = () => {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-20 text-center">
-                    <ArrowDownUp className="w-12 h-12 mx-auto opacity-20 mb-2 text-primary" />
-                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Sin entradas ni salidas manuales</p>
+                    <p className="text-sm font-semibold text-foreground/80">Sin entradas ni salidas manuales</p>
                   </td>
                 </tr>
               ) : (
                 filtered.map((x, i) => (
-                  <tr key={i} className="border-b border-border/10 hover:bg-primary/5">
-                    <td className="p-3 font-mono text-[10px] text-muted-foreground whitespace-nowrap">{x.created_at ? new Date(x.created_at).toLocaleString() : '—'}</td>
-                    <td className="p-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${x.isIn ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                  <tr key={i} className="border-b border-border/60 hover:bg-muted/40 transition-colors">
+                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">{x.created_at ? new Date(x.created_at).toLocaleString() : '—'}</td>
+                    <td className="px-3 py-2.5">
+                      <Chip tone={x.isIn ? 'success' : 'danger'}>
                         {x.isIn ? <ArrowDownCircle className="w-3 h-3" /> : <ArrowUpCircle className="w-3 h-3" />}
                         {x.direction}
-                      </span>
+                      </Chip>
                     </td>
-                    <td className="p-3 text-[11px] font-bold">{x.reason || '—'}</td>
-                    <td className="p-3 font-mono text-[11px] font-bold text-primary truncate max-w-[200px]" title={x.style}>{x.style || '—'}</td>
-                    <td className="p-3 font-mono text-[11px]">
+                    <td className="px-3 py-2.5 text-xs">{x.reason || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs font-medium truncate max-w-[200px]" title={x.style}>{x.style || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">
                       <span className="text-foreground">{x.color || '—'}</span>
-                      <span className="mx-1 opacity-20">·</span>
-                      <span className="text-primary">{x.size || '—'}</span>
+                      <span className="mx-1 text-muted-foreground/40">·</span>
+                      <span className="text-foreground">{x.size || '—'}</span>
                     </td>
-                    <td className="p-3 font-mono text-[11px]">{x.location || '—'}</td>
-                    <td className={`p-3 text-right font-mono font-black ${x.isIn ? 'text-emerald-500' : 'text-rose-500'}`}>{x.isIn ? '+' : '-'}{(Number(x.units) || 0).toLocaleString()}</td>
-                    <td className="p-3 text-right font-mono">{(Number(x.boxes) || 0).toLocaleString()}</td>
-                    <td className="p-3 text-[11px] flex items-center gap-1.5"><User className="w-3 h-3 text-muted-foreground" />{x.user}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">{x.location || '—'}</td>
+                    <td className={`px-3 py-2.5 text-right font-mono tabular-nums font-medium ${x.isIn ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{x.isIn ? '+' : '-'}{(Number(x.units) || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-right font-mono tabular-nums">{(Number(x.boxes) || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-xs flex items-center gap-1.5"><User className="w-3 h-3 text-muted-foreground" />{x.user}</td>
                   </tr>
                 ))
               )}
@@ -596,14 +576,14 @@ const UpcsTab = () => {
       <div className="flex flex-wrap gap-3 items-center">
         {canManage && (
           <div className="relative min-w-[230px]">
-            <Ruler className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-blue-400" />
+            <Ruler className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               value={scanCode}
               onChange={e => setScanCode(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); scanToFix(scanCode); } }}
               placeholder="Escanear UPC para corregir…"
               title="Escanea o teclea el UPC y presiona Enter para abrir la corrección"
-              className="w-full pl-9 pr-3 py-2 bg-blue-500/5 border border-blue-500/30 rounded-lg text-sm focus:outline-none focus:border-blue-500/60"
+              className={`${cls.input} pl-9`}
             />
           </div>
         )}
@@ -613,7 +593,7 @@ const UpcsTab = () => {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar UPC / style / color / customer / brand…"
-            className="w-full pl-9 pr-9 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/40"
+            className={`${cls.input} pl-9 pr-9`}
           />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -625,32 +605,32 @@ const UpcsTab = () => {
           <select
             value={userFilter}
             onChange={e => setUserFilter(e.target.value)}
-            className="px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono"
+            className="px-3 py-2 bg-card border border-input rounded-md text-sm font-mono"
           >
             <option value="">Todos los usuarios</option>
             {creators.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
-        <div className="text-[11px] font-mono font-bold text-muted-foreground ml-auto">
+        <div className="text-xs font-mono tabular-nums text-muted-foreground ml-auto">
           {filtered.length.toLocaleString()} UPCs
           {userFilter && ` · ${userFilter}`}
         </div>
       </div>
 
       {/* Table */}
-      <div className="border border-border/40 rounded-2xl bg-card/40 overflow-hidden">
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
         <div className="overflow-auto max-h-[600px] custom-scrollbar">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-secondary/80 backdrop-blur-md border-b border-border/40">
+            <thead className={tableCls.thead}>
               <tr>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">UPC</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente / Brand</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color · Talla</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Descripción</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Creado por</th>
-                <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
-                {canManage && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Acciones</th>}
+                <th className={cls.th}>UPC</th>
+                <th className={cls.th}>Cliente / Brand</th>
+                <th className={cls.th}>Style</th>
+                <th className={cls.th}>Color · Talla</th>
+                <th className={cls.th}>Descripción</th>
+                <th className={cls.th}>Creado por</th>
+                <th className={cls.th}>Fecha</th>
+                {canManage && <th className={`${cls.th} text-right`}>Acciones</th>}
               </tr>
             </thead>
             <tbody>
@@ -663,41 +643,40 @@ const UpcsTab = () => {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={canManage ? 8 : 7} className="py-20 text-center">
-                    <Tag className="w-12 h-12 mx-auto opacity-20 mb-2 text-indigo-400" />
-                    <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                    <p className="text-sm font-semibold text-foreground/80">
                       {upcs.length === 0 ? 'No hay UPCs en el catálogo' : 'Sin coincidencias'}
                     </p>
                   </td>
                 </tr>
               ) : (
                 filtered.map(u => (
-                  <tr key={u.catalog_id || u.upc} className="border-b border-border/10 hover:bg-primary/5">
-                    <td className="p-3 font-mono font-black text-indigo-400 text-[12px]">{u.upc}</td>
-                    <td className="p-3 text-[11px] font-bold">
+                  <tr key={u.catalog_id || u.upc} className="border-b border-border/60 hover:bg-muted/40 transition-colors">
+                    <td className="px-3 py-2.5 font-mono font-medium text-xs">{u.upc}</td>
+                    <td className="px-3 py-2.5 text-xs">
                       <div>{u.customer || '—'}</div>
-                      {u.brand && <div className="text-[10px] text-muted-foreground font-normal">{u.brand}</div>}
+                      {u.brand && <div className="text-xs text-muted-foreground">{u.brand}</div>}
                     </td>
-                    <td className="p-3 font-mono text-[11px] font-bold text-primary truncate max-w-[220px]" title={u.style}>{u.style || '—'}</td>
-                    <td className="p-3 font-mono text-[11px]">
+                    <td className="px-3 py-2.5 font-mono text-xs font-medium truncate max-w-[220px]" title={u.style}>{u.style || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">
                       <span className="text-foreground">{u.color || '—'}</span>
-                      <span className="mx-1 opacity-20">·</span>
-                      <span className="text-primary">{u.size || '—'}</span>
+                      <span className="mx-1 text-muted-foreground/40">·</span>
+                      <span className="text-foreground">{u.size || '—'}</span>
                     </td>
-                    <td className="p-3 text-[11px] text-muted-foreground truncate max-w-[200px]" title={u.description}>{u.description || '—'}</td>
-                    <td className="p-3 text-[11px] flex items-center gap-1.5">
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground truncate max-w-[200px]" title={u.description}>{u.description || '—'}</td>
+                    <td className="px-3 py-2.5 text-xs flex items-center gap-1.5">
                       <User className="w-3 h-3 text-muted-foreground" />
-                      <span className={u.created_by_name?.startsWith('import_') ? 'text-muted-foreground italic' : 'font-bold'}>
+                      <span className={u.created_by_name?.startsWith('import_') ? 'text-muted-foreground italic' : 'font-medium'}>
                         {u.created_by_name || '—'}
                       </span>
                     </td>
-                    <td className="p-3 font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
                       {u.created_at ? new Date(u.created_at).toLocaleString() : '—'}
                     </td>
                     {canManage && (
-                      <td className="p-3 text-right whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button onClick={() => openFix(u)} className="p-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400" title="Corregir UPC (y el stock ya recibido)"><Ruler className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => removeUpc(u)} className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-500" title="Eliminar UPC"><Trash2 className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => openFix(u)} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Corregir UPC (y el stock ya recibido)"><Ruler className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => removeUpc(u)} className="p-1.5 rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors" title="Eliminar UPC"><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
                       </td>
                     )}
@@ -711,14 +690,11 @@ const UpcsTab = () => {
 
       {fixing && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[88vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center"><Ruler className="w-5 h-5 text-blue-400" /></div>
-                <div>
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Corregir UPC</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold">UPC <span className="font-mono text-indigo-400">{fixing.upc}</span></p>
-                </div>
+              <div>
+                <h3 className="font-semibold text-sm">Corregir UPC</h3>
+                <p className="text-xs text-muted-foreground">UPC <span className="font-mono">{fixing.upc}</span></p>
               </div>
               <button onClick={closeFix} disabled={fixBusy} className="p-2 hover:bg-secondary rounded-lg transition-all disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
@@ -729,16 +705,16 @@ const UpcsTab = () => {
                   const changed = fixDraft && (fixDraft[f.k] ?? '').toString().trim().toUpperCase() !== (fixing[f.k] ?? '').toString().trim().toUpperCase();
                   return (
                     <div key={f.k}>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-                        {f.label}{changed && <span className="ml-1 text-blue-400">●</span>}
+                      <label className="text-xs font-medium text-muted-foreground block mb-1">
+                        {f.label}{changed && <span className="ml-1 text-blue-600 dark:text-blue-400">●</span>}
                       </label>
                       {f.size ? (
-                        <select value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, e.target.value)} className={`w-full px-3 py-2 bg-background border rounded text-sm font-mono ${changed ? 'border-blue-500/60' : 'border-border'}`}>
+                        <select value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, e.target.value)} className={`w-full px-3 py-2 bg-card border rounded-md text-sm font-mono ${changed ? 'border-blue-500/60' : 'border-border'}`}>
                           <option value="">—</option>
                           {SIZES_ORDER.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                       ) : (
-                        <input value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, f.upper ? e.target.value.toUpperCase() : e.target.value)} className={`w-full px-3 py-2 bg-background border rounded text-sm ${f.mono ? 'font-mono font-bold' : ''} ${changed ? 'border-blue-500/60' : 'border-border'}`} />
+                        <input value={fixDraft?.[f.k] ?? ''} onChange={e => setFixField(f.k, f.upper ? e.target.value.toUpperCase() : e.target.value)} className={`w-full px-3 py-2 bg-card border rounded-md text-sm ${f.mono ? 'font-mono font-medium' : ''} ${changed ? 'border-blue-500/60' : 'border-border'}`} />
                       )}
                     </div>
                   );
@@ -746,36 +722,36 @@ const UpcsTab = () => {
               </div>
 
               {fixPreview && (
-                <div className="rounded-xl border border-border/40 bg-secondary/20 p-3 text-[12px] space-y-1">
-                  <div className="font-black uppercase tracking-widest text-[10px] text-muted-foreground mb-1">Impacto de la corrección</div>
-                  <div className="flex justify-between gap-3"><span>Campos a cambiar</span><span className="font-mono font-bold text-right">{Object.keys(fixPreview.changes || {}).join(', ') || '—'}</span></div>
-                  <div className="flex justify-between"><span>Recibos afectados</span><span className="font-mono font-bold">{fixPreview.receivings}</span></div>
-                  <div className="flex justify-between"><span>Cajas con este UPC</span><span className="font-mono font-bold">{fixPreview.boxes_total}</span></div>
-                  <div className="flex justify-between"><span>Cajas que se mueven</span><span className="font-mono font-bold">{fixPreview.moved_boxes}</span></div>
-                  <div className="flex justify-between"><span>Unidades que se mueven</span><span className="font-mono font-bold">{(fixPreview.moved_units ?? 0).toLocaleString()}</span></div>
+                <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Impacto de la corrección</div>
+                  <div className="flex justify-between gap-3"><span>Campos a cambiar</span><span className="font-mono font-medium text-right">{Object.keys(fixPreview.changes || {}).join(', ') || '—'}</span></div>
+                  <div className="flex justify-between"><span>Recibos afectados</span><span className="font-mono font-medium">{fixPreview.receivings}</span></div>
+                  <div className="flex justify-between"><span>Cajas con este UPC</span><span className="font-mono font-medium">{fixPreview.boxes_total}</span></div>
+                  <div className="flex justify-between"><span>Cajas que se mueven</span><span className="font-mono font-medium">{fixPreview.moved_boxes}</span></div>
+                  <div className="flex justify-between"><span>Unidades que se mueven</span><span className="font-mono font-medium">{(fixPreview.moved_units ?? 0).toLocaleString()}</span></div>
                   {fixPreview.blocked?.length > 0 && (
-                    <div className="mt-2 flex items-start gap-2 text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+                    <div className="mt-2 flex items-start gap-2 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 rounded-md p-2">
                       <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                      <span className="text-[11px] font-bold">Hay unidades asignadas a órdenes en {fixPreview.blocked.length} ubicación(es). Desasigna esas órdenes antes de aplicar.</span>
+                      <span className="text-xs font-medium">Hay unidades asignadas a órdenes en {fixPreview.blocked.length} ubicación(es). Desasigna esas órdenes antes de aplicar.</span>
                     </div>
                   )}
                 </div>
               )}
 
-              <p className="text-[11px] text-muted-foreground">Cambiar <b>Style, Color o Talla</b> mueve el stock ya recibido a la línea de inventario corregida; los demás campos se actualizan en sitio. Revisa el impacto antes de aplicar.</p>
+              <p className="text-xs text-muted-foreground">Cambiar <b>Style, Color o Talla</b> mueve el stock ya recibido a la línea de inventario corregida; los demás campos se actualizan en sitio. Revisa el impacto antes de aplicar.</p>
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">
               {!fixPreview ? (
-                <button onClick={() => runFix(false)} disabled={fixBusy} className="flex-1 px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
+                <button onClick={() => runFix(false)} disabled={fixBusy} className="flex-1 px-4 py-2.5 bg-card border border-border text-foreground rounded-md text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                   {fixBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Ver impacto
                 </button>
               ) : (
-                <button onClick={() => runFix(true)} disabled={fixBusy || fixPreview.blocked?.length > 0} className="flex-1 px-4 py-2.5 bg-blue-500 hover:bg-blue-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2">
+                <button onClick={() => runFix(true)} disabled={fixBusy || fixPreview.blocked?.length > 0} className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                   {fixBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Aplicar corrección
                 </button>
               )}
-              <button onClick={closeFix} disabled={fixBusy} className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50">Cancelar</button>
+              <button onClick={closeFix} disabled={fixBusy} className="px-4 py-2.5 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50">Cancelar</button>
             </div>
           </div>
         </div>
@@ -813,45 +789,45 @@ const BoxHistoryTab = () => {
       {/* Search */}
       <form onSubmit={search} className="flex items-center gap-2 max-w-xl">
         <div className="relative flex-1">
-          <ScanLine className="w-5 h-5 text-primary absolute left-3 top-1/2 -translate-y-1/2" />
+          <ScanLine className="w-5 h-5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             autoFocus value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="Escanea o teclea el número de caja / LPN"
             data-testid="box-history-input"
-            className="w-full h-12 pl-11 pr-4 bg-secondary/30 border-2 border-border rounded-xl font-mono font-bold focus:outline-none focus:border-primary"
+            className="w-full h-12 pl-11 pr-4 bg-card border border-input rounded-lg font-mono font-medium focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
           />
         </div>
         <button type="submit" disabled={loading || !code.trim()}
-          className="h-12 px-5 rounded-xl bg-primary text-black font-black uppercase text-xs tracking-widest disabled:opacity-40 active:scale-95 transition-transform flex items-center gap-2">
+          className="h-12 px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 active:scale-95 transition-transform flex items-center gap-2">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Buscar
         </button>
       </form>
 
       {loading && (
-        <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
       )}
 
       {!loading && searched && data && (
         <div className="space-y-4">
           {/* Box summary */}
-          <div className="bg-card/60 border border-border/30 rounded-2xl p-4 space-y-3">
+          <div className="bg-card border border-border rounded-lg p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-black">Caja</div>
-                <div className="text-lg font-mono font-black truncate">{data.box_id}</div>
+                <div className="text-xs font-medium text-muted-foreground">Caja</div>
+                <div className="text-lg font-mono font-semibold truncate">{data.box_id}</div>
                 {data.found && (
-                  <div className="text-sm font-bold text-foreground mt-0.5 truncate">
+                  <div className="text-sm font-medium text-foreground mt-0.5 truncate">
                     {(data.box?.style || data.box?.sku)} · {data.box?.color} · {data.box?.size}
                   </div>
                 )}
               </div>
               {data.found && (
                 <div className="text-right flex-shrink-0">
-                  <div className="text-2xl font-black leading-none">{data.box?.units ?? data.box?.qty ?? 0}</div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">unidades</div>
+                  <div className="text-2xl font-semibold tabular-nums leading-none">{data.box?.units ?? data.box?.qty ?? 0}</div>
+                  <div className="text-xs text-muted-foreground">unidades</div>
                   {(data.box?.units_allocated ?? 0) > 0 && (
-                    <div className="text-[10px] font-bold text-amber-500 mt-0.5">{data.box.units_allocated} comprom.</div>
+                    <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-0.5">{data.box.units_allocated} comprom.</div>
                   )}
                 </div>
               )}
@@ -874,24 +850,24 @@ const BoxHistoryTab = () => {
                   ['Creada', data.box?.created_at ? new Date(data.box.created_at).toLocaleDateString() : null],
                 ].filter(([, v]) => v != null && v !== '').map(([label, v, Icon]) => (
                   <div key={label} className="min-w-0">
-                    <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">{label}</div>
-                    <div className="text-xs font-mono font-bold text-foreground truncate flex items-center gap-1">
-                      {Icon && <Icon className="w-3 h-3 text-cyan-400 flex-shrink-0" />}{v}
+                    <div className="text-xs font-medium text-muted-foreground">{label}</div>
+                    <div className="text-xs font-mono font-medium text-foreground truncate flex items-center gap-1">
+                      {Icon && <Icon className="w-3 h-3 text-muted-foreground flex-shrink-0" />}{v}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-[11px] text-amber-500 font-bold flex items-center gap-1 pt-1 border-t border-border/20">
+              <div className="text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1 pt-1 border-t border-border/60">
                 <AlertTriangle className="w-3.5 h-3.5" /> La caja ya no existe (eliminada/embarcada). Mostrando su historial.
               </div>
             )}
           </div>
 
           {/* Box events */}
-          <div className="bg-card/60 border border-border/20 rounded-3xl p-5 shadow-xl">
-            <div className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
-              <PackageSearch className="w-4 h-4 text-primary" />
+          <div className="bg-card border border-border rounded-lg p-5">
+            <div className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-2">
+              <PackageSearch className="w-4 h-4 text-muted-foreground" />
               Eventos de esta caja ({data.box_event_count})
             </div>
             {data.box_events?.length ? (
@@ -905,12 +881,12 @@ const BoxHistoryTab = () => {
 
           {/* SKU context */}
           {data.sku_context?.length > 0 && (
-            <div className="bg-card/40 border border-border/10 rounded-3xl p-5">
-              <div className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-2">
+            <div className="bg-card border border-border rounded-lg p-5">
+              <div className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-2">
                 <History className="w-4 h-4" />
                 Contexto del SKU/ubicación ({data.sku_context_count})
               </div>
-              <p className="text-[11px] text-muted-foreground mb-3">
+              <p className="text-xs text-muted-foreground mb-3">
                 Movimientos del mismo SKU que no nombran una caja específica (asignaciones, surtido, conteos). Útil para diagnóstico, no exclusivo de esta caja.
               </p>
               <div className="max-h-[320px] overflow-auto custom-scrollbar">
@@ -922,9 +898,8 @@ const BoxHistoryTab = () => {
       )}
 
       {!loading && searched && !data && (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground opacity-60">
-          <PackageSearch className="w-14 h-14 mb-3 stroke-[1px]" />
-          <p className="font-bold uppercase tracking-widest text-sm italic">Sin resultados</p>
+        <div className="flex flex-col items-center justify-center py-16">
+          <p className="text-sm font-semibold text-foreground/80">Sin resultados</p>
         </div>
       )}
     </div>
@@ -935,7 +910,7 @@ export const MovementsModule = () => {
   const [tab, setTab] = useState('movements');
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 p-1 bg-secondary/20 rounded-2xl w-fit border border-border/40">
+      <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
         {TABS.map(t => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -943,7 +918,7 @@ export const MovementsModule = () => {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${active ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${active ? 'bg-card text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               data-testid={`movements-tab-${t.id}`}
             >
               <Icon className="w-3.5 h-3.5" />

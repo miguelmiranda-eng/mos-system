@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, Loader2, Link2 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError } from "./lib";
+import { ModuleHeader, Btn, Chip } from "./ui";
 
 export const AllocationModule = () => {
   const { t } = useLang();
@@ -66,17 +67,19 @@ export const AllocationModule = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-foreground">{t('allocation')}</h2>
-        <button onClick={() => setShowForm(!showForm)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5" data-testid="new-allocation-btn">
-          <Plus className="w-4 h-4" /> {t('wms_new_loc')}
-        </button>
-      </div>
+    <div className="space-y-6">
+      <ModuleHeader
+        title={t('allocation')}
+        right={
+          <Btn variant="primary" onClick={() => setShowForm(!showForm)} data-testid="new-allocation-btn">
+            <Plus className="w-4 h-4" /> {t('wms_new_loc')}
+          </Btn>
+        }
+      />
       {showForm && (
         <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-3" data-testid="allocation-form">
           <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('order')}</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">{t('order')}</label>
             <select value={selectedOrder} onChange={e => setSelectedOrder(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="alloc-order-select">
               <option value="">{t('select_order_placeholder')}</option>
               {orders.map(o => (
@@ -86,7 +89,7 @@ export const AllocationModule = () => {
               ))}
             </select>
           </div>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{t('items_to_allocate')}</div>
+          <div className="text-xs font-medium text-muted-foreground">{t('items_to_allocate')}</div>
           {items.map((item, i) => (
             <div key={i} className="grid grid-cols-6 gap-2 items-end">
               <div className="col-span-3">
@@ -110,10 +113,10 @@ export const AllocationModule = () => {
           ))}
           <button onClick={addItem} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('add_item')}</button>
           <div className="flex gap-2">
-            <button onClick={handleSubmit} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm flex items-center gap-1.5 disabled:opacity-50" data-testid="alloc-submit">
+            <Btn variant="primary" onClick={handleSubmit} disabled={loading} data-testid="alloc-submit">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} {t('allocate_inventory')}
-            </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
+            </Btn>
+            <Btn onClick={() => setShowForm(false)}>{t('cancel')}</Btn>
           </div>
         </div>
       )}
@@ -122,8 +125,8 @@ export const AllocationModule = () => {
           <div key={a.allocation_id} className="border border-border rounded-lg p-3 bg-card" data-testid={`alloc-${a.allocation_id}`}>
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-mono font-bold text-primary text-sm">{a.order_number}</span>
-                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${a.status === 'allocated' ? 'bg-orange-500/15 text-orange-400' : 'bg-green-500/15 text-green-400'}`}>{a.status}</span>
+                <span className="font-mono font-medium text-sm">{a.order_number}</span>
+                <Chip tone={a.status === 'allocated' ? 'warning' : 'success'} className="ml-2">{a.status}</Chip>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleDateString()}</span>
@@ -133,7 +136,7 @@ export const AllocationModule = () => {
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {(a.items || []).map((it, i) => <span key={i} className="text-xs bg-secondary px-2 py-1 rounded">{it.sku} {it.color} {it.size}: {it.qty}</span>)}
+              {(a.items || []).map((it, i) => <span key={i} className="text-xs bg-muted px-2 py-1 rounded-md">{it.sku} {it.color} {it.size}: {it.qty}</span>)}
             </div>
           </div>
         ))}

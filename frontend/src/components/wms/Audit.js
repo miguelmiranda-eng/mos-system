@@ -1,10 +1,11 @@
 import { useState } from "react";
 import {
-  ShieldCheck, Activity, PackageSearch, Layers, History, Search, Loader2,
+  Activity, PackageSearch, Layers, History, Search, Loader2,
   AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
+import { ModuleHeader, Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — EXCLUSIVO super admin (el backend rechaza con 403 a
 // cualquier otro rol). Cuatro vistas: salud del sistema, trazabilidad por
@@ -25,18 +26,15 @@ const fmtDate = (iso) => {
 };
 
 const Card = ({ title, value, tone = "default", sub }) => (
-  <div className={`p-4 rounded-xl border ${tone === "bad" ? "border-red-500/40 bg-red-500/5" : tone === "good" ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-card/60"}`}>
-    <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</div>
-    <div className={`text-2xl font-black mt-1 ${tone === "bad" ? "text-red-400" : tone === "good" ? "text-emerald-400" : "text-foreground"}`}>{value}</div>
-    {sub && <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
+  <div className={`p-4 rounded-lg border ${tone === "bad" ? "border-red-200 bg-red-50 dark:border-red-500/25 dark:bg-red-500/10" : tone === "good" ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10" : "border-border bg-card"}`}>
+    <div className="text-xs font-medium text-muted-foreground">{title}</div>
+    <div className={`text-2xl font-semibold tracking-tight tabular-nums mt-1 ${tone === "bad" ? "text-red-600 dark:text-red-400" : tone === "good" ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}>{value}</div>
+    {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
   </div>
 );
 
-const Th = ({ children, right }) => (
-  <th className={`p-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground ${right ? "text-right" : "text-left"}`}>{children}</th>
-);
 const Td = ({ children, right, mono }) => (
-  <td className={`p-2 text-xs ${right ? "text-right" : ""} ${mono ? "font-mono" : ""}`}>{children}</td>
+  <td className={`px-3 py-2 text-xs ${right ? "text-right tabular-nums" : ""} ${mono ? "font-mono" : ""}`}>{children}</td>
 );
 
 // ─── Tab 1: Salud ────────────────────────────────────────────────────────────
@@ -55,12 +53,11 @@ const HealthTab = () => {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <button onClick={run} disabled={loading}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-black font-black uppercase text-xs tracking-widest disabled:opacity-50">
+        <Btn variant="primary" onClick={run} disabled={loading}>
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Ejecutar chequeo completo
-        </button>
-        {data && <span className="text-[10px] text-muted-foreground">Generado: {fmtDate(data.generated_at)}</span>}
+        </Btn>
+        {data && <span className="text-xs text-muted-foreground">Generado: {fmtDate(data.generated_at)}</span>}
       </div>
       {!data && !loading && (
         <p className="text-sm text-muted-foreground">Compara inventario contra cajas celda por celda, detecta picks sin descontar, negativos y cajas estancadas. Tarda unos segundos.</p>
@@ -81,22 +78,22 @@ const HealthTab = () => {
           </div>
 
           {data.drift.top.length > 0 && (
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-400" /> Peores celdas con drift (top {data.drift.top.length})
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" /> Peores celdas con drift (top {data.drift.top.length})
               </div>
               <div className="overflow-x-auto max-h-80 overflow-y-auto">
                 <table className="w-full">
-                  <thead className="sticky top-0 bg-card"><tr>
+                  <thead className={tableCls.thead}><tr>
                     <Th>Ubicación</Th><Th>Style</Th><Th>Color</Th><Th>Talla</Th>
                     <Th right>Inventario</Th><Th right>Cajas</Th><Th right>Diferencia</Th>
                   </tr></thead>
                   <tbody>
                     {data.drift.top.map((d, i) => (
-                      <tr key={i} className="border-t border-border/40">
+                      <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
                         <Td mono>{d.location}</Td><Td>{d.style}</Td><Td>{d.color}</Td><Td>{d.size}</Td>
                         <Td right>{d.inventario.toLocaleString()}</Td><Td right>{d.cajas.toLocaleString()}</Td>
-                        <Td right><span className={d.diff > 0 ? "text-amber-400 font-bold" : "text-red-400 font-bold"}>{d.diff > 0 ? "+" : ""}{d.diff.toLocaleString()}</span></Td>
+                        <Td right><span className={d.diff > 0 ? "text-amber-600 dark:text-amber-400 font-medium" : "text-red-600 dark:text-red-400 font-medium"}>{d.diff > 0 ? "+" : ""}{d.diff.toLocaleString()}</span></Td>
                       </tr>
                     ))}
                   </tbody>
@@ -106,8 +103,8 @@ const HealthTab = () => {
           )}
 
           {data.sin_descontar.top.length > 0 && (
-            <div className="border border-red-500/40 rounded-xl overflow-hidden">
-              <div className="px-3 py-2 bg-red-500/10 text-[11px] font-black uppercase tracking-widest flex items-center gap-2 text-red-300">
+            <div className="border border-red-200 dark:border-red-500/25 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-red-50 dark:bg-red-500/10 border-b border-red-200 dark:border-red-500/25 text-xs font-semibold flex items-center gap-2 text-red-700 dark:text-red-300">
                 <AlertTriangle className="w-4 h-4" /> Tickets con picks sin descontar
               </div>
               <div className="overflow-x-auto">
@@ -115,7 +112,7 @@ const HealthTab = () => {
                   <thead><tr><Th>Ticket</Th><Th>Orden</Th><Th>Style</Th><Th>Color</Th><Th>Status</Th><Th right>Pickeado</Th><Th>Creado</Th></tr></thead>
                   <tbody>
                     {data.sin_descontar.top.map((t, i) => (
-                      <tr key={i} className="border-t border-border/40">
+                      <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
                         <Td mono>{t.ticket_id}</Td><Td>{t.order}</Td><Td>{t.style}</Td><Td>{t.color}</Td>
                         <Td>{t.status}</Td><Td right>{t.picked.toLocaleString()}</Td><Td>{fmtDate(t.created_at)}</Td>
                       </tr>
@@ -126,7 +123,7 @@ const HealthTab = () => {
             </div>
           )}
           {data.drift.celdas === 0 && data.sin_descontar.tickets === 0 && (
-            <div className="flex items-center gap-2 text-emerald-400 text-sm font-bold">
+            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
               <CheckCircle2 className="w-5 h-5" /> Sistema consistente: sin drift ni picks pendientes de descuento.
             </div>
           )}
@@ -154,7 +151,7 @@ const SelfTestTab = () => {
 
   return (
     <div className="space-y-4">
-      <div className="p-4 rounded-xl border border-border bg-card/60 text-sm text-muted-foreground">
+      <div className="p-4 rounded-lg border border-border bg-card text-sm text-muted-foreground">
         Ejecuta el ciclo completo — <b className="text-foreground">Recibo → Putaway → Pick Ticket → Surtido</b> — usando
         las mismas funciones internas del sistema real, con material de prueba marcado. Verifica el inventario en cada
         paso y <b className="text-foreground">borra todo automáticamente</b> al terminar. No toca inventario real.
@@ -162,44 +159,43 @@ const SelfTestTab = () => {
       <div className="flex flex-wrap items-end gap-3">
         {[["boxes", "Cajas"], ["units_per_box", "Unidades/caja"], ["pick_units", "Unidades a surtir"]].map(([k, lbl]) => (
           <div key={k}>
-            <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">{lbl}</div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">{lbl}</div>
             <input type="number" min="1" value={params[k]}
               onChange={e => setParams({ ...params, [k]: parseInt(e.target.value) || 1 })}
-              className="w-28 px-3 py-2 bg-secondary/50 border border-border rounded-xl text-sm" />
+              className="w-28 px-3 py-2 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
           </div>
         ))}
-        <button onClick={run} disabled={loading}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-black font-black uppercase text-xs tracking-widest disabled:opacity-50">
+        <Btn variant="primary" onClick={run} disabled={loading}>
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
           Ejecutar simulación
-        </button>
+        </Btn>
       </div>
 
       {data && (
         <>
-          <div className={`flex items-center gap-2 text-lg font-black ${data.ok ? "text-emerald-400" : "text-red-400"}`}>
+          <div className={`flex items-center gap-2 text-lg font-semibold ${data.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
             {data.ok ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
             {data.ok ? `Todos los módulos funcionan (${data.passed}/${data.total})` : `Falló (${data.passed}/${data.total})`}
           </div>
           <div className="space-y-2">
             {data.steps.map(s => (
-              <div key={s.step} className={`p-3 rounded-xl border flex items-start gap-3 ${s.status === "PASS" ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/40 bg-red-500/5"}`}>
+              <div key={s.step} className={`p-3 rounded-lg border flex items-start gap-3 ${s.status === "PASS" ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10" : "border-red-200 bg-red-50 dark:border-red-500/25 dark:bg-red-500/10"}`}>
                 {s.status === "PASS"
-                  ? <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                  : <XCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
+                  ? <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  : <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />}
                 <div className="min-w-0">
-                  <div className="text-sm font-bold">{s.step}. {s.name}</div>
+                  <div className="text-sm font-semibold">{s.step}. {s.name}</div>
                   <div className="text-xs text-muted-foreground">{s.detail}</div>
-                  <div className="text-[11px] font-mono mt-1">
+                  <div className="text-xs font-mono mt-1">
                     <span className="text-muted-foreground">obtenido:</span> {s.got}
-                    {s.status === "FAIL" && <span className="text-red-400"> · esperado: {s.expected}</span>}
+                    {s.status === "FAIL" && <span className="text-red-600 dark:text-red-400"> · esperado: {s.expected}</span>}
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="text-[11px] text-muted-foreground flex items-center gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="text-xs text-muted-foreground flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             Limpieza automática: {Object.entries(data.cleanup).map(([k, v]) => `${v} ${k}`).join(", ")} eliminados. Sin residuo.
           </div>
         </>
@@ -229,8 +225,8 @@ const BoxTab = () => {
     <div className="space-y-4">
       <form onSubmit={run} className="flex gap-2 max-w-md">
         <input value={boxId} onChange={e => setBoxId(e.target.value)} placeholder="BOX-012345 (escanea o teclea)"
-          className="flex-1 px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm font-mono" autoFocus />
-        <button disabled={loading} className="px-4 rounded-xl bg-primary text-black font-black text-xs uppercase disabled:opacity-50">
+          className="flex-1 px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring font-mono" autoFocus />
+        <button disabled={loading} className="px-4 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-colors disabled:opacity-50 inline-flex items-center justify-center">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
         </button>
       </form>
@@ -246,29 +242,29 @@ const BoxTab = () => {
           </div>
           <div className="grid md:grid-cols-2 gap-3 text-xs">
             {data.receiving && (
-              <div className="p-3 border border-border rounded-xl space-y-1">
-                <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recibo</div>
+              <div className="p-3 border border-border rounded-lg space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">Recibo</div>
                 <div className="font-mono">{data.receiving.receiving_id}</div>
                 <div>{fmtDate(data.receiving.created_at)} — {data.receiving.received_by_name || "?"} → <b>{data.receiving.inv_location}</b></div>
                 <div>{data.receiving.style} {data.receiving.color} {data.receiving.size} · {data.receiving.total_units} u totales del recibo</div>
               </div>
             )}
             {data.pick_ticket && (
-              <div className="p-3 border border-border rounded-xl space-y-1">
-                <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Último pick</div>
+              <div className="p-3 border border-border rounded-lg space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">Último pick</div>
                 <div className="font-mono">{data.pick_ticket.ticket_id}</div>
                 <div>Orden {data.pick_ticket.order_number} · {data.pick_ticket.status}</div>
                 <div>{data.pick_ticket.assigned_to_name || ""} {data.pick_ticket.completed_at ? `· ${fmtDate(data.pick_ticket.completed_at)}` : ""}</div>
               </div>
             )}
           </div>
-          <div className="border border-border rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest">Línea de tiempo ({data.movement_count})</div>
-            <div className="max-h-96 overflow-y-auto divide-y divide-border/40">
+          <div className="border border-border rounded-lg overflow-hidden">
+            <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">Línea de tiempo ({data.movement_count})</div>
+            <div className="max-h-96 overflow-y-auto divide-y divide-border/60">
               {data.movements.map((m, i) => (
                 <div key={i} className="px-3 py-2 text-xs flex items-start gap-3">
                   <span className="text-muted-foreground whitespace-nowrap font-mono">{fmtDate(m.created_at)}</span>
-                  <span className="font-bold uppercase whitespace-nowrap">{m.type}</span>
+                  <span className="font-medium whitespace-nowrap">{m.type}</span>
                   <span className="text-muted-foreground">{m.user_name}</span>
                   <span className="truncate text-muted-foreground">{JSON.stringify(m.details || {}).slice(0, 160)}</span>
                 </div>
@@ -307,9 +303,9 @@ const SkuTab = () => {
         {["style", "color", "size"].map(f => (
           <input key={f} value={form[f]} onChange={e => setForm({ ...form, [f]: e.target.value })}
             placeholder={f === "style" ? "Style (ej. 64000)" : f === "color" ? "Color (opcional)" : "Talla (opcional)"}
-            className="flex-1 min-w-[130px] px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
+            className="flex-1 min-w-[130px] px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
         ))}
-        <button disabled={loading} className="px-5 rounded-xl bg-primary text-black font-black text-xs uppercase disabled:opacity-50">
+        <button disabled={loading} className="px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Auditar"}
         </button>
       </form>
@@ -324,13 +320,13 @@ const SkuTab = () => {
               tone={ok ? "good" : "bad"} sub={ok ? "cuadra" : "revisar: fantasma o entradas sin rastrear"} />
           </div>
           <div className="grid md:grid-cols-2 gap-3">
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest">Inventario por ubicación</div>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">Inventario por ubicación</div>
               <div className="max-h-64 overflow-y-auto">
                 <table className="w-full">
                   <thead><tr><Th>Ubicación</Th><Th>Talla</Th><Th right>En mano</Th><Th right>Cajas</Th></tr></thead>
                   <tbody>{data.inventario.map((r, i) => (
-                    <tr key={i} className="border-t border-border/40">
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
                       <Td mono>{r.location}</Td><Td>{r.size}</Td>
                       <Td right>{(r.units_on_hand || 0).toLocaleString()}</Td><Td right>{r.total_boxes || 0}</Td>
                     </tr>))}
@@ -339,23 +335,23 @@ const SkuTab = () => {
               </div>
             </div>
             <div className="space-y-3">
-              <div className="border border-border rounded-xl p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Cajas por status</div>
+              <div className="border border-border rounded-lg p-3">
+                <div className="text-xs font-medium text-muted-foreground mb-2">Cajas por status</div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(data.cajas_por_status).map(([st, v]) => (
-                    <span key={st} className="px-2.5 py-1 rounded-lg bg-secondary/60 text-xs">
+                    <Chip key={st}>
                       <b>{st}</b>: {v.cajas} cajas / {(v.unidades || 0).toLocaleString()} u
-                    </span>
+                    </Chip>
                   ))}
                 </div>
               </div>
-              <div className="border border-border rounded-xl overflow-hidden">
-                <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest">Tickets que lo surtieron</div>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">Tickets que lo surtieron</div>
                 <div className="max-h-40 overflow-y-auto">
                   <table className="w-full">
                     <thead><tr><Th>Orden</Th><Th>Status</Th><Th right>Pickeado</Th><Th>Fecha</Th></tr></thead>
                     <tbody>{data.tickets.map((t, i) => (
-                      <tr key={i} className="border-t border-border/40">
+                      <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
                         <Td>{t.order}</Td><Td>{t.status}</Td><Td right>{t.picked.toLocaleString()}</Td><Td>{fmtDate(t.created_at)}</Td>
                       </tr>))}
                     </tbody>
@@ -391,29 +387,29 @@ const MovementsTab = () => {
       <form onSubmit={run} className="flex flex-wrap gap-2 items-end">
         <input value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })}
           placeholder="Caja / SKU / orden / ubicación / ticket…"
-          className="flex-1 min-w-[220px] px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
+          className="flex-1 min-w-[220px] px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
         <input value={filters.movement_type} onChange={e => setFilters({ ...filters, movement_type: e.target.value })}
-          placeholder="Tipo (ej. pick_deduction)" className="w-48 px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
+          placeholder="Tipo (ej. pick_deduction)" className="w-48 px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
         <input value={filters.user} onChange={e => setFilters({ ...filters, user: e.target.value })}
-          placeholder="Usuario" className="w-36 px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
+          placeholder="Usuario" className="w-36 px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
         <input type="date" value={filters.since} onChange={e => setFilters({ ...filters, since: e.target.value })}
-          className="px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
+          className="px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
         <input type="date" value={filters.until} onChange={e => setFilters({ ...filters, until: e.target.value })}
-          className="px-3 py-2.5 bg-secondary/50 border border-border rounded-xl text-sm" />
-        <button disabled={loading} className="px-5 py-2.5 rounded-xl bg-primary text-black font-black text-xs uppercase disabled:opacity-50">
+          className="px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
+        <button disabled={loading} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
         </button>
       </form>
       {data && (
-        <div className="border border-border rounded-xl overflow-hidden">
-          <div className="px-3 py-2 bg-secondary/40 text-[11px] font-black uppercase tracking-widest">
+        <div className="border border-border rounded-lg overflow-hidden">
+          <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">
             {data.count} de {data.total.toLocaleString()} movimientos
           </div>
-          <div className="max-h-[32rem] overflow-y-auto divide-y divide-border/40">
+          <div className="max-h-[32rem] overflow-y-auto divide-y divide-border/60">
             {data.movements.map((m, i) => (
               <div key={i} className="px-3 py-2 text-xs flex items-start gap-3">
                 <span className="text-muted-foreground whitespace-nowrap font-mono">{fmtDate(m.created_at)}</span>
-                <span className="font-bold uppercase whitespace-nowrap">{m.type}</span>
+                <span className="font-medium whitespace-nowrap">{m.type}</span>
                 <span className="text-muted-foreground whitespace-nowrap">{m.user_name}</span>
                 <span className="truncate text-muted-foreground">{JSON.stringify(m.details || {}).slice(0, 180)}</span>
               </div>
@@ -431,22 +427,14 @@ export const AuditModule = () => {
   const [tab, setTab] = useState("health");
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/30">
-          <ShieldCheck className="w-6 h-6 text-red-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-black uppercase tracking-wide">Auditoría</h2>
-          <p className="text-[11px] text-muted-foreground">Trazabilidad y consistencia de todo el flujo — exclusivo super admin</p>
-        </div>
-      </div>
+      <ModuleHeader title="Auditoría" subtitle="Trazabilidad y consistencia de todo el flujo — exclusivo super admin" />
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {TABS.map(t => {
           const Icon = t.icon;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-wider whitespace-nowrap border-b-2 transition-colors
-                ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors
+                ${tab === t.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
               <Icon className="w-4 h-4" /> {t.label}
             </button>
           );

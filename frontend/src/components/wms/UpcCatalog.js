@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { fetcher, poster, putter, deleter, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
+import { Btn, cls } from "./ui";
 
 // Validacion GTIN del lado del cliente — mismo criterio que _valid_gtin del
 // backend (POST /upc). Adelanta el feedback: el supervisor ve al instante si el
@@ -216,57 +217,52 @@ export const UpcCatalog = ({ isManager }) => {
   const setD = (k, v) => setDraft(p => ({ ...p, [k]: v }));
 
   return (
-    <div className="bg-card/40 border border-indigo-500/20 rounded-2xl overflow-hidden" data-testid="upc-catalog">
-      <div className="p-5 bg-indigo-500/5 border-b border-indigo-500/20 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-            <Barcode className="w-5 h-5 text-indigo-400" />
-          </div>
-          <div>
-            <h2 className="text-sm font-black uppercase tracking-widest text-foreground">Catálogo de UPC</h2>
-            <p className="text-xs text-muted-foreground">Los UPC que el operador escanea en Receiving. Aquí los da de alta el supervisor.</p>
-          </div>
+    <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="upc-catalog">
+      <div className="p-5 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Catálogo de UPC</h2>
+          <p className="text-xs text-muted-foreground">Los UPC que el operador escanea en Receiving. Aquí los da de alta el supervisor.</p>
         </div>
         {isManager && (
-          <button onClick={openCreate} className="px-4 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl font-black uppercase tracking-wider text-xs flex items-center gap-2 transition-all" data-testid="upc-cat-new">
+          <Btn variant="primary" onClick={openCreate} data-testid="upc-cat-new">
             <Plus className="w-4 h-4" /> Nuevo UPC
-          </button>
+          </Btn>
         )}
       </div>
 
       <div className="p-4">
         <div className="relative mb-3">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar por UPC, estilo, color, cliente…"
-            className="w-full pl-10 pr-3 py-2.5 bg-background border border-border rounded-xl text-sm"
+            className={`${cls.input} pl-10`}
             data-testid="upc-cat-search"
           />
           {loading && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />}
         </div>
 
         {rows.length === 0 ? (
-          <div className="py-8 text-center text-xs text-muted-foreground italic">
+          <div className="py-8 text-center text-sm text-muted-foreground">
             {search.trim() ? "Sin resultados." : "Escribe para buscar UPC en el catálogo."}
           </div>
         ) : (
           <>
           {filtersActive && (
-            <div className="flex items-center justify-between mb-2 text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
               <span>Mostrando <b>{filteredRows.length}</b> de {rows.length} con filtros de columna</span>
-              <button onClick={clearFilters} className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider" data-testid="upc-cat-clear-filters">
+              <button onClick={clearFilters} className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground font-medium" data-testid="upc-cat-clear-filters">
                 <X className="w-3 h-3" /> Limpiar filtros
               </button>
             </div>
           )}
-          <div className="overflow-x-auto custom-scrollbar max-h-[420px] overflow-y-auto rounded-xl border border-border/30">
-            <table className="w-full text-[11px]">
-              <thead className="sticky top-0 bg-secondary/80 backdrop-blur z-10">
+          <div className="overflow-x-auto custom-scrollbar max-h-[420px] overflow-y-auto rounded-lg border border-border">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-muted/50 border-b border-border z-10">
                 <tr className="text-left">
                   {["UPC", "Cliente", "Estilo", "Color", "Talla", ""].map(h => (
-                    <th key={h} className="px-2.5 pt-2 pb-1 font-black uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
+                    <th key={h} className="px-2.5 pt-2 pb-1 text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
                 {/* Fila de filtros por columna: contiene, sin distinguir mayúsculas. */}
@@ -278,7 +274,7 @@ export const UpcCatalog = ({ isManager }) => {
                         value={colFilters[k]}
                         onChange={e => setF(k, e.target.value)}
                         placeholder="Filtrar…"
-                        className="w-full min-w-[64px] px-1.5 py-1 bg-background border border-border rounded text-[10px] font-normal normal-case tracking-normal"
+                        className="w-full min-w-[64px] px-1.5 py-1 bg-card border border-input rounded text-xs font-normal"
                         data-testid={`upc-cat-filter-${k}`}
                       />
                     </th>
@@ -286,29 +282,29 @@ export const UpcCatalog = ({ isManager }) => {
                   <th className="px-2.5 pb-2"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/10">
+              <tbody className="divide-y divide-border/60">
                 {filteredRows.length === 0 && (
-                  <tr><td colSpan={6} className="px-2.5 py-6 text-center text-muted-foreground italic">Ningún UPC coincide con los filtros.</td></tr>
+                  <tr><td colSpan={6} className="px-2.5 py-6 text-center text-muted-foreground">Ningún UPC coincide con los filtros.</td></tr>
                 )}
                 {filteredRows.map(r => {
                   const ok = validGtin(r.upc);
                   return (
-                    <tr key={r.upc} className="hover:bg-secondary/20">
-                      <td className="px-2.5 py-1.5 font-mono font-bold whitespace-nowrap">
+                    <tr key={r.upc} className="hover:bg-muted/40 transition-colors">
+                      <td className="px-2.5 py-1.5 font-mono font-medium whitespace-nowrap">
                         <span className="inline-flex items-center gap-1">
-                          {ok ? <CheckCircle2 className="w-3 h-3 text-emerald-500" /> : <AlertTriangle className="w-3 h-3 text-amber-500" title="No pasa el dígito verificador" />}
+                          {ok ? <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> : <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" title="No pasa el dígito verificador" />}
                           {r.upc}
                         </span>
                       </td>
                       <td className="px-2.5 py-1.5">{r.customer}</td>
-                      <td className="px-2.5 py-1.5 font-bold">{r.style}</td>
+                      <td className="px-2.5 py-1.5 font-medium">{r.style}</td>
                       <td className="px-2.5 py-1.5">{r.color}</td>
                       <td className="px-2.5 py-1.5 font-mono">{r.size}</td>
                       <td className="px-2.5 py-1.5 whitespace-nowrap">
                         {isManager && (
                           <div className="flex items-center gap-1 justify-end">
-                            <button onClick={() => openEdit(r)} className="p-1 text-muted-foreground hover:text-indigo-400" title="Editar" data-testid={`upc-cat-edit-${r.upc}`}><Edit2 className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => remove(r)} className="p-1 text-muted-foreground hover:text-red-400" title="Eliminar" data-testid={`upc-cat-del-${r.upc}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => openEdit(r)} className="p-1 text-muted-foreground hover:text-primary" title="Editar" data-testid={`upc-cat-edit-${r.upc}`}><Edit2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => remove(r)} className="p-1 text-muted-foreground hover:text-red-600 dark:hover:text-red-400" title="Eliminar" data-testid={`upc-cat-del-${r.upc}`}><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         )}
                       </td>
@@ -325,44 +321,44 @@ export const UpcCatalog = ({ isManager }) => {
       {/* Alta / edición — supervisor. Identidad 100% desde catálogos curados. */}
       {formOpen && (
         <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="upc-cat-form">
-          <div className="w-full max-w-2xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
-            <div className="px-5 py-3 bg-indigo-500/10 border-b border-border/40 flex items-center justify-between">
-              <span className="font-black uppercase tracking-wider text-sm flex items-center gap-2">
-                <Barcode className="w-4 h-4 text-indigo-400" /> {editMode ? "Editar UPC" : "Nuevo UPC"}
+          <div className="w-full max-w-2xl bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+              <span className="font-semibold text-sm flex items-center gap-2">
+                <Barcode className="w-4 h-4 text-muted-foreground" /> {editMode ? "Editar UPC" : "Nuevo UPC"}
               </span>
               <button onClick={() => setFormOpen(false)} className="p-1 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
             <div className="p-5 grid grid-cols-2 gap-3 max-h-[65vh] overflow-y-auto custom-scrollbar">
               <div className="col-span-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">UPC (código de barras) *</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">UPC (código de barras) *</label>
                 <div className="flex gap-2">
                   <input
                     value={draft.upc}
                     onChange={e => setD("upc", e.target.value.replace(/\s+/g, "").toUpperCase())}
                     disabled={editMode}
                     placeholder="Escanea el código físico"
-                    className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono font-bold disabled:opacity-60 ${
-                      draft.upc ? (codeValid ? "border-emerald-500/50" : "border-amber-500/50") : "border-border"
+                    className={`flex-1 px-3 py-2 text-sm bg-card border rounded-md font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 transition-colors disabled:opacity-60 ${
+                      draft.upc ? (codeValid ? "border-emerald-500/50" : "border-amber-500/50") : "border-input"
                     }`}
                     data-testid="upc-cat-draft-upc"
                     autoFocus={!editMode}
                   />
                   {!editMode && (
-                    <button
+                    <Btn
                       type="button"
                       onClick={generateUpc}
                       disabled={generating}
                       title="Para material sin código de fábrica: genera un UPC-A interno válido (estilo+color+talla)"
-                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-black uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                      className="whitespace-nowrap"
                       data-testid="upc-cat-generate"
                     >
                       {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Barcode className="w-3.5 h-3.5" />}
                       Generar interno
-                    </button>
+                    </Btn>
                   )}
                 </div>
                 {draft.upc && !codeValid && !editMode && (
-                  <p className="text-[10px] text-amber-500 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" /> No pasa el dígito verificador — {looksLikeBoxCode ? "no es un GTIN válido." : "no es un código de barras real. Escanéalo, no lo teclees."}
                   </p>
                 )}
@@ -370,46 +366,46 @@ export const UpcCatalog = ({ isManager }) => {
                     en la caja pero no cumplen el checksum (GTIN de fábrica mal
                     formado). El texto libre (ICEBLUE2X) nunca llega aquí. */}
                 {draft.upc && !codeValid && looksLikeBoxCode && !editMode && (
-                  <label className="mt-2 flex items-start gap-2 p-2 rounded-lg bg-amber-500/5 border border-amber-500/30 cursor-pointer" data-testid="upc-cat-noncompliant">
+                  <label className="mt-2 flex items-start gap-2 p-2 rounded-lg border bg-amber-50 border-amber-200/70 dark:bg-amber-500/10 dark:border-amber-500/25 cursor-pointer" data-testid="upc-cat-noncompliant">
                     <input
                       type="checkbox"
                       checked={allowNonCompliant}
                       onChange={e => setAllowNonCompliant(e.target.checked)}
                       className="mt-0.5"
                     />
-                    <span className="text-[10px] text-amber-600 dark:text-amber-400 leading-snug">
+                    <span className="text-xs text-amber-700 dark:text-amber-300 leading-snug">
                       <b>Este código viene impreso en la caja</b> aunque no pase el verificador
                       (algunas etiquetas de fábrica traen el GTIN mal formado). Regístralo tal
                       cual para poder escanear la caja como viene.
                     </span>
                   </label>
                 )}
-                <p className="text-[10px] text-muted-foreground mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   El UPC identifica una variante única: <b>estilo + color + talla</b> (el SKU). Los tres son obligatorios.
                   Si el material <b>no trae código de fábrica</b> (blank de importación), usa <b>Generar interno</b>.
                 </p>
                 {dupUpc && (
-                  <p className="text-[10px] text-amber-500 mt-1 flex items-start gap-1" data-testid="upc-cat-dup-warn">
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-start gap-1" data-testid="upc-cat-dup-warn">
                     <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                    <span>Ya existe el UPC <span className="font-mono font-bold">{dupUpc}</span> para {draft.style}/{draft.color}/{draft.size}. Un SKU normalmente lleva un solo UPC.</span>
+                    <span>Ya existe el UPC <span className="font-mono font-medium">{dupUpc}</span> para {draft.style}/{draft.color}/{draft.size}. Un SKU normalmente lleva un solo UPC.</span>
                   </p>
                 )}
               </div>
               <div className="col-span-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente *</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Cliente *</label>
                 <SearchableSelect options={customerOptions} value={draft.customer} onChange={v => setDraft(p => ({ ...p, customer: v, style: "", color: "" }))} placeholder="Cliente…" testId="upc-cat-draft-customer" allowCreate={false} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Estilo *</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Estilo *</label>
                 <SearchableSelect options={styleOptions} value={draft.style} onChange={v => setD("style", v)} placeholder={draft.customer ? "Estilo…" : "Elige cliente primero"} testId="upc-cat-draft-style" allowCreate={false} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color *</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Color *</label>
                 <SearchableSelect options={colorOptions} value={draft.color} onChange={v => setD("color", v)} placeholder="Color…" testId="upc-cat-draft-color" allowCreate={false} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla *</label>
-                <select value={draft.size} onChange={e => setD("size", e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" data-testid="upc-cat-draft-size">
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Talla *</label>
+                <select value={draft.size} onChange={e => setD("size", e.target.value)} className="w-full px-3 py-2 bg-card border border-input rounded-md text-sm font-mono" data-testid="upc-cat-draft-size">
                   <option value="">—</option>
                   {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -418,12 +414,12 @@ export const UpcCatalog = ({ isManager }) => {
                   descripción, tela y fabricante NO son parte del UPC — son
                   metadata del embarque y las provee el ASN en Receiving. */}
             </div>
-            <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
-              <button onClick={() => setFormOpen(false)} className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold">Cancelar</button>
-              <button onClick={save} disabled={saving} className="px-5 py-2 bg-indigo-500 text-white rounded-lg text-sm font-black uppercase tracking-wider flex items-center gap-2 disabled:opacity-50" data-testid="upc-cat-save">
+            <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+              <Btn onClick={() => setFormOpen(false)}>Cancelar</Btn>
+              <Btn variant="primary" onClick={save} disabled={saving} data-testid="upc-cat-save">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 {editMode ? "Guardar" : "Crear UPC"}
-              </button>
+              </Btn>
             </div>
           </div>
         </div>

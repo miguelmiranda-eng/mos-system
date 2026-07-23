@@ -4,17 +4,19 @@ import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Sea
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
 import { UpcCatalog } from "./UpcCatalog";
+import { Btn, cls } from "./ui";
 
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
-  { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
-  { type: 'manufacturers', label: 'Fabricantes', desc: 'Valores para "manufacturer" en Receiving', icon: Factory, color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20' },
-  { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
-  { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
-  { type: 'sizes', label: 'Tallas', desc: 'Tallas adicionales para el desplegable de "size" en Receiving', icon: Ruler, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
-  { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
-  { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-  { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+  // Rediseño 2026-07: paleta neutra — el color ya no distingue catálogos.
+  { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'manufacturers', label: 'Fabricantes', desc: 'Valores para "manufacturer" en Receiving', icon: Factory, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'sizes', label: 'Tallas', desc: 'Tallas adicionales para el desplegable de "size" en Receiving', icon: Ruler, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
 ];
 
 // Tipos por-cliente: el selector de cliente aparece en su tarjeta y los valores
@@ -312,8 +314,8 @@ export const HomeModule = () => {
           que el operador escanea en Receiving (Receiving ya no los crea). */}
       <UpcCatalog isManager={isManager} />
 
-      <div className="bg-card/40 border border-border/20 rounded-2xl p-5">
-        <h2 className="text-sm font-black uppercase tracking-widest text-foreground mb-1">Catálogos maestros</h2>
+      <div className="bg-card border border-border rounded-lg p-5">
+        <h2 className="text-sm font-semibold text-foreground mb-1">Catálogos maestros</h2>
         <p className="text-xs text-muted-foreground">
           Una sola lista por catálogo: cada valor muestra su uso real en inventario y un badge
           <b> En cat.</b> si ya está curado (los curados son los únicos que aparecen en Receiving / Agregar Manual).
@@ -333,17 +335,17 @@ export const HomeModule = () => {
           // Antes eran dos: la lista de arriba mostraba "curados" y el acordeon "inventario".
           const totalCount = srcData?.total_distinct ?? 0;
           return (
-            <div key={section.type} className={`border ${section.border} rounded-3xl bg-card/60 backdrop-blur-sm shadow-xl flex flex-col`}>
+            <div key={section.type} className={`border ${section.border} rounded-lg bg-card flex flex-col`}>
               {/* Header */}
-              <div className="p-5 border-b border-border/10 flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-2xl ${section.bg} flex items-center justify-center`}>
+              <div className="p-5 border-b border-border flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-lg ${section.bg} flex items-center justify-center`}>
                   <Icon className={`w-5 h-5 ${section.color}`} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-black uppercase tracking-tighter text-sm">{section.label}</h3>
-                  <p className="text-[10px] text-muted-foreground font-bold opacity-60 leading-tight">{section.desc}</p>
+                  <h3 className="text-sm font-semibold">{section.label}</h3>
+                  <p className="text-xs text-muted-foreground leading-tight">{section.desc}</p>
                 </div>
-                <span className="text-[10px] font-black tabular-nums bg-secondary/60 px-2 py-1 rounded-lg text-muted-foreground">
+                <span className="text-xs font-medium tabular-nums bg-muted px-2 py-1 rounded-md text-muted-foreground">
                   {srcLoading ? '…' : totalCount}
                 </span>
               </div>
@@ -352,14 +354,14 @@ export const HomeModule = () => {
                   Estilos EXIGE cliente; colores/fabricantes lo permiten vacío
                   (= valor global compartido para todos los clientes). */}
               {isScoped && (
-                <div className="p-3 border-b border-border/10">
-                  <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/70 block mb-1">
+                <div className="p-3 border-b border-border/60">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Cliente{isStyles ? '' : ' (opcional — vacío = global)'}
                   </label>
                   <select
                     value={styleCustomer}
                     onChange={e => setStyleCustomer(e.target.value)}
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-bold text-foreground focus:ring-2 focus:ring-primary/30"
+                    className="w-full px-3 py-2 bg-card border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25"
                     data-testid="style-customer-select"
                   >
                     <option value="">{isStyles ? '— Selecciona cliente —' : '— Global (todos los clientes) —'}</option>
@@ -370,7 +372,7 @@ export const HomeModule = () => {
 
               {/* Add new — lead/supervisor only */}
               {isManager ? (
-                <div className="p-4 border-b border-border/10 flex gap-2">
+                <div className="p-4 border-b border-border/60 flex gap-2">
                   <input
                     type="text"
                     value={drafts[section.type]}
@@ -378,21 +380,20 @@ export const HomeModule = () => {
                     onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
                     placeholder={isStyles && !styleCustomer ? 'Selecciona un cliente…' : 'Nuevo valor…'}
                     disabled={isStyles && !styleCustomer}
-                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                    className={`flex-1 ${cls.input} disabled:opacity-50`}
                     data-testid={`cat-input-${section.type}`}
                   />
-                  <button
+                  <Btn
                     onClick={() => handleAdd(section.type)}
                     disabled={saving === section.type || !drafts[section.type]?.trim() || (isStyles && !styleCustomer)}
-                    className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-1 transition-all disabled:opacity-40 ${section.bg} ${section.color}`}
                     data-testid={`cat-add-${section.type}`}
                   >
                     {saving === section.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
                     Agregar
-                  </button>
+                  </Btn>
                 </div>
               ) : (
-                <div className="p-3 border-b border-border/10 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                <div className="p-3 border-b border-border/60 flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   <Lock className="w-3 h-3" /> Solo líder/supervisor puede editar
                 </div>
               )}
@@ -407,8 +408,8 @@ export const HomeModule = () => {
                   <>
                     <button
                       onClick={() => toggleSimilar(section.type)}
-                      className={`w-full px-4 py-2.5 border-t border-border/10 flex items-center justify-between text-[11px] font-black uppercase tracking-widest transition-colors ${
-                        nPairs > 0 ? 'text-amber-400 hover:bg-amber-500/10' : 'text-muted-foreground hover:bg-secondary/30'
+                      className={`w-full px-4 py-2.5 border-t border-border/60 flex items-center justify-between text-xs font-medium transition-colors ${
+                        nPairs > 0 ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10' : 'text-muted-foreground hover:bg-muted/40'
                       }`}
                       data-testid={`similar-toggle-${section.type}`}
                     >
@@ -416,8 +417,8 @@ export const HomeModule = () => {
                         <Wand2 className="w-3.5 h-3.5" />
                         Detectar typos
                         {simData && (
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] tabular-nums ${
-                            nPairs > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-secondary/50 text-muted-foreground'
+                          <span className={`px-1.5 py-0.5 rounded text-xs tabular-nums ${
+                            nPairs > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground'
                           }`}>{nPairs}</span>
                         )}
                       </span>
@@ -425,50 +426,50 @@ export const HomeModule = () => {
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-border/10 bg-amber-500/[0.03] max-h-[360px] overflow-auto custom-scrollbar">
+                      <div className="border-t border-border/60 bg-amber-500/[0.03] max-h-[360px] overflow-auto custom-scrollbar">
                         {simLoading ? (
                           <div className="flex items-center justify-center py-8">
-                            <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+                            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                           </div>
                         ) : !simData ? (
-                          <div className="text-center py-6 text-[10px] text-muted-foreground/60 italic">
+                          <div className="text-center py-6 text-xs text-muted-foreground">
                             Cargando…
                           </div>
                         ) : nPairs === 0 ? (
-                          <div className="text-center py-6 text-[10px] text-emerald-500 font-bold uppercase tracking-widest">
+                          <div className="text-center py-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                             Sin typos detectados
                           </div>
                         ) : (
                           <>
-                            <div className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-amber-400/80 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-1.5">
+                            <div className="px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200/70 dark:border-amber-500/20 flex items-center gap-1.5">
                               <AlertTriangle className="w-3 h-3" />
                               Distancia ≤ 2. Revisa: algunos pueden ser colores distintos.
                             </div>
-                            <ul className="divide-y divide-border/5">
+                            <ul className="divide-y divide-border/60">
                               {simData.pairs.map((p, i) => {
                                 const drop = p.recommend_drop;
                                 const keep = p.recommend_keep;
                                 const isBusy = actioning === `merge:${section.type}:${drop}`;
                                 const isDrop = (v) => v === drop;
                                 return (
-                                  <li key={`${p.a}-${p.b}-${i}`} className="px-3 py-2 hover:bg-secondary/20 transition-colors">
-                                    <div className="flex items-center gap-2 text-[11px]">
-                                      <span className={`font-mono font-bold ${isDrop(p.a) ? 'text-red-400 line-through decoration-red-500/40' : 'text-emerald-400'}`}>
+                                  <li key={`${p.a}-${p.b}-${i}`} className="px-3 py-2 hover:bg-muted/40 transition-colors">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <span className={`font-mono font-medium ${isDrop(p.a) ? 'text-red-600 dark:text-red-400 line-through decoration-red-500/40' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                         {p.a}
                                       </span>
-                                      <span className="text-[8px] text-muted-foreground bg-secondary/60 px-1 rounded tabular-nums">{p.count_a.toLocaleString()}</span>
+                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{p.count_a.toLocaleString()}</span>
                                       <ArrowRight className="w-3 h-3 text-muted-foreground/60" />
-                                      <span className={`font-mono font-bold ${isDrop(p.b) ? 'text-red-400 line-through decoration-red-500/40' : 'text-emerald-400'}`}>
+                                      <span className={`font-mono font-medium ${isDrop(p.b) ? 'text-red-600 dark:text-red-400 line-through decoration-red-500/40' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                         {p.b}
                                       </span>
-                                      <span className="text-[8px] text-muted-foreground bg-secondary/60 px-1 rounded tabular-nums">{p.count_b.toLocaleString()}</span>
-                                      <span className="ml-auto text-[8px] bg-amber-500/15 text-amber-400 px-1 rounded">d={p.distance}</span>
+                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{p.count_b.toLocaleString()}</span>
+                                      <span className="ml-auto text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 px-1 rounded">d={p.distance}</span>
                                     </div>
                                     <div className="mt-1.5 flex items-center gap-1.5">
                                       <button
                                         onClick={() => mergePair(section.type, drop, keep)}
                                         disabled={!!actioning}
-                                        className="text-[10px] font-black uppercase tracking-widest bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 px-2 py-1 rounded flex items-center gap-1 disabled:opacity-40"
+                                        className="text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 dark:hover:bg-emerald-500/20 px-2 py-1 rounded-md flex items-center gap-1 transition-colors disabled:opacity-40"
                                       >
                                         {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
                                         Fusionar "{drop}" → "{keep}"
@@ -476,7 +477,7 @@ export const HomeModule = () => {
                                       <button
                                         onClick={() => mergePair(section.type, keep, drop)}
                                         disabled={!!actioning}
-                                        className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 hover:text-foreground px-2 py-1 rounded"
+                                        className="text-xs font-medium text-muted-foreground hover:text-foreground px-2 py-1 rounded"
                                         title="Invertir dirección de la fusión"
                                       >
                                         ⇄
@@ -491,7 +492,7 @@ export const HomeModule = () => {
                                             },
                                           }));
                                         }}
-                                        className="ml-auto text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 hover:text-muted-foreground"
+                                        className="ml-auto text-xs font-medium text-muted-foreground/60 hover:text-muted-foreground"
                                         title="Ignorar este par (solo en esta sesión)"
                                       >
                                         Ignorar
@@ -510,16 +511,16 @@ export const HomeModule = () => {
               })()}
 
               {/* Lista unificada: curados + valores reales de inventario, con match y contadores. */}
-              <div className="border-t border-border/10 bg-secondary/10 flex-1 flex flex-col">
-                <div className="p-3 border-b border-border/10">
+              <div className="border-t border-border/60 bg-muted/20 flex-1 flex flex-col">
+                <div className="p-3 border-b border-border/60">
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
                     <input
                       type="text"
                       value={sourceSearch[section.type]}
                       onChange={e => setSourceSearch(p => ({ ...p, [section.type]: e.target.value }))}
                       placeholder="Filtrar valores…"
-                      className="w-full pl-9 pr-3 py-1.5 bg-background border border-border rounded-lg text-xs focus:ring-2 focus:ring-primary/30"
+                      className="w-full pl-9 pr-3 py-1.5 bg-card border border-input rounded-md text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 transition-colors"
                       data-testid={`sources-search-${section.type}`}
                     />
                   </div>
@@ -531,34 +532,34 @@ export const HomeModule = () => {
                       <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                     </div>
                   ) : isStyles && !styleCustomer ? (
-                    <div className="text-center py-8 text-[10px] text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                    <div className="text-center py-8 text-sm text-muted-foreground">
                       Selecciona un cliente
                     </div>
                   ) : filteredSources.length === 0 ? (
-                    <div className="text-center py-6 text-[10px] text-muted-foreground/40 font-bold uppercase tracking-widest italic">
+                    <div className="text-center py-6 text-sm text-muted-foreground">
                       Sin valores
                     </div>
                   ) : (
-                    <ul className="divide-y divide-border/5">
+                    <ul className="divide-y divide-border/60">
                       {filteredSources.map((it, i) => {
                         const isPromoting = actioning === `promote:${section.type}:${it.value}`;
                         const isClearing = actioning === `clear:${section.type}:${it.value}`;
                         const isRemovingCat = deleting === it.catalog_id;
                         return (
-                          <li key={`${it.value}-${i}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-secondary/30 transition-colors group">
-                            <span className="text-[12px] font-mono font-bold text-foreground truncate flex-1" title={it.value}>
+                          <li key={`${it.value}-${i}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/40 transition-colors group">
+                            <span className="text-xs font-mono font-medium text-foreground truncate flex-1" title={it.value}>
                               {it.value}
                             </span>
                             <span
-                              className={`text-[9px] font-black tabular-nums px-1.5 py-0.5 rounded ${
-                                it.count > 0 ? 'text-muted-foreground/70 bg-secondary/40' : 'text-muted-foreground/40 bg-transparent'
+                              className={`text-xs font-medium tabular-nums px-1.5 py-0.5 rounded ${
+                                it.count > 0 ? 'text-muted-foreground bg-muted/60' : 'text-muted-foreground/50 bg-transparent'
                               }`}
                               title={it.count > 0 ? `Aparece en ${it.count} fila(s)` : 'Curado sin uso en inventario'}
                             >
                               {it.count > 0 ? it.count.toLocaleString() : '—'}
                             </span>
                             {it.in_catalog && (
-                              <span className={`text-[8px] font-black uppercase tracking-widest ${section.color} ${section.bg} px-1.5 py-0.5 rounded`}>
+                              <span className={`text-xs font-medium ${section.color} ${section.bg} border border-border px-1.5 py-0.5 rounded-md whitespace-nowrap`}>
                                 En cat.
                               </span>
                             )}
@@ -566,7 +567,7 @@ export const HomeModule = () => {
                               <button
                                 onClick={() => promoteToCatalog(section.type, it.value)}
                                 disabled={!!actioning}
-                                className={`p-1 ${section.color} hover:${section.bg} rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30`}
+                                className="p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
                                 title="Promover al catálogo"
                               >
                                 {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpToLine className="w-3 h-3" />}
@@ -576,7 +577,7 @@ export const HomeModule = () => {
                               <button
                                 onClick={() => handleDelete(it.catalog_id, it.value, section.type)}
                                 disabled={!!actioning || isRemovingCat}
-                                className="p-1 text-muted-foreground hover:text-orange-500 hover:bg-orange-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                className="p-1 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
                                 title="Quitar del catálogo (no afecta inventario)"
                               >
                                 {isRemovingCat ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
@@ -586,7 +587,7 @@ export const HomeModule = () => {
                               <button
                                 onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
                                 disabled={!!actioning}
-                                className="p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                className="p-1 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
                                 title="Renombrar en todas las filas"
                               >
                                 <Edit2 className="w-3 h-3" />
@@ -596,7 +597,7 @@ export const HomeModule = () => {
                               <button
                                 onClick={() => bulkClearValue(section.type, it.value)}
                                 disabled={!!actioning}
-                                className="p-1 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
+                                className="p-1 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
                                 title="Vaciar valor (afecta inventario)"
                               >
                                 {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
@@ -624,15 +625,15 @@ export const HomeModule = () => {
           .slice(0, 8);
         return (
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div className="bg-card border border-yellow-500/40 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl animate-in zoom-in-95 duration-150">
               <div className="flex items-center justify-between p-5 border-b border-border/20">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
-                    <Edit2 className="w-5 h-5 text-yellow-400" />
+                  <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                    <Edit2 className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-black uppercase tracking-tighter text-sm truncate">Renombrar en {section?.label}</h3>
-                    <p className="text-[11px] text-muted-foreground font-bold truncate">Afecta TODAS las filas con este valor</p>
+                    <h3 className="font-semibold text-sm truncate">Renombrar en {section?.label}</h3>
+                    <p className="text-xs text-muted-foreground truncate">Afecta TODAS las filas con este valor</p>
                   </div>
                 </div>
                 <button onClick={() => setRenameModal(null)} className="p-2 hover:bg-secondary rounded-lg" disabled={actioning?.startsWith('rename:')}>
@@ -642,31 +643,31 @@ export const HomeModule = () => {
 
               <div className="p-5 space-y-4">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Valor actual</label>
-                  <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-sm font-mono font-bold text-red-300">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Valor actual</label>
+                  <div className="px-3 py-2 border rounded-md text-sm font-mono font-medium bg-red-50 border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/25 dark:text-red-300">
                     {renameModal.oldValue}
                   </div>
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cambiar a</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cambiar a</label>
                   <input
                     type="text"
                     value={renameModal.newValue}
                     onChange={e => setRenameModal(p => ({ ...p, newValue: e.target.value.toUpperCase() }))}
                     onKeyDown={e => { if (e.key === 'Enter') submitRename(); }}
                     placeholder="ej: BANGLADESH"
-                    className="w-full px-3 py-2 bg-background border border-emerald-500/40 rounded-lg text-sm font-mono font-bold focus:ring-2 focus:ring-emerald-500/30"
+                    className={`${cls.input} font-mono`}
                     autoFocus
                     data-testid="rename-input"
                   />
                   {suggestions.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 self-center mr-1">Sugerencias:</span>
+                      <span className="text-xs font-medium text-muted-foreground/70 self-center mr-1">Sugerencias:</span>
                       {suggestions.map(s => (
                         <button
                           key={s}
                           onClick={() => setRenameModal(p => ({ ...p, newValue: s }))}
-                          className="px-2 py-0.5 text-[10px] font-mono font-bold bg-secondary/60 hover:bg-emerald-500/20 hover:text-emerald-400 rounded transition-colors"
+                          className="px-2 py-0.5 text-xs font-mono font-medium bg-muted hover:bg-primary/10 hover:text-primary rounded-md transition-colors"
                         >
                           {s}
                         </button>
@@ -677,18 +678,18 @@ export const HomeModule = () => {
               </div>
 
               <div className="flex items-center justify-end gap-2 p-5 border-t border-border/20">
-                <button onClick={() => setRenameModal(null)} disabled={actioning?.startsWith('rename:')} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground">
+                <Btn variant="ghost" onClick={() => setRenameModal(null)} disabled={actioning?.startsWith('rename:')}>
                   Cancelar
-                </button>
-                <button
+                </Btn>
+                <Btn
+                  variant="primary"
                   onClick={submitRename}
                   disabled={actioning?.startsWith('rename:') || !renameModal.newValue?.trim()}
-                  className="px-5 py-2 bg-yellow-500 text-black rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 hover:bg-yellow-600 disabled:opacity-50"
                   data-testid="rename-submit"
                 >
                   {actioning?.startsWith('rename:') ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit2 className="w-4 h-4" />}
                   Aplicar
-                </button>
+                </Btn>
               </div>
             </div>
           </div>

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { MapPin, ScanLine, Loader2, ClipboardCheck, Box, Package, ChevronRight, X, Keyboard } from "lucide-react";
+import { MapPin, ScanLine, Loader2, ClipboardCheck, Package, ChevronRight, X, Keyboard } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 import { BoxStatus } from "./constants";
+import { ModuleHeader, cls } from "./ui";
 
 export const PutawayModule = () => {
   const { t } = useLang();
@@ -93,28 +94,23 @@ export const PutawayModule = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/40 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-          {t('wms_mod_putaway')}
-        </div>
-      </div>
+      <ModuleHeader title={t('wms_mod_putaway')} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
-          <div className="text-sm font-bold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-primary" /> {t('wms_scan_input')}</div>
+          <div className="text-sm font-semibold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-muted-foreground" /> {t('wms_scan_input')}</div>
           <div className="relative">
-            <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono" data-testid="putaway-box-input" />
+            <input placeholder={t('wms_box_id_placeholder')} value={boxId} onChange={e => setBoxId(e.target.value.toUpperCase())} className={`${cls.input} font-mono`} data-testid="putaway-box-input" />
             {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />}
           </div>
           {/* Location: scannable input by default, manual <select> fallback */}
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+            <span className="text-xs font-medium text-muted-foreground">
               {manualMode ? 'Seleccionar manual' : 'Escanear ubicación'}
             </span>
             <button
               type="button"
               onClick={() => { setManualMode(m => !m); setScanInput(''); setLocation(''); }}
-              className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center gap-1"
+              className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
             >
               <Keyboard className="w-3 h-3" /> {manualMode ? 'Usar scanner' : 'Escribir manualmente'}
             </button>
@@ -128,14 +124,14 @@ export const PutawayModule = () => {
           ) : (
             <form onSubmit={handleScanSubmit}>
               <div className="relative">
-                <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary" />
+                <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   value={scanInput}
                   onChange={e => setScanInput(e.target.value.toUpperCase())}
                   placeholder="Escanea ubicación destino (Enter para confirmar)"
                   autoComplete="off"
-                  className="w-full pl-10 pr-3 py-2 bg-background border border-primary/30 rounded text-sm text-foreground font-mono focus:ring-2 focus:ring-primary/30"
+                  className={`${cls.input} pl-10 font-mono`}
                   data-testid="putaway-loc-scan"
                 />
               </div>
@@ -150,7 +146,7 @@ export const PutawayModule = () => {
               setPendingConfirm(match);
             }}
             disabled={loading || !boxId || !location || !manualMode}
-            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center justify-center gap-2 hover:opacity-90 transition-colors disabled:opacity-50"
             data-testid="putaway-submit"
             title={!manualMode ? 'En modo scanner se confirma vía overlay' : 'Abrirá confirmación antes de aplicar'}
           >
@@ -165,33 +161,32 @@ export const PutawayModule = () => {
             <div className="space-y-3 animate-in fade-in duration-300">
                <div className="flex justify-between items-start">
                  <div>
-                   <div className="text-[10px] font-black uppercase text-muted-foreground">{t('wms_label_sku')}</div>
-                   <div className="text-sm font-black text-primary">{boxDetails.sku}</div>
+                   <div className="text-xs font-medium text-muted-foreground">{t('wms_label_sku')}</div>
+                   <div className="text-sm font-semibold font-mono">{boxDetails.sku}</div>
                  </div>
                  <div className="text-right">
-                   <div className="text-[10px] font-black uppercase text-muted-foreground">{t('units')}</div>
-                   <div className="text-sm font-black">{boxDetails.units}</div>
+                   <div className="text-xs font-medium text-muted-foreground">{t('units')}</div>
+                   <div className="text-sm font-semibold tabular-nums">{boxDetails.units}</div>
                  </div>
                </div>
-               <div className="p-3 bg-secondary/50 rounded-xl border border-border/20">
-                 <label className="text-[9px] font-black uppercase text-blue-400 block mb-1">PO / ORDER (Editable)</label>
+               <div className="p-3 bg-muted/40 rounded-lg border border-border">
+                 <label className="text-xs font-medium text-muted-foreground block mb-1">PO / ORDER (Editable)</label>
                  <input
                    value={boxDetails.po || ''}
                    onChange={e => setBoxDetails(p => ({ ...p, po: e.target.value }))}
-                   className="w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                   className="w-full bg-transparent border-none p-0 text-sm font-medium focus:ring-0"
                  />
                </div>
             </div>
           ) : (
-            <div className="text-center opacity-30 italic text-xs">
-              <Box className="w-8 h-8 mx-auto mb-2 opacity-20" />
+            <div className="text-center text-sm text-muted-foreground">
               {t('wms_scan_hint') || 'Escanea una caja para ver detalles'}
             </div>
           )}
         </div>
       </div>
-        <div className="border border-border/20 rounded-3xl p-6 bg-card/40 backdrop-blur-sm shadow-xl space-y-4">
-          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60 flex items-center gap-2">
+        <div className="border border-border rounded-lg p-4 bg-card space-y-4">
+          <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
           <Package className="w-4 h-4" /> {t('wms_unlocated_mat')}
         </div>
         <div className="space-y-2 max-h-[400px] overflow-auto custom-scrollbar pr-2 font-mono">
@@ -199,12 +194,12 @@ export const PutawayModule = () => {
             <button
               key={b.box_id}
               onClick={() => setBoxId(b.box_id)}
-              className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all
-                ${boxId === b.box_id ? 'bg-primary/20 border-primary text-primary shadow-lg shadow-primary/10' : 'bg-secondary/40 border-border/10 text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+              className={`w-full flex items-center justify-between p-3 rounded-md border transition-colors
+                ${boxId === b.box_id ? 'bg-primary/10 border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}
             >
               <div className="flex flex-col items-start">
-                <span className="text-xs font-black">{b.box_id}</span>
-                <span className="text-[10px] opacity-60">{b.sku} / {b.units} UN</span>
+                <span className="text-xs font-semibold">{b.box_id}</span>
+                <span className="text-xs opacity-60">{b.sku} / {b.units} UN</span>
               </div>
               <ChevronRight className="w-4 h-4 opacity-40" />
             </button>
@@ -216,30 +211,30 @@ export const PutawayModule = () => {
       {/* Confirm overlay (shown after a valid location scan) */}
       {pendingConfirm && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-primary/40 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-primary">
-                <ScanLine className="w-5 h-5" />
-                <h3 className="font-black uppercase tracking-widest text-sm">Confirmar Putaway</h3>
+              <div className="flex items-center gap-2">
+                <ScanLine className="w-5 h-5 text-muted-foreground" />
+                <h3 className="font-semibold text-sm">Confirmar Putaway</h3>
               </div>
               <button onClick={() => setPendingConfirm(null)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={loading}>
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="bg-secondary/40 rounded-2xl p-4 space-y-3 border border-border/20">
+            <div className="bg-muted/40 rounded-lg p-4 space-y-3 border border-border">
               <div>
-                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest mb-1">Caja</div>
-                <div className="font-mono font-black text-primary">{boxId}</div>
-                {boxDetails?.sku && <div className="text-[11px] text-muted-foreground font-bold mt-1">{boxDetails.sku} · {boxDetails.units} pcs</div>}
+                <div className="text-xs font-medium text-muted-foreground mb-1">Caja</div>
+                <div className="font-mono font-semibold">{boxId}</div>
+                {boxDetails?.sku && <div className="text-xs text-muted-foreground mt-1">{boxDetails.sku} · {boxDetails.units} pcs</div>}
               </div>
-              <div className="border-t border-border/20 pt-3">
-                <div className="text-[10px] font-black uppercase text-muted-foreground/60 tracking-widest mb-1">Ubicación destino</div>
-                <div className="font-mono font-black text-emerald-400 text-lg">{pendingConfirm.name}</div>
-                <div className="text-[11px] text-muted-foreground font-bold uppercase tracking-widest mt-1">
+              <div className="border-t border-border/60 pt-3">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Ubicación destino</div>
+                <div className="font-mono font-semibold text-lg">{pendingConfirm.name}</div>
+                <div className="text-xs text-muted-foreground mt-1">
                   {pendingConfirm.zone || 'SIN ZONA'}
                   {pendingConfirm.inventory_summary?.total_units > 0 && (
-                    <span className="ml-2 text-amber-400">· Ya ocupada: {pendingConfirm.inventory_summary.total_units} pcs</span>
+                    <span className="ml-2 text-amber-600 dark:text-amber-400">· Ya ocupada: {pendingConfirm.inventory_summary.total_units} pcs</span>
                   )}
                 </div>
               </div>
@@ -249,7 +244,7 @@ export const PutawayModule = () => {
               <button
                 onClick={confirmPutaway}
                 disabled={loading}
-                className="flex-1 py-3 bg-emerald-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-3 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
                 Confirmar
@@ -257,7 +252,7 @@ export const PutawayModule = () => {
               <button
                 onClick={() => setPendingConfirm(null)}
                 disabled={loading}
-                className="flex-1 py-3 bg-secondary text-foreground font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-secondary/80 transition-all disabled:opacity-50"
+                className="flex-1 py-3 bg-card border border-border text-foreground text-sm font-medium rounded-md hover:bg-muted transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>

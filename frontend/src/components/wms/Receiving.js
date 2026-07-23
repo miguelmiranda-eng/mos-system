@@ -5,6 +5,7 @@ import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
+import { SoftAlert, Btn, Chip, cls } from "./ui";
 
 const STANDARD_UNITS_PER_BOX = 72;
 
@@ -843,18 +844,18 @@ export const ReceivingModule = () => {
           El código abre el formulario y dispara el lookup de UPC (autofill +
           candado). Beep/vibración según el resultado. ── */}
       <div className="relative">
-        <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-indigo-400" />
+        <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-muted-foreground" />
         <input
           ref={scanRef}
           value={scanBuf}
           onChange={e => setScanBuf(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleGlobalScan(); } }}
           placeholder="ESCANEA EL UPC DEL CARTÓN PARA RECIBIR…"
-          className="w-full pl-14 pr-4 py-4 bg-indigo-500/5 border-2 border-indigo-500/40 focus:border-indigo-400 rounded-2xl text-lg font-mono font-black tracking-wider focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-sm placeholder:tracking-widest placeholder:font-bold"
+          className="w-full pl-14 pr-4 py-4 bg-card border border-input rounded-lg text-lg font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors placeholder:text-sm placeholder:text-muted-foreground/60"
           data-testid="rcv-global-scan"
           autoFocus
         />
-        {upcLooking && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-400 animate-spin" />}
+        {upcLooking && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground animate-spin" />}
       </div>
       <div className="flex items-center justify-between gap-3">
         <div className="relative flex-1 max-w-2xl group">
@@ -865,13 +866,13 @@ export const ReceivingModule = () => {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar por N° de recibo, cliente o carro (ubicación)…"
-            className="w-full pl-12 pr-10 py-3 bg-card/40 border border-border/40 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/10 transition-all"
+            className={`${cls.input} pl-12 pr-10`}
             data-testid="rcv-search"
           />
           {search && (
             <button
               onClick={() => setSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-md transition-colors"
               title="Limpiar búsqueda"
             >
               <X className="w-4 h-4" />
@@ -881,21 +882,20 @@ export const ReceivingModule = () => {
       </div>
       {/* Exportar Excel de recibos por cliente */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Exportar recibos:</span>
+        <span className="text-xs font-medium text-muted-foreground">Exportar recibos:</span>
         <div className="w-64">
           <SearchableSelect options={customerOptions} value={exportCustomer} onChange={setExportCustomer} placeholder="Cliente (vacío = todos)…" testId="rcv-export-customer" />
         </div>
-        <button
+        <Btn
           onClick={() => window.open(`${API}/export/receiving${exportCustomer ? `?customer=${encodeURIComponent(exportCustomer)}` : ''}`, '_blank')}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold uppercase tracking-wider text-xs flex items-center gap-2 transition-all"
           data-testid="rcv-export-btn"
           title={exportCustomer ? `Exportar recibos de ${exportCustomer}` : 'Exportar todos los recibos'}
         >
           <Download className="w-4 h-4" /> Exportar Excel
-        </button>
+        </Btn>
       </div>
       {search.trim() && (
-        <div className="text-xs font-black uppercase tracking-widest text-muted-foreground px-1">
+        <div className="text-xs font-medium text-muted-foreground px-1">
           {records.length} resultado(s) para "{search.trim()}"
         </div>
       )}
@@ -904,8 +904,8 @@ export const ReceivingModule = () => {
           {/* ASN (Packing List) — al principio: se recibe contra un packing list */}
           <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                ASN (Packing List) <span className="text-red-400">*</span>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                ASN (Packing List) <span className="text-red-600 dark:text-red-400">*</span>
               </label>
               <div className="flex gap-2">
                 <input
@@ -918,21 +918,22 @@ export const ReceivingModule = () => {
                   disabled={!!editingId}
                 />
                 {!editingId && form.asn_reference && !selectedAsnDoc && (
-                  <button
+                  <Btn
                     type="button"
+                    variant="primary"
                     onClick={openCreateAsn}
-                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-black uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-all"
+                    className="whitespace-nowrap"
                     title={`Crear ASN ${form.asn_reference} si aún no existe`}
                     data-testid="rcv-asn-create"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     Crear ASN
-                  </button>
+                  </Btn>
                 )}
               </div>
               {!editingId && form.asn_reference && !selectedAsnDoc && (
-                <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
-                  El ASN <span className="font-mono font-bold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
+                  El ASN <span className="font-mono font-semibold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
                 </p>
               )}
               <datalist id="rcv-asn-list">
@@ -942,11 +943,11 @@ export const ReceivingModule = () => {
               </datalist>
               {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
               {selectedAsnDoc && !editingId && (
-                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden">
-                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30 border-b border-border/20">
+                <div className="mt-2 border border-border bg-card rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
                     <div className="flex items-center gap-2">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                      <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground">
                         Líneas del ASN ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
                       </span>
                     </div>
@@ -954,14 +955,14 @@ export const ReceivingModule = () => {
                       <button
                         type="button"
                         onClick={clearAsnLine}
-                        className="flex items-center gap-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                        className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                       >
                         <X className="w-3 h-3" /> Limpiar
                       </button>
                     )}
                   </div>
                   {pendingAsnLines.length === 0 ? (
-                    <div className="px-3 py-3 text-[11px] text-muted-foreground italic">
+                    <div className="px-3 py-3 text-xs text-muted-foreground">
                       Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.
                     </div>
                   ) : (
@@ -975,34 +976,34 @@ export const ReceivingModule = () => {
                         const badge = remaining > 0
                           ? { value: remaining.toLocaleString(), label: 'pendientes', cls: 'text-foreground' }
                           : remaining < 0
-                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-500' }
-                            : { value: '0', label: 'completo', cls: 'text-emerald-500' };
+                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-600 dark:text-amber-400' }
+                            : { value: '0', label: 'completo', cls: 'text-emerald-600 dark:text-emerald-400' };
                         return (
                           <button
                             key={line.line_no}
                             type="button"
                             onClick={() => pickAsnLine(line)}
-                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-all ${isSel ? 'bg-primary/10' : 'hover:bg-secondary/30'}`}
+                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${isSel ? 'bg-primary/5' : 'hover:bg-muted/40'}`}
                           >
                             <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSel ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
                               {isSel && <CheckCircle2 className="w-3 h-3" />}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 text-xs">
-                                <span className="font-mono font-black text-primary">{line.part_number}</span>
-                                {line.country && <span className="text-[10px] font-bold uppercase text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">{line.country}</span>}
-                                {line.brand && <span className="text-[10px] font-bold uppercase text-muted-foreground">{line.brand}</span>}
+                                <span className="font-mono font-medium text-foreground">{line.part_number}</span>
+                                {line.country && <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">{line.country}</span>}
+                                {line.brand && <span className="text-xs font-medium text-muted-foreground">{line.brand}</span>}
                               </div>
                               {line.description && (
-                                <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={line.description}>
+                                <div className="text-xs text-muted-foreground truncate mt-0.5" title={line.description}>
                                   {line.description}
                                 </div>
                               )}
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <div className={`text-xs font-black tabular-nums ${badge.cls}`}>{badge.value}</div>
-                              <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">{badge.label}</div>
-                              <div className="text-[9px] tabular-nums text-muted-foreground mt-0.5">{received.toLocaleString()} / {expected.toLocaleString()}</div>
+                              <div className={`text-xs font-semibold tabular-nums ${badge.cls}`}>{badge.value}</div>
+                              <div className="text-[10px] text-muted-foreground">{badge.label}</div>
+                              <div className="text-[10px] tabular-nums text-muted-foreground mt-0.5">{received.toLocaleString()} / {expected.toLocaleString()}</div>
                             </div>
                           </button>
                         );
@@ -1015,22 +1016,22 @@ export const ReceivingModule = () => {
                   alimenta de las cajas reales (GET /asn/{id}) y se refresca en
                   cada recibo — el operador ve el packing list llenarse en vivo. */}
               {selectedAsnDoc && !editingId && asnMatrix && (
-                <div className="mt-2 border border-border/40 bg-background/40 rounded-xl overflow-hidden" data-testid="rcv-asn-matrix">
-                  <div className="px-3 py-2 bg-secondary/30 border-b border-border/20 flex items-center gap-2">
-                    <ClipboardCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                <div className="mt-2 border border-border bg-card rounded-lg overflow-hidden" data-testid="rcv-asn-matrix">
+                  <div className="px-3 py-2 bg-muted/50 border-b border-border flex items-center gap-2">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground">
                       Recibido en este ASN — color × talla ({(asnBoxes || []).length} cajas)
                     </span>
                   </div>
                   <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-[11px] tabular-nums">
                       <thead>
-                        <tr className="bg-secondary/20">
-                          <th className="text-left px-3 py-1.5 font-black uppercase tracking-wider text-muted-foreground">Color</th>
+                        <tr className="bg-muted/50 border-b border-border">
+                          <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Color</th>
                           {asnMatrix.sizes.map(sz => (
-                            <th key={sz} className="px-2 py-1.5 font-black text-muted-foreground">{sz}</th>
+                            <th key={sz} className="px-2 py-1.5 font-semibold text-muted-foreground">{sz}</th>
                           ))}
-                          <th className="px-3 py-1.5 font-black text-muted-foreground">Total</th>
+                          <th className="px-3 py-1.5 font-semibold text-muted-foreground">Total</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1038,18 +1039,18 @@ export const ReceivingModule = () => {
                           const rowTotal = asnMatrix.sizes.reduce((s, sz) => s + (asnMatrix.cells[`${co}|${sz}`] || 0), 0);
                           const isActiveColor = (form.color || '').toUpperCase() === co;
                           return (
-                            <tr key={co} className={`border-t border-border/10 ${isActiveColor ? 'bg-primary/5' : ''}`}>
-                              <td className="px-3 py-1.5 font-bold font-mono">{co}</td>
+                            <tr key={co} className={`border-t border-border/60 ${isActiveColor ? 'bg-primary/5' : ''}`}>
+                              <td className="px-3 py-1.5 font-medium font-mono">{co}</td>
                               {asnMatrix.sizes.map(sz => {
                                 const v = asnMatrix.cells[`${co}|${sz}`] || 0;
                                 const isActiveCell = isActiveColor && (form.size || '').toUpperCase() === sz;
                                 return (
-                                  <td key={sz} className={`px-2 py-1.5 text-center ${v ? 'font-black text-foreground' : 'text-muted-foreground/40'} ${isActiveCell ? 'ring-2 ring-primary/60 rounded' : ''}`}>
+                                  <td key={sz} className={`px-2 py-1.5 text-center ${v ? 'font-medium text-foreground' : 'text-muted-foreground/40'} ${isActiveCell ? 'ring-2 ring-primary/60 rounded' : ''}`}>
                                     {v ? v.toLocaleString() : '·'}
                                   </td>
                                 );
                               })}
-                              <td className="px-3 py-1.5 text-center font-black text-emerald-500">{rowTotal.toLocaleString()}</td>
+                              <td className="px-3 py-1.5 text-center font-semibold">{rowTotal.toLocaleString()}</td>
                             </tr>
                           );
                         })}
@@ -1062,19 +1063,19 @@ export const ReceivingModule = () => {
           </div>
           {/* UPC — captura primero. Master del catálogo de producto */}
           {!editingId && (
-            <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
-              <label className="text-xs uppercase tracking-wider font-bold block mb-1 flex items-center gap-2">
-                <span className="text-indigo-400">UPC</span>
-                <span className="text-[9px] font-black uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 rounded">Obligatorio</span>
+            <div className="p-3 rounded-lg bg-card border border-border">
+              <label className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-2">
+                <span className="text-foreground font-semibold">UPC</span>
+                <Chip tone="danger">Obligatorio</Chip>
                 {upcDoc && (
-                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <Chip tone="success">
                     <CheckCircle2 className="w-2.5 h-2.5" /> en catálogo
-                  </span>
+                  </Chip>
                 )}
                 {upc.trim() && !upcDoc && !upcLooking && (
-                  <span className="text-[9px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 rounded">
+                  <Chip tone="danger">
                     no registrado
-                  </span>
+                  </Chip>
                 )}
               </label>
               <div className="flex gap-2">
@@ -1082,7 +1083,7 @@ export const ReceivingModule = () => {
                   value={upc}
                   onChange={e => setUpc(e.target.value)}
                   placeholder="Escanea el UPC del cartón"
-                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono font-bold ${
+                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono ${
                     upcDoc ? 'border-emerald-500/40' : upc.trim() ? 'border-red-500/40' : 'border-border'
                   }`}
                   data-testid="rcv-upc"
@@ -1094,32 +1095,30 @@ export const ReceivingModule = () => {
                   </span>
                 )}
                 {upcDoc && (
-                  <button
+                  <Btn
                     type="button"
                     onClick={() => { setUpc(''); setUpcDoc(null); }}
-                    className="px-3 py-2 bg-secondary hover:bg-secondary/70 text-foreground rounded text-xs font-bold uppercase tracking-widest flex items-center gap-1.5"
                     title="Limpiar UPC y desbloquear campos"
                   >
                     <X className="w-3.5 h-3.5" />
-                  </button>
+                  </Btn>
                 )}
               </div>
               {upcDoc && (
-                <p className="text-[10px] text-emerald-500 mt-1.5 font-mono">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1.5 font-mono">
                   {upcDoc.style} · {upcDoc.color} · {upcDoc.size} — {upcDoc.description?.slice(0, 60) || '—'}
                 </p>
               )}
               {upc.trim() && !upcDoc && !upcLooking && (
-                <p className="text-[10px] text-red-500 mt-1.5 flex items-start gap-1">
-                  <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                <SoftAlert tone="danger" className="mt-2">
                   <span>
-                    El UPC <span className="font-mono font-bold">{upc.trim().toUpperCase()}</span> no está registrado. No se puede recibir.
+                    El UPC <span className="font-mono font-semibold">{upc.trim().toUpperCase()}</span> no está registrado. No se puede recibir.
                     Pídele al supervisor que lo dé de alta en <b>Configuración WMS → Catálogo de UPC</b>.
                   </span>
-                </p>
+                </SoftAlert>
               )}
               {!upc.trim() && (
-                <p className="text-[10px] text-muted-foreground mt-1.5">
+                <p className="text-xs text-muted-foreground mt-1.5">
                   Escanea el UPC del cartón. Todo material se recibe con UPC registrado.
                 </p>
               )}
@@ -1128,38 +1127,38 @@ export const ReceivingModule = () => {
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('customer')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.customer && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('customer')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.customer && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('manufacturer')} {!editingId && <span className="text-red-500">*</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('manufacturer')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
               </label>
               <SearchableSelect options={manufacturerOptions} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="rcv-manufacturer" allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">{t('wms_lot')}</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_lot')}</label>
               <input placeholder={t('wms_lot')} value={form.lot_number} onChange={e => setForm(p => ({ ...p, lot_number: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="rcv-lot" />
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('style')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.style && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('style')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.style && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && styleOptions.length === 0)} allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('color')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.color && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('color')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.color && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('size')} {!editingId && <span className="text-red-500">*</span>} {!!upcDoc?.size && <span className="text-emerald-500 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('size')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.size && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
               </label>
               <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc?.size}>
                 <option value="">{t('select_placeholder')}</option>
@@ -1169,22 +1168,22 @@ export const ReceivingModule = () => {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('description')} {!editingId && <span className="text-red-500">*</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('description')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
               </label>
               <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('country_of_origin')} {!editingId && <span className="text-red-500">*</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('country_of_origin')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
                 <SearchableSelect options={countryOptions} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
               </div>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground font-bold block mb-1">
-                {t('fabric_content')} {!editingId && <span className="text-red-500">*</span>}
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                {t('fabric_content')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
                 <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} />
@@ -1204,7 +1203,7 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-units-per-box"
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Default 72. Cámbialo si la caja trae otra cantidad (ej. 60).</p>
+              <p className="text-xs text-muted-foreground mt-1">Default 72. Cámbialo si la caja trae otra cantidad (ej. 60).</p>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">N° de cajas</label>
@@ -1216,7 +1215,7 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-boxes"
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Cajas completas de {effectiveUpb} pzs c/u.</p>
+              <p className="text-xs text-muted-foreground mt-1">Cajas completas de {effectiveUpb} pzs c/u.</p>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Piezas sueltas <span className="normal-case text-muted-foreground/70">(opcional)</span></label>
@@ -1228,15 +1227,15 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-loose"
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Caja incompleta (menos de {effectiveUpb}).</p>
+              <p className="text-xs text-muted-foreground mt-1">Caja incompleta (menos de {effectiveUpb}).</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Total a recibir (auto)</label>
-              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-primary/5 border border-primary/40 rounded text-base text-foreground font-black" data-testid="rcv-total" />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                {(parseInt(form.boxes) || 0)} caja(s) × {effectiveUpb}{(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''} = <span className="font-bold text-foreground">{totalUnits} pzs</span>
+              <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-muted/50 border border-border rounded-md text-base text-foreground font-semibold tabular-nums" data-testid="rcv-total" />
+              <p className="text-xs text-muted-foreground mt-1">
+                {(parseInt(form.boxes) || 0)} caja(s) × {effectiveUpb}{(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''} = <span className="font-semibold text-foreground">{totalUnits} pzs</span>
               </p>
             </div>
             <div>
@@ -1252,7 +1251,7 @@ export const ReceivingModule = () => {
               impresión de etiquetas. Ahora TODO recibo imprime etiqueta automática
               (ver handlePrintLabel en el submit). */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-foreground">{t('total')}: {totalUnits} {t('wms_units')}</span>
+            <span className="text-sm font-medium text-foreground">{t('total')}: <span className="font-semibold tabular-nums">{totalUnits}</span> {t('wms_units')}</span>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             {/* No hay botón "Revisar y Recibir" ni edición de recibos: NO se
@@ -1261,19 +1260,19 @@ export const ReceivingModule = () => {
                 legacy" al fondo del menú). */}
             {!editingId && (
               <div className="relative" ref={cartMenuRef}>
-                <button
+                <Btn
+                  variant="primary"
                   onClick={() => setShowCartMenu(s => !s)}
                   disabled={loading}
-                  className="px-4 py-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 rounded text-sm flex items-center gap-1.5 disabled:opacity-50"
                   data-testid="rcv-submit-cart"
                   title="Recibir esta caja a un carro de Putaway 2.0 — quedará en el carro hasta que la ubiques manualmente."
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
                   Recibir a Carro
                   <ChevronDown className="w-3.5 h-3.5 opacity-70" />
-                </button>
+                </Btn>
                 {showCartMenu && (
-                  <div className="absolute z-30 right-0 mt-1 w-56 bg-popover border border-amber-500/30 rounded-lg shadow-2xl overflow-hidden">
+                  <div className="absolute z-30 right-0 mt-1 w-56 bg-popover border border-border rounded-lg shadow-xl overflow-hidden">
                     {(transitCarts.length > 0 ? transitCarts :
                       Array.from({ length: 50 }, (_, i) => ({ name: `CARRO ${i + 1}`, boxes: 0 }))
                     ).map(c => (
@@ -1281,13 +1280,13 @@ export const ReceivingModule = () => {
                         key={c.name}
                         onClick={() => requestSubmit({ toLocation: c.name })}
                         disabled={loading}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-amber-500/15 flex items-center justify-between gap-2 disabled:opacity-50"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center justify-between gap-2 disabled:opacity-50"
                         data-testid={`rcv-submit-cart-${c.name.replace(/\s+/g, '-').toLowerCase()}`}
                       >
-                        <span className="flex items-center gap-2 font-mono font-bold text-amber-500">
-                          <Truck className="w-3.5 h-3.5" /> {c.name}
+                        <span className="flex items-center gap-2 font-mono font-medium text-foreground">
+                          <Truck className="w-3.5 h-3.5 text-muted-foreground" /> {c.name}
                         </span>
-                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           {c.boxes || 0} cajas
                         </span>
                       </button>
@@ -1295,7 +1294,7 @@ export const ReceivingModule = () => {
                     <button
                       onClick={() => requestSubmit({ toLocation: TRANSIT_LOCATION })}
                       disabled={loading}
-                      className="w-full text-left px-3 py-2 text-xs border-t border-border/40 hover:bg-secondary/60 text-muted-foreground disabled:opacity-50"
+                      className="w-full text-left px-3 py-2 text-xs border-t border-border hover:bg-muted text-muted-foreground disabled:opacity-50"
                       title="Ubicación temporal legacy — solo si ninguno de los carros aplica."
                       data-testid="rcv-submit-temporal"
                     >
@@ -1305,7 +1304,7 @@ export const ReceivingModule = () => {
                 )}
               </div>
             )}
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-secondary text-foreground rounded text-sm">{t('cancel')}</button>
+            <Btn onClick={() => setShowForm(false)}>{t('cancel')}</Btn>
           </div>
         </div>
       )}
@@ -1314,94 +1313,92 @@ export const ReceivingModule = () => {
           (el backend revalida todo de todas formas). ── */}
       {pendingSubmit && (
         <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="rcv-summary-modal">
-          <div className="w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
-            <div className="px-5 py-3 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
-              <ClipboardCheck className="w-5 h-5 text-primary" />
-              <span className="font-black uppercase tracking-wider text-sm">Revisar y confirmar recepción</span>
+          <div className="w-full max-w-lg bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-border/20 flex items-center gap-2">
+              <ClipboardCheck className="w-5 h-5 text-muted-foreground" />
+              <span className="font-semibold text-sm">Revisar y confirmar recepción</span>
             </div>
             <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                <span className="text-muted-foreground text-xs uppercase font-bold">Cliente</span>
-                <span className="font-bold">{form.customer}</span>
-                <span className="text-muted-foreground text-xs uppercase font-bold">Producto</span>
-                <span className="font-mono font-black text-primary">{form.style} / {form.color} / {form.size}</span>
-                <span className="text-muted-foreground text-xs uppercase font-bold">UPC</span>
+                <span className="text-xs font-medium text-muted-foreground">Cliente</span>
+                <span className="font-medium">{form.customer}</span>
+                <span className="text-xs font-medium text-muted-foreground">Producto</span>
+                <span className="font-mono font-medium">{form.style} / {form.color} / {form.size}</span>
+                <span className="text-xs font-medium text-muted-foreground">UPC</span>
                 <span className="font-mono">{upcDoc?.upc || (upc.trim() ? `${upc.trim().toUpperCase()} (sin catálogo)` : '— sin UPC —')}</span>
-                <span className="text-muted-foreground text-xs uppercase font-bold">ASN</span>
+                <span className="text-xs font-medium text-muted-foreground">ASN</span>
                 <span className="font-mono">{form.asn_reference}{selectedAsnLine != null ? ` · línea ${selectedAsnLine}` : ''}</span>
-                <span className="text-muted-foreground text-xs uppercase font-bold">Destino</span>
-                <span className="font-mono font-bold">{pendingSubmit.opts.toLocation || 'UBICACION TEMPORAL'}</span>
+                <span className="text-xs font-medium text-muted-foreground">Destino</span>
+                <span className="font-mono font-medium">{pendingSubmit.opts.toLocation || 'UBICACION TEMPORAL'}</span>
               </div>
-              <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-center">
-                <div className="text-2xl font-black tabular-nums">
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-center">
+                <div className="text-2xl font-semibold tracking-tight tabular-nums">
                   {(parseInt(form.boxes) || 0).toLocaleString()} caja(s) × {effectiveUpb}
                   {(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''}
                 </div>
-                <div className="text-sm font-bold text-primary uppercase tracking-wider mt-1">
+                <div className="text-sm font-medium text-muted-foreground mt-1">
                   = {totalUnits.toLocaleString()} piezas
                 </div>
               </div>
               {pendingSubmit.warnings.length > 0 && (
-                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 space-y-1.5">
-                  {pendingSubmit.warnings.map((w, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                      <span>{w}</span>
-                    </div>
-                  ))}
-                </div>
+                <SoftAlert tone="warning">
+                  <div className="space-y-1.5">
+                    {pendingSubmit.warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                        <span>{w}</span>
+                      </div>
+                    ))}
+                  </div>
+                </SoftAlert>
               )}
             </div>
-            <div className="px-5 py-3 bg-secondary/30 border-t border-border/40 flex justify-end gap-2">
-              <button
+            <div className="px-5 py-3 border-t border-border/20 flex justify-end gap-2">
+              <Btn
                 onClick={() => setPendingSubmit(null)}
-                className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold"
                 data-testid="rcv-summary-cancel"
               >
                 Volver
-              </button>
-              <button
+              </Btn>
+              <Btn
+                variant="primary"
                 onClick={() => { const p = pendingSubmit; setPendingSubmit(null); handleSubmit(p.opts); }}
                 disabled={loading}
-                className="px-5 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-black uppercase tracking-wider flex items-center gap-2 disabled:opacity-50"
                 data-testid="rcv-summary-confirm"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
                 Confirmar recepción
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 overflow-y-auto max-h-[600px] pr-2 custom-scrollbar">
         {records.map(r => (
-          <div key={r.receiving_id} className="group border border-border/40 rounded-2xl p-4 bg-card/60 backdrop-blur-sm hover:border-primary/40 hover:bg-card transition-all relative overflow-hidden shadow-lg hover:shadow-primary/5 shadow-black/20" data-testid={`rcv-${r.receiving_id}`}>
+          <div key={r.receiving_id} className="border border-border rounded-lg p-4 bg-card hover:bg-muted/40 transition-colors" data-testid={`rcv-${r.receiving_id}`}>
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-4 min-w-0">
-                <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                  <Package className="w-6 h-6 text-blue-400" />
-                </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="font-mono font-black text-primary text-sm uppercase tracking-tighter">
+                    <span className="font-mono font-semibold text-sm">
                       {r.style || t('wms_no_style')}
                     </span>
-                    <span className="text-[10px] font-black uppercase bg-secondary/80 px-2 py-0.5 rounded text-muted-foreground tracking-widest">
+                    <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded-md text-muted-foreground">
                       {r.receiving_id}
                     </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="text-xs font-bold text-foreground truncate max-w-[150px]">{r.customer || t('wms_no_client')}</span>
-                    <span className="text-xs text-muted-foreground font-medium">{r.color} / {r.size || 'N/A'}</span>
+                    <span className="text-xs font-medium text-foreground truncate max-w-[150px]">{r.customer || t('wms_no_client')}</span>
+                    <span className="text-xs text-muted-foreground">{r.color} / {r.size || 'N/A'}</span>
                     {r.inv_location && (
-                      <span className="text-[10px] font-black uppercase text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                      <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md flex items-center gap-1">
                         <MapPin className="w-2.5 h-2.5" /> {r.inv_location}
                       </span>
                     )}
                     {r.is_bpo && (
-                      <span className="text-[10px] font-black uppercase text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded flex items-center gap-1 border border-amber-500/20">
+                      <Chip tone="warning">
                         B.O.
-                      </span>
+                      </Chip>
                     )}
                   </div>
                 </div>
@@ -1409,19 +1406,19 @@ export const ReceivingModule = () => {
 
               <div className="flex items-center gap-4 flex-shrink-0">
                 <div className="text-right">
-                  <div className="text-lg font-black tabular-nums leading-none">
+                  <div className="text-lg font-semibold tabular-nums leading-none">
                     {(r.total_units || r.units || 0).toLocaleString()}
-                    <span className="text-[10px] uppercase text-muted-foreground ml-1 font-bold">Units</span>
+                    <span className="text-xs font-normal text-muted-foreground ml-1">Units</span>
                   </div>
-                  <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-1">
+                  <div className="text-xs text-muted-foreground mt-1">
                     {new Date(r.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 h-10 border-l border-border/40 pl-4">
+                <div className="flex items-center gap-2 h-10 border-l border-border/60 pl-4">
                   <button
                     onClick={() => handlePrintLabel(r)}
-                    className="p-2.5 text-muted-foreground hover:text-primary rounded-xl hover:bg-primary/10 transition-all shadow-none hover:shadow-lg shadow-primary/20"
+                    className="p-2 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"
                     title="Imprimir etiqueta"
                     data-testid={`rcv-print-${r.receiving_id}`}
                   >
@@ -1432,25 +1429,23 @@ export const ReceivingModule = () => {
             </div>
 
             {/* Detalles expandibles sutiles */}
-            <div className="mt-3 pt-3 border-t border-border/20 flex gap-4 text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
+            <div className="mt-3 pt-3 border-t border-border/60 flex gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><Factory className="w-3 h-3" /> {r.manufacturer || '-'}</span>
               <span className="flex items-center gap-1">LOT: {r.lot_number || '-'}</span>
-              <span className="ml-auto opacity-40">By: {r.received_by_name || 'System'}</span>
+              <span className="ml-auto text-muted-foreground/60">By: {r.received_by_name || 'System'}</span>
             </div>
           </div>
         ))}
         {records.length === 0 && !search.trim() && (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-60 bg-secondary/10 rounded-3xl border border-dashed border-border/40">
-            <Search className="w-16 h-16 mb-4 stroke-[1px]" />
-            <p className="font-bold uppercase tracking-widest text-sm italic">Busca un recibo</p>
-            <p className="text-xs mt-1">Escribe el N° de recibo o el nombre del cliente arriba</p>
+          <div className="py-16 text-center">
+            <p className="text-sm font-semibold text-foreground/80">Busca un recibo</p>
+            <p className="text-sm text-muted-foreground mt-1">Escribe el N° de recibo o el nombre del cliente arriba</p>
           </div>
         )}
         {records.length === 0 && search.trim() && !searching && (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-50 bg-secondary/10 rounded-3xl border border-dashed border-border/40">
-            <Package className="w-16 h-16 mb-4 stroke-[1px]" />
-            <p className="font-bold uppercase tracking-widest text-sm italic">Sin resultados</p>
-            <p className="text-xs mt-1">No hay recibos que coincidan con "{search.trim()}"</p>
+          <div className="py-16 text-center">
+            <p className="text-sm font-semibold text-foreground/80">Sin resultados</p>
+            <p className="text-sm text-muted-foreground mt-1">No hay recibos que coincidan con "{search.trim()}"</p>
           </div>
         )}
       </div>
@@ -1459,18 +1454,13 @@ export const ReceivingModule = () => {
       {/* Create ASN inline modal */}
       {createAsnOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border/50 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div>
-                  <h3 className="font-black uppercase tracking-tighter text-sm">Crear ASN manualmente</h3>
-                  <p className="text-[11px] text-muted-foreground font-bold">
-                    Captura mínima del packing list — luego puedes recibir contra este ASN.
-                  </p>
-                </div>
+              <div>
+                <h3 className="font-semibold text-sm">Crear ASN manualmente</h3>
+                <p className="text-xs text-muted-foreground">
+                  Captura mínima del packing list — luego puedes recibir contra este ASN.
+                </p>
               </div>
               <button
                 onClick={() => setCreateAsnOpen(false)}
@@ -1485,19 +1475,19 @@ export const ReceivingModule = () => {
               {/* Header fields */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-                    N° ASN <span className="text-red-400">*</span>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
+                    N° ASN <span className="text-red-600 dark:text-red-400">*</span>
                   </label>
                   <input
                     value={asnDraft.asn_id}
                     onChange={e => setAsnDraft(p => ({ ...p, asn_id: e.target.value.trim() }))}
                     placeholder="Ej. 12345"
-                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono font-bold"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono"
                     data-testid="asn-draft-id"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Vendor</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Vendor</label>
                   <input
                     value={asnDraft.vendor}
                     onChange={e => setAsnDraft(p => ({ ...p, vendor: e.target.value }))}
@@ -1506,7 +1496,7 @@ export const ReceivingModule = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">PO</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">PO</label>
                   <input
                     value={asnDraft.po_number}
                     onChange={e => setAsnDraft(p => ({ ...p, po_number: e.target.value }))}
@@ -1519,32 +1509,32 @@ export const ReceivingModule = () => {
               {/* Items */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                  <span className="text-xs font-medium text-muted-foreground">
                     Líneas del packing list ({asnDraft.items.length})
                   </span>
                   <button
                     type="button"
                     onClick={addAsnDraftItem}
-                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-indigo-400 hover:text-indigo-300"
+                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                   >
                     <Plus className="w-3 h-3" /> Agregar línea
                   </button>
                 </div>
                 <div className="space-y-2">
                   {asnDraft.items.map((it, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 p-3 bg-secondary/20 border border-border/20 rounded-xl">
+                    <div key={idx} className="grid grid-cols-12 gap-2 p-3 bg-muted/30 border border-border/60 rounded-lg">
                       <div className="col-span-3">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Part #*</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">Part #*</label>
                         <input
                           value={it.part_number}
                           onChange={e => updateAsnDraftItem(idx, 'part_number', e.target.value)}
                           placeholder="Style"
-                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs font-mono font-bold"
+                          className="w-full px-2 py-1.5 bg-background border border-border rounded text-xs font-mono"
                           data-testid={`asn-draft-pn-${idx}`}
                         />
                       </div>
                       <div className="col-span-4">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción</label>
                         <input
                           value={it.description}
                           onChange={e => updateAsnDraftItem(idx, 'description', e.target.value)}
@@ -1552,7 +1542,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Cant.*</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">Cant.*</label>
                         <input
                           type="number"
                           min="1"
@@ -1563,7 +1553,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">País</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">País</label>
                         <input
                           value={it.country}
                           onChange={e => updateAsnDraftItem(idx, 'country', e.target.value.toUpperCase())}
@@ -1572,7 +1562,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground block mb-1">Marca</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">Marca</label>
                         <input
                           value={it.brand}
                           onChange={e => updateAsnDraftItem(idx, 'brand', e.target.value)}
@@ -1597,22 +1587,22 @@ export const ReceivingModule = () => {
             </div>
 
             <div className="flex gap-2 p-5 border-t border-border/20">
-              <button
+              <Btn
+                variant="primary"
                 onClick={handleCreateAsn}
                 disabled={creatingAsn || !asnDraft.asn_id.trim()}
-                className="flex-1 px-4 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1"
                 data-testid="asn-draft-submit"
               >
                 {creatingAsn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Crear ASN
-              </button>
-              <button
+              </Btn>
+              <Btn
                 onClick={() => setCreateAsnOpen(false)}
                 disabled={creatingAsn}
-                className="px-4 py-2.5 bg-secondary text-foreground rounded-xl text-sm font-bold uppercase disabled:opacity-50"
               >
                 Cancelar
-              </button>
+              </Btn>
             </div>
           </div>
         </div>
