@@ -22,91 +22,63 @@
   --dark-gray: 0 0% 10%;
   --white: 0 0% 100%;
 
-  /* Modern Light Theme (Harmonious High Contrast Zinc/Slate) */
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
-  
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
-  
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  
-  --primary: 221.2 83.2% 53.3%;
-  --primary-foreground: 210 40% 98%;
-  
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  
-  --destructive: 0 84.2% 60.2%;
+  /* TEMA ÚNICO (rediseño 2026-07): azulado semi-oscuro con detalles claros.
+     No hay claro/oscuro — la MISMA paleta vive en :root, en .dark y en la
+     media query, para que ninguna ruta (clase vieja guardada, preferencia del
+     SO) produzca otro tema. Los pares Tailwind `x dark:y` del código resuelven
+     por la clase .dark que ThemeContext fija siempre. */
+  --background: 222 44% 11%;
+  --foreground: 213 30% 96%;
+
+  --card: 221 39% 15%;
+  --card-foreground: 213 30% 96%;
+
+  --popover: 221 39% 14%;
+  --popover-foreground: 213 30% 96%;
+
+  --primary: 213 92% 66%;
+  --primary-foreground: 222 47% 10%;
+
+  --secondary: 220 32% 20%;
+  --secondary-foreground: 213 25% 92%;
+
+  --muted: 220 32% 20%;
+  --muted-foreground: 216 16% 70%;
+
+  --accent: 220 32% 22%;
+  --accent-foreground: 213 25% 92%;
+
+  --destructive: 0 72% 57%;
   --destructive-foreground: 0 0% 98%;
-  
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 221.2 83.2% 53.3%;
-  
+
+  --border: 219 28% 24%;
+  --input: 219 28% 27%;
+  --ring: 213 92% 66%;
+
   --radius: 0.5rem;
 }
 
 .dark {
-  /* Modern Dark Theme (Harmonious High Contrast Zinc/Slate) */
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  
-  --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  
-  --destructive: 0 62.8% 30.6%;
+  /* Idéntico a :root — un solo tema (ver nota arriba). */
+  --background: 222 44% 11%;
+  --foreground: 213 30% 96%;
+  --card: 221 39% 15%;
+  --card-foreground: 213 30% 96%;
+  --popover: 221 39% 14%;
+  --popover-foreground: 213 30% 96%;
+  --primary: 213 92% 66%;
+  --primary-foreground: 222 47% 10%;
+  --secondary: 220 32% 20%;
+  --secondary-foreground: 213 25% 92%;
+  --muted: 220 32% 20%;
+  --muted-foreground: 216 16% 70%;
+  --accent: 220 32% 22%;
+  --accent-foreground: 213 25% 92%;
+  --destructive: 0 72% 57%;
   --destructive-foreground: 0 0% 98%;
-  
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 217.2 91.2% 59.8%;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 217.2 91.2% 59.8%;
-  }
+  --border: 219 28% 24%;
+  --input: 219 28% 27%;
+  --ring: 213 92% 66%;
 }
 
 /* ─── iPad / iOS performance ───────────────────────────────────────────────

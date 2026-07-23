@@ -5,7 +5,7 @@ import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  Sun, Moon, LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert,
+  LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -251,10 +251,6 @@ export default function WMS() {
             <Warehouse className="w-5 h-5 text-primary" /> MOS <span className="text-primary not-italic ml-0.5">WMS</span>
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={toggleTheme} title={isDark ? t('light_mode') : t('dark_mode')}
-              className="p-2 rounded-xl bg-secondary/20 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all border border-border/20">
-              {isDark ? <Sun className="w-4 h-4 text-primary" /> : <Moon className="w-4 h-4 text-indigo-400" />}
-            </button>
             <button onClick={handleLogout} title="Cerrar Sesión"
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20">
               <LogOut className="w-4 h-4" /> <span className="text-xs font-medium">Salir</span>
@@ -312,15 +308,6 @@ export default function WMS() {
           <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} />
           <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 sm:px-8 py-4 border-b border-border/40 bg-background/95 backdrop-blur">
             <div className="flex items-center gap-3 min-w-0">
-              {/* Working theme toggle (sun in dark mode, moon in light mode). */}
-              <button
-                onClick={toggleTheme}
-                title={isDark ? 'Light mode' : 'Dark mode'}
-                data-testid="customer-theme-toggle"
-                className="p-2.5 rounded-2xl bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-all flex-shrink-0"
-              >
-                {isDark ? <Sun className="w-6 h-6 text-primary" /> : <Moon className="w-6 h-6 text-indigo-400" />}
-              </button>
               <div className="leading-tight min-w-0">
                 <h1 className="text-lg sm:text-2xl font-bold tracking-tight whitespace-nowrap pr-1">My Inventory</h1>
                 <p className="text-xs text-muted-foreground truncate">
@@ -381,16 +368,6 @@ export default function WMS() {
           </div>
 
           <div className={`flex ${sidebarCollapsed ? 'flex-col' : 'flex-row'} gap-2`}>
-            <button
-              onClick={toggleTheme}
-              className="flex-1 flex items-center justify-center gap-2 p-2 rounded-xl bg-secondary/10 hover:bg-secondary/40 text-muted-foreground hover:text-foreground transition-all border border-border/20"
-              title={isDark ? t('light_mode') : t('dark_mode')}
-              data-testid="wms-theme-toggle"
-            >
-              {isDark ? <Sun className="w-4 h-4 text-primary animate-spin-slow" /> : <Moon className="w-4 h-4 text-indigo-400" />}
-              {!sidebarCollapsed && <span className="text-xs font-medium">{isDark ? t('light_mode') : t('dark_mode')}</span>}
-            </button>
-
             <button
               onClick={handleLogout}
               className="flex-1 flex items-center justify-center gap-2 p-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20"

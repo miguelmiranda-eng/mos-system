@@ -1,27 +1,28 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 
 const ThemeContext = createContext();
 
+/* TEMA ÚNICO (rediseño 2026-07, pedido del usuario): un solo tema azulado
+   semi-oscuro con detalles claros — se retiró el switch claro/oscuro.
+
+   La paleta vive en index.css bajo la clase `dark`, que aquí se fija SIEMPRE:
+   así todos los pares Tailwind `x dark:y` del código resuelven a su variante
+   sobre fondo oscuro y no hay dos temas que mantener. `toggleTheme`/`setTheme`
+   se conservan como no-ops para no romper llamadores viejos. */
 export const ThemeProvider = ({ children }) => {
-  const [theme, setTheme] = useState(() => {
-    // Support both keys for backwards compatibility.
-    // Default CLARO (rediseño minimalista 2026-07): quien ya eligió tema
-    // conserva su preferencia guardada; solo cambia el arranque en frío.
-    return localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'light';
-  });
+  const theme = 'dark';
 
   useEffect(() => {
     const root = window.document.documentElement;
-    root.classList.remove('light', 'dark', 'light-theme');
-    root.classList.add(theme);
-    // Keep both keys in sync for any legacy components
-    localStorage.setItem('mos_theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    root.classList.remove('light', 'light-theme');
+    root.classList.add('dark');
+    // Se pisa cualquier preferencia guardada de la era de dos temas.
+    localStorage.setItem('mos_theme', 'dark');
+    localStorage.setItem('theme', 'dark');
+  }, []);
 
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
-  };
+  const toggleTheme = () => {};
+  const setTheme = () => {};
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>

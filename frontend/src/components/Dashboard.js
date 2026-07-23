@@ -1492,9 +1492,6 @@ const Dashboard = () => {
         <div className="flex items-center gap-4 text-card-foreground">
           {/* Quick Actions */}
           <div className="flex items-center gap-1">
-            <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all text-muted-foreground hover:text-foreground" title={isDark ? t('light_mode') : t('dark_mode')}>
-              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
             {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
             {!isMobile && <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
