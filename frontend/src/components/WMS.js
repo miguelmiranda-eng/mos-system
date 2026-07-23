@@ -367,16 +367,6 @@ export default function WMS() {
             </button>
           </div>
 
-          <div className={`flex ${sidebarCollapsed ? 'flex-col' : 'flex-row'} gap-2`}>
-            <button
-              onClick={handleLogout}
-              className="flex-1 flex items-center justify-center gap-2 p-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20"
-              title="Cerrar Sesión"
-            >
-              <LogOut className="w-4 h-4" />
-              {!sidebarCollapsed && <span className="text-xs font-medium">Salir</span>}
-            </button>
-          </div>
         </div>
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
