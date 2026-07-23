@@ -961,14 +961,21 @@ async def seed_packing_link(request: Request):
     seeded, not_found, skipped, duplicated = [], [], [], []
     for num in numbers:
         # TODAS las órdenes que respondan a ese número — hay order_number
-        # duplicados en el CRM (p. ej. 2264 dos veces por doble captura, visto
-        # 2026-07-23: find_one sembraba en la gemela muerta y la orden viva que
-        # el usuario abre quedaba sin packing). Sembrar en todas es inocuo; no
-        # sembrar en la viva es el bug.
+        # duplicados en el CRM (censo 2026-07-23: 22 números, y en TODOS la
+        # gemela extra vive en PAPELERA DE RECICLAJE: se duplicó la orden y la
+        # copia vieja fue a la basura conservando su número). find_one sembraba
+        # en la gemela de la papelera y la orden viva quedaba sin packing (caso
+        # 2264). La papelera NO se siembra; el resto de matches, todas.
         matches = await db.orders.find(
             {"$or": [{"order_id": num}, {"order_number": num}]},
-            {"_id": 0, "order_id": 1, "order_number": 1},
+            {"_id": 0, "order_id": 1, "order_number": 1, "board": 1},
         ).to_list(20)
+        vivas = [o for o in matches if (o.get("board") or "").strip().upper() != "PAPELERA DE RECICLAJE"]
+        if matches and not vivas:
+            # Solo existe en la papelera: decirlo tal cual, no "no encontrada".
+            not_found.append(f"{num} (en papelera)")
+            continue
+        matches = vivas
         if not matches:
             not_found.append(num)
             continue
