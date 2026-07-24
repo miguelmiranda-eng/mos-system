@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from deps import db, require_auth, require_admin, log_activity, logger
 import printavo_client
-from printavo_sync import sync_once, CONFIG_ID
+from printavo_sync import sync_once, finalize_once, CONFIG_ID, DEFAULT_FINAL_BILL_STATUSES
 
 router = APIRouter(prefix="/api")
 
@@ -36,6 +36,12 @@ DEFAULTS = {
     "last_run_at": None,      # ISO timestamp of last poll attempt
     "last_error": None,       # last error message, if any
     "created_count": 0,       # cumulative orders created by the sync
+    # ── Final Bill pass ──────────────────────────────────────────────────────
+    "final_bill_enabled": True,                            # run the finalize pass each tick
+    "final_bill_status_names": DEFAULT_FINAL_BILL_STATUSES,  # Printavo status name(s) to match
+    "finalized_count": 0,     # cumulative orders whose invoice/total were filled
+    "last_finalize_at": None,
+    "last_finalize_error": None,
 }
 
 
@@ -58,13 +64,31 @@ async def _run_sync(cfg: dict) -> dict:
         if result.get("created"):
             update["created_count"] = int(cfg.get("created_count") or 0) + int(result["created"])
         await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": update}, upsert=True)
-        return result
     except Exception as e:
         logger.error(f"[printavo-sync] run error: {e}")
         await db.printavo_sync.update_one(
             {"config_id": CONFIG_ID}, {"$set": {"last_run_at": now, "last_error": str(e)[:500]}}, upsert=True
         )
         raise
+
+    # Final Bill pass runs independently: an invoice reaching Final Bill has
+    # nothing to do with which invoices were just created, and a finalize failure
+    # must not fail (or roll back) the create pass. Errors are recorded, not raised.
+    if cfg.get("final_bill_enabled", True):
+        try:
+            fin = await finalize_once(cfg)
+            fupd = {"last_finalize_at": now, "last_finalize_error": None}
+            if fin.get("finalized"):
+                fupd["finalized_count"] = int(cfg.get("finalized_count") or 0) + int(fin["finalized"])
+            await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": fupd}, upsert=True)
+            result["finalized"] = fin.get("finalized", 0)
+        except Exception as e:
+            logger.error(f"[printavo-sync] finalize error: {e}")
+            await db.printavo_sync.update_one(
+                {"config_id": CONFIG_ID},
+                {"$set": {"last_finalize_at": now, "last_finalize_error": str(e)[:500]}}, upsert=True,
+            )
+    return result
 
 
 async def _sync_guarded() -> dict:
@@ -140,6 +164,18 @@ async def update_printavo_sync(request: Request):
     # Allow resetting the watermark (e.g. to re-seed or force a backfill window).
     if "last_visual_id" in body:
         allowed["last_visual_id"] = str(body["last_visual_id"]).strip() or None
+    # ── Final Bill pass config ───────────────────────────────────────────────
+    if "final_bill_enabled" in body:
+        allowed["final_bill_enabled"] = bool(body["final_bill_enabled"])
+    if "final_bill_status_names" in body:
+        raw = body["final_bill_status_names"]
+        if isinstance(raw, str):
+            raw = [s for s in (p.strip() for p in raw.split(",")) if s]
+        allowed["final_bill_status_names"] = [str(s).strip() for s in (raw or []) if str(s).strip()]
+    # Setting final_bill_seeded=false re-arms the finalize pass to back-fill every
+    # invoice currently in Final Bill (one-shot catch-up) on the next run.
+    if "final_bill_seeded" in body:
+        allowed["final_bill_seeded"] = bool(body["final_bill_seeded"])
     await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": allowed}, upsert=True)
     await log_activity(user, "update_printavo_sync", allowed)
     cfg = await _get_config()

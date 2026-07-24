@@ -170,3 +170,74 @@ async def fetch_recent_invoices(first: int = 25) -> list:
     nodes = ((data.get("invoices") or {}).get("nodes")) or []
     logger.info(f"[printavo] fetched {len(nodes)} invoice(s) from API")
     return nodes
+
+
+# ── Final Bill sync ──────────────────────────────────────────────────────────
+# When an invoice reaches the "Final Bill" status, MOS copies the invoice's
+# Amount Outstanding and total item count onto the matching order (see
+# printavo_sync.finalize_once). "Final Bill" is a late-lifecycle status, so the
+# invoice is usually far outside the recent-VISUAL_ID window the create-sync
+# polls — we therefore query Printavo directly by statusIds instead of scanning
+# the newest invoices.
+
+STATUSES_QUERY = """
+query AllStatuses { statuses(first: 200) { nodes { id name } } }
+"""
+
+# Same line-item selection as INVOICES_QUERY (needed to recompute the total
+# quantity) plus amountOutstanding and a status-id filter + cursor pagination.
+FINAL_BILL_INVOICES_QUERY = """
+query FinalBillInvoices($first: Int!, $after: String, $statusIds: [ID!]) {
+  invoices(first: $first, after: $after, statusIds: $statusIds,
+           sortOn: VISUAL_ID, sortDescending: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      visualId
+      total
+      amountOutstanding
+      amountPaid
+      status { id name }
+      lineItemGroups(first: 5) {
+        nodes {
+          lineItems(first: 20) {
+            nodes {
+              description
+              color
+              itemNumber
+              items
+              sizes { count size }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def resolve_status_ids(names) -> list:
+    """Resolve Printavo status NAMES (e.g. ["Final Bill"]) to their status IDs,
+    matched case-insensitively. Returns [] if none match (caller no-ops)."""
+    wanted = {str(n).strip().lower() for n in (names or []) if str(n).strip()}
+    if not wanted:
+        return []
+    data = await _graphql(STATUSES_QUERY, {})
+    nodes = ((data.get("statuses") or {}).get("nodes")) or []
+    return [n["id"] for n in nodes
+            if n.get("id") and (n.get("name") or "").strip().lower() in wanted]
+
+
+async def fetch_invoices_by_status(status_ids: list, first: int = 30, after: str = None) -> dict:
+    """Return one page of invoices currently in any of `status_ids`.
+
+    Returns {"nodes": [...], "pageInfo": {"hasNextPage", "endCursor"}}. `first`
+    is clamped to 30 for the same complexity-budget reason as fetch_recent_invoices.
+    """
+    variables = {"first": max(1, min(first, 30)), "after": after, "statusIds": status_ids}
+    data = await _graphql(FINAL_BILL_INVOICES_QUERY, variables)
+    conn = (data.get("invoices")) or {}
+    nodes = conn.get("nodes") or []
+    logger.info(f"[printavo] fetched {len(nodes)} final-bill invoice(s) from API")
+    return {"nodes": nodes, "pageInfo": conn.get("pageInfo") or {}}

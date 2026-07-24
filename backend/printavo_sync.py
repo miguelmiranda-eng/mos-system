@@ -44,6 +44,13 @@ CONFIG_ID = "invoice_sync"
 # Overridable per-install via cfg["required_statuses"].
 DEFAULT_REQUIRED_STATUSES = ["Scheduled"]
 
+# Printavo status name(s) that mean "the job is billed"; reaching one triggers
+# copying Amount Outstanding + total quantity onto the matching MOS order.
+# Overridable per-install via cfg["final_bill_status_names"].
+DEFAULT_FINAL_BILL_STATUSES = ["Final Bill"]
+
+TRASH_BOARD = "PAPELERA DE RECICLAJE"
+
 
 def _status_ok(node: dict, allowed: set) -> bool:
     if not allowed:
@@ -126,6 +133,23 @@ def _flatten_line_items(invoice: dict) -> list:
     return items
 
 
+def _real_line_items(invoice: dict) -> list:
+    """Return only the GARMENT line items as (line_item, sizes, qty) tuples.
+
+    A Printavo work order carries many non-garment lines (department headers,
+    notes, approval method, allowed shortage, sample specs, ...). The real
+    garment lines are the ones with a positive quantity AND either a size
+    breakdown or a color. Shared by order creation (invoice_to_orders) and the
+    Final Bill total-quantity calc so both agree on what counts as a garment.
+    """
+    real = []
+    for li in _flatten_line_items(invoice):
+        sizes, qty = _map_sizes(li)
+        if qty > 0 and (bool(sizes) or bool((li.get("color") or "").strip())):
+            real.append((li, sizes, qty))
+    return real
+
+
 def _map_sizes(line_item: dict):
     """Return ({mos_size: qty}, total_qty) from a Printavo line item.
 
@@ -190,17 +214,9 @@ def invoice_to_orders(invoice: dict) -> list:
     workorder_url = invoice.get("workorderUrl") or invoice.get("url") or ""
     note_url, note_label = _extract_note_link(invoice.get("customerNote"))
 
-    # A Printavo work order carries many non-garment "line items": department
-    # headers (PRODUCTION/PACKING "DO NOT EDIT"), notes, approval method,
-    # allowed shortage, sample specs, etc. The actual garment lines are the ones
-    # with a real quantity. Keep only those so we don't create junk orders.
-    real = []
-    for li in _flatten_line_items(invoice):
-        sizes, qty = _map_sizes(li)
-        has_sizes = bool(sizes)
-        has_color = bool((li.get("color") or "").strip())
-        if qty > 0 and (has_sizes or has_color):
-            real.append((li, sizes, qty))
+    # Keep only the garment lines (see _real_line_items) so we don't create junk
+    # orders from department headers / notes / sample specs.
+    real = _real_line_items(invoice)
 
     orders = []
     for idx, (li, sizes, qty) in enumerate(real):
@@ -410,3 +426,124 @@ async def sync_once(cfg: dict) -> dict:
             await db.printavo_processed.delete_one({"_id": str(inv_id)})
 
     return {"initialized": False, "created": created_total, "seen": len(nodes), "watermark": watermark}
+
+
+# ── Final Bill pass ──────────────────────────────────────────────────────────
+# Separate lifecycle from creation: an invoice reaches "Final Bill" long after it
+# was created, so it is claimed in its OWN collection (printavo_finalized), not
+# the create-side printavo_processed. Idempotent: each invoice is applied once.
+
+async def _claim_finalize(invoice_id) -> bool:
+    """Atomically claim an invoice for the Final Bill pass (mirrors _claim_invoice).
+    Returns True the first time this invoice is finalized, False afterwards."""
+    if not invoice_id:
+        return False
+    try:
+        await db.printavo_finalized.insert_one({
+            "_id": str(invoice_id),
+            "claimed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
+
+
+async def apply_final_bill(invoice: dict) -> bool:
+    """Copy the invoice's Amount Outstanding and total item count onto the
+    matching MOS order (order_number == visualId). Returns True if a live order
+    was found and updated, False if no order matched (caller releases the claim
+    so a later tick retries once the order is imported)."""
+    visual_id = str(invoice.get("visualId") or "").strip()
+    if not visual_id:
+        return False
+
+    # Base order only: an invoice occasionally splits into visualId, visualId-2…
+    # Amount Outstanding is a single invoice-level figure, so it lives on the base.
+    order = await db.orders.find_one(
+        {"order_number": visual_id, "board": {"$ne": TRASH_BOARD}},
+        {"_id": 0, "order_id": 1},
+    )
+    if not order:
+        logger.info(f"[printavo] final-bill {visual_id}: no matching MOS order (yet), skipped")
+        return False
+
+    reals = _real_line_items(invoice)
+    if len(reals) > 1:
+        logger.warning(
+            f"[printavo] final-bill {visual_id}: invoice has {len(reals)} garment lines; "
+            f"writing invoice-level Amount Outstanding + total on the base order only")
+    total_qty = sum(q for _, _, q in reals)
+    try:
+        amount = round(float(invoice.get("amountOutstanding") or 0), 2)
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"order_id": order["order_id"]},
+        {"$set": {
+            "invoice": amount,            # column key for "INVOICE"
+            "total_quantity": total_qty,  # column key for "Total Quantity"
+            "final_bill_applied_at": now,
+            "updated_at": now,
+        }},
+    )
+    logger.info(f"[printavo] final-bill {visual_id}: set invoice={amount}, total_quantity={total_qty}")
+    return True
+
+
+async def finalize_once(cfg: dict) -> dict:
+    """Fetch invoices currently in a Final Bill status and apply each to its order.
+
+    First run SEEDS: it claims the invoices already in Final Bill WITHOUT writing,
+    so enabling the sync doesn't back-fill the whole billed history in one sweep
+    (mirrors sync_once's seeding). New transitions after that are applied normally.
+    """
+    from printavo_client import resolve_status_ids, fetch_invoices_by_status
+
+    names = cfg.get("final_bill_status_names") or DEFAULT_FINAL_BILL_STATUSES
+    status_ids = await resolve_status_ids(names)
+    if not status_ids:
+        logger.warning(f"[printavo] final-bill: no Printavo status matched {names}; pass skipped")
+        return {"finalized": 0, "seen": 0, "resolved": False}
+
+    fetch_size = int(cfg.get("final_bill_fetch_size") or 30)
+    max_pages = max(1, int(cfg.get("final_bill_max_pages") or 5))
+    seeding = not cfg.get("final_bill_seeded")
+
+    finalized = seen = 0
+    after = None
+    for _ in range(max_pages):
+        page = await fetch_invoices_by_status(status_ids, fetch_size, after)
+        nodes = page.get("nodes") or []
+        seen += len(nodes)
+        won = 0  # invoices we claimed this page (0 => the page is all previously-seen)
+        for node in nodes:
+            inv_id = node.get("id")
+            if not await _claim_finalize(inv_id):
+                continue
+            won += 1
+            if seeding:
+                continue  # first run: claim only, don't write history
+            try:
+                if await apply_final_bill(node):
+                    finalized += 1
+                else:
+                    # No order matched yet — release so a later tick can retry.
+                    await db.printavo_finalized.delete_one({"_id": str(inv_id)})
+            except Exception as e:
+                logger.error(f"[printavo] final-bill {node.get('visualId')} failed, releasing claim: {e}")
+                await db.printavo_finalized.delete_one({"_id": str(inv_id)})
+        info = page.get("pageInfo") or {}
+        # Stop paginating once we hit a page of already-claimed invoices (steady
+        # state: new Final Bills float to the top by VISUAL_ID) or run out.
+        if not info.get("hasNextPage") or won == 0:
+            break
+        after = info.get("endCursor")
+
+    if seeding:
+        await db.printavo_sync.update_one(
+            {"config_id": CONFIG_ID}, {"$set": {"final_bill_seeded": True}}, upsert=True
+        )
+        return {"finalized": 0, "seen": seen, "resolved": True, "seeded": True}
+    return {"finalized": finalized, "seen": seen, "resolved": True}
