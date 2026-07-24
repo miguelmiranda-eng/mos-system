@@ -17,7 +17,10 @@ from fastapi import APIRouter, HTTPException, Request
 
 from deps import db, require_auth, require_admin, log_activity, logger
 import printavo_client
-from printavo_sync import sync_once, finalize_once, CONFIG_ID, DEFAULT_FINAL_BILL_STATUSES
+from printavo_sync import (
+    sync_once, finalize_once, apply_final_bill_by_visual_id,
+    CONFIG_ID, DEFAULT_FINAL_BILL_STATUSES,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -196,3 +199,45 @@ async def run_printavo_sync_now(request: Request):
     result = await _sync_guarded()
     await log_activity(user, "run_printavo_sync_now", {"created": result.get("created", 0)})
     return {"status": "ok", **result}
+
+
+@router.post("/printavo-sync/finalize-now")
+async def finalize_printavo_now(request: Request):
+    """Manually apply the Final Bill values (Amount Outstanding + total quantity)
+    to orders already in Final Bill — a one-shot BACKFILL, and the way to test.
+
+    Body (optional):
+      {"visual_id": "1236"}  -> apply just that order (re-runnable, ignores claim).
+      {}                     -> backfill EVERY invoice currently in Final Bill.
+    """
+    user = await require_admin(request)
+    if not printavo_client.is_configured():
+        raise HTTPException(400, "Credenciales de Printavo no configuradas (PRINTAVO_API_EMAIL / PRINTAVO_API_TOKEN)")
+    if _sync_lock.locked():
+        raise HTTPException(409, "Ya hay una sincronización en curso. Espera unos segundos e intenta de nuevo.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    visual_id = str((body or {}).get("visual_id") or "").strip()
+
+    async with _sync_lock:
+        cfg = await _get_config()
+        if visual_id:
+            res = await apply_final_bill_by_visual_id(visual_id, cfg)
+        else:
+            # Backfill: force-apply, paginating deep enough to cover the whole
+            # Final Bill backlog (40 pages × 25 = up to 1000 invoices).
+            bcfg = {**cfg, "final_bill_max_pages": 40, "final_bill_fetch_size": 25}
+            res = await finalize_once(bcfg, force_apply=True)
+            fin = int(res.get("finalized") or 0)
+            if fin:
+                await db.printavo_sync.update_one(
+                    {"config_id": CONFIG_ID},
+                    {"$set": {
+                        "finalized_count": int(cfg.get("finalized_count") or 0) + fin,
+                        "last_finalize_at": datetime.now(timezone.utc).isoformat(),
+                    }}, upsert=True,
+                )
+    await log_activity(user, "printavo_finalize_now", {"visual_id": visual_id or None, "result": res})
+    return {"status": "ok", **res}

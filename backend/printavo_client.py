@@ -229,13 +229,14 @@ async def resolve_status_ids(names) -> list:
             if n.get("id") and (n.get("name") or "").strip().lower() in wanted]
 
 
-async def fetch_invoices_by_status(status_ids: list, first: int = 30, after: str = None) -> dict:
+async def fetch_invoices_by_status(status_ids: list, first: int = 25, after: str = None) -> dict:
     """Return one page of invoices currently in any of `status_ids`.
 
     Returns {"nodes": [...], "pageInfo": {"hasNextPage", "endCursor"}}. `first`
-    is clamped to 30 for the same complexity-budget reason as fetch_recent_invoices.
+    is clamped to 25 — Printavo rejects a larger page on this connection
+    ("'first' must not be greater than 25").
     """
-    variables = {"first": max(1, min(first, 30)), "after": after, "statusIds": status_ids}
+    variables = {"first": max(1, min(first, 25)), "after": after, "statusIds": status_ids}
     data = await _graphql(FINAL_BILL_INVOICES_QUERY, variables)
     conn = (data.get("invoices")) or {}
     nodes = conn.get("nodes") or []

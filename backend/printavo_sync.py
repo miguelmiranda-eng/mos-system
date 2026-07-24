@@ -479,25 +479,35 @@ async def apply_final_bill(invoice: dict) -> bool:
         amount = 0.0
 
     now = datetime.now(timezone.utc).isoformat()
-    await db.orders.update_one(
-        {"order_id": order["order_id"]},
-        {"$set": {
-            "invoice": amount,            # column key for "INVOICE"
-            "total_quantity": total_qty,  # column key for "Total Quantity"
-            "final_bill_applied_at": now,
-            "updated_at": now,
-        }},
-    )
-    logger.info(f"[printavo] final-bill {visual_id}: set invoice={amount}, total_quantity={total_qty}")
+    set_fields = {
+        "invoice": amount,                # column key for "INVOICE"
+        "final_bill_applied_at": now,
+        "updated_at": now,
+    }
+    # Only write Total Quantity when we actually parsed garment pieces. A 0 here
+    # means the invoice had no size/color breakdown we could read (seen on some
+    # old/large invoices) — writing 0 would be misleading, so leave the column be.
+    if total_qty > 0:
+        set_fields["total_quantity"] = total_qty  # column key for "Total Quantity"
+    else:
+        logger.warning(f"[printavo] final-bill {visual_id}: 0 parseable garment lines; "
+                       f"writing invoice only, leaving total_quantity untouched")
+
+    await db.orders.update_one({"order_id": order["order_id"]}, {"$set": set_fields})
+    logger.info(f"[printavo] final-bill {visual_id}: set invoice={amount}, "
+                f"total_quantity={total_qty if total_qty > 0 else '(skipped)'}")
     return True
 
 
-async def finalize_once(cfg: dict) -> dict:
+async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
     """Fetch invoices currently in a Final Bill status and apply each to its order.
 
     First run SEEDS: it claims the invoices already in Final Bill WITHOUT writing,
     so enabling the sync doesn't back-fill the whole billed history in one sweep
     (mirrors sync_once's seeding). New transitions after that are applied normally.
+
+    force_apply=True skips seeding and WRITES even on the first run — used by the
+    manual backfill endpoint to fill orders already in Final Bill on demand.
     """
     from printavo_client import resolve_status_ids, fetch_invoices_by_status
 
@@ -507,9 +517,9 @@ async def finalize_once(cfg: dict) -> dict:
         logger.warning(f"[printavo] final-bill: no Printavo status matched {names}; pass skipped")
         return {"finalized": 0, "seen": 0, "resolved": False}
 
-    fetch_size = int(cfg.get("final_bill_fetch_size") or 30)
+    fetch_size = int(cfg.get("final_bill_fetch_size") or 25)
     max_pages = max(1, int(cfg.get("final_bill_max_pages") or 5))
-    seeding = not cfg.get("final_bill_seeded")
+    seeding = (not force_apply) and (not cfg.get("final_bill_seeded"))
 
     finalized = seen = 0
     after = None
@@ -546,4 +556,39 @@ async def finalize_once(cfg: dict) -> dict:
             {"config_id": CONFIG_ID}, {"$set": {"final_bill_seeded": True}}, upsert=True
         )
         return {"finalized": 0, "seen": seen, "resolved": True, "seeded": True}
+    if force_apply and not cfg.get("final_bill_seeded"):
+        # A manual backfill IS the seed: mark it so the scheduled pass runs in
+        # steady state (apply new transitions) instead of seeding afterwards.
+        await db.printavo_sync.update_one(
+            {"config_id": CONFIG_ID}, {"$set": {"final_bill_seeded": True}}, upsert=True
+        )
     return {"finalized": finalized, "seen": seen, "resolved": True}
+
+
+async def apply_final_bill_by_visual_id(visual_id: str, cfg: dict) -> dict:
+    """Force-apply the Final Bill values to ONE order by visualId, ignoring the
+    claim so it can be re-run for testing. Returns {found, applied, resolved}."""
+    from printavo_client import resolve_status_ids, fetch_invoices_by_status
+
+    vid = str(visual_id).strip()
+    if not vid:
+        return {"found": False, "applied": False, "resolved": True}
+    status_ids = await resolve_status_ids(cfg.get("final_bill_status_names") or DEFAULT_FINAL_BILL_STATUSES)
+    if not status_ids:
+        return {"found": False, "applied": False, "resolved": False}
+
+    after = None
+    for _ in range(40):  # up to 1000 Final Bill invoices deep
+        page = await fetch_invoices_by_status(status_ids, 25, after)
+        nodes = page.get("nodes") or []
+        for node in nodes:
+            if str(node.get("visualId") or "").strip() == vid:
+                applied = await apply_final_bill(node)
+                if applied:
+                    await _claim_finalize(node.get("id"))  # keep the steady-state pass off it
+                return {"found": True, "applied": bool(applied), "resolved": True}
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            break
+        after = info.get("endCursor")
+    return {"found": False, "applied": False, "resolved": True}

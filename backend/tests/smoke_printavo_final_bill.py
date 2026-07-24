@@ -120,6 +120,16 @@ async def main():
     # 3. sin orden que coincida -> False (se reintenta luego)
     check("apply False sin orden", await ps.apply_final_bill(dict(inv, visualId="999999")) is False)
 
+    # 3b. invoice sin lineas de prenda parseables -> escribe invoice, NO pisa total_quantity
+    await fake.orders.insert_one({"order_id": "o0", "order_number": "777777",
+                                  "board": "SCHEDULING", "total_quantity": 99})
+    inv0 = {"visualId": "777777", "amountOutstanding": 205444.8, "lineItemGroups": {"nodes": []}}
+    await ps.apply_final_bill(inv0)
+    o0 = await fake.orders.find_one({"order_id": "o0"})
+    check("0 piezas: escribe invoice", o0.get("invoice") == 205444.8, f"got {o0.get('invoice')}")
+    check("0 piezas: NO pisa total_quantity", o0.get("total_quantity") == 99,
+          f"got {o0.get('total_quantity')}")
+
     # 4. orden en papelera se ignora
     await fake.orders.insert_one({"order_id": "o2", "order_number": "888888", "board": ps.TRASH_BOARD})
     check("orden en papelera no matchea", await ps.apply_final_bill(dict(inv, visualId="888888")) is False)
@@ -161,6 +171,38 @@ async def main():
 
     r_again = await ps.finalize_once({"final_bill_status_names": ["Final Bill"], "final_bill_seeded": True})
     check("re-run idempotente (finaliza 0)", r_again.get("finalized") == 0, f"got {r_again}")
+
+    # 6b. force_apply (backfill): escribe en el PRIMER run sin seed
+    fake3 = FakeDB()
+    ps.db = fake3
+    await fake3.orders.insert_one({"order_id": "oB", "order_number": vid, "board": "SCHEDULING"})
+
+    async def fake_resolve_fb(names):
+        return ["523159"]
+
+    async def fake_fetch_one(status_ids, first=25, after=None):
+        return {"nodes": [inv], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+
+    pc.resolve_status_ids = fake_resolve_fb
+    pc.fetch_invoices_by_status = fake_fetch_one
+    r_bf = await ps.finalize_once({"final_bill_status_names": ["Final Bill"]}, force_apply=True)
+    ob = await fake3.orders.find_one({"order_id": "oB"})
+    check("backfill (force_apply) escribe en el primer run",
+          r_bf.get("finalized") == 1 and ob.get("invoice") is not None, f"got {r_bf}")
+    seeded_doc = await fake3.printavo_sync.find_one({"config_id": ps.CONFIG_ID})
+    check("backfill marca final_bill_seeded", bool(seeded_doc and seeded_doc.get("final_bill_seeded")))
+
+    # 6c. apply_final_bill_by_visual_id: aplica uno puntual (ignora claim)
+    fake4 = FakeDB()
+    ps.db = fake4
+    await fake4.orders.insert_one({"order_id": "oV", "order_number": vid, "board": "SCHEDULING"})
+    pc.fetch_invoices_by_status = fake_fetch_one
+    rv = await ps.apply_final_bill_by_visual_id(vid, {"final_bill_status_names": ["Final Bill"]})
+    ov = await fake4.orders.find_one({"order_id": "oV"})
+    check("by_visual_id encuentra y aplica",
+          rv.get("found") and rv.get("applied") and ov.get("invoice") is not None, f"got {rv}")
+    rv_miss = await ps.apply_final_bill_by_visual_id("000000", {"final_bill_status_names": ["Final Bill"]})
+    check("by_visual_id no encontrado -> found False", rv_miss.get("found") is False)
 
     # 7. status sin match -> pass omitido, sin tronar
     async def fake_resolve_none(names):
