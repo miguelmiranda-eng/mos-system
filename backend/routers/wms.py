@@ -2742,6 +2742,10 @@ async def create_receiving(request: Request):
                     "asn_reference": body.get("asn_reference", "").strip(),
                     "upc": str(body.get("upc", "")).strip().upper(),
                     "created_at": now_iso(),
+                    # Fecha REAL de entrada al almacén, para medir días almacenados
+                    # (facturación de almacenaje). A diferencia de created_at, NO se
+                    # resetea al partir/mover una caja: la hija la hereda por copia.
+                    "received_at": now_iso(),
                 })
     else:
         seq += 1
@@ -2759,6 +2763,7 @@ async def create_receiving(request: Request):
             "lot_number": lot_number,
             "asn_reference": body.get("asn_reference", "").strip(),
             "created_at": now_iso(),
+            "received_at": now_iso(),  # fecha real de entrada (sobrevive splits)
         })
 
     # Authoritative received total = sum of the boxes actually created. The
@@ -4262,11 +4267,122 @@ async def get_inventory(
     ]
     inventory = await db.wms_inventory.aggregate(pipeline).to_list(limit)
 
+    # Días en almacén: fecha de entrada de la CAJA más vieja aún con stock de cada
+    # renglón (received_at, o created_at si es una caja previa a la feature). El
+    # front calcula los días desde esta fecha. $min sobre ISO-8601 = la más vieja.
+    inv_ids = [r.get("inventory_id") for r in inventory if r.get("inventory_id")]
+    if inv_ids:
+        oldest_agg = await db.wms_boxes.aggregate([
+            {"$match": {"inventory_id": {"$in": inv_ids}, "units": {"$gt": 0}}},
+            {"$group": {"_id": "$inventory_id",
+                        "oldest": {"$min": {"$ifNull": ["$received_at", "$created_at"]}}}},
+        ]).to_list(len(inv_ids))
+        oldest_by_id = {a["_id"]: a.get("oldest") for a in oldest_agg}
+        for r in inventory:
+            r["oldest_received_at"] = oldest_by_id.get(r.get("inventory_id"))
+
     if not paginated:
         return inventory
 
     total = await db.wms_inventory.count_documents(query)
     return {"items": inventory, "total": total, "has_more": (skip + len(inventory)) < total}
+
+
+# Rangos de antigüedad (días en almacén) para el reporte de almacenaje.
+_AGING_BUCKETS = ["d0_30", "d31_60", "d61_90", "d90_plus", "sin_fecha"]
+
+
+def _aging_days(entry_raw, now):
+    """Días entre la fecha de entrada (ISO) y ahora. None si no se puede parsear."""
+    if not entry_raw:
+        return None
+    try:
+        d = datetime.fromisoformat(str(entry_raw).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return max(0, (now - d).days)
+
+
+def _aging_bucket(days):
+    if days is None:
+        return "sin_fecha"
+    if days <= 30:
+        return "d0_30"
+    if days <= 60:
+        return "d31_60"
+    if days <= 90:
+        return "d61_90"
+    return "d90_plus"
+
+
+@router.get("/inventory/aging")
+async def inventory_aging(request: Request, customer: str = "", detail: bool = False):
+    """Antigüedad del inventario en planta (días almacenados) para facturar
+    almacenaje. Mide desde received_at (o created_at si la caja es previa a la
+    feature) de cada CAJA con stock (units>0).
+      - detail=false → resumen por cliente con rangos 0-30/31-60/61-90/90+.
+      - detail=true  → renglones por caja (para exportar a Excel).
+    """
+    await require_auth(request)
+    now = datetime.now(timezone.utc)
+    q = {"units": {"$gt": 0}}
+    if customer:
+        q["customer"] = {"$regex": customer, "$options": "i"}
+    proj = {"_id": 0, "customer": 1, "style": 1, "sku": 1, "color": 1, "size": 1,
+            "location": 1, "units": 1, "received_at": 1, "created_at": 1,
+            "lpn_id": 1, "box_id": 1, "country_of_origin": 1, "description": 1,
+            "asn_reference": 1}
+    boxes = await db.wms_boxes.find(q, proj).to_list(50000)
+
+    if detail:
+        rows = []
+        for b in boxes:
+            entry = b.get("received_at") or b.get("created_at")
+            days = _aging_days(entry, now)
+            rows.append({
+                "customer": b.get("customer") or "",
+                "lpn": b.get("lpn_id") or b.get("box_id") or "",
+                "style": b.get("style") or "", "sku": b.get("sku") or "",
+                "color": b.get("color") or "", "size": b.get("size") or "",
+                "country_of_origin": b.get("country_of_origin") or "",
+                "description": b.get("description") or "",
+                "location": b.get("location") or "",
+                "asn_reference": b.get("asn_reference") or "",
+                "units": int(b.get("units") or 0),
+                "received_at": entry,
+                "days_in_warehouse": days,
+                "bucket": _aging_bucket(days),
+            })
+        rows.sort(key=lambda r: (r["days_in_warehouse"] is None, -(r["days_in_warehouse"] or 0)))
+        return {"total": len(rows), "rows": rows[:20000]}
+
+    # Resumen por cliente.
+    agg = {}
+    for b in boxes:
+        cust = (b.get("customer") or "").strip() or "(SIN CLIENTE)"
+        entry = b.get("received_at") or b.get("created_at")
+        days = _aging_days(entry, now)
+        bk = _aging_bucket(days)
+        units = int(b.get("units") or 0)
+        c = agg.setdefault(cust, {
+            "customer": cust, "total_boxes": 0, "total_units": 0, "oldest_days": 0,
+            "buckets": {x: {"boxes": 0, "units": 0} for x in _AGING_BUCKETS},
+        })
+        c["total_boxes"] += 1
+        c["total_units"] += units
+        c["buckets"][bk]["boxes"] += 1
+        c["buckets"][bk]["units"] += units
+        if days is not None and days > c["oldest_days"]:
+            c["oldest_days"] = days
+    customers = sorted(agg.values(), key=lambda x: x["oldest_days"], reverse=True)
+    return {
+        "customers": customers,
+        "total_boxes": sum(c["total_boxes"] for c in customers),
+        "total_units": sum(c["total_units"] for c in customers),
+        "generated_at": now.isoformat(),
+    }
 
 @router.get("/inventory/filters")
 async def inventory_filters_v2(request: Request):

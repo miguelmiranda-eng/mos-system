@@ -14,6 +14,24 @@ const EMPTY = [];
 // en lib.js (notación canónica 2X/3X/…, incluye youth y toddler).
 const STD_SIZES = ALL_SIZES;
 
+// Antigüedad de una línea: días desde la entrada de la caja MÁS VIEJA aún en
+// stock de esa fila (row.oldest_received_at, ISO o null). null / fecha ilegible
+// → sin fecha. Colores por umbral, consistentes con el resto del WMS:
+// verde ≤30, ámbar 31-60, naranja 61-90, rojo 90+.
+const agingDays = (iso) => {
+  if (!iso) return null;
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return null;
+  return Math.floor((Date.now() - ts) / 86400000);
+};
+const agingColorCls = (days) => {
+  if (days == null) return 'text-muted-foreground';
+  if (days <= 30) return 'text-emerald-600 dark:text-emerald-400';
+  if (days <= 60) return 'text-amber-600 dark:text-amber-400';
+  if (days <= 90) return 'text-orange-600 dark:text-orange-400';
+  return 'text-red-600 dark:text-red-400';
+};
+
 /**
  * Header con filtro tipo Dashboard: el label + un icono ListFilter que abre un
  * Popover con buscador + lista clickeable de valores distintos. Single-select.
@@ -650,6 +668,17 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
     }
   };
 
+  // "Días en almacén": antigüedad de la caja más vieja aún en stock de la fila.
+  const renderAgingCell = (inv) => {
+    const days = agingDays(inv.oldest_received_at);
+    if (days == null) return <span className="text-muted-foreground/50">—</span>;
+    return (
+      <span className={`font-medium tabular-nums ${agingColorCls(days)}`} title={inv.oldest_received_at ? `Caja más vieja: ${new Date(inv.oldest_received_at).toLocaleDateString()}` : undefined}>
+        {days.toLocaleString()}<span className="text-muted-foreground/60 font-normal"> d</span>
+      </span>
+    );
+  };
+
   // The "Cajas" cell: chevron toggles the inline LPN list; the number opens the
   // modal (both kept — Case# 007).
   const renderCajasCell = (inv) => (
@@ -673,7 +702,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   const renderBoxesSubRow = (inv) => (
     expandedBoxes === inv.inventory_id ? (
       <tr className="bg-muted/30 border-b border-border/60">
-        <td colSpan="14" className="px-6 py-2.5">
+        <td colSpan="15" className="px-6 py-2.5">
           {boxesRowLoading === inv.inventory_id ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
               <Loader2 className="w-4 h-4 animate-spin" /> Cargando cajas…
@@ -843,6 +872,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_on_hand')}</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_allocated')}</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_available')}</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Días en almacén</th>
                 <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground whitespace-nowrap">Historial</th>
               </tr>
             </thead>
@@ -851,7 +881,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 groupedInventory.map(([customer, items]) => (
                   <Fragment key={customer}>
                     <tr className="bg-muted/40 border-b border-border">
-                      <td colSpan="14" className="px-3 py-2">
+                      <td colSpan="15" className="px-3 py-2">
                         <span className="text-xs font-semibold">{customer}</span>
                         <span className="text-xs text-muted-foreground ml-2">({items.length} SKUs)</span>
                       </td>
@@ -874,6 +904,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                         <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
                           {(inv.available || 0).toLocaleString()}
                         </td>
+                        <td className="px-3 py-2.5 text-right">{renderAgingCell(inv)}</td>
                         <td className="px-3 py-2.5 text-center">
                           <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
                             <History className="w-3.5 h-3.5" />
@@ -904,6 +935,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                     <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
                       {(inv.available || 0).toLocaleString()}
                     </td>
+                    <td className="px-3 py-2.5 text-right">{renderAgingCell(inv)}</td>
                     <td className="px-3 py-2.5 text-center">
                       <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
                         <History className="w-3.5 h-3.5" />

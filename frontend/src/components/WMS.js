@@ -21,6 +21,7 @@ import { HomeModule } from "./wms/Home";
 import { ReceivingModule } from "./wms/Receiving";
 import { PutawayModule } from "./wms/Putaway";
 import { InventoryModule } from "./wms/Inventory";
+import { AgingModule } from "./wms/Aging";
 import { LocationsModule } from "./wms/Locations";
 import { PickingModule } from "./wms/Picking";
 import { NeckCuttingModule } from "./wms/NeckCutting";
@@ -48,6 +49,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'mover':        return <MoverModule currentUser={ctx.currentUser} />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} currentUser={ctx.currentUser} />;
+    case 'aging':        return <AgingModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
     case 'picking':      return <PickingModule currentUser={ctx.currentUser} />;
     case 'neck_cutting': return <NeckCuttingModule />;
@@ -226,6 +228,7 @@ export default function WMS() {
     // El import + el case 'putaway' del switch se quedan vivos por si hay que reactivarlo.
     // { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
     { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
+    { id: 'aging', label: 'Antigüedad', icon: Clock, color: 'text-amber-400', desc: 'Días en almacén / almacenaje' },
     { id: 'locations', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400', desc: 'Mapa lógico y gestión de ubicaciones' },
     { id: 'picking', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400', desc: t('wms_mod_picking_desc') },
     { id: 'neck_cutting', label: 'Corte de Neck', icon: Scissors, color: 'text-pink-400', desc: 'Material surtido en espera de corte' },
@@ -469,7 +472,7 @@ export default function WMS() {
             if (currentUser?.role === 'inventory') {
               const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
               if (lvl < 1) return false;
-              const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'movements'];
+              const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'aging', 'movements'];
               return allowed.includes(m.id);
             }
             if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
