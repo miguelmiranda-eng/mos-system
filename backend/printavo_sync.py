@@ -527,23 +527,36 @@ async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
         page = await fetch_invoices_by_status(status_ids, fetch_size, after)
         nodes = page.get("nodes") or []
         seen += len(nodes)
-        won = 0  # invoices we claimed this page (0 => the page is all previously-seen)
+        won = 0  # invoices we processed this page (0 => the page is all previously-seen)
         for node in nodes:
             inv_id = node.get("id")
-            if not await _claim_finalize(inv_id):
-                continue
+            # Backfill (force_apply) re-processes every invoice, even ones a prior
+            # seed already claimed; the scheduled pass claims-first for idempotency.
+            if not force_apply:
+                if not await _claim_finalize(inv_id):
+                    continue
             won += 1
             if seeding:
                 continue  # first run: claim only, don't write history
             try:
                 if await apply_final_bill(node):
                     finalized += 1
-                else:
+                    if force_apply:
+                        # Mark claimed so the steady-state pass won't re-touch it.
+                        try:
+                            await db.printavo_finalized.insert_one({
+                                "_id": str(inv_id),
+                                "claimed_at": datetime.now(timezone.utc).isoformat(),
+                            })
+                        except DuplicateKeyError:
+                            pass
+                elif not force_apply:
                     # No order matched yet — release so a later tick can retry.
                     await db.printavo_finalized.delete_one({"_id": str(inv_id)})
             except Exception as e:
-                logger.error(f"[printavo] final-bill {node.get('visualId')} failed, releasing claim: {e}")
-                await db.printavo_finalized.delete_one({"_id": str(inv_id)})
+                logger.error(f"[printavo] final-bill {node.get('visualId')} failed: {e}")
+                if not force_apply:
+                    await db.printavo_finalized.delete_one({"_id": str(inv_id)})
         info = page.get("pageInfo") or {}
         # Stop paginating once we hit a page of already-claimed invoices (steady
         # state: new Final Bills float to the top by VISUAL_ID) or run out.

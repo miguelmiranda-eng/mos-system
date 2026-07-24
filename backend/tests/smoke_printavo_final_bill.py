@@ -192,6 +192,20 @@ async def main():
     seeded_doc = await fake3.printavo_sync.find_one({"config_id": ps.CONFIG_ID})
     check("backfill marca final_bill_seeded", bool(seeded_doc and seeded_doc.get("final_bill_seeded")))
 
+    # 6b-bis: backfill ESCRIBE aunque el invoice ya esté reclamado (seed previo)
+    fake3b = FakeDB()
+    ps.db = fake3b
+    await fake3b.orders.insert_one({"order_id": "oC", "order_number": vid, "board": "SCHEDULING"})
+    await fake3b.printavo_finalized.insert_one({"_id": inv.get("id") or "gid://master",
+                                                "claimed_at": "seeded"})
+    pc.resolve_status_ids = fake_resolve_fb
+    pc.fetch_invoices_by_status = fake_fetch_one
+    r_bf2 = await ps.finalize_once({"final_bill_status_names": ["Final Bill"], "final_bill_seeded": True},
+                                   force_apply=True)
+    oc = await fake3b.orders.find_one({"order_id": "oC"})
+    check("backfill ignora claim previo y escribe",
+          r_bf2.get("finalized") == 1 and oc.get("invoice") is not None, f"got {r_bf2}")
+
     # 6c. apply_final_bill_by_visual_id: aplica uno puntual (ignora claim)
     fake4 = FakeDB()
     ps.db = fake4
