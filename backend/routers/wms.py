@@ -2019,14 +2019,32 @@ async def move_units(request: Request):
     if units > avail:
         raise HTTPException(409, f"No hay suficiente en {src}: pides {units}, disponible {avail}")
 
-    # Consume source boxes FIFO. Se leen ANTES de escribir nada.
-    q = {
-        "$or": [{"sku": sku}, {"style": sku}], "color": color, "size": size,
-        "location": {"$regex": f"^{re.escape(src)}$", "$options": "i"},
-        "units": {"$gt": 0},
-    }
-    boxes = await db.wms_boxes.find(q).sort("created_at", 1).to_list(1000)
-    sample = boxes[0] if boxes else {}
+    # PROYECTO "SIN FIFO": se mueve la caja ESCANEADA/SELECCIONADA, nunca "la más
+    # vieja" automáticamente. box_id es obligatorio.
+    box_id = (body.get("box_id") or "").strip()
+    if not box_id:
+        raise HTTPException(400, (
+            "Selecciona o escanea la caja a mover. El movimiento automático por "
+            "antigüedad (FIFO) está deshabilitado."
+        ))
+    one = await db.wms_boxes.find_one({"box_id": box_id})
+    if not one or int(one.get("units") or 0) <= 0:
+        raise HTTPException(409, f"La caja {box_id} no tiene unidades disponibles.")
+    box_units = int(one.get("units") or 0)
+    # Cross-check: la caja escaneada debe estar en el origen y ser del material pedido.
+    if (one.get("location") or "").strip().upper() != src:
+        raise HTTPException(409, f"La caja {box_id} no está en {src} (está en {one.get('location') or 'sin ubicación'}).")
+    _bk = {(one.get("sku") or "").strip().upper(), (one.get("style") or "").strip().upper()}
+    if sku.strip().upper() not in _bk or (one.get("color") or "").strip() != color or (one.get("size") or "").strip() != size:
+        raise HTTPException(409, (
+            f"La caja {box_id} es {one.get('style')}/{one.get('color')}/{one.get('size')}, "
+            f"no {sku}/{color}/{size}. Escanea otra."
+        ))
+    if units > box_units:
+        raise HTTPException(409, f"La caja {box_id} solo tiene {box_units} u; pediste {units}. Selecciona otra o mueve menos.")
+    # El plan/consumo/split y la reproyección corren sobre ESTA sola caja.
+    boxes = [one]
+    sample = one
 
     # Identidad del material TAL COMO ESTÁ GUARDADA. El frontend manda una sola
     # cadena (`style` primero, si no `sku`), que puede ser el corto 'CK001' o el
@@ -3568,7 +3586,8 @@ def _ci_eq(v):
 
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                              customer="", order_number=None, order_id=None,
-                             user=None, ticket_id=None, only_box_id=None):
+                             user=None, ticket_id=None, only_box_id=None,
+                             enforce_scan=False):
     """Deduct `qty` units for a pick from the physical boxes AND the
     inventory row, keeping wms_boxes / units_on_hand / total_boxes in lockstep.
 
@@ -3616,6 +3635,15 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             ))
         boxes = [specific]
     else:
+        # PROYECTO "SIN FIFO": los flujos que exigen escaneo NO pueden caer al
+        # descuento automático por antigüedad. Si llegan aquí sin caja, se rechaza
+        # pidiendo escanear/seleccionar — nunca se vacía "la más vieja a lo loco".
+        if enforce_scan:
+            raise HTTPException(400, (
+                f"Descuento sin caja bloqueado para {style}/{color}/{size}"
+                f"{(' en ' + location) if location else ''}: escanea o selecciona la caja. "
+                "El descuento automático (FIFO) está deshabilitado."
+            ))
         q = {"$or": [{"sku": _ci_eq(style)}, {"style": _ci_eq(style)}],
              "color": _ci_eq(color), "size": _ci_eq(size), "units": {"$gt": 0}}
         if location:
@@ -5876,7 +5904,7 @@ async def save_pick_progress(ticket_id: str, request: Request):
     try:
         for sz, loc, d in pos:
             await _deduct_pick_boxes(style, color, sz, loc, d, inv_op, customer, _ord_no, _ord_id,
-                                     user=user, ticket_id=ticket_id)
+                                     user=user, ticket_id=ticket_id, enforce_scan=True)
         for sz, loc, d in neg:
             # Correction downward: return the units to the shelf they came from.
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
@@ -6196,9 +6224,12 @@ async def pick_size(ticket_id: str, request: Request):
     # el total cumulativo. Antes rechazabamos si CUALQUIER loc con qty>0 no
     # traia box_id, aunque delta=0 (ej: re-OK de talla porque el operador aniade
     # de OTRA caja/loc). Ahora solo se pide scan cuando hay extraccion nueva.
-    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
-    require_scan = bool(cfg.get("pick_requires_scan",
-                                DEFAULT_OPTIONS.get("pick_requires_scan", True)))
+    # FIFO REMOVAL (proyecto "sin FIFO", F0): el descuento por talla es SIEMPRE por
+    # caja escaneada. El toggle pick_requires_scan queda DEPRECADO y forzado ON —
+    # ya no existe el fallback FIFO ciego (que vaciaba la caja más vieja de la BD
+    # aunque el picker jalara de otra). Si no viene box_id en una celda con delta
+    # positivo, se rechaza pidiendo escanear la caja.
+    require_scan = True
 
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
     if not ticket:
@@ -6451,16 +6482,17 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
                         if int(loc_qty or 0) > 0:
                             await _deduct_pick_boxes(style, color, sz, loc, int(loc_qty),
                                                      inv_operation, customer, order_number, order_id,
-                                                     user=user, ticket_id=target_id)
+                                                     user=user, ticket_id=target_id, enforce_scan=True)
                     continue
                 qty_to_pick = int(data.get("total", 0))
             else:
                 qty_to_pick = int(data or 0)
-            # No shelf chosen → FIFO across this SKU's boxes (location="").
+            # Antes: sin repisa elegida → FIFO across shelves. Ahora prohibido:
+            # enforce_scan rechaza el descuento sin caja (proyecto "sin FIFO").
             if qty_to_pick > 0:
                 await _deduct_pick_boxes(style, color, sz, "", qty_to_pick,
                                          inv_operation, customer, order_number, order_id,
-                                         user=user, ticket_id=target_id)
+                                         user=user, ticket_id=target_id, enforce_scan=True)
 
     new_status = "in_neck_cutting" if is_neck_cutting else "confirmed"
     

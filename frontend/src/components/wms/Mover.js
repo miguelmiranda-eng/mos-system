@@ -126,6 +126,7 @@ export function MoverModule({ currentUser }) {
   const [pendingForeign, setPendingForeign] = useState(null); // a foreign box awaiting "move it anyway?" confirm
   const [scanLookup, setScanLookup] = useState(false);      // looking up a scanned code
   const [selectedLine, setSelectedLine] = useState(null);   // units/reconcile mode: an inventory line
+  const [selectedUnitBox, setSelectedUnitBox] = useState(null); // units mode: la caja ESPECÍFICA a partir/mover (sin FIFO)
   const [qty, setQty] = useState("");
   const [physicalLpn, setPhysicalLpn] = useState("");       // reconcile mode: scanned real LPN
 
@@ -226,6 +227,7 @@ export function MoverModule({ currentUser }) {
     setForeignBoxes([]);
     setPendingForeign(null);
     setSelectedLine(null);
+    setSelectedUnitBox(null);
     setQty("");
     setPhysicalLpn("");
     setDest("");
@@ -235,7 +237,7 @@ export function MoverModule({ currentUser }) {
   const resetAll = () => {
     setOrigin(""); setOriginInput(""); setMode(null);
     setContents({ boxes: [], lines: [] });
-    setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
+    setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest("");
   };
 
   const totalUnits = useMemo(
@@ -277,7 +279,7 @@ export function MoverModule({ currentUser }) {
         toast.success(data.message || `${label} completado`);
         // Stay on the same origin and refresh so the operator can keep working
         // in the same bin; clear the per-move selection.
-        setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest("");
+        setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest("");
         await loadContents(origin);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -303,6 +305,8 @@ export function MoverModule({ currentUser }) {
     from: origin, to: cleanScan(dest),
     sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
     size: selectedLine.size || "", units: parseInt(qty) || 0,
+    // SIN FIFO: la caja ESPECÍFICA seleccionada/escaneada de la que se parte/mueve.
+    box_id: selectedUnitBox?.box_id,
   }));
 
   // Reconcile a migrated generic LPN with the box's real physical license plate,
@@ -610,7 +614,7 @@ export function MoverModule({ currentUser }) {
             ) : (
               /* STEP 3 — per-mode selection + destination */
               <div className="space-y-4">
-                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
+                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
                   className="text-xs font-medium text-primary flex items-center gap-1">
                   <X className="w-3.5 h-3.5" /> Cambiar tipo de movimiento
                 </button>
@@ -749,27 +753,77 @@ export function MoverModule({ currentUser }) {
                             <div className="font-mono font-semibold">{selectedLine.style || selectedLine.sku}</div>
                             <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
                           </div>
-                          <button onClick={() => { setSelectedLine(null); setQty(""); }}
+                          <button onClick={() => { setSelectedLine(null); setSelectedUnitBox(null); setQty(""); }}
                             className="text-xs font-medium text-primary">Cambiar</button>
                         </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">
-                            Cantidad a mover (máx {selectedLine.units_on_hand})
-                          </label>
-                          <div className="flex items-center gap-2 mt-1">
-                            <input type="number" min="1" max={selectedLine.units_on_hand}
-                              value={qty} onChange={(e) => setQty(e.target.value)}
-                              data-testid="mover-units-qty"
-                              className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
-                            <button onClick={() => setQty(String(selectedLine.units_on_hand))}
-                              className="h-14 px-4 rounded-md bg-primary/10 text-primary text-sm font-medium hover:bg-primary/15 transition-colors">Todo</button>
-                          </div>
-                        </div>
-                        <DestAndGo
-                          dest={dest} setDest={setDest} locations={locNames}
-                          disabled={submitting || !(parseInt(qty) > 0) || parseInt(qty) > selectedLine.units_on_hand}
-                          onGo={moveUnits}
-                          label={`Mover ${parseInt(qty) || 0} u a`} />
+
+                        {!selectedUnitBox ? (
+                          // SIN FIFO: paso obligatorio — elegir/escanear la caja específica.
+                          (() => {
+                            const key = (v) => String(v ?? "").trim().toUpperCase();
+                            const boxes = (contents.boxes || []).filter(b =>
+                              (b.units ?? b.qty ?? 0) > 0 &&
+                              key(b.color) === key(selectedLine.color) &&
+                              key(b.size) === key(selectedLine.size) &&
+                              (key(b.style) === key(selectedLine.style) || key(b.sku) === key(selectedLine.sku) ||
+                               key(b.style) === key(selectedLine.sku) || key(b.sku) === key(selectedLine.style)));
+                            return (
+                              <div className="space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                                  <ScanLine className="w-4 h-4" /> Elige o escanea la caja a mover
+                                </div>
+                                {boxes.length === 0 ? (
+                                  <div className="text-sm text-muted-foreground p-3 rounded-lg border border-dashed border-border text-center">
+                                    Sin cajas con stock para este material en {origin}.
+                                  </div>
+                                ) : boxes.map(b => (
+                                  <button key={b.box_id}
+                                    onClick={() => { setSelectedUnitBox(b); setQty(String(b.units ?? b.qty ?? "")); }}
+                                    data-testid={`mover-units-box-${b.box_id}`}
+                                    className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
+                                    <div className="min-w-0">
+                                      <div className="font-mono font-medium text-sm truncate">{b.box_id}</div>
+                                      <div className="text-xs text-muted-foreground truncate">{b.country_of_origin || b.coo || ""}{b.lot_number ? ` · ${b.lot_number}` : ""}</div>
+                                    </div>
+                                    <div className="text-right flex-shrink-0">
+                                      <div className="font-semibold tabular-nums">{b.units ?? b.qty ?? 0}</div>
+                                      <div className="text-[10px] text-muted-foreground">u</div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between rounded-lg border border-primary/40 bg-primary/5 p-3">
+                              <div className="min-w-0">
+                                <div className="font-mono font-semibold text-sm truncate">{selectedUnitBox.box_id}</div>
+                                <div className="text-xs text-muted-foreground">{selectedUnitBox.units ?? selectedUnitBox.qty ?? 0} u disponibles</div>
+                              </div>
+                              <button onClick={() => { setSelectedUnitBox(null); setQty(""); }}
+                                className="text-xs font-medium text-primary">Cambiar caja</button>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-muted-foreground">
+                                Cantidad a mover (máx {selectedUnitBox.units ?? selectedUnitBox.qty ?? 0})
+                              </label>
+                              <div className="flex items-center gap-2 mt-1">
+                                <input type="number" min="1" max={selectedUnitBox.units ?? selectedUnitBox.qty ?? 0}
+                                  value={qty} onChange={(e) => setQty(e.target.value)}
+                                  data-testid="mover-units-qty"
+                                  className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
+                                <button onClick={() => setQty(String(selectedUnitBox.units ?? selectedUnitBox.qty ?? 0))}
+                                  className="h-14 px-4 rounded-md bg-primary/10 text-primary text-sm font-medium hover:bg-primary/15 transition-colors">Todo</button>
+                              </div>
+                            </div>
+                            <DestAndGo
+                              dest={dest} setDest={setDest} locations={locNames}
+                              disabled={submitting || !(parseInt(qty) > 0) || parseInt(qty) > (selectedUnitBox.units ?? selectedUnitBox.qty ?? 0)}
+                              onGo={moveUnits}
+                              label={`Mover ${parseInt(qty) || 0} u a`} />
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
