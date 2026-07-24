@@ -227,6 +227,23 @@ RED_INCIDENT_KINDS = {
 }
 
 
+async def _push_descuadre(title, body, url="/wms", tag="wms-alerta"):
+    """Manda una alerta de descuadre SOLO a los usuarios opt-in
+    (notify_inventory_discrepancy que fija el super user por usuario). Un opt-in
+    sin dispositivo suscrito simplemente no recibe. Nunca truena."""
+    try:
+        recipients = await db.users.find(
+            {"notify_inventory_discrepancy": True}, {"_id": 0, "user_id": 1}).to_list(200)
+        ids = [r["user_id"] for r in recipients if r.get("user_id")]
+        if not ids:
+            return (0, 0)
+        from services.push_notify import send_push_to_users
+        return await send_push_to_users(db, ids, title, body, url=url, tag=tag)
+    except Exception:
+        logger.exception("push de descuadre falló")
+        return (0, 0)
+
+
 async def _record_incident(kind, user, mensaje, **campos):
     """Registra una incidencia del sistema en `wms_incidents`.
 
@@ -257,9 +274,8 @@ async def _record_incident(kind, user, mensaje, **campos):
         # Alarma real al celular para las ROJAS. Fire-and-forget: la push jamás
         # detiene ni retrasa la operación que registró la incidencia.
         if kind in RED_INCIDENT_KINDS:
-            from services.push_notify import send_push_to_all
-            asyncio.create_task(send_push_to_all(
-                db, "⚠ Descuadre de stock",
+            asyncio.create_task(_push_descuadre(
+                "⚠ Descuadre de stock",
                 f"{kind}: {mensaje[:140]}", url="/wms", tag=f"inc-{kind}"))
     except Exception:
         logger.exception("no se pudo registrar la incidencia %s", kind)
@@ -7631,9 +7647,8 @@ async def nightly_phantom_scan_loop():
                         res.get("count"), res.get("nuevos"), res.get("resueltos"))
             # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
             if res.get("nuevos"):
-                from services.push_notify import send_push_to_all
-                await send_push_to_all(
-                    db, "🌙 Job nocturno: fantasmas nuevos",
+                await _push_descuadre(
+                    "🌙 Job nocturno: fantasmas nuevos",
                     f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
                     f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
                     url="/wms", tag="job-nocturno")

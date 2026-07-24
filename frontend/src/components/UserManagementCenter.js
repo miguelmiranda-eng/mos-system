@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   UserPlus, Loader2, Shield, User, Trash2, ChevronDown, ChevronUp, 
   Eye, EyeOff, Pencil, Ban, Mail, Lock, KeyRound, Check, X, ClipboardCheck,
-  ArrowLeft, Users, Search, RefreshCw, Smartphone, Activity, Clock, Truck
+  ArrowLeft, Users, Search, RefreshCw, Smartphone, Activity, Clock, Truck, AlertTriangle
 } from 'lucide-react';
 import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -263,16 +263,16 @@ const UserManagementCenter = () => {
     }
   };
 
-  // Opt-in per usuario a las notificaciones push de "packing cargado" (camioncito).
-  // Supersu only; reenviamos el rol para conservar la forma del PUT.
-  const handleNotifyPackingToggle = async (userId, currentRole, next) => {
+  // Opt-in per usuario a una notificación push (packing cargado / descuadre de
+  // stock). Supersu only; reenviamos el rol para conservar la forma del PUT.
+  const handleNotifyToggle = async (userId, currentRole, field, next, okMsg) => {
     try {
       const res = await fetch(`${API}/users/${userId}/role`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ role: currentRole, notify_packing_loaded: next }),
+        body: JSON.stringify({ role: currentRole, [field]: next }),
       });
       if (res.ok) {
-        toast.success(next ? 'Recibirá aviso de packing cargado' : 'Aviso de packing desactivado');
+        toast.success(next ? okMsg : 'Notificación desactivada');
         setTimeout(fetchUsers, 300);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -672,11 +672,14 @@ const UserManagementCenter = () => {
                       </span>
                     )}
 
-                    {/* Opt-in a las notificaciones push de "packing cargado"
-                        (camioncito). Solo supersu decide quién las recibe. */}
+                    {/* Opt-in a las notificaciones push al celular. Solo supersu
+                        decide quién las recibe.
+                          🚚 Packing   = camioncito (packing cargado en el CRM)
+                          ⚠ Descuadre = incidencias rojas + job nocturno del WMS */}
                     {isSupersu && (
                       <button
-                        onClick={() => handleNotifyPackingToggle(u.user_id, u.role, !u.notify_packing_loaded)}
+                        onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_packing_loaded',
+                          !u.notify_packing_loaded, 'Recibirá aviso de packing cargado')}
                         title={u.notify_packing_loaded
                           ? 'Recibe aviso al celular cuando se carga un packing (clic para desactivar)'
                           : 'No recibe aviso de packing cargado (clic para activar)'}
@@ -688,6 +691,23 @@ const UserManagementCenter = () => {
                       >
                         <Truck className="w-4 h-4" />
                         {u.notify_packing_loaded ? 'Packing ON' : 'Packing'}
+                      </button>
+                    )}
+                    {isSupersu && (
+                      <button
+                        onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_inventory_discrepancy',
+                          !u.notify_inventory_discrepancy, 'Recibirá alertas de descuadre de stock')}
+                        title={u.notify_inventory_discrepancy
+                          ? 'Recibe alertas al celular de descuadres de inventario (clic para desactivar)'
+                          : 'No recibe alertas de descuadre (clic para activar)'}
+                        className={`h-9 flex items-center gap-1.5 px-3 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${
+                          u.notify_inventory_discrepancy
+                            ? 'bg-red-500/15 border-red-500/50 text-red-500 hover:bg-red-500/25'
+                            : 'bg-secondary/30 border-border text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        {u.notify_inventory_discrepancy ? 'Descuadre ON' : 'Descuadre'}
                       </button>
                     )}
 

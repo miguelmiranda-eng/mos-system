@@ -132,11 +132,15 @@ async def update_user_role(user_id: str, request: Request):
         except (TypeError, ValueError):
             ilvl = 0
         update_data["inventory_level"] = max(0, min(3, ilvl))
-    # Opt-in a las notificaciones push de "packing cargado" (camioncito). Solo un
-    # super admin decide quién las recibe. Requiere que el usuario haya suscrito su
-    # dispositivo (campana del WMS) para que efectivamente le llegue.
-    if "notify_packing_loaded" in body and caller_is_supersu:
-        update_data["notify_packing_loaded"] = bool(body.get("notify_packing_loaded"))
+    # Opt-in a notificaciones push por tipo. Solo un super admin decide quién las
+    # recibe. Requiere además que el usuario haya suscrito su dispositivo (campana
+    # del WMS) para que efectivamente le llegue.
+    #   notify_packing_loaded      -> "packing cargado" (camioncito en el CRM)
+    #   notify_inventory_discrepancy -> descuadres de stock (incidencias rojas + job nocturno)
+    if caller_is_supersu:
+        for _flag in ("notify_packing_loaded", "notify_inventory_discrepancy"):
+            if _flag in body:
+                update_data[_flag] = bool(body.get(_flag))
 
     result = await db.users.update_one(
         {"$or": [{"user_id": user_id}, {"email": user_id}]},
