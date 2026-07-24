@@ -959,6 +959,9 @@ async def seed_packing_link(request: Request):
     now = datetime.now(timezone.utc).isoformat()
 
     seeded, not_found, skipped, duplicated = [], [], [], []
+    # Órdenes cuyo camioncito se ENCIENDE ahora (pasan de sin packing_link a tenerlo),
+    # para la notificación push resumen al final.
+    newly_loaded = []
     for num in numbers:
         # TODAS las órdenes que respondan a ese número — hay order_number
         # duplicados en el CRM (censo 2026-07-23: 22 números, y en TODOS la
@@ -968,7 +971,7 @@ async def seed_packing_link(request: Request):
         # 2264). La papelera NO se siembra; el resto de matches, todas.
         matches = await db.orders.find(
             {"$or": [{"order_id": num}, {"order_number": num}]},
-            {"_id": 0, "order_id": 1, "order_number": 1, "board": 1},
+            {"_id": 0, "order_id": 1, "order_number": 1, "board": 1, "packing_link": 1},
         ).to_list(20)
         vivas = [o for o in matches if (o.get("board") or "").strip().upper() != "PAPELERA DE RECICLAJE"]
         if matches and not vivas:
@@ -984,6 +987,9 @@ async def seed_packing_link(request: Request):
         alguna_nueva = False
         for order in matches:
             oid = order["order_id"]
+            # ¿El camioncito se enciende AHORA? (no tenía packing_link antes)
+            if not order.get("packing_link"):
+                newly_loaded.append(order.get("order_number") or num)
             # Marca la orden como "packing importado" para el indicador (camion)
             # en el CRM. Para toda orden encontrada, aunque el comentario exista.
             await db.orders.update_one({"order_id": oid}, {"$set": {
@@ -1004,6 +1010,30 @@ async def seed_packing_link(request: Request):
             await ws_manager.broadcast("order_change", {"action": "add_comment", "order_id": oid})
             alguna_nueva = True
         (seeded if alguna_nueva else skipped).append(num)
+
+    # Notificación push a los usuarios opt-in: se cargó el packing (camioncito) de
+    # una o más órdenes. Un solo resumen por operación para no spamear (el packing
+    # se siembra en lote). Fire-and-forget: nunca bloquea ni tumba la respuesta.
+    if newly_loaded:
+        try:
+            recipients = await db.users.find(
+                {"notify_packing_loaded": True}, {"_id": 0, "user_id": 1}
+            ).to_list(200)
+            recipient_ids = [r["user_id"] for r in recipients if r.get("user_id")]
+            if recipient_ids:
+                from services.push_notify import send_push_to_users
+                n = len(newly_loaded)
+                muestra = ", ".join(newly_loaded[:10]) + (f" +{n - 10} más" if n > 10 else "")
+                if n == 1:
+                    title = "📦 Packing cargado"
+                    body = f"La orden {newly_loaded[0]} cargó su packing"
+                else:
+                    title = f"📦 Packing cargado ({n} órdenes)"
+                    body = f"{n} órdenes cargaron su packing: {muestra}"
+                asyncio.create_task(send_push_to_users(
+                    db, recipient_ids, title, body, url="/", tag="packing-loaded"))
+        except Exception:
+            logger.exception("[packing] notificación push falló")
 
     return {
         "total": len(numbers),

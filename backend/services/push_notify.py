@@ -59,14 +59,57 @@ async def ensure_vapid_keys(db):
     return cfg
 
 
-def _send_one(sub, payload, private_pem, claims):
+def _pem_to_der_b64url(private_pem):
+    """pywebpush recibe la llave como string SOLO en RAW/DER-base64url
+    (Vapid.from_string no entiende PEM); el PEM guardado en Mongo se
+    convierte aquí en cada tanda de envíos."""
+    from cryptography.hazmat.primitives import serialization
+    key = serialization.load_pem_private_key(private_pem.encode(), password=None)
+    der = key.private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    return base64.urlsafe_b64encode(der).decode().rstrip("=")
+
+
+def _send_one(sub, payload, private_key_b64url, claims):
     webpush(
         subscription_info=sub,
         data=json.dumps(payload),
-        vapid_private_key=private_pem,
+        vapid_private_key=private_key_b64url,
         vapid_claims=dict(claims),  # pywebpush muta el dict; copia por envío
         ttl=3600,
     )
+
+
+async def _send_to_subs(db, subs, title, body, url, tag):
+    """Envía `payload` a una lista de suscripciones ya resuelta. Devuelve
+    (enviadas, muertas); limpia las suscripciones muertas (404/410)."""
+    if not subs:
+        return (0, 0)
+    cfg = await ensure_vapid_keys(db)
+    payload = {"title": title, "body": body, "url": url, "tag": tag}
+    claims = {"sub": "mailto:tech@prosper-mfg.com"}
+    private_key_b64url = _pem_to_der_b64url(cfg["private_pem"])
+    enviadas, muertas = 0, []
+    for s in subs:
+        try:
+            await asyncio.to_thread(_send_one, s["subscription"], payload,
+                                    private_key_b64url, claims)
+            enviadas += 1
+        except WebPushException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (404, 410):
+                muertas.append(s["subscription"].get("endpoint"))
+            else:
+                logger.warning("push falló (%s): %s", status, e)
+        except Exception:
+            logger.exception("push falló")
+    if muertas:
+        await db.wms_push_subs.delete_many(
+            {"subscription.endpoint": {"$in": muertas}})
+    return (enviadas, len(muertas))
 
 
 async def send_push_to_all(db, title, body, url="/wms", tag="wms-alerta"):
@@ -75,30 +118,26 @@ async def send_push_to_all(db, title, body, url="/wms", tag="wms-alerta"):
     if not _PUSH_OK:
         return (0, 0)
     try:
-        cfg = await ensure_vapid_keys(db)
         subs = await db.wms_push_subs.find({}, {"_id": 0}).to_list(500)
-        if not subs:
-            return (0, 0)
-        payload = {"title": title, "body": body, "url": url, "tag": tag}
-        claims = {"sub": "mailto:tech@prosper-mfg.com"}
-        enviadas, muertas = 0, []
-        for s in subs:
-            try:
-                await asyncio.to_thread(_send_one, s["subscription"], payload,
-                                        cfg["private_pem"], claims)
-                enviadas += 1
-            except WebPushException as e:
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                if status in (404, 410):
-                    muertas.append(s["subscription"].get("endpoint"))
-                else:
-                    logger.warning("push falló (%s): %s", status, e)
-            except Exception:
-                logger.exception("push falló")
-        if muertas:
-            await db.wms_push_subs.delete_many(
-                {"subscription.endpoint": {"$in": muertas}})
-        return (enviadas, len(muertas))
+        return await _send_to_subs(db, subs, title, body, url, tag)
     except Exception:
         logger.exception("send_push_to_all falló")
+        return (0, 0)
+
+
+async def send_push_to_users(db, user_ids, title, body, url="/wms", tag="wms-alerta"):
+    """Notifica sólo a los dispositivos de `user_ids` (los que hayan suscrito).
+    Un usuario opt-in sin dispositivo suscrito simplemente no recibe nada.
+    Nunca truena."""
+    if not _PUSH_OK:
+        return (0, 0)
+    ids = [u for u in (user_ids or []) if u]
+    if not ids:
+        return (0, 0)
+    try:
+        subs = await db.wms_push_subs.find(
+            {"user_id": {"$in": ids}}, {"_id": 0}).to_list(500)
+        return await _send_to_subs(db, subs, title, body, url, tag)
+    except Exception:
+        logger.exception("send_push_to_users falló")
         return (0, 0)

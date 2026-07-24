@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   UserPlus, Loader2, Shield, User, Trash2, ChevronDown, ChevronUp, 
   Eye, EyeOff, Pencil, Ban, Mail, Lock, KeyRound, Check, X, ClipboardCheck,
-  ArrowLeft, Users, Search, RefreshCw, Smartphone, Activity, Clock
+  ArrowLeft, Users, Search, RefreshCw, Smartphone, Activity, Clock, Truck
 } from 'lucide-react';
 import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -257,6 +257,26 @@ const UserManagementCenter = () => {
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || 'No se pudo actualizar el nivel');
+      }
+    } catch {
+      toast.error('Error de conexión');
+    }
+  };
+
+  // Opt-in per usuario a las notificaciones push de "packing cargado" (camioncito).
+  // Supersu only; reenviamos el rol para conservar la forma del PUT.
+  const handleNotifyPackingToggle = async (userId, currentRole, next) => {
+    try {
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: currentRole, notify_packing_loaded: next }),
+      });
+      if (res.ok) {
+        toast.success(next ? 'Recibirá aviso de packing cargado' : 'Aviso de packing desactivado');
+        setTimeout(fetchUsers, 300);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No se pudo actualizar la notificación');
       }
     } catch {
       toast.error('Error de conexión');
@@ -650,6 +670,25 @@ const UserManagementCenter = () => {
                       <span className="h-9 flex items-center px-3 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary">
                         Nivel {u.admin_level || 1}
                       </span>
+                    )}
+
+                    {/* Opt-in a las notificaciones push de "packing cargado"
+                        (camioncito). Solo supersu decide quién las recibe. */}
+                    {isSupersu && (
+                      <button
+                        onClick={() => handleNotifyPackingToggle(u.user_id, u.role, !u.notify_packing_loaded)}
+                        title={u.notify_packing_loaded
+                          ? 'Recibe aviso al celular cuando se carga un packing (clic para desactivar)'
+                          : 'No recibe aviso de packing cargado (clic para activar)'}
+                        className={`h-9 flex items-center gap-1.5 px-3 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${
+                          u.notify_packing_loaded
+                            ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500/25'
+                            : 'bg-secondary/30 border-border text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <Truck className="w-4 h-4" />
+                        {u.notify_packing_loaded ? 'Packing ON' : 'Packing'}
+                      </button>
                     )}
 
                     <div className="flex bg-secondary/30 rounded-lg p-1 border border-border">
