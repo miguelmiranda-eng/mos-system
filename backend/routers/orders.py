@@ -181,6 +181,26 @@ async def check_order_number(request: Request, order_number: str = None):
         "in_trash": in_trash
     }
 
+@router.get("/shipped")
+async def list_shipped_orders(request: Request, skip: int = 0, limit: int = 50):
+    """Órdenes con packing cargado (el camioncito): las que ya tienen packing_link.
+    Paginado — 50 por defecto. Para exportar, el front pide páginas más grandes.
+    NOTA: debe declararse ANTES de /{order_id} o el catch-all se la traga."""
+    await require_auth(request)
+    skip = max(0, skip)
+    limit = max(1, min(limit, 5000))
+    q = {"packing_link": {"$nin": [None, ""]}, "board": {"$ne": "PAPELERA DE RECICLAJE"}}
+    total = await db.orders.count_documents(q)
+    proj = {
+        "_id": 0, "order_number": 1, "client": 1, "style": 1, "color": 1,
+        "quantity": 1, "customer_po": 1, "board": 1, "due_date": 1,
+        "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
+    }
+    items = await (db.orders.find(q, proj)
+                   .sort("packing_link_at", -1).skip(skip).limit(limit).to_list(limit))
+    return {"total": total, "skip": skip, "limit": limit, "items": items}
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: str, request: Request):
     await require_auth(request)

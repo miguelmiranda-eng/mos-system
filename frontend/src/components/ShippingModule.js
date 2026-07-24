@@ -12,8 +12,12 @@ import {
   ChevronRight,
   Search,
   Camera,
-  Layers
+  Layers,
+  Truck,
+  Download,
+  Loader2
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -28,6 +32,15 @@ const ShippingModule = () => {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [searchDate, setSearchDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+
+  // Pestaña "Con Packing": órdenes que ya tienen packing cargado (el camioncito).
+  // Se traen de 50 en 50 (no todas de golpe) y se pueden exportar a Excel.
+  const PAGE = 50;
+  const [activeTab, setActiveTab] = useState('registro');
+  const [shipped, setShipped] = useState([]);
+  const [shippedTotal, setShippedTotal] = useState(0);
+  const [shippedLoading, setShippedLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Lock the background page scroll while the detail modal is open so iPad/iOS
   // doesn't scroll the page behind the modal (scroll-chaining) when the user
@@ -66,6 +79,77 @@ const ShippingModule = () => {
   useEffect(() => {
     fetchRecords();
   }, [fetchRecords]);
+
+  // Carga una página de órdenes con packing. reset=true reinicia desde 0;
+  // reset=false agrega los siguientes 50 (botón "Cargar más").
+  const loadShipped = async (reset) => {
+    setShippedLoading(true);
+    try {
+      const skip = reset ? 0 : shipped.length;
+      const res = await fetch(`${API}/orders/shipped?skip=${skip}&limit=${PAGE}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setShippedTotal(data.total || 0);
+        setShipped(prev => reset ? (data.items || []) : [...prev, ...(data.items || [])]);
+      } else {
+        toast.error('No se pudo cargar la lista de envíos');
+      }
+    } catch {
+      toast.error('Error de conexión');
+    } finally {
+      setShippedLoading(false);
+    }
+  };
+
+  // Al entrar por primera vez a la pestaña, trae la primera página.
+  useEffect(() => {
+    if (activeTab === 'packing' && shipped.length === 0 && shippedTotal === 0) {
+      loadShipped(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Exporta TODA la lista (no solo lo cargado) a Excel, trayéndola por bloques.
+  const exportShipped = async () => {
+    setExporting(true);
+    try {
+      const BIG = 5000;
+      let all = [];
+      let skip = 0;
+      while (true) {
+        const res = await fetch(`${API}/orders/shipped?skip=${skip}&limit=${BIG}`, { credentials: 'include' });
+        if (!res.ok) throw new Error('fetch');
+        const data = await res.json();
+        all = all.concat(data.items || []);
+        if (!(data.items || []).length || all.length >= (data.total || 0)) break;
+        skip += BIG;
+      }
+      if (!all.length) { toast.error('No hay envíos para exportar'); return; }
+      const rows = all.map(o => ({
+        'Orden': o.order_number || '',
+        'Cliente': o.client || '',
+        'Customer PO': o.customer_po || '',
+        'Style': o.style || '',
+        'Color': o.color || '',
+        'Cantidad': o.quantity ?? '',
+        'Tablero': o.board || '',
+        'Packing': o.packing_link_label || o.packing_link || '',
+        'Fecha packing': o.packing_link_at ? new Date(o.packing_link_at).toLocaleString() : '',
+        'Entrega': o.due_date || '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [{ wch: 10 }, { wch: 24 }, { wch: 16 }, { wch: 14 }, { wch: 14 },
+                     { wch: 10 }, { wch: 16 }, { wch: 28 }, { wch: 20 }, { wch: 12 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Envios_con_packing');
+      XLSX.writeFile(wb, `envios_con_packing_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success(`${all.length} envío(s) exportado(s)`);
+    } catch {
+      toast.error('No se pudo exportar');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleFileChange = (e) => {
     const selectedFiles = Array.from(e.target.files);
@@ -136,19 +220,46 @@ const ShippingModule = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-200 w-full md:w-auto">
-          <Search className="w-5 h-5 text-blue-600" />
-          <input 
-            type="date" 
-            value={searchDate} 
-            onChange={(e) => setSearchDate(e.target.value)}
-            className="bg-transparent border-none text-slate-800 font-bold text-sm focus:ring-0 cursor-pointer w-full"
-          />
-        </div>
+        {activeTab === 'registro' && (
+          <div className="flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-200 w-full md:w-auto">
+            <Search className="w-5 h-5 text-blue-600" />
+            <input
+              type="date"
+              value={searchDate}
+              onChange={(e) => setSearchDate(e.target.value)}
+              className="bg-transparent border-none text-slate-800 font-bold text-sm focus:ring-0 cursor-pointer w-full"
+            />
+          </div>
+        )}
       </header>
 
+      {/* Pestañas */}
+      <div className="max-w-7xl mx-auto flex gap-2">
+        <button
+          onClick={() => setActiveTab('registro')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${
+            activeTab === 'registro'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+              : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'
+          }`}
+        >
+          <Package className="w-4 h-4" /> Registro de envíos
+        </button>
+        <button
+          onClick={() => setActiveTab('packing')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${
+            activeTab === 'packing'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+              : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'
+          }`}
+        >
+          <Truck className="w-4 h-4" /> Con packing cargado
+        </button>
+      </div>
+
+      {activeTab === 'registro' && (
       <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
+
         {/* Left Column: Form */}
         <div className="lg:col-span-5">
           <form onSubmit={handleSubmit} className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-slate-100 space-y-8">
@@ -328,6 +439,109 @@ const ShippingModule = () => {
           </div>
         </div>
       </main>
+      )}
+
+      {/* Pestaña: órdenes con packing cargado (camioncito) */}
+      {activeTab === 'packing' && (
+        <main className="max-w-7xl mx-auto">
+          <div className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-xl shadow-slate-200/50 border border-slate-100 min-h-[700px] flex flex-col">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+              <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                <Truck className="w-6 h-6 text-blue-600" />
+                ENVÍOS CON PACKING
+                <span className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-full uppercase">
+                  {shipped.length} de {shippedTotal}
+                </span>
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadShipped(true)}
+                  disabled={shippedLoading}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[11px] uppercase tracking-widest hover:bg-slate-200 transition-all disabled:opacity-50"
+                >
+                  <Search className="w-4 h-4" /> Refrescar
+                </button>
+                <button
+                  onClick={exportShipped}
+                  disabled={exporting || shippedTotal === 0}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-black text-[11px] uppercase tracking-widest hover:bg-emerald-700 transition-all disabled:opacity-50"
+                >
+                  {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  Exportar Excel
+                </button>
+              </div>
+            </div>
+
+            {shipped.length === 0 && shippedLoading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin" />
+              </div>
+            ) : shipped.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-300">
+                <Truck className="w-24 h-24 mb-4 opacity-20" />
+                <p className="font-black uppercase tracking-widest text-slate-400">Sin envíos con packing</p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto flex-1">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-200">
+                        <th className="py-3 px-3">Orden</th>
+                        <th className="py-3 px-3">Cliente</th>
+                        <th className="py-3 px-3">Style</th>
+                        <th className="py-3 px-3 text-right">Cant.</th>
+                        <th className="py-3 px-3">Packing</th>
+                        <th className="py-3 px-3">Fecha</th>
+                        <th className="py-3 px-3">Tablero</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shipped.map((o, i) => (
+                        <tr key={`${o.order_number}-${i}`} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-3">
+                            <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-black rounded-md">#{o.order_number}</span>
+                          </td>
+                          <td className="py-3 px-3 text-sm font-bold text-slate-700">{o.client || '—'}</td>
+                          <td className="py-3 px-3 text-sm font-semibold text-slate-600">{o.style || '—'}</td>
+                          <td className="py-3 px-3 text-sm font-bold text-slate-700 text-right">{o.quantity ?? '—'}</td>
+                          <td className="py-3 px-3 text-sm text-slate-600 max-w-[220px] truncate">
+                            {o.packing_link ? (
+                              <a href={o.packing_link} target="_blank" rel="noopener noreferrer"
+                                 className="text-blue-600 font-bold hover:underline inline-flex items-center gap-1">
+                                <ExternalLink className="w-3 h-3" /> {o.packing_link_label || 'Packing'}
+                              </a>
+                            ) : '—'}
+                          </td>
+                          <td className="py-3 px-3 text-xs font-semibold text-slate-500">
+                            {o.packing_link_at ? new Date(o.packing_link_at).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">{o.board || '—'}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {shipped.length < shippedTotal && (
+                  <div className="pt-6 flex justify-center">
+                    <button
+                      onClick={() => loadShipped(false)}
+                      disabled={shippedLoading}
+                      className="flex items-center gap-2 px-8 py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all disabled:opacity-50"
+                    >
+                      {shippedLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
+                      Cargar 50 más ({shipped.length}/{shippedTotal})
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </main>
+      )}
 
       {/* Modal de Detalles */}
       {selectedRecord && (
