@@ -14,6 +14,20 @@ import { Btn, Chip, cls, EmptyState, StatCard, Th } from "./ui";
 // supervisor rojo, cuadradas verde.
 const PASS_TONES = { 1: "neutral", 2: "info", 3: "warning", supervisor: "danger", ok: "success" };
 
+// SKU canónico STYLE-COLOR-SIZE — espejo EXACTO de _auto_sku() del backend
+// (backend/routers/wms.py). El supervisor teclea estilo/color/talla y el SKU se
+// genera solo, para no reintroducir fantasmas por SKU corto tecleado a mano.
+const ccAutoSku = (style, color, size) => {
+  const s = (style || '').trim();
+  if (!s) return '';
+  const parts = [s.toUpperCase().replace(/ /g, '-')];
+  const c = (color || '').trim();
+  const z = (size || '').trim();
+  if (c) parts.push(c.toUpperCase().replace(/ /g, '-').slice(0, 10));
+  if (z) parts.push(z.toUpperCase());
+  return parts.join('-');
+};
+
 // ── Helpers de la pestaña Eficiencia (todo en hora LOCAL del navegador) ──────
 // Fecha local YYYY-MM-DD, formato de <input type="date">.
 const localDateStr = (d = new Date()) => {
@@ -560,11 +574,11 @@ export const CycleCountModule = () => {
         const f = supForm[`${loc}:${b}`] || {};
         const action = f.action || 'discard';
         return action === 'create'
-          ? { box_id: b, action, units: parseInt(f.units, 10) || 0, sku: f.sku || '', color: f.color || '', size: f.size || '', customer: f.customer || '' }
+          ? { box_id: b, action, units: parseInt(f.units, 10) || 0, style: f.style || '', color: f.color || '', size: f.size || '', customer: f.customer || '' }
           : { box_id: b, action: 'discard' };
       });
-      const bad = resolutions.find(r => r.action === 'create' && (!r.units || r.units <= 0 || !r.sku));
-      if (bad) { toast.error(`Falta style o unidades (>0) para crear ${bad.box_id}`); return; }
+      const bad = resolutions.find(r => r.action === 'create' && (!r.units || r.units <= 0 || !r.style));
+      if (bad) { toast.error(`Falta el estilo o unidades (>0) para crear ${bad.box_id}`); return; }
       setResolvingSup(true);
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/resolve-supervisor`, { location: loc, resolutions });
@@ -850,9 +864,13 @@ export const CycleCountModule = () => {
                                   {isCreate && (
                                     <div className="grid grid-cols-2 gap-1.5">
                                       <input value={f.units || ''} onChange={e => upd({ units: e.target.value })} type="number" min="1" placeholder="Unidades *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
-                                      <input value={f.sku || ''} onChange={e => upd({ sku: e.target.value })} placeholder="Style / SKU *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <input value={f.style || ''} onChange={e => upd({ style: e.target.value })} placeholder="Estilo *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
                                       <input value={f.color || ''} onChange={e => upd({ color: e.target.value })} placeholder="Color" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
                                       <input value={f.size || ''} onChange={e => upd({ size: e.target.value })} placeholder="Talla" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <div className="col-span-2 text-[11px] text-muted-foreground font-mono">
+                                        SKU: <span className="text-foreground font-medium">{ccAutoSku(f.style, f.color, f.size) || '—'}</span>
+                                        <span className="opacity-70"> · se genera solo</span>
+                                      </div>
                                     </div>
                                   )}
                                 </div>

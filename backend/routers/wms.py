@@ -2719,11 +2719,7 @@ async def create_receiving(request: Request):
 
     # Auto-generate SKU if not provided
     if not sku and style:
-        base = style.upper().replace(' ', '-')
-        parts = [base]
-        if color: parts.append(color.upper().replace(' ', '-')[:10])
-        if size: parts.append(size.upper())
-        sku = '-'.join(parts)
+        sku = _auto_sku(style, color, size)
 
     # Calculate total units
     total_units = units if units > 0 else (dozens * 12 + pieces)
@@ -10114,18 +10110,32 @@ async def import_inventory(request: Request, file: UploadFile = File(...), force
 
 # ==================== SKU GENERATION ====================
 
+def _auto_sku(style: str, color: str = "", size: str = "") -> str:
+    """SKU canónico STYLE-COLOR-SIZE. Fuente ÚNICA de verdad.
+
+    Reglas: mayúsculas, espacios -> '-', color truncado a 10 chars. La usan
+    recepción, el ajuste del supervisor en cicloconteo y el preview /generate-sku,
+    para que un mismo (estilo,color,talla) produzca SIEMPRE el mismo SKU y no se
+    generen filas fantasma por SKU corto/tecleado a mano.
+    """
+    style = (style or "").strip()
+    if not style:
+        return ""
+    parts = [style.upper().replace(' ', '-')]
+    color = (color or "").strip()
+    size = (size or "").strip()
+    if color:
+        parts.append(color.upper().replace(' ', '-')[:10])
+    if size:
+        parts.append(size.upper())
+    return '-'.join(parts)
+
+
 @router.get("/generate-sku")
 async def generate_sku(request: Request, style: str = "", color: str = "", size: str = ""):
     """Preview auto-generated SKU for a style+color+size combination."""
     await require_auth(request)
-    if not style:
-        return {"sku": ""}
-    base = style.upper().replace(' ', '-')
-    parts = [base]
-    if color: parts.append(color.upper().replace(' ', '-')[:10])
-    if size: parts.append(size.upper())
-    sku = '-'.join(parts)
-    return {"sku": sku}
+    return {"sku": _auto_sku(style, color, size)}
 
 # ==================== CYCLE COUNT ====================
 
@@ -10980,12 +10990,16 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
                 raise HTTPException(400, f"Unidades inválidas para {bid}")
             if units <= 0:
                 raise HTTPException(400, f"Las unidades de {bid} deben ser mayores a 0")
-            sku = (r.get("sku") or r.get("style") or "").strip().upper()
-            if not sku:
-                raise HTTPException(400, f"El style/SKU es obligatorio para crear {bid}")
+            # Identidad = estilo + color + talla. El SKU se GENERA canónicamente
+            # (nunca se teclea) para no reintroducir filas fantasma por SKU corto.
+            # Compat: clientes viejos mandaban 'sku' con el estilo dentro.
+            style = (r.get("style") or r.get("sku") or "").strip().upper()
+            if not style:
+                raise HTTPException(400, f"El estilo es obligatorio para crear {bid}")
             color = (r.get("color") or "").strip().upper()
             size = (r.get("size") or "").strip().upper()
             customer = (r.get("customer") or "").strip().upper()
+            sku = _auto_sku(style, color, size)
             existing = await db.wms_boxes.find_one(
                 {"$or": [{"box_id": bid}, {"barcode": bid}, {"lpn_id": bid}]})
             real_id = existing.get("box_id") if existing else bid
@@ -10998,7 +11012,7 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
             else:
                 await db.wms_boxes.insert_one({
                     "box_id": real_id, "barcode": real_id, "lpn_id": real_id,
-                    "sku": sku, "style": sku, "color": color, "size": size,
+                    "sku": sku, "style": style, "color": color, "size": size,
                     "units": units, "qty": units, "location": loc, "status": "stored",
                     "customer": customer, "is_adjustment": True,
                     "created_at": now_iso(), "updated_at": now_iso(),
@@ -11007,10 +11021,11 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
             # LA CAJA MANDA: la caja ya quedó viva arriba; el marcador se
             # reescribe desde las cajas (antes: _cc_add_inventory, aritmética).
             await _reproject_material_rows(
-                sku, sku, color, size, loc, user=user,
+                style, sku, color, size, loc, user=user,
                 contexto={"via": "cycle_count", "count_id": count_id})
             await log_movement(user, "cycle_count_manual_create", {
-                "box_id": real_id, "location": loc, "sku": sku, "color": color, "size": size,
+                "box_id": real_id, "location": loc, "style": style, "sku": sku,
+                "color": color, "size": size,
                 "old_units": 0, "new_units": units, "delta_units": units,
                 "via": "cycle_count", "count_id": count_id,
             })
