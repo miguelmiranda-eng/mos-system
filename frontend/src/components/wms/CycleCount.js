@@ -63,7 +63,7 @@ export const CycleCountModule = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
-  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
+  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
   // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
   const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
@@ -391,7 +391,7 @@ export const CycleCountModule = () => {
         const data = await res.json();
         toast.success(t('wms_cc_created', { count: data.total_lines }));
         setShowForm(false);
-        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', assigned_to: '', assigned_to_name: '' });
+        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error('Error de conexion'); }
@@ -1183,6 +1183,33 @@ export const CycleCountModule = () => {
               Puedes combinar filtros. Ej: solo <b>style 5000 + color BLACK</b> cuenta esas dos dimensiones donde existan.
             </div>
           </div>
+
+          {/* Incluir locaciones vacías: solo tiene sentido en conteo por ubicación
+              o general. Con filtro de cliente/estilo/color se deshabilita porque una
+              locación vacía no casa esos filtros. */}
+          {(() => {
+            const emptyApplicable = !(form.customer_filter || form.style_filter || form.color_filter);
+            return (
+              <div className={`flex items-start gap-3 p-3 bg-card border border-border rounded-lg ${emptyApplicable ? '' : 'opacity-40'}`}>
+                <input
+                  type="checkbox"
+                  id="cc_include_empty"
+                  checked={emptyApplicable && form.include_empty}
+                  disabled={!emptyApplicable}
+                  onChange={e => setForm(p => ({ ...p, include_empty: e.target.checked }))}
+                  className="w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary/20 bg-background"
+                  data-testid="cc-include-empty"
+                />
+                <label htmlFor="cc_include_empty" className="text-xs font-medium text-foreground cursor-pointer select-none">
+                  Incluir locaciones vacías
+                  <span className="block text-muted-foreground/70 font-normal mt-0.5">
+                    Visita también las ubicaciones que el sistema cree vacías para detectar stock encontrado.
+                    {emptyApplicable ? '' : ' No aplica con filtro de cliente/estilo/color.'}
+                  </span>
+                </label>
+              </div>
+            );
+          })()}
 
           <div className="flex gap-2 pt-2">
             <Btn variant="primary" onClick={handleCreate} disabled={loading} data-testid="cc-create">

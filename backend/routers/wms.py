@@ -10151,6 +10151,11 @@ async def create_cycle_count(request: Request):
     color_filter = body.get("color_filter", "").strip()
     assigned_to = body.get("assigned_to", "").strip()
     assigned_to_name = body.get("assigned_to_name", "").strip()
+    # Incluir locaciones que el sistema cree VACÍAS (solo box_scan, y solo cuando
+    # el conteo es por ubicación/general: una locación vacía no tiene
+    # cliente/estilo/color con qué casar esos filtros). Permite detectar stock
+    # encontrado en ubicaciones sin inventario registrado.
+    include_empty = bool(body.get("include_empty", False))
     is_general = body.get("is_general", False) or (
         not location_filter and not customer_filter and not style_filter and not color_filter
     )
@@ -10230,6 +10235,20 @@ async def create_cycle_count(request: Request):
             if not loc:
                 continue
             by_loc.setdefault(loc, []).append(b.get("box_id"))
+
+        # Locaciones VACÍAS (opt-in): visitar también las que el sistema cree sin
+        # stock, con expected_boxes:[]. Si el contador escanea algo ahí, sale como
+        # 'extra' → escala → supervisor (stock encontrado). No aplica con filtro de
+        # cliente/estilo/color (una locación vacía no casa esos filtros).
+        if include_empty and not (customer_filter or style_filter or color_filter):
+            loc_query = {"active": True}
+            if not is_general and location_filter:
+                loc_query["name"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
+            async for locdoc in db.wms_locations.find(loc_query, {"_id": 0, "name": 1}):
+                loc = (locdoc.get("name") or "").strip()
+                if loc and loc not in by_loc:
+                    by_loc[loc] = []   # vacía → sin cajas esperadas
+
         for loc in sorted(by_loc):
             scan_locations.append({
                 "loc_id": gen_id("ccl"),
@@ -10246,7 +10265,7 @@ async def create_cycle_count(request: Request):
                 "history": [],                   # auditoría por pase
             })
         if not scan_locations:
-            raise HTTPException(400, "No se encontraron cajas con los filtros proporcionados")
+            raise HTTPException(400, "No se encontraron cajas ni locaciones con los filtros proporcionados")
 
     count_id = gen_id("cc")
     count_doc = {
@@ -10259,6 +10278,7 @@ async def create_cycle_count(request: Request):
         "customer_filter": customer_filter if not is_general else "",
         "style_filter": style_filter if not is_general else "",
         "color_filter": color_filter if not is_general else "",
+        "include_empty": include_empty,
         "assigned_to": assigned_to or None,
         "assigned_to_name": assigned_to_name or None,
         "total_lines": len(count_lines),
