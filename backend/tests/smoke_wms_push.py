@@ -103,6 +103,26 @@ async def main():
         r = await sup.get("/api/wms/push/vapid-public-key")
         check("la llave PERSISTE (misma en 2a llamada)", r.json().get("public_key") == k1)
 
+        print("\n== La llave privada es digerible por pywebpush ==")
+        # pywebpush recibe la llave como string vía Vapid.from_string, que SOLO
+        # entiende RAW/DER-b64url — pasarle el PEM de Mongo truena y ninguna
+        # push sale (así se cayó el canal completo el 2026-07-23).
+        from services.push_notify import _pem_to_der_b64url
+        from py_vapid import Vapid
+        import base64
+        from cryptography.hazmat.primitives import serialization
+        cfg = sdb.wms_push_config.find_one({"_id": "vapid_keys"})
+        try:
+            v = Vapid.from_string(_pem_to_der_b64url(cfg["private_pem"]))
+            raw_pub = v.public_key.public_bytes(
+                serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+            pub = base64.urlsafe_b64encode(raw_pub).decode().rstrip("=")
+            check("PEM→DER-b64url pasa por Vapid.from_string y la pública coincide",
+                  pub == cfg["public_key_b64url"], "la pública derivada no coincide")
+        except Exception as e:
+            check("PEM→DER-b64url pasa por Vapid.from_string y la pública coincide",
+                  False, repr(e))
+
         print("\n== Suscripción ==")
         r = await sup.post("/api/wms/push/subscribe", json={"subscription": FAKE_SUB})
         check("subscribe 200", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
