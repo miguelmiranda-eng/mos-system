@@ -11741,6 +11741,43 @@ async def get_cycle_count_report(count_id: str, request: Request):
                 "loc_status": st, "counted_by_name": by, "counted_at": at,
             })
 
+    # KPIs de CAJA (solo conteos por escaneo). "Fuera de inventario" = caja
+    # escaneada que el sistema no tenia en esa ubicacion (`extra`), mas los
+    # codigos desconocidos que el supervisor tuvo que atar (`unknown_boxes`):
+    # ambos son stock encontrado que el inventario no reflejaba.
+    scan_locs = count.get("scan_locations") or []
+    boxes_scanned = boxes_missing = boxes_extra = boxes_unknown = 0
+    locs_with_findings = 0
+    loc_status_tally = {}
+    pass_tally = {}
+    for sl in scan_locs:
+        n_extra = len(sl.get("extra") or [])
+        n_missing = len(sl.get("missing") or [])
+        n_unknown = len(sl.get("unknown_boxes") or [])
+        boxes_scanned += len(sl.get("scanned_boxes") or [])
+        boxes_missing += n_missing
+        boxes_extra += n_extra
+        boxes_unknown += n_unknown
+        if n_extra or n_missing or n_unknown:
+            locs_with_findings += 1
+        st = sl.get("status") or "pendiente"
+        loc_status_tally[st] = loc_status_tally.get(st, 0) + 1
+        p = str(sl.get("pass") or "1")
+        pass_tally[p] = pass_tally.get(p, 0) + 1
+
+    box_kpis = {
+        "is_box_scan": bool(scan_locs),
+        "locations_total": len(scan_locs),
+        "locations_closed": sum(1 for sl in scan_locs if sl.get("status") in ("ok", "supervisor")),
+        "locations_with_findings": locs_with_findings,
+        "boxes_scanned": boxes_scanned,
+        "boxes_missing": boxes_missing,        # el sistema la tenia, no aparecio
+        "boxes_out_of_inventory": boxes_extra,  # aparecio, el sistema no la tenia
+        "boxes_unknown": boxes_unknown,         # codigo no reconocido, atado por supervisor
+        "locations_by_status": loc_status_tally,
+        "locations_by_pass": pass_tally,
+    }
+
     return {
         "count_id": count["count_id"],
         "name": count.get("name", ""),
@@ -11767,6 +11804,7 @@ async def get_cycle_count_report(count_id: str, request: Request):
             "adjusted_count": adjusted_count,
             "duration_mins": duration_mins,
         },
+        "box_kpis": box_kpis,
         "discrepancy_table": discrepancy_table,
         "all_lines": all_lines_table,
         "location_breakdown": location_breakdown,

@@ -85,7 +85,27 @@ export const CycleCountModule = () => {
   // { title, message, onConfirm } | null
   const [confirmDialog, setConfirmDialog] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'efficiency'
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'kpis' | 'efficiency'
+
+  // ── KPIs de UN conteo (gate nivel 3, igual que el reporte) ────────────────
+  // Reusa /cycle-counts/{id}/report: el mismo payload del Excel, pintado en
+  // pantalla. `box_kpis` solo trae datos en conteos por escaneo.
+  const [kpiCountId, setKpiCountId] = useState('');
+  const [kpiReport, setKpiReport] = useState(null);
+  const [loadingKpi, setLoadingKpi] = useState(false);
+
+  const loadKpis = useCallback(async (countId) => {
+    if (!countId) { setKpiReport(null); return; }
+    setLoadingKpi(true);
+    try {
+      setKpiReport(await fetcher(`/cycle-counts/${countId}/report`));
+    } catch {
+      toast.error('Error cargando KPIs del conteo');
+      setKpiReport(null);
+    } finally {
+      setLoadingKpi(false);
+    }
+  }, []);
 
   // ── Eficiencia (gate nivel 3 en el backend): cierres de ubicación por
   // contador. El endpoint regresa eventos crudos (un pase cerrado por evento);
@@ -1084,6 +1104,10 @@ export const CycleCountModule = () => {
     .sort((a, b) => b.boxes - a.boxes);
   const effTotalBoxes = effList.reduce((s, ev) => s + (ev.boxes || 0), 0);
 
+  // Detalle de "fuera de inventario": las SOBRANTE de scanned_boxes, o sea la
+  // caja que apareció en la ubicación y el sistema no tenía ahí.
+  const outOfInventoryRows = (kpiReport?.scanned_boxes || []).filter(b => b.tipo === 'SOBRANTE');
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1095,6 +1119,23 @@ export const CycleCountModule = () => {
             <ClipboardList className="w-4 h-4" />
             ACTIVOS
           </button>
+          {canExportReport && (
+            <button
+              onClick={() => {
+                setActiveTab('kpis');
+                // Sin conteo elegido: abre con el más reciente (la lista ya viene
+                // ordenada por fecha desde /cycle-counts).
+                const target = kpiCountId || selectedCount?.count_id || counts[0]?.count_id || '';
+                if (target && target !== kpiCountId) { setKpiCountId(target); loadKpis(target); }
+                else if (target && !kpiReport && !loadingKpi) loadKpis(target);
+              }}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'kpis' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              data-testid="cc-tab-kpis"
+            >
+              <BarChart3 className="w-4 h-4" />
+              KPIs
+            </button>
+          )}
           {(user?.access_level >= 5 || user?.role === 'supersu' || user?.role === 'admin' || (parseInt(user?.inventory_level, 10) || 0) >= 3) && (
             <button
               onClick={() => { setActiveTab('efficiency'); if (effEvents === null && !loadingEff) loadEfficiency(); }}
@@ -1333,6 +1374,158 @@ export const CycleCountModule = () => {
           </div>
         )}
         </>
+      )}
+
+      {activeTab === 'kpis' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="cc-kpis">
+
+          {/* ── Selector de conteo ────────────────────────────────────────── */}
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="min-w-[18rem]">
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Conteo</label>
+              <select
+                value={kpiCountId}
+                onChange={e => { setKpiCountId(e.target.value); loadKpis(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
+                data-testid="cc-kpi-select"
+              >
+                <option value="">Selecciona un conteo…</option>
+                {counts.map(c => (
+                  <option key={c.count_id} value={c.count_id}>
+                    {(c.name || c.count_id)} · {c.status === 'approved' ? 'aprobado' : c.status}
+                    {c.created_at ? ` · ${new Date(c.created_at).toLocaleDateString()}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {kpiCountId && (
+              <Btn onClick={() => loadKpis(kpiCountId)} disabled={loadingKpi} data-testid="cc-kpi-reload">
+                Actualizar
+              </Btn>
+            )}
+            {kpiReport && (
+              <Btn variant="primary" onClick={() => exportExcel(kpiReport)} data-testid="cc-kpi-export">
+                <FileSpreadsheet className="w-4 h-4" /> Excel
+              </Btn>
+            )}
+          </div>
+
+          {loadingKpi ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <Loader2 className="w-8 h-8 animate-spin mb-4" />
+              <p className="text-sm">Cargando KPIs...</p>
+            </div>
+          ) : !kpiReport ? (
+            <EmptyState title="Elige un conteo para ver sus KPIs."
+              hint="Se muestran los datos de ese conteo: líneas, unidades y cajas." />
+          ) : (
+            <>
+              {/* ── Precisión del conteo ──────────────────────────────────── */}
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Precisión</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <StatCard label="Líneas en sistema" value={kpiReport.kpis.total_lines} />
+                  <StatCard label="Líneas contadas" value={kpiReport.kpis.counted_lines} />
+                  <StatCard label="Pendientes" value={kpiReport.kpis.total_lines - kpiReport.kpis.counted_lines} />
+                  <StatCard label="Con discrepancia" value={kpiReport.kpis.discrepant_lines} />
+                  <StatCard label="Exactitud" value={`${kpiReport.kpis.accuracy_pct}%`} />
+                </div>
+              </div>
+
+              {/* ── Unidades ──────────────────────────────────────────────── */}
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Unidades</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <StatCard label="Unidades faltantes" value={kpiReport.kpis.units_short} />
+                  <StatCard label="Unidades sobrantes" value={kpiReport.kpis.units_over} />
+                  <StatCard label="Ajustes aplicados" value={kpiReport.kpis.adjusted_count} />
+                  <StatCard label="Duración" value={kpiReport.kpis.duration_mins != null
+                    ? `${Math.floor(kpiReport.kpis.duration_mins / 60)}h ${kpiReport.kpis.duration_mins % 60}m`
+                    : '—'} />
+                </div>
+              </div>
+
+              {/* ── Cajas: solo conteos por escaneo ───────────────────────── */}
+              {kpiReport.box_kpis?.is_box_scan ? (
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Cajas escaneadas</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                    <StatCard label="Ubicaciones" value={kpiReport.box_kpis.locations_total} />
+                    <StatCard label="Ubic. cerradas" value={kpiReport.box_kpis.locations_closed} />
+                    <StatCard label="Ubic. con hallazgos" value={kpiReport.box_kpis.locations_with_findings} />
+                    <StatCard label="Cajas escaneadas" value={kpiReport.box_kpis.boxes_scanned} />
+                    <StatCard label="Cajas faltantes" value={kpiReport.box_kpis.boxes_missing} />
+                    <StatCard label="Fuera de inventario" value={kpiReport.box_kpis.boxes_out_of_inventory} />
+                  </div>
+                  {kpiReport.box_kpis.boxes_unknown > 0 && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {kpiReport.box_kpis.boxes_unknown} caja(s) con código desconocido, atadas por supervisor.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Este conteo es por líneas, no por escaneo de cajas: los KPIs de caja no aplican.
+                </p>
+              )}
+
+              {/* ── Fuera de inventario: el detalle ───────────────────────── */}
+              {outOfInventoryRows.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Cajas contadas fuera de inventario ({outOfInventoryRows.length})
+                  </h3>
+                  <div className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-muted/50 border-b border-border sticky top-0">
+                          <tr><Th>Ubicación</Th><Th>Caja</Th><Th>Contó</Th><Th>Fecha</Th></tr>
+                        </thead>
+                        <tbody>
+                          {outOfInventoryRows.map((b, i) => (
+                            <tr key={`${b.location}-${b.box_id}-${i}`} className="border-b border-border/60">
+                              <td className="px-3 py-2 font-mono">{b.location}</td>
+                              <td className="px-3 py-2 font-mono">{b.box_id}</td>
+                              <td className="px-3 py-2">{b.counted_by_name || '—'}</td>
+                              <td className="px-3 py-2 tabular-nums">{b.counted_at ? new Date(b.counted_at).toLocaleString() : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Ubicaciones con más discrepancias ─────────────────────── */}
+              {(kpiReport.location_breakdown || []).some(l => l.discrepant > 0) && (
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ubicaciones con más discrepancias</h3>
+                  <div className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-muted/50 border-b border-border sticky top-0">
+                          <tr><Th>Ubicación</Th><Th right>Líneas</Th><Th right>Contadas</Th><Th right>Discrepantes</Th><Th right>Δ unidades</Th></tr>
+                        </thead>
+                        <tbody>
+                          {kpiReport.location_breakdown.filter(l => l.discrepant > 0).slice(0, 50).map(l => (
+                            <tr key={l.location} className="border-b border-border/60">
+                              <td className="px-3 py-2 font-mono">{l.location}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{l.total}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{l.counted}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-amber-600 dark:text-amber-400">{l.discrepant}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{l.units_delta}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {activeTab === 'efficiency' && (
