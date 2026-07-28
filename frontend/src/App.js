@@ -275,11 +275,11 @@ const ProtectedRoute = ({ children, allowCustomer = false, supersuOnly = false }
         navigate('/wms', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && !['/wms', '/pda'].includes(window.location.pathname)) {
+      } else if (user.role === 'picker' && !['/wms', '/pda', '/pda-recon'].includes(window.location.pathname)) {
         // Pickers use the WMS launcher: "Picking" returns to their original /pda
         // view, "Putaway 2.0" is the WMS module. Allow those; bounce anything
         // else back to the launcher (covers the iPad PWA entry too).
-        // "/pda-recon" ya NO está permitida: la conciliación es solo supersu.
+        // "/pda-recon" (Conciliación) SÍ está permitida para pickers.
         navigate('/wms', { replace: true });
       } else if (QC_ROLES.includes(user.role) && window.location.pathname !== '/qc') {
         // QC inspectors are locked to the QC dashboard, like operators to /operator.
@@ -833,7 +833,7 @@ function AppRouter() {
         </ProtectedRoute>
       } />
       <Route path="/pda-recon" element={
-        <ProtectedRoute supersuOnly>
+        <ProtectedRoute>
           <PdaRecon />
         </ProtectedRoute>
       } />

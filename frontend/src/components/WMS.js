@@ -370,16 +370,14 @@ export default function WMS() {
                   </button>
                 );
               })}
-              {/* Conciliación física (/pda-recon): SOLO super usuario. El backend
-                  también rechaza (403) a cualquier otro rol. */}
-              {currentUser?.role === 'supersu' && (
+              {/* Conciliación física (/pda-recon): disponible para pickers (además
+                  de supersu/admin). El backend valida el rol en /recon/*. */}
               <button onClick={() => navigate('/pda-recon')} data-testid="picker-launch-recon"
                 className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
                 <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
                 <span className="text-xl sm:text-2xl font-semibold text-center">Conciliación</span>
                 <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
               </button>
-              )}
             </div>
           </div>
         </div>

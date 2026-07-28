@@ -7327,11 +7327,23 @@ def _recon_lpn_boxes(boxes):
     return out
 
 
+# Roles que pueden usar la conciliación física de la PDA (/pda-recon):
+# pickers (liberado por pedido del usuario) además de admin/supersu/ceo.
+_RECON_ROLES = {"picker", "supersu", "admin", "ceo"}
+
+
+async def _require_recon_role(request: Request):
+    user = await require_auth(request)
+    if user.get("role") not in _RECON_ROLES:
+        raise HTTPException(403, "No autorizado para conciliación física")
+    return user
+
+
 @router.get("/recon/location/{loc}")
 async def recon_location(loc: str, request: Request):
     """Estado de una ubicacion para conciliar: cajas esperadas + si ya fue
     conciliada (bloqueada)."""
-    await require_supersu(request)
+    await _require_recon_role(request)
     location = _RECON_NORM(loc)
     if not location:
         raise HTTPException(400, "Ubicacion requerida")
@@ -7351,6 +7363,73 @@ async def recon_location(loc: str, request: Request):
     }
 
 
+@router.post("/recon/resolve-scan")
+async def recon_resolve_scan(request: Request):
+    """Conciliación LPN: resuelve un código escaneado (LPN físico) a su caja.
+    body: { location, code }
+      - LPN ya ligado / box_id conocido -> {matched:true, box_id, here, box}
+      - LPN físico SIN ligar             -> {matched:false, candidates:[...]}
+        para que el picker elija la caja placeholder y luego /recon/bind-lpn.
+    """
+    await _require_recon_role(request)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    code = str(body.get("code") or "").strip().upper()
+    if not location or not code:
+        raise HTTPException(400, "location y code requeridos")
+    box = None
+    if code.startswith("BOX"):
+        box = await db.wms_boxes.find_one({"box_id": code}, {"_id": 0})
+    if not box:
+        box = await _find_box_by_lpn(code)
+    if box:
+        return {
+            "matched": True,
+            "box_id": box.get("box_id"),
+            "here": _RECON_NORM(box.get("location")) == location,
+            "box": {k: box.get(k) for k in ("box_id", "sku", "style", "color", "size", "units", "location", "physical_lpn")},
+        }
+    # LPN físico sin ligar -> candidatos placeholder (box_id LPN…, sin physical_lpn).
+    candidates = await _cc_bind_candidates(location)
+    return {
+        "matched": False, "code": code,
+        "candidates": [{k: c.get(k) for k in ("box_id", "sku", "style", "color", "size", "units")}
+                       for c in candidates],
+    }
+
+
+@router.post("/recon/bind-lpn")
+async def recon_bind_lpn(request: Request):
+    """Conciliación LPN: liga el LPN físico escaneado a la caja placeholder que el
+    picker eligió. body: { location, lpn, box_id }."""
+    user = await _require_recon_role(request)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    lpn = _norm_lpn(body.get("lpn"))
+    box_id = str(body.get("box_id") or "").strip().upper()
+    if not (location and lpn and box_id):
+        raise HTTPException(400, "location, lpn y box_id requeridos")
+    dup = await _find_box_by_lpn(lpn)
+    if dup and dup.get("box_id") != box_id:
+        return {"status": "already_bound", "box_id": dup.get("box_id"),
+                "message": "Ese LPN ya estaba ligado a otra caja"}
+    box = await db.wms_boxes.find_one({"box_id": box_id})
+    if not box:
+        raise HTTPException(404, f"Caja {box_id} no encontrada")
+    if _RECON_NORM(box.get("location")) != location:
+        raise HTTPException(409, f"La caja {box_id} no está en {location}")
+    if box.get("physical_lpn"):
+        raise HTTPException(409, f"La caja {box_id} ya tiene LPN {box.get('physical_lpn')}")
+    await db.wms_boxes.update_one(
+        {"box_id": box_id},
+        {"$set": {"physical_lpn": lpn, "lpn_reconciled_at": now_iso(),
+                  "bound_by": user.get("user_id"), "bound_at": now_iso()},
+         "$addToSet": {"lpn_aliases": lpn}},
+    )
+    await log_movement(user, "recon_lpn_bound", {"location": location, "lpn": lpn, "box_id": box_id})
+    return {"status": "ok", "box_id": box_id, "lpn": lpn}
+
+
 @router.post("/recon/commit")
 async def recon_commit(request: Request):
     """Concilia una ubicacion contra las cajas fisicamente escaneadas.
@@ -7363,10 +7442,11 @@ async def recon_commit(request: Request):
     - Reconstruye el inventario de la ubicacion desde las cajas presentes.
     - Bloquea la ubicacion. Reversible via wms_recon_bak + commit_id.
 
-    RESTRINGIDO A SUPER USUARIO: reconstruye el inventario de una ubicacion
-    completa a partir de lo escaneado, asi que un error borra saldo real.
+    Disponible para pickers (además de admin/supersu): reconstruye el inventario
+    de una ubicacion completa a partir de lo escaneado, asi que un error borra
+    saldo real — es reversible via wms_recon_bak + commit_id.
     """
-    user = await require_supersu(request)
+    user = await _require_recon_role(request)
     body = await request.json()
     location = _RECON_NORM(body.get("location"))
     if not location:
@@ -7377,8 +7457,8 @@ async def recon_commit(request: Request):
         bid = str(raw or "").strip().upper()
         if not bid or bid in seen:
             continue
-        if not bid.startswith("BOX"):
-            continue  # solo cajas del sistema (prefijo BOX)
+        if not (bid.startswith("BOX") or bid.startswith("LPN")):
+            continue  # cajas del sistema: BOX-… o LPN… (LPN físico ya resuelto/ligado)
         seen.add(bid)
         scanned.append(bid)
 
@@ -7394,13 +7474,11 @@ async def recon_commit(request: Request):
     # Respaldo: cajas presentes actuales + inventario de la ubicacion.
     pre_boxes = await _recon_present_boxes(location)
 
-    # Bloqueo por LPN: si la ubicacion tiene cajas con licencia fisica real, la
-    # conciliacion por-BOX no aplica (no puede casarlas). Se rechaza.
-    lpn_boxes = _recon_lpn_boxes(pre_boxes)
-    if lpn_boxes:
-        ejemplos = ", ".join(str(x.get("lpn") or x.get("box_id")) for x in lpn_boxes[:3])
-        raise HTTPException(409, f"La ubicacion {location} tiene {len(lpn_boxes)} caja(s) con LPN fisico "
-                                 f"(ej. {ejemplos}) y no puede conciliarse aqui. Repórtala al administrador.")
+    # Cajas LPN: antes se bloqueaba la ubicación. Ahora el picker las resuelve en
+    # la PDA (escanea el LPN físico → se casa con su caja, o elige de una lista y
+    # la liga), así que llegan aquí en `scanned` como box_id (BOX-… o LPN…) igual
+    # que cualquier otra. Una caja LPN que NO se escaneó cae en "faltantes" como
+    # las demás (reversible via wms_recon_bak).
     pre_inv = await db.wms_inventory.find({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}}, {"_id": 0}).to_list(2000)
     scanned_docs = await db.wms_boxes.find({"box_id": {"$in": scanned}}, {"_id": 0}).to_list(3000) if scanned else []
     await db.wms_recon_bak.insert_one({

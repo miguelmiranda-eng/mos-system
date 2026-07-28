@@ -22,15 +22,16 @@ export default function PdaRecon() {
 
   const [phase, setPhase] = useState("loc"); // loc | scan | done | locked
   const [loc, setLoc] = useState(null);       // { location, expected, expected_count }
-  const [scanned, setScanned] = useState([]); // [{ id, known }]
+  const [scanned, setScanned] = useState([]); // [{ id, known, lpn? }]
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [pick, setPick] = useState(null);     // { code, candidates } — selector de LPN sin casar
   const inputRef = useRef(null);
 
   useEffect(() => { if (user === null) navigate("/", { replace: true }); }, [user, navigate]);
   useEffect(() => { inputRef.current?.focus(); }, [phase]);
 
-  const reset = () => { setPhase("loc"); setLoc(null); setScanned([]); setResult(null); };
+  const reset = () => { setPhase("loc"); setLoc(null); setScanned([]); setResult(null); setPick(null); };
 
   const submitLoc = async (e) => {
     e?.preventDefault();
@@ -39,9 +40,7 @@ export default function PdaRecon() {
     setBusy(true);
     try {
       const data = await fetcher(`/recon/location/${encodeURIComponent(v)}`);
-      if (data.blocked_lpn) {
-        setLoc(data); setPhase("lpn"); buzz([120, 60, 120]);
-      } else if (data.locked) {
+      if (data.locked) {
         setLoc(data); setPhase("locked"); buzz([120, 60, 120]);
       } else {
         setLoc(data); setScanned([]); setPhase("scan"); buzz(50);
@@ -52,23 +51,74 @@ export default function PdaRecon() {
 
   const expectedIds = new Set((loc?.expected || []).map(b => b.box_id));
 
+  // Agrega un objeto de caja a la lista, deduplicando por box_id.
+  const addScanned = useCallback((item) => {
+    setScanned(prev => {
+      if (prev.some(b => b.id === item.id)) { toast.info("Ya escaneada"); return prev; }
+      buzz(40);
+      return [item, ...prev];
+    });
+  }, []);
+
   const addBox = useCallback((raw) => {
     const id = String(raw || "").trim().toUpperCase();
     if (!id) return;
-    if (!id.startsWith("BOX")) { toast.error("Código inválido — solo cajas BOX"); buzz([120, 60, 120]); return; }
-    setScanned(prev => {
-      if (prev.some(b => b.id === id)) { toast.info("Ya escaneada"); return prev; }
-      buzz(40);
-      return [{ id, known: expectedIds.has(id) }, ...prev];
-    });
-  }, [expectedIds]);
+    addScanned({ id, known: expectedIds.has(id) });
+  }, [expectedIds, addScanned]);
 
-  const submitScan = (e) => {
+  // Resuelve un LPN físico (código sin prefijo BOX) contra el backend.
+  const resolveLpn = async (code) => {
+    setBusy(true);
+    try {
+      const res = await poster("/recon/resolve-scan", { location: loc.location, code });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.detail || "No se pudo resolver el código"); buzz([120, 60, 120]); return; }
+      if (data.matched) {
+        const box = data.box || {};
+        if (scanned.some(b => b.id === data.box_id)) { toast.info("Ya escaneada"); return; }
+        const label = `${box.style || box.sku || ""} ${box.color || ""} ${box.size || ""}`.trim() || data.box_id;
+        addScanned({ id: data.box_id, known: data.here, lpn: code });
+        if (data.here === false) { toast.warning(`Movida aquí: ${label}`); }
+        else { toast.success(label); }
+      } else {
+        setPick({ code, candidates: data.candidates || [] });
+      }
+    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+    finally { setBusy(false); }
+  };
+
+  const submitScan = async (e) => {
     e?.preventDefault();
-    const v = inputRef.current?.value || "";
-    addBox(v);
+    const raw = (inputRef.current?.value || "").trim();
     if (inputRef.current) inputRef.current.value = "";
     inputRef.current?.focus();
+    if (!raw) return;
+    if (busy) return; // evita doble disparo del scanner mientras se resuelve
+    const code = raw.toUpperCase();
+    if (code.startsWith("BOX")) { addBox(code); return; }
+    await resolveLpn(code);
+  };
+
+  // Casa un LPN físico sin enlazar contra una de las cajas candidatas.
+  const bindLpn = async (candidate) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await poster("/recon/bind-lpn", { location: loc.location, lpn: pick.code, box_id: candidate.box_id });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.detail || "No se pudo enlazar"); buzz([120, 60, 120]); return; }
+      if (data.status === "ok") {
+        addScanned({ id: candidate.box_id, known: true, lpn: pick.code });
+        setPick(null); toast.success("Caja enlazada"); buzz([60, 40, 120]);
+      } else if (data.status === "already_bound") {
+        const bid = data.box_id || candidate.box_id;
+        addScanned({ id: bid, known: true, lpn: pick.code });
+        setPick(null); toast.info(data.message || "Ya estaba enlazada");
+      } else {
+        toast.error("Respuesta inesperada"); buzz([120, 60, 120]);
+      }
+    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+    finally { setBusy(false); }
   };
 
   const commit = async () => {
@@ -134,32 +184,6 @@ export default function PdaRecon() {
           </div>
         )}
 
-        {/* ── PANTALLA bloqueada por LPN físico ── */}
-        {phase === "lpn" && (
-          <div className="space-y-5 pt-10 text-center">
-            <div className="mx-auto w-16 h-16 rounded-full bg-red-500/20 border-2 border-red-500/50 flex items-center justify-center">
-              <AlertTriangle className="w-9 h-9 text-red-400" />
-            </div>
-            <h2 className="text-xl font-black uppercase">{loc.location}</h2>
-            <p className="text-base text-red-300 font-bold">No se puede conciliar aquí</p>
-            <p className="text-sm text-slate-300">
-              Esta ubicación tiene {loc.lpn_boxes?.length || 0} caja(s) con <b>LPN físico</b> (licencia real, sin
-              prefijo BOX). Este proceso solo maneja cajas BOX.
-            </p>
-            {loc.lpn_boxes?.length > 0 && (
-              <div className="rounded-2xl bg-white/5 border border-white/10 p-3 text-left">
-                {loc.lpn_boxes.slice(0, 6).map((b, i) => (
-                  <div key={i} className="font-mono text-xs py-0.5 text-amber-300">{b.lpn || b.box_id}</div>
-                ))}
-              </div>
-            )}
-            <p className="text-xs text-slate-400">Repórtala al administrador.</p>
-            <button onClick={reset} className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
-              Otra ubicación
-            </button>
-          </div>
-        )}
-
         {/* ── PANTALLA 2: escanear cajas ── */}
         {phase === "scan" && (
           <div className="space-y-4">
@@ -181,8 +205,13 @@ export default function PdaRecon() {
             </div>
 
             <form onSubmit={submitScan}>
-              <input ref={inputRef} autoFocus inputMode="text" placeholder="Escanea una caja BOX-…"
+              <input ref={inputRef} autoFocus inputMode="text" placeholder="Escanea una caja (BOX-… o LPN)"
                 className="w-full px-4 py-4 bg-white/5 border-2 border-emerald-500/40 rounded-2xl text-center text-lg font-mono uppercase focus:border-emerald-400 outline-none" />
+              {busy && (
+                <div className="mt-2 flex items-center justify-center gap-2 text-xs text-slate-400">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Resolviendo…
+                </div>
+              )}
             </form>
 
             <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[40vh] overflow-y-auto">
@@ -192,8 +221,11 @@ export default function PdaRecon() {
                   {b.known
                     ? <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                     : <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />}
-                  <span className="font-mono text-sm flex-1">{b.id}</span>
-                  <span className="text-[10px] uppercase font-black text-slate-500">{b.known ? "esperada" : "nueva/otra"}</span>
+                  <span className="font-mono text-sm flex-1 min-w-0 truncate">
+                    {b.id}
+                    {b.lpn && <span className="block text-[10px] text-sky-300/80 truncate">LPN {b.lpn}</span>}
+                  </span>
+                  <span className="text-[10px] uppercase font-black text-slate-500 shrink-0">{b.known ? "esperada" : "nueva/otra"}</span>
                   <button onClick={() => setScanned(prev => prev.filter(x => x.id !== b.id))} className="p-1.5 rounded-lg active:bg-white/10">
                     <Trash2 className="w-4 h-4 text-slate-500" />
                   </button>
@@ -235,6 +267,53 @@ export default function PdaRecon() {
           </div>
         )}
       </main>
+
+      {/* ── HOJA: casar LPN físico con una caja del sistema ── */}
+      {pick && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70" onClick={() => !busy && setPick(null)}>
+          <div className="w-full max-w-md bg-[#0b0f1a] border-t border-white/10 rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">LPN sin casar</div>
+              <div className="text-lg font-black font-mono truncate">{pick.code}</div>
+            </div>
+
+            {pick.candidates.length === 0 ? (
+              <>
+                <p className="text-sm text-slate-300 text-center py-2">
+                  No hay cajas candidatas en esta ubicación — repórtalo al administrador.
+                </p>
+                <button onClick={() => setPick(null)}
+                  className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
+                  Cerrar
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-slate-400 text-center">¿A qué caja corresponde? Tócala para casarla.</p>
+                <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[45vh] overflow-y-auto">
+                  {pick.candidates.map((c) => (
+                    <button key={c.box_id} onClick={() => bindLpn(c)} disabled={busy}
+                      className="w-full flex items-center gap-3 px-3 py-3 text-left active:bg-white/10 disabled:opacity-50">
+                      <PackageCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-mono text-sm truncate">{c.box_id}</div>
+                        <div className="text-xs text-slate-400 truncate">
+                          {`${c.sku || c.style || ""} ${c.color || ""} ${c.size || ""}`.trim()}
+                        </div>
+                      </div>
+                      <span className="text-xs font-black text-emerald-300 shrink-0">{c.units}u</span>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setPick(null)} disabled={busy}
+                  className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20 disabled:opacity-50">
+                  Cancelar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
