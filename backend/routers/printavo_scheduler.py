@@ -42,10 +42,37 @@ DEFAULTS = {
     # ── Final Bill pass ──────────────────────────────────────────────────────
     "final_bill_enabled": True,                            # run the finalize pass each tick
     "final_bill_status_names": DEFAULT_FINAL_BILL_STATUSES,  # Printavo status name(s) to match
+    "final_bill_max_pages": 5,          # shallow pass: pages of 25 scanned each tick
+    "final_bill_deep_pages": 40,        # deep sweep: pages walked end-to-end (40x25 = 1000)
+    "final_bill_deep_every_minutes": 360,  # how often the deep sweep runs (0 = never)
     "finalized_count": 0,     # cumulative orders whose invoice/total were filled
     "last_finalize_at": None,
     "last_finalize_error": None,
+    "last_deep_finalize_at": None,
 }
+
+
+def _deep_due(cfg: dict) -> bool:
+    """True when the deep Final Bill sweep is due.
+
+    The shallow pass only sees invoices billed in VISUAL_ID order; a straggler
+    that reaches Final Bill late sits below its window forever. The deep sweep
+    walks the whole list to catch those, but each page is a heavy GraphQL query,
+    so it runs on its own slow cadence instead of every tick.
+    """
+    every = int(cfg.get("final_bill_deep_every_minutes") or 0)
+    if every <= 0:
+        return False
+    last = cfg.get("last_deep_finalize_at")
+    if not last:
+        return True  # never swept
+    try:
+        prev = datetime.fromisoformat(str(last))
+    except ValueError:
+        return True
+    if prev.tzinfo is None:
+        prev = prev.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - prev).total_seconds() >= every * 60
 
 
 async def _get_config() -> dict:
@@ -78,18 +105,26 @@ async def _run_sync(cfg: dict) -> dict:
     # nothing to do with which invoices were just created, and a finalize failure
     # must not fail (or roll back) the create pass. Errors are recorded, not raised.
     if cfg.get("final_bill_enabled", True):
+        deep = _deep_due(cfg)
         try:
-            fin = await finalize_once(cfg)
+            fin = await finalize_once(cfg, deep=deep)
             fupd = {"last_finalize_at": now, "last_finalize_error": None}
+            if deep:
+                fupd["last_deep_finalize_at"] = now
             if fin.get("finalized"):
                 fupd["finalized_count"] = int(cfg.get("finalized_count") or 0) + int(fin["finalized"])
             await db.printavo_sync.update_one({"config_id": CONFIG_ID}, {"$set": fupd}, upsert=True)
             result["finalized"] = fin.get("finalized", 0)
+            result["deep"] = bool(fin.get("deep"))
         except Exception as e:
             logger.error(f"[printavo-sync] finalize error: {e}")
+            ferr = {"last_finalize_at": now, "last_finalize_error": str(e)[:500]}
+            if deep:
+                # Stamp it anyway: a deep sweep that fails (rate limit, timeout)
+                # must wait its normal cadence, not retry 40 heavy pages next tick.
+                ferr["last_deep_finalize_at"] = now
             await db.printavo_sync.update_one(
-                {"config_id": CONFIG_ID},
-                {"$set": {"last_finalize_at": now, "last_finalize_error": str(e)[:500]}}, upsert=True,
+                {"config_id": CONFIG_ID}, {"$set": ferr}, upsert=True,
             )
     return result
 
@@ -175,6 +210,13 @@ async def update_printavo_sync(request: Request):
         if isinstance(raw, str):
             raw = [s for s in (p.strip() for p in raw.split(",")) if s]
         allowed["final_bill_status_names"] = [str(s).strip() for s in (raw or []) if str(s).strip()]
+    if "final_bill_max_pages" in body:
+        allowed["final_bill_max_pages"] = max(1, min(40, int(body["final_bill_max_pages"])))
+    if "final_bill_deep_pages" in body:
+        allowed["final_bill_deep_pages"] = max(1, min(200, int(body["final_bill_deep_pages"])))
+    if "final_bill_deep_every_minutes" in body:
+        # 0 disables the deep sweep (shallow pass only).
+        allowed["final_bill_deep_every_minutes"] = max(0, min(10080, int(body["final_bill_deep_every_minutes"])))
     # Setting final_bill_seeded=false re-arms the finalize pass to back-fill every
     # invoice currently in Final Bill (one-shot catch-up) on the next run.
     if "final_bill_seeded" in body:
@@ -203,7 +245,7 @@ async def run_printavo_sync_now(request: Request):
 
 @router.post("/printavo-sync/finalize-now")
 async def finalize_printavo_now(request: Request):
-    """Manually apply the Final Bill values (Amount Outstanding + total quantity)
+    """Manually apply the Final Bill values (total facturado + total quantity)
     to orders already in Final Bill — a one-shot BACKFILL, and the way to test.
 
     Body (optional):

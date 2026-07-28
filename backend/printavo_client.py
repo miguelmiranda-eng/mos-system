@@ -174,7 +174,7 @@ async def fetch_recent_invoices(first: int = 25) -> list:
 
 # ── Final Bill sync ──────────────────────────────────────────────────────────
 # When an invoice reaches the "Final Bill" status, MOS copies the invoice's
-# Amount Outstanding and total item count onto the matching order (see
+# billed total and total item count onto the matching order (see
 # printavo_sync.finalize_once). "Final Bill" is a late-lifecycle status, so the
 # invoice is usually far outside the recent-VISUAL_ID window the create-sync
 # polls — we therefore query Printavo directly by statusIds instead of scanning

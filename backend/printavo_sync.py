@@ -45,7 +45,7 @@ CONFIG_ID = "invoice_sync"
 DEFAULT_REQUIRED_STATUSES = ["Scheduled"]
 
 # Printavo status name(s) that mean "the job is billed"; reaching one triggers
-# copying Amount Outstanding + total quantity onto the matching MOS order.
+# copying the billed total + total quantity onto the matching MOS order.
 # Overridable per-install via cfg["final_bill_status_names"].
 DEFAULT_FINAL_BILL_STATUSES = ["Final Bill"]
 
@@ -148,6 +148,22 @@ def _real_line_items(invoice: dict) -> list:
         if qty > 0 and (bool(sizes) or bool((li.get("color") or "").strip())):
             real.append((li, sizes, qty))
     return real
+
+
+def _billed_qty(line_item: dict, sizes_qty: int) -> int:
+    """Piece count of one garment line FOR BILLING (columna Total Quantity).
+
+    Printavo's own `items` is the authoritative line quantity, so it wins here.
+    The size breakdown drops every size outside SIZES_MAP — notably `size_other`,
+    Printavo's catch-all — which silently undercounts (a line with 245 in normal
+    sizes + 20 in `size_other` summed to 245). Falls back to the size sum when
+    `items` is missing/0, which is what `_map_sizes` already returns.
+    """
+    try:
+        items = int(line_item.get("items") or 0)
+    except (TypeError, ValueError):
+        items = 0
+    return items if items > 0 else sizes_qty
 
 
 def _map_sizes(line_item: dict):
@@ -449,19 +465,20 @@ async def _claim_finalize(invoice_id) -> bool:
 
 
 async def apply_final_bill(invoice: dict) -> bool:
-    """Copy the invoice's Amount Outstanding and total item count onto the
-    matching MOS order (order_number == visualId). Returns True if a live order
-    was found and updated, False if no order matched (caller releases the claim
-    so a later tick retries once the order is imported)."""
+    """Copy the invoice's billed total and total item count onto the matching MOS
+    order (order_number == visualId). Returns True if a live order was found and
+    updated, False if no order matched (caller releases the claim so a later tick
+    retries once the order is imported)."""
     visual_id = str(invoice.get("visualId") or "").strip()
     if not visual_id:
         return False
 
     # Base order only: an invoice occasionally splits into visualId, visualId-2…
-    # Amount Outstanding is a single invoice-level figure, so it lives on the base.
+    # The billed total is a single invoice-level figure, so it lives on the base.
     order = await db.orders.find_one(
         {"order_number": visual_id, "board": {"$ne": TRASH_BOARD}},
-        {"_id": 0, "order_id": 1},
+        {"_id": 0, "order_id": 1, "order_number": 1, "board": 1,
+         "invoice": 1, "total_quantity": 1},
     )
     if not order:
         logger.info(f"[printavo] final-bill {visual_id}: no matching MOS order (yet), skipped")
@@ -471,10 +488,13 @@ async def apply_final_bill(invoice: dict) -> bool:
     if len(reals) > 1:
         logger.warning(
             f"[printavo] final-bill {visual_id}: invoice has {len(reals)} garment lines; "
-            f"writing invoice-level Amount Outstanding + total on the base order only")
-    total_qty = sum(q for _, _, q in reals)
+            f"writing invoice-level total + piece count on the base order only")
+    total_qty = sum(_billed_qty(li, q) for li, _, q in reals)
+    # `total` (what the job was billed for), NOT `amountOutstanding`: the balance
+    # drops with every payment, so an invoice already paid when the pass ran would
+    # freeze a 0 in the column — and the claim means it is never rewritten.
     try:
-        amount = round(float(invoice.get("amountOutstanding") or 0), 2)
+        amount = round(float(invoice.get("total") or 0), 2)
     except (TypeError, ValueError):
         amount = 0.0
 
@@ -496,10 +516,45 @@ async def apply_final_bill(invoice: dict) -> bool:
     await db.orders.update_one({"order_id": order["order_id"]}, {"$set": set_fields})
     logger.info(f"[printavo] final-bill {visual_id}: set invoice={amount}, "
                 f"total_quantity={total_qty if total_qty > 0 else '(skipped)'}")
+    await _publish_final_bill(order, set_fields)
     return True
 
 
-async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
+async def _publish_final_bill(order: dict, set_fields: dict) -> None:
+    """Log the write to the order history and broadcast it.
+
+    The broadcast is NOT cosmetic: routers.orders serves /api/orders from an
+    in-memory cache with no TTL that is only cleared by ws_manager.broadcast, so
+    without this the board keeps serving the pre-final-bill docs (the INVOICE /
+    Total Quantity columns look empty) until some unrelated edit flushes it.
+    Failures here must not undo the write, so everything is best-effort.
+    """
+    from deps import log_activity  # lazy: keeps the module import side-effect free
+    from ws_manager import ws_manager
+
+    changed = {k: v for k, v in set_fields.items()
+               if k not in ("updated_at", "final_bill_applied_at")}
+    try:
+        await log_activity(SYNC_USER, "printavo_final_bill", {
+            "order_id": order["order_id"],
+            "order_number": order.get("order_number"),
+            "changed_fields": list(changed.keys()),
+            "changes": {k: {"from": order.get(k), "to": v} for k, v in changed.items()},
+        })  # sin previous_data a propósito: un undo dejaría la columna vacía y el
+            # claim impide que la pasada la vuelva a escribir.
+    except Exception as e:
+        logger.warning(f"[printavo] final-bill log_activity failed: {e}")
+    try:
+        await ws_manager.broadcast("order_change", {
+            "action": "update",
+            "order_id": order["order_id"],
+            "boards": [order.get("board")] if order.get("board") else [],
+        })
+    except Exception as e:
+        logger.warning(f"[printavo] final-bill broadcast failed: {e}")
+
+
+async def finalize_once(cfg: dict, force_apply: bool = False, deep: bool = False) -> dict:
     """Fetch invoices currently in a Final Bill status and apply each to its order.
 
     First run SEEDS: it claims the invoices already in Final Bill WITHOUT writing,
@@ -508,6 +563,14 @@ async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
 
     force_apply=True skips seeding and WRITES even on the first run — used by the
     manual backfill endpoint to fill orders already in Final Bill on demand.
+
+    deep=True walks the WHOLE Final Bill window instead of stopping at the first
+    fully-claimed page. The shallow pass is sorted by VISUAL_ID desc, so it only
+    sees invoices billed in visual-id order; one that reaches Final Bill late (a
+    straggler with enough newer invoices already billed above it) sits below the
+    window and would never be applied. The deep sweep is the catch-all — it costs
+    one heavy query per page, so the scheduler runs it on its own slow cadence
+    (final_bill_deep_every_minutes), not every tick.
     """
     from printavo_client import resolve_status_ids, fetch_invoices_by_status
 
@@ -518,7 +581,10 @@ async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
         return {"finalized": 0, "seen": 0, "resolved": False}
 
     fetch_size = int(cfg.get("final_bill_fetch_size") or 25)
-    max_pages = max(1, int(cfg.get("final_bill_max_pages") or 5))
+    if deep:
+        max_pages = max(1, int(cfg.get("final_bill_deep_pages") or 40))
+    else:
+        max_pages = max(1, int(cfg.get("final_bill_max_pages") or 5))
     seeding = (not force_apply) and (not cfg.get("final_bill_seeded"))
 
     finalized = seen = 0
@@ -558,9 +624,10 @@ async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
                 if not force_apply:
                     await db.printavo_finalized.delete_one({"_id": str(inv_id)})
         info = page.get("pageInfo") or {}
-        # Stop paginating once we hit a page of already-claimed invoices (steady
-        # state: new Final Bills float to the top by VISUAL_ID) or run out.
-        if not info.get("hasNextPage") or won == 0:
+        # Shallow pass: stop once we hit a page of already-claimed invoices (steady
+        # state: new Final Bills float to the top by VISUAL_ID) or run out. The deep
+        # sweep keeps going — that's the whole point, the stragglers live below.
+        if not info.get("hasNextPage") or (won == 0 and not deep):
             break
         after = info.get("endCursor")
 
@@ -575,7 +642,7 @@ async def finalize_once(cfg: dict, force_apply: bool = False) -> dict:
         await db.printavo_sync.update_one(
             {"config_id": CONFIG_ID}, {"$set": {"final_bill_seeded": True}}, upsert=True
         )
-    return {"finalized": finalized, "seen": seen, "resolved": True}
+    return {"finalized": finalized, "seen": seen, "resolved": True, "deep": deep}
 
 
 async def apply_final_bill_by_visual_id(visual_id: str, cfg: dict) -> dict:

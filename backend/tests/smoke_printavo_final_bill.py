@@ -96,14 +96,33 @@ async def main():
     fake = FakeDB()
     ps.db = fake
 
+    # _publish_final_bill toca deps.log_activity (Mongo real) y ws_manager, así que
+    # se sustituye por un espía: aquí solo verificamos QUE se dispare por escritura.
+    published = []
+
+    async def fake_publish(order, set_fields):
+        published.append((order.get("order_id"), dict(set_fields)))
+
+    ps._publish_final_bill = fake_publish
+
     # 1. total de piezas desde el invoice maestro real
     with open(os.path.join(BE, "master_invoice_23686706.json"), encoding="utf-8") as f:
         inv = json.load(f)
     reals = ps._real_line_items(inv)
-    total = sum(q for _, _, q in reals)
+    total = sum(ps._billed_qty(li, q) for li, _, q in reals)
     print(f"\n== master invoice {inv.get('visualId')}: {len(reals)} garment line(s), total={total} ==")
     check("total quantity > 0", total > 0, f"got {total}")
-    check("amountOutstanding presente", inv.get("amountOutstanding") is not None)
+    check("total facturado presente", inv.get("total") is not None)
+
+    # 1b. _billed_qty prefiere `items` (las tallas fuera de SIZES_MAP, p.ej.
+    # size_other, no se suman y subcontarían en silencio)
+    li_other = {"items": 265, "color": "WHITE",
+                "sizes": [{"count": 245, "size": "size_s"}, {"count": 20, "size": "size_other"}]}
+    _, sz_qty = ps._map_sizes(li_other)
+    check("tallas ignoran size_other", sz_qty == 245, f"got {sz_qty}")
+    check("_billed_qty usa items (265, no 245)", ps._billed_qty(li_other, sz_qty) == 265,
+          f"got {ps._billed_qty(li_other, sz_qty)}")
+    check("_billed_qty cae a tallas si items=0", ps._billed_qty({"items": 0}, 77) == 77)
 
     # 2. apply_final_bill escribe invoice + total_quantity en la orden base
     vid = str(inv["visualId"])
@@ -111,11 +130,21 @@ async def main():
     applied = await ps.apply_final_bill(inv)
     order = await fake.orders.find_one({"order_id": "o1"})
     check("apply True cuando existe la orden", applied is True)
-    check("columna invoice = amountOutstanding",
-          order.get("invoice") == round(float(inv["amountOutstanding"]), 2), f"got {order.get('invoice')}")
+    check("columna invoice = total facturado",
+          order.get("invoice") == round(float(inv["total"]), 2), f"got {order.get('invoice')}")
     check("columna total_quantity = suma de piezas", order.get("total_quantity") == total,
           f"got {order.get('total_quantity')}")
     check("marca final_bill_applied_at", bool(order.get("final_bill_applied_at")))
+    check("publica el cambio (broadcast + log)", published and published[-1][0] == "o1",
+          f"got {published}")
+
+    # 2b. invoice ya pagado: la columna lleva lo FACTURADO, no el saldo (0)
+    await fake.orders.insert_one({"order_id": "oPaid", "order_number": "555555", "board": "SCHEDULING"})
+    paid = dict(inv, visualId="555555", total=1000.0, amountOutstanding=0.0, amountPaid=1000.0)
+    await ps.apply_final_bill(paid)
+    opaid = await fake.orders.find_one({"order_id": "oPaid"})
+    check("pagado: invoice = 1000.0 (no el saldo 0)", opaid.get("invoice") == 1000.0,
+          f"got {opaid.get('invoice')}")
 
     # 3. sin orden que coincida -> False (se reintenta luego)
     check("apply False sin orden", await ps.apply_final_bill(dict(inv, visualId="999999")) is False)
@@ -123,7 +152,7 @@ async def main():
     # 3b. invoice sin lineas de prenda parseables -> escribe invoice, NO pisa total_quantity
     await fake.orders.insert_one({"order_id": "o0", "order_number": "777777",
                                   "board": "SCHEDULING", "total_quantity": 99})
-    inv0 = {"visualId": "777777", "amountOutstanding": 205444.8, "lineItemGroups": {"nodes": []}}
+    inv0 = {"visualId": "777777", "total": 205444.8, "lineItemGroups": {"nodes": []}}
     await ps.apply_final_bill(inv0)
     o0 = await fake.orders.find_one({"order_id": "o0"})
     check("0 piezas: escribe invoice", o0.get("invoice") == 205444.8, f"got {o0.get('invoice')}")
@@ -157,7 +186,7 @@ async def main():
     check("primer run = seed (no escribe)",
           r_seed.get("seeded") is True and seeded_order.get("invoice") is None)
 
-    new_inv = dict(inv, id="gid://new", visualId="700001", amountOutstanding=300.15)
+    new_inv = dict(inv, id="gid://new", visualId="700001", total=300.15)
     await fake2.orders.insert_one({"order_id": "oNew", "order_number": "700001", "board": "SCHEDULING"})
 
     async def fake_fetch2(status_ids, first=30, after=None):
@@ -217,6 +246,45 @@ async def main():
           rv.get("found") and rv.get("applied") and ov.get("invoice") is not None, f"got {rv}")
     rv_miss = await ps.apply_final_bill_by_visual_id("000000", {"final_bill_status_names": ["Final Bill"]})
     check("by_visual_id no encontrado -> found False", rv_miss.get("found") is False)
+
+    # 6d. barrido profundo: el rezagado vive DEBAJO de la primera página ya reclamada.
+    # La pasada superficial corta ahí (won==0) y nunca lo ve; deep=True sigue.
+    fake5 = FakeDB()
+    ps.db = fake5
+    inv_a = dict(inv, id="gid://A", visualId="800001")          # ya reclamado
+    inv_b = dict(inv, id="gid://B", visualId="800002", total=55.5)  # rezagado
+    await fake5.printavo_finalized.insert_one({"_id": "gid://A", "claimed_at": "prev"})
+    await fake5.orders.insert_one({"order_id": "oDeep", "order_number": "800002", "board": "SCHEDULING"})
+
+    async def fake_fetch_2pages(status_ids, first=25, after=None):
+        if after is None:
+            return {"nodes": [inv_a], "pageInfo": {"hasNextPage": True, "endCursor": "c1"}}
+        return {"nodes": [inv_b], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+
+    pc.resolve_status_ids = fake_resolve_fb
+    pc.fetch_invoices_by_status = fake_fetch_2pages
+    cfg_deep = {"final_bill_status_names": ["Final Bill"], "final_bill_seeded": True}
+    r_shallow = await ps.finalize_once(cfg_deep)
+    od_shallow = await fake5.orders.find_one({"order_id": "oDeep"})
+    check("superficial NO alcanza al rezagado",
+          r_shallow.get("finalized") == 0 and od_shallow.get("invoice") is None, f"got {r_shallow}")
+    r_deep = await ps.finalize_once(cfg_deep, deep=True)
+    od_deep = await fake5.orders.find_one({"order_id": "oDeep"})
+    check("profundo sí lo alcanza y escribe 55.5",
+          r_deep.get("finalized") == 1 and od_deep.get("invoice") == 55.5, f"got {r_deep}")
+
+    # 6e. cadencia del barrido profundo (_deep_due)
+    from routers.printavo_scheduler import _deep_due
+    from datetime import datetime, timedelta, timezone as _tz
+    check("nunca barrido -> toca", _deep_due({"final_bill_deep_every_minutes": 360}) is True)
+    recent = (datetime.now(_tz.utc) - timedelta(minutes=10)).isoformat()
+    check("barrido reciente -> no toca",
+          _deep_due({"final_bill_deep_every_minutes": 360, "last_deep_finalize_at": recent}) is False)
+    old = (datetime.now(_tz.utc) - timedelta(hours=7)).isoformat()
+    check("barrido viejo -> toca",
+          _deep_due({"final_bill_deep_every_minutes": 360, "last_deep_finalize_at": old}) is True)
+    check("0 minutos -> desactivado",
+          _deep_due({"final_bill_deep_every_minutes": 0}) is False)
 
     # 7. status sin match -> pass omitido, sin tronar
     async def fake_resolve_none(names):
