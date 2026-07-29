@@ -150,11 +150,35 @@ async def get_board_counts(request: Request):
     api_key = request.query_params.get("api_key")
     if api_key != MASTER_API_KEY:
         await require_auth(request)
-    pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
-    results = await db.orders.aggregate(pipeline).to_list(1000)
-    # Convert to simple key-value: {BOARD_NAME: COUNT}
-    counts = {r["_id"]: r["count"] for r in results if r["_id"]}
-    return counts
+
+    # Mismo patrón que get_orders: caché invalidado en cada broadcast + lock
+    # contra estampida.
+    #
+    # Este $group no lleva $match, así que recorre la colección `orders`
+    # COMPLETA. El Dashboard lo pide en cada cambio del arreglo de órdenes y
+    # cada pestaña abierta tiene su propia caché de navegador, así que en
+    # producción se midieron 8 llamadas en 460 ms — ocho barridos completos.
+    # El lock es la mitad que importa: sin él, las 8 concurrentes lanzan el
+    # barrido a la vez; con él, una consulta y las demás leen el resultado.
+    cache_key = "board_counts"
+    cached = get_orders_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    if cache_key not in _orders_cache_locks:
+        _orders_cache_locks[cache_key] = asyncio.Lock()
+
+    async with _orders_cache_locks[cache_key]:
+        cached = get_orders_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
+        results = await db.orders.aggregate(pipeline).to_list(1000)
+        # Convert to simple key-value: {BOARD_NAME: COUNT}
+        counts = {r["_id"]: r["count"] for r in results if r["_id"]}
+        _orders_cache[cache_key] = counts
+        return counts
 
 @router.get("/check-number")
 async def check_order_number(request: Request, order_number: str = None):
