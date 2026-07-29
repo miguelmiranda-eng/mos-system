@@ -67,11 +67,27 @@ export default function PdaPhoto() {
   useEffect(() => { fetcher("/recon/photo/lines?limit=1").then(d => setContainers(d.containers || [])).catch(() => {}); }, []);
   useEffect(() => { if (phase === "captura") load(container); }, [phase, container, load]);
 
+  // El contenedor es una locación que el supervisor da de alta en Ubicaciones
+  // (ej. 53077-01). Se valida contra el WMS: si el piso pudiera teclearla libre,
+  // los renglones de un mismo contenedor se repartirían entre variantes del
+  // mismo nombre y el manifiesto saldría partido.
+  const abrirContainer = useCallback(async (raw) => {
+    const v = String(raw || "").trim().toUpperCase();
+    if (!v) { toast.error("Escanea o escribe el contenedor"); return; }
+    setBusy(true);
+    try {
+      const d = await fetcher(`/recon/photo/container/${encodeURIComponent(v)}`);
+      setContainer(d.container); setPhase("captura"); buzz(50);
+    } catch (res) {
+      const e = await res?.json?.().catch(() => ({})) || {};
+      toast.error(e.detail || "No se pudo validar el contenedor");
+      buzz([120, 60, 120]);
+    } finally { setBusy(false); }
+  }, []);
+
   const startContainer = (e) => {
     e?.preventDefault();
-    const v = (contRef.current?.value || "").trim().toUpperCase();
-    if (!v) { toast.error("Escribe el contenedor"); return; }
-    setContainer(v); setPhase("captura"); buzz(50);
+    abrirContainer(contRef.current?.value);
   };
 
   // Foto -> lectura. Nunca bloquea: lo que no se leyó viene vacío y el operador
@@ -129,7 +145,7 @@ export default function PdaPhoto() {
   const Fuente = ({ campo }) => {
     const f = fuentes[campo];
     if (f === "barcode") return <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-emerald-400"><ScanBarcode className="w-3 h-3" /> código</span>;
-    if (f === "vision") return <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sky-400"><Sparkles className="w-3 h-3" /> leído</span>;
+    if (f === "ocr") return <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sky-400"><Sparkles className="w-3 h-3" /> leído</span>;
     return <span className="text-[9px] font-black uppercase text-amber-400">a mano</span>;
   };
 
@@ -162,26 +178,26 @@ export default function PdaPhoto() {
           <form onSubmit={startContainer} className="space-y-5 pt-8">
             <div className="text-center">
               <Container className="w-14 h-14 mx-auto text-sky-400 mb-3" />
-              <h2 className="text-xl font-black uppercase tracking-wide">¿Qué contenedor?</h2>
-              <p className="text-sm text-slate-400 mt-1">El material que estés cargando ahora</p>
+              <h2 className="text-xl font-black uppercase tracking-wide">Escanea el contenedor</h2>
+              <p className="text-sm text-slate-400 mt-1">La locación que dio de alta el supervisor</p>
             </div>
             <input ref={contRef} autoFocus inputMode="text" list="pi-conts"
-              placeholder="Ej. CONTENEDOR 1"
+              placeholder="Ej. 53077-01"
               className="w-full px-4 py-4 bg-white/5 border-2 border-sky-500/40 rounded-2xl text-center text-lg font-mono uppercase focus:border-sky-400 outline-none" />
             <datalist id="pi-conts">{containers.map(c => <option key={c} value={c} />)}</datalist>
             {containers.length > 0 && (
               <div className="flex flex-wrap gap-2 justify-center">
                 {containers.map(c => (
-                  <button key={c} type="button" onClick={() => { setContainer(c); setPhase("captura"); buzz(50); }}
-                    className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-bold active:bg-white/15">
+                  <button key={c} type="button" onClick={() => abrirContainer(c)}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono font-bold active:bg-white/15">
                     {c}
                   </button>
                 ))}
               </div>
             )}
-            <button type="submit"
-              className="w-full py-4 rounded-2xl bg-sky-500 text-black text-lg font-black uppercase tracking-widest active:bg-sky-600 flex items-center justify-center gap-2">
-              <Camera className="w-5 h-5" /> Empezar
+            <button type="submit" disabled={busy}
+              className="w-full py-4 rounded-2xl bg-sky-500 text-black text-lg font-black uppercase tracking-widest active:bg-sky-600 disabled:opacity-50 flex items-center justify-center gap-2">
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />} Empezar
             </button>
           </form>
         )}

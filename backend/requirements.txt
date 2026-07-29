@@ -29,4 +29,5 @@ apscheduler==3.10.4
 pywebpush
 
 pyzbar==0.1.9
+pytesseract==0.3.13
 Pillow>=10.0.0

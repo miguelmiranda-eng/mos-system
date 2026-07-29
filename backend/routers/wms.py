@@ -7937,12 +7937,12 @@ _LABEL_MAX_BYTES = 12 * 1024 * 1024
 @router.post("/recon/label-read")
 async def recon_label_read(request: Request, file: UploadFile = File(...)):
     """Lee una foto de etiqueta y devuelve los campos para el modal de captura.
-    Devuelve { campos: {...}, fuentes: {campo: "barcode"|"vision"}, avisos: [] }.
+    Devuelve { campos: {...}, fuentes: {campo: "barcode"}, avisos: [] }.
     No escribe nada. Nunca falla por lectura parcial: los campos que no se
     pudieron leer vienen vacíos para que el operador los teclee."""
     await _require_recon_role(request)
     from services.label_barcode import decode_label, barcode_disponible
-    from services.label_vision import read_label, vision_disponible, CAMPOS
+    from services.label_ocr import CAMPOS, parse_label, ocr_disponible
 
     data = await file.read()
     if not data:
@@ -7958,24 +7958,14 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
     campos = {c: "" for c in CAMPOS}
     fuentes, avisos = {}, []
 
-    # 1) Visión: la etiqueta completa. Si falla, seguimos con lo que dé el
-    #    barcode — media lectura sigue siendo mejor que mandar al operador a
-    #    teclear el cartón de 11 dígitos a mano.
-    if vision_disponible():
-        try:
-            leidos = await read_label(data)
-            for c, v in leidos.items():
-                if v:
-                    campos[c] = v
-                    fuentes[c] = "vision"
-        except Exception as e:
-            logger.warning("label-read: visión falló: %s", e)
-            avisos.append("No se pudo leer la etiqueta automáticamente; captura los datos a mano.")
-    else:
-        avisos.append("Lectura automática no configurada (falta ANTHROPIC_API_KEY); captura a mano.")
-
-    # 2) Barcode: determinista, gana sobre la visión en cartón y SKU.
-    if barcode_disponible():
+    # Todo local: zbar para los dos códigos, Tesseract por regiones para el
+    # resto (services/label_ocr.py). Los campos que no salen con confianza
+    # llegan vacíos al modal — nunca se rellenan a la fuerza.
+    if not barcode_disponible():
+        avisos.append("Lector de códigos no disponible en el servidor.")
+    elif not ocr_disponible():
+        # Sin Tesseract todavía se pueden leer los dos barcodes.
+        avisos.append("Lectura de texto no disponible; captura los datos a mano.")
         try:
             bc = decode_label(data)
             for c in ("carton", "sku"):
@@ -7984,6 +7974,16 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
                     fuentes[c] = "barcode"
         except Exception as e:
             logger.warning("label-read: barcode falló: %s", e)
+    else:
+        try:
+            leidos = parse_label(data)      # incluye la decodificación de códigos
+            for c, v in leidos.items():
+                if v:
+                    campos[c] = v
+                    fuentes[c] = "barcode" if c in ("carton", "sku") else "ocr"
+        except Exception as e:
+            logger.warning("label-read: lectura falló: %s", e)
+            avisos.append("No se pudo leer la etiqueta; captura los datos a mano.")
 
     if not campos["carton"]:
         avisos.append("No se leyó el número de cartón; escríbelo antes de guardar.")
@@ -8043,12 +8043,45 @@ _PHOTO_FIELDS = ("sku", "style", "color", "size", "description", "country_of_ori
 # Para exportar hace falta el papeleo aduanal. No se bloquea la captura por esto
 # —el piso no debe frenarse—, pero se marca para que no salga un Excel con huecos.
 _PHOTO_ADUANA = ("country_of_origin", "fabric_content")
-_PHOTO_CONTAINER_DEFAULT = "RP-GEN"
 _PHOTO_MAX_UNITS = 100000
 
 
 def _photo_container(v) -> str:
-    return (str(v or "").strip().upper() or _PHOTO_CONTAINER_DEFAULT)
+    return _RECON_NORM(v)
+
+
+async def _photo_container_loc(v):
+    """El contenedor es una LOCACIÓN que el supervisor da de alta en Ubicaciones
+    (ej. 53077-01). Se valida contra wms_locations y se devuelve el nombre tal
+    como quedó registrado: si el piso pudiera teclearlo libre, los renglones de
+    un mismo contenedor acabarían repartidos entre '53077-01', '5307701' y
+    '53077 01', y el manifiesto de salida saldría partido en tres."""
+    name = _photo_container(v)
+    if not name:
+        return None
+    return await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}, {"_id": 0, "name": 1})
+
+
+@router.get("/recon/photo/container/{loc}")
+async def photo_container_check(loc: str, request: Request):
+    """Valida la locación del contenedor antes de empezar a capturar y devuelve
+    lo que ya lleva. La PDA la escanea igual que cualquier otra ubicación."""
+    await _require_recon_role(request)
+    doc = await _photo_container_loc(loc)
+    if not doc:
+        raise HTTPException(404, f"La locación '{_photo_container(loc)}' no existe. "
+                                 f"Pídele al supervisor que la dé de alta en Ubicaciones.")
+    name = doc["name"]
+    agg = await db.wms_photo_lines.aggregate([
+        {"$match": {"container": name}},
+        {"$group": {"_id": None, "u": {"$sum": "$units"}, "n": {"$sum": 1}}},
+    ]).to_list(1)
+    return {
+        "container": name,
+        "cartones": int(agg[0]["n"]) if agg else 0,
+        "unidades": int(agg[0]["u"]) if agg else 0,
+    }
 
 
 def _photo_completo(doc) -> bool:
@@ -8066,7 +8099,11 @@ async def photo_line_add(request: Request):
     user = await _require_recon_role(request)
     await _ensure_photo_indexes()
     body = await request.json()
-    container = _photo_container(body.get("container"))
+    loc = await _photo_container_loc(body.get("container"))
+    if not loc:
+        raise HTTPException(400, f"La locación '{_photo_container(body.get('container'))}' no existe. "
+                                 f"Pídele al supervisor que la dé de alta en Ubicaciones.")
+    container = loc["name"]
     carton = str(body.get("carton") or "").strip().upper()
     if not carton:
         raise HTTPException(400, "El número de cartón es obligatorio")

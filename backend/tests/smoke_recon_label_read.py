@@ -85,10 +85,10 @@ async def main():
     sembrar()
     from httpx import ASGITransport, AsyncClient
     from server import app
-    from services.label_vision import CAMPOS, vision_disponible
+    from services.label_ocr import CAMPOS, ocr_disponible
 
-    con_vision = vision_disponible()
-    print(f"\n== lectura por visión: {'configurada' if con_vision else 'NO configurada'} ==")
+    con_ocr = ocr_disponible()
+    print(f"\n== OCR local: {'disponible' if con_ocr else 'NO disponible'} ==")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as c:
         r = await foto(c, blanco())
@@ -113,18 +113,24 @@ async def main():
                   f"{fuentes.get('carton')!r}")
             check("sku marcado como leído del barcode", fuentes.get("sku") == "barcode",
                   f"{fuentes.get('sku')!r}")
-            if con_vision:
-                check("la visión llenó país de origen", bool(campos.get("country_of_origin")),
+            if con_ocr:
+                check("lee el style", campos.get("style") == "5000", f"{campos.get('style')!r}")
+                check("lee el color", campos.get("color", "").upper() == "NAVY",
+                      f"{campos.get('color')!r}")
+                check("lee el tipo de prenda", "SHIRT" in campos.get("description", "").upper(),
+                      f"{campos.get('description')!r}")
+                check("lee el país de origen",
+                      "DOMINICANA" in campos.get("country_of_origin", "").upper(),
                       f"{campos.get('country_of_origin')!r}")
-                check("la visión llenó contenido", bool(campos.get("fabric_content")),
+                check("lee el porcentaje de tela", "COTTON" in campos.get("fabric_content", "").upper(),
                       f"{campos.get('fabric_content')!r}")
-                check("la visión llenó las unidades", bool(campos.get("units")),
-                      f"{campos.get('units')!r}")
+                check("lee la cantidad", campos.get("units") == "72", f"{campos.get('units')!r}")
+                check("los campos de texto se marcan como leídos por OCR",
+                      fuentes.get("style") == "ocr", f"{fuentes.get('style')!r}")
             else:
-                check("avisa que la lectura automática no está configurada",
-                      any("ANTHROPIC_API_KEY" in a for a in d.get("avisos", [])), f"{d.get('avisos')}")
-                check("aun así el cartón salió del barcode (no se pierde el trabajo)",
-                      campos.get("carton") == CARTON)
+                check("sin Tesseract avisa y no inventa",
+                      any("mano" in a.lower() for a in d.get("avisos", [])) and not campos.get("style"),
+                      f"{d.get('avisos')} style={campos.get('style')!r}")
 
         print("\n== imagen sin nada legible ==")
         r = await foto(c, blanco())

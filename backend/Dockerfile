@@ -2,11 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# libzbar: lector de barcodes de "Inventario por foto" (Conciliación). pyzbar es
-# sólo el binding de Python; sin esta librería del sistema el endpoint
-# /wms/recon/label-scan responde 503 en producción.
+# "Inventario por foto" lee la etiqueta del cartón en el propio servidor:
+#   libzbar0     -> los dos barcodes (pyzbar es sólo el binding de Python)
+#   tesseract-ocr -> el resto de los campos, recortados por región
+# Sin estos paquetes el endpoint /wms/recon/label-read responde igual, pero con
+# los campos vacíos para que el operador los capture a mano.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libzbar0 \
+    && apt-get install -y --no-install-recommends libzbar0 tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar dependencias primero para aprovechar la cache de Docker

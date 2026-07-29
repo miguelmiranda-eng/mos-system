@@ -43,7 +43,8 @@ raw = pymongo.MongoClient(MONGO)
 sdb = raw[SMOKE_DB]
 ok = fail = 0
 
-CONT = "CONTENEDOR 1"
+CONT = "53077-01"          # locación de contenedor, la crea el supervisor
+CONT2 = "53077-02"
 CARTON = "A2524611066"
 CARTON2 = "A2524611099"
 CARTON3 = "A2524611100"
@@ -66,9 +67,14 @@ def check(n, cond, det=""):
 
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
-    for c in ["users", "user_sessions", "wms_photo_lines",
+    for c in ["users", "user_sessions", "wms_photo_lines", "wms_locations",
               "wms_boxes", "wms_inventory", "wms_movements"]:
         sdb[c].delete_many({})
+    # Los contenedores son locaciones dadas de alta por el supervisor.
+    sdb.wms_locations.insert_many([
+        {"location_id": "loc_1", "name": CONT, "type": "rack", "active": True, "is_custom": True},
+        {"location_id": "loc_2", "name": CONT2, "type": "rack", "active": True, "is_custom": True},
+    ])
     sdb.users.insert_many([
         {"user_id": "u_p1", "email": "p1@test.local", "name": "Picker Uno",
          "password_hash": bcrypt.hash("pk123"), "role": "picker", "active": True},
@@ -94,6 +100,21 @@ async def main():
                                    (su, "su@test.local", "su123", "supersu")):
             r = await c.post("/api/auth/login", json={"email": mail, "password": pw})
             check(f"login {quien}", r.status_code == 200, f"{r.status_code}")
+
+        print("\n== el contenedor es una locación del WMS, no texto libre ==")
+        r = await p1.get(f"/api/wms/recon/photo/container/{CONT}")
+        d = r.json() if r.status_code == 200 else {}
+        check("locación existente -> 200 con su conteo",
+              r.status_code == 200 and d.get("container") == CONT and d.get("cartones") == 0,
+              f"{r.status_code} {r.text[:160]}")
+        r = await p1.get("/api/wms/recon/photo/container/53077-99")
+        check("locación inexistente -> 404", r.status_code == 404, f"{r.status_code}")
+        check("el 404 dice qué hacer", "supervisor" in r.text.lower(), f"{r.text[:160]}")
+        r = await p1.post(L, json={"container": "53077-99", "carton": "A1", "units": 5})
+        check("no se puede capturar en una locación inventada -> 400",
+              r.status_code == 400, f"{r.status_code} {r.text[:160]}")
+        check("wms_locations intacto (la herramienta no crea locaciones)",
+              sdb.wms_locations.count_documents({}) == 2)
 
         print("\n== captura de un cartón con toda su etiqueta ==")
         r = await p1.post(L, json={"container": CONT, "carton": CARTON, "units": 72, **ETIQUETA})
@@ -160,8 +181,15 @@ async def main():
         check("ya no quedan renglones sin aduana",
               r.json().get("resumen", {}).get("sin_aduana") == 0, f"{r.json().get('resumen')}")
 
+        print("\n== el nombre se normaliza al de la locación ==")
+        r = await p1.post(L, json={"container": " 53077-01 ", "carton": "A2524611077", "units": 8})
+        d = r.json() if r.status_code == 200 else {}
+        check("escrito con espacios -> se guarda con el nombre de la locación",
+              (d.get("line") or {}).get("container") == CONT, f"{d.get('line')}")
+        sdb.wms_photo_lines.delete_one({"carton": "A2524611077"})
+
         print("\n== contenedores separados: el mismo cartón puede ir en otro ==")
-        r = await p1.post(L, json={"container": "CONTENEDOR 2", "carton": CARTON, "units": 12})
+        r = await p1.post(L, json={"container": CONT2, "carton": CARTON, "units": 12})
         check("mismo cartón en OTRO contenedor -> se permite", r.json().get("ok") is True, f"{r.text[:160]}")
         r = await p1.get("/api/wms/recon/photo/lines", params={"container": CONT})
         check("y no contamina el resumen del primero",
