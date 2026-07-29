@@ -7985,6 +7985,12 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
             logger.warning("label-read: lectura falló: %s", e)
             avisos.append("No se pudo leer la etiqueta; captura los datos a mano.")
 
+    if not campos["carton"] and not campos["sku"]:
+        # Sin ningún código no hay cómo ubicar los campos en la etiqueta, así que
+        # el modal saldría entero vacío: hay que decir por qué y qué hacer.
+        avisos.append("No se leyó ningún código de barras, así que no se pudo ubicar "
+                      "el texto de la etiqueta. Toma la foto de frente, con la etiqueta "
+                      "completa dentro del cuadro y buena luz.")
     if not campos["carton"]:
         avisos.append("No se leyó el número de cartón; escríbelo antes de guardar.")
     if not campos["units"]:

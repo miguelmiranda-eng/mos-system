@@ -73,6 +73,17 @@ _BANDAS = {
     "units":             (0.824, 0.952,  0.84, 1.08, _DIG),
 }
 
+# Proporciones fijas de la plantilla, medidas sobre las fotos de referencia
+# (nítida y arrugada, que coincidieron en 1.493 y 1.497): permiten anclar aunque
+# sólo se lea uno de los dos códigos.
+# Alto al que se lleva cada banda antes de leerla, en píxeles. Es el tamaño con
+# el que se calibró: normalizar aquí hace que una foto de 8 MP y una de 1 MP se
+# lean igual de bien.
+_ALTO_BANDA = 520
+
+_PROP_H_W = 1.495          # distancia entre códigos ÷ ancho del código de cartón
+_PROP_SKU_W = 0.384        # ancho del código de SKU ÷ ancho del código de cartón
+
 _ROTULOS = ["CUSTOMER", "MANUFACTURER", "STYLE", "COLOR", "SIZE", "DESCRIPTION",
             "COUNTRYOFORIGIN", "FABRICCONTENT", "DOZENS", "PIECES", "UNITS",
             "PURCHASEORDER", "LOTNUMBER", "SKU", "QUASARSYSTEMS"]
@@ -205,6 +216,49 @@ def _consenso(img, wl) -> str:
     return ""
 
 
+def _cajas_de(res):
+    return {b["data"]: b for b in res.get("barcodes", [])}
+
+
+def _bien_orientada(cajas, carton, sku) -> bool:
+    """En la etiqueta derecha el código de cartón es claramente apaisado y el de
+    SKU queda por debajo."""
+    c = cajas.get(carton)
+    if not c or c["width"] <= c["height"] * 1.5:
+        return False
+    s = cajas.get(sku)
+    return True if not s else s["top"] > c["top"]
+
+
+def _enderezar(image_bytes, bc):
+    """Devuelve (imagen enderezada, cajas de los códigos en esa imagen).
+
+    Se rota y se vuelve a decodificar en lugar de transformar las coordenadas a
+    mano: una llamada más a zbar cuesta poco y evita toda una clase de errores
+    de conversión, que es justo lo que rompía la lectura."""
+    from services.label_barcode import base_image, rotacion_de, decode_label as _dec
+    base = base_image(image_bytes)
+    rot = rotacion_de(bc.get("variante", ""))
+    img0 = base.rotate(rot, expand=True) if rot else base
+    cajas0 = _cajas_de(bc)
+    carton, sku = bc.get("carton", ""), bc.get("sku", "")
+    if _bien_orientada(cajas0, carton, sku):
+        return ImageOps.autocontrast(img0, cutoff=1), cajas0
+
+    c = cajas0.get(carton) or cajas0.get(sku)
+    # Si el código se ve más alto que ancho, la etiqueta está acostada.
+    candidatas = (90, 270, 180) if (c and c["height"] > c["width"]) else (180, 90, 270)
+    for ang in candidatas:
+        rotada = img0.rotate(ang, expand=True)
+        buf = io.BytesIO()
+        rotada.save(buf, format="PNG")
+        res = _dec(buf.getvalue())
+        cajas = _cajas_de(res)
+        if _bien_orientada(cajas, res.get("carton", ""), res.get("sku", "")):
+            return ImageOps.autocontrast(rotada, cutoff=1), cajas
+    return ImageOps.autocontrast(img0, cutoff=1), cajas0
+
+
 def parse_label(image_bytes: bytes) -> dict:
     """Lee la etiqueta apoyándose en los barcodes como anclas.
 
@@ -220,18 +274,36 @@ def parse_label(image_bytes: bytes) -> dict:
     bc = decode_label(image_bytes)
     campos["carton"], campos["sku"] = bc.get("carton", ""), bc.get("sku", "")
 
-    cajas = {b["data"]: b for b in bc.get("barcodes", [])}
+    # Enderezar la etiqueta ANTES de recortar. Las bandas están definidas sobre
+    # la etiqueta vertical; si la foto se tomó de lado —cosa normal con una
+    # tablet— los recortes caen en el vacío y el modal sale entero vacío aunque
+    # el texto se vea perfecto. El barcode de cartón es la brújula: en la
+    # etiqueta derecha es mucho más ancho que alto.
+    img, cajas = _enderezar(image_bytes, bc)
     a_cart, a_sku = cajas.get(campos["carton"]), cajas.get(campos["sku"])
-    if not a_cart or not a_sku:
-        # Sin las dos anclas no hay geometría fiable: mejor devolver los códigos
-        # que sí se leyeron y dejar el resto al operador que inventar posiciones.
+
+    # Geometría. Con los dos códigos sale exacta. Con uno solo se usa la
+    # proporción de la plantilla, que es constante (medida sobre las fotos de
+    # referencia: la distancia entre códigos es 1.495x el ancho del de cartón,
+    # y el de SKU mide 0.384x ese ancho). Esto importa: el código de abajo es
+    # chico y se pierde en fotos de lejos, y sin este respaldo la etiqueta
+    # entera se devolvía vacía aunque el texto fuera perfectamente legible.
+    if a_cart and a_sku:
+        yA = a_cart["top"] + a_cart["height"] / 2
+        H = (a_sku["top"] + a_sku["height"] / 2) - yA
+        xA, W = a_cart["left"], a_cart["width"]
+    elif a_cart:
+        yA = a_cart["top"] + a_cart["height"] / 2
+        xA, W = a_cart["left"], a_cart["width"]
+        H = W * _PROP_H_W
+    elif a_sku:
+        W = a_sku["width"] / _PROP_SKU_W
+        H = W * _PROP_H_W
+        yA = (a_sku["top"] + a_sku["height"] / 2) - H
+        xA = a_sku["left"] + a_sku["width"] / 2 - W / 2
+    else:
         return campos
 
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("L")
-    img = ImageOps.autocontrast(img, cutoff=1)
-    yA = a_cart["top"] + a_cart["height"] / 2
-    H = (a_sku["top"] + a_sku["height"] / 2) - yA
-    xA, W = a_cart["left"], a_cart["width"]
     if H <= 0 or W <= 0:
         return campos
 
@@ -241,7 +313,14 @@ def parse_label(image_bytes: bytes) -> dict:
         if box[2] - box[0] < 8 or box[3] - box[1] < 8:
             continue
         banda = img.crop(box)
-        banda = banda.resize((banda.width * 3, banda.height * 3), Image.LANCZOS)
+        # Normalizar el alto de la banda en vez de escalar x3 a ciegas. Con una
+        # foto de tablet de 8 MP, el x3 dejaba recortes enormes y Tesseract se
+        # degradaba: llegó a leer "12" donde la etiqueta dice "72" — y la
+        # cantidad es justo el dato que no puede salir mal.
+        f = _ALTO_BANDA / max(1, banda.height)
+        f = max(0.5, min(4.0, f))
+        banda = banda.resize((max(1, int(banda.width * f)),
+                              max(1, int(banda.height * f))), Image.LANCZOS)
         ln = _linea_valor(banda, wl)
         if not ln:
             continue

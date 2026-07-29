@@ -45,7 +45,14 @@ def motor_error() -> str:
     return _ZBAR_ERR
 
 
-def _base_image(image_bytes: bytes):
+def base_image(image_bytes: bytes):
+    """Imagen normalizada sobre la que se decodifica.
+
+    IMPORTANTE: las coordenadas que devuelve zbar son de ESTA imagen, no de la
+    original. Es pública porque `label_ocr` recorta usando esas coordenadas y
+    tiene que partir exactamente de la misma base — con una foto de cámara de
+    12 MP, la reducción de aquí desplazaba los recortes y la etiqueta salía
+    entera vacía."""
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img)      # respeta la orientación de la cámara
     img = img.convert("L")                  # zbar trabaja en gris; ahorra memoria
@@ -54,6 +61,13 @@ def _base_image(image_bytes: bytes):
         f = _MAX_PIXELS / max(w, h)
         img = img.resize((max(1, int(w * f)), max(1, int(h * f))))
     return img
+
+
+def rotacion_de(variante: str) -> int:
+    """Grados que se le aplicaron a la base en la variante que sí decodificó.
+    Quien use los rects tiene que aplicar la misma rotación."""
+    m = re.match(r"rot(\d+)", variante or "")
+    return int(m.group(1)) if m else 0
 
 
 def _variantes(img):
@@ -117,7 +131,7 @@ def decode_label(image_bytes: bytes) -> dict:
     if not _ZBAR_OK:
         raise RuntimeError(f"Lector de barcode no disponible (pyzbar/libzbar0): {_ZBAR_ERR}")
 
-    img = _base_image(image_bytes)
+    img = base_image(image_bytes)
     mejor, mejor_var = [], ""
     for nombre, variante in _variantes(img):
         found = _decode(variante)
