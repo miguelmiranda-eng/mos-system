@@ -137,10 +137,13 @@ async def main():
         d = r.json() if r.status_code == 200 else {}
         check("responde 200 (no rompe)", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
         check("no inventa cartón", not d.get("campos", {}).get("carton"), f"{d.get('campos')}")
-        check("avisa que falta el cartón",
-              any("cartón" in a.lower() for a in d.get("avisos", [])), f"{d.get('avisos')}")
-        check("avisa que falta la cantidad",
-              any("cantidad" in a.lower() for a in d.get("avisos", [])), f"{d.get('avisos')}")
+        check("avisa que no se pudo leer y qué hacer",
+              any("foto de frente" in a.lower() for a in d.get("avisos", [])), f"{d.get('avisos')}")
+        # Los códigos de barras son opcionales: su ausencia NO se le reclama al
+        # operador, porque no es algo que pueda resolver.
+        check("no reclama códigos de barras",
+              not any("código de barras" in a.lower() for a in d.get("avisos", [])),
+              f"{d.get('avisos')}")
 
         print("\n== entradas inválidas ==")
         r = await foto(c, b"esto no es una imagen", "nota.txt", "text/plain")

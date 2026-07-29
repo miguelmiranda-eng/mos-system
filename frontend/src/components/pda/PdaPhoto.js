@@ -22,13 +22,16 @@ const buzz = (p) => { if (navigator.vibrate) navigator.vibrate(p); };
 // Campos del modal, en el orden en que conviene revisarlos: primero identidad y
 // cantidad, luego el material, y al final lo aduanal (que es lo que hace falta
 // para sacar el material del país y NO viene en ningún barcode).
+// Lo que de verdad hace falta para sacar el material, en el orden en que
+// conviene revisarlo. Cliente y fabricante van al final: se leen, pero no son
+// lo que el operador viene a confirmar.
 const CAMPOS = [
-  { k: "style", label: "Style" },
+  { k: "style", label: "Estilo" },
   { k: "color", label: "Color" },
   { k: "size", label: "Talla" },
-  { k: "description", label: "Descripción" },
+  { k: "description", label: "Tipo de prenda" },
   { k: "country_of_origin", label: "País de origen", aduana: true },
-  { k: "fabric_content", label: "Contenido", aduana: true },
+  { k: "fabric_content", label: "Contenido / %", aduana: true },
   { k: "customer", label: "Cliente" },
   { k: "manufacturer", label: "Fabricante" },
 ];
@@ -115,7 +118,8 @@ export default function PdaPhoto() {
     e?.preventDefault();
     const carton = (draft.carton || "").trim();
     const units = parseInt(draft.units, 10);
-    if (!carton) { toast.error("Falta el número de cartón"); buzz([120, 60, 120]); return; }
+    // El nº de cartón no se exige: viene del código de barras y ése se pierde
+    // con facilidad. La cantidad sí, porque es la razón de ser del renglón.
     if (!units || units <= 0) { toast.error("Falta la cantidad"); buzz([120, 60, 120]); return; }
     setBusy(true);
     try {
@@ -266,31 +270,14 @@ export default function PdaPhoto() {
               </div>
             ))}
 
-            {/* Cartón + cantidad: lo que no puede salir mal */}
+            {/* La cantidad primero: es el dato por el que existe el renglón. */}
             <div>
               <label className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                Nº de cartón <Fuente campo="carton" />
+                Cantidad (unidades) <Fuente campo="units" />
               </label>
-              <input value={draft.carton || ""} onChange={e => setCampo("carton", e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/15 rounded-2xl text-center text-lg font-mono focus:border-sky-400 outline-none" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                  SKU <Fuente campo="sku" />
-                </label>
-                <input value={draft.sku || ""} onChange={e => setCampo("sku", e.target.value)}
-                  className="w-full px-3 py-3 bg-white/5 border-2 border-white/15 rounded-2xl text-center font-mono focus:border-sky-400 outline-none" />
-              </div>
-              <div>
-                <label className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                  Unidades <Fuente campo="units" />
-                </label>
-                <input type="number" inputMode="numeric" min="1" value={draft.units || ""}
-                  onChange={e => setCampo("units", e.target.value)}
-                  className="w-full px-3 py-3 bg-white/5 border-2 border-emerald-500/40 rounded-2xl text-center text-2xl font-black focus:border-emerald-400 outline-none" />
-              </div>
+              <input type="number" inputMode="numeric" min="1" value={draft.units || ""}
+                onChange={e => setCampo("units", e.target.value)}
+                className="w-full px-4 py-4 bg-white/5 border-2 border-emerald-500/40 rounded-2xl text-center text-3xl font-black focus:border-emerald-400 outline-none" />
             </div>
 
             {CAMPOS.map(c => (
@@ -304,6 +291,31 @@ export default function PdaPhoto() {
                     c.aduana && !draft[c.k] ? "border-amber-500/40" : "border-white/15"}`} />
               </div>
             ))}
+
+            {/* Códigos de barras: opcionales. Cuando se leen, el nº de cartón
+                evita contar dos veces la misma caja; si no, no estorban. */}
+            <details className="rounded-2xl bg-white/5 border border-white/10 px-3 py-2">
+              <summary className="text-[10px] font-black uppercase tracking-widest text-slate-400 cursor-pointer">
+                Códigos de barras (opcional)
+                {draft.carton ? <span className="ml-2 text-emerald-400 normal-case">{draft.carton}</span> : null}
+              </summary>
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                <div>
+                  <label className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                    Nº cartón <Fuente campo="carton" />
+                  </label>
+                  <input value={draft.carton || ""} onChange={e => setCampo("carton", e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2.5 bg-white/5 border-2 border-white/15 rounded-2xl text-center font-mono text-sm focus:border-sky-400 outline-none" />
+                </div>
+                <div>
+                  <label className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                    SKU <Fuente campo="sku" />
+                  </label>
+                  <input value={draft.sku || ""} onChange={e => setCampo("sku", e.target.value)}
+                    className="w-full px-3 py-2.5 bg-white/5 border-2 border-white/15 rounded-2xl text-center font-mono text-sm focus:border-sky-400 outline-none" />
+                </div>
+              </div>
+            </details>
 
             <div className="sticky bottom-0 bg-[#0b0f1a] pt-2 space-y-2">
               <button type="submit" disabled={busy}

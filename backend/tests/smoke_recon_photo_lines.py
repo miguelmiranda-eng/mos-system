@@ -143,8 +143,18 @@ async def main():
         for bad in (0, -5, "muchas", None):
             r = await p1.post(L, json={"container": CONT, "carton": f"A99{bad}", "units": bad})
             check(f"units={bad!r} -> 400", r.status_code == 400, f"{r.status_code}")
-        r = await p1.post(L, json={"container": CONT, "carton": "  ", "units": 10})
-        check("cartón vacío -> 400", r.status_code == 400, f"{r.status_code}")
+        # El nº de cartón viene del código de barras y se pierde con facilidad
+        # (reflejo, distancia). No puede frenar la captura del material.
+        r = await p1.post(L, json={"container": CONT, "carton": "  ", "units": 10,
+                                   "style": "3000", "color": "RED"})
+        d = r.json() if r.status_code == 200 else {}
+        check("sin nº de cartón se guarda igual", d.get("ok") is True, f"{r.status_code} {r.text[:160]}")
+        r = await p1.post(L, json={"container": CONT, "carton": "", "units": 20,
+                                   "style": "4000", "color": "BLUE"})
+        check("y un segundo renglón sin cartón también (índice parcial)",
+              r.json().get("ok") is True, f"{r.status_code} {r.text[:160]}")
+        for c in ("3000", "4000"):
+            sdb.wms_photo_lines.delete_one({"style": c})
 
         print("\n== renglón sin datos aduanales: entra, pero queda marcado ==")
         r = await p1.post(L, json={"container": CONT, "carton": CARTON2, "units": 24, "style": "2000"})

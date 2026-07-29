@@ -7985,16 +7985,19 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
             logger.warning("label-read: lectura falló: %s", e)
             avisos.append("No se pudo leer la etiqueta; captura los datos a mano.")
 
-    if not campos["carton"] and not campos["sku"]:
-        # Sin ningún código no hay cómo ubicar los campos en la etiqueta, así que
-        # el modal saldría entero vacío: hay que decir por qué y qué hacer.
-        avisos.append("No se leyó ningún código de barras, así que no se pudo ubicar "
-                      "el texto de la etiqueta. Toma la foto de frente, con la etiqueta "
-                      "completa dentro del cuadro y buena luz.")
-    if not campos["carton"]:
-        avisos.append("No se leyó el número de cartón; escríbelo antes de guardar.")
-    if not campos["units"]:
-        avisos.append("No se leyó la cantidad; confírmala contra la etiqueta.")
+    # Los códigos de barras son opcionales: dan el nº de cartón gratis, pero la
+    # etiqueta se lee igual sin ellos. No se avisa de su ausencia — no es algo
+    # que el operador tenga que resolver.
+    faltan = [n for c, n in (("style", "estilo"), ("color", "color"), ("size", "talla"),
+                             ("units", "cantidad"), ("description", "tipo de prenda"),
+                             ("country_of_origin", "país de origen"),
+                             ("fabric_content", "contenido"))
+              if not campos[c]]
+    if len(faltan) >= 5:
+        avisos.append("Casi no se pudo leer la etiqueta. Toma la foto de frente, con la "
+                      "etiqueta completa dentro del cuadro y buena luz.")
+    elif faltan:
+        avisos.append("Falta por capturar: " + ", ".join(faltan) + ".")
 
     return {"campos": campos, "fuentes": fuentes, "avisos": avisos}
 
@@ -8036,8 +8039,15 @@ async def _ensure_photo_indexes():
     global _PHOTO_IDX_OK
     if _PHOTO_IDX_OK:
         return
-    await db.wms_photo_lines.create_index([("container", 1), ("carton", 1)], unique=True,
-                                          name="uniq_container_carton")
+    # PARCIAL: sólo aplica cuando hay número de cartón. Sin él (código ilegible)
+    # varios renglones compartirían la llave vacía y el segundo sería rechazado.
+    try:
+        await db.wms_photo_lines.create_index(
+            [("container", 1), ("carton", 1)], unique=True,
+            partialFilterExpression={"carton": {"$gt": ""}},
+            name="uniq_container_carton_v2")
+    except Exception as e:                      # ya existe con otra definición
+        logger.warning("photo: índice no creado (%s)", e)
     await db.wms_photo_lines.create_index([("created_at", -1)], name="by_created")
     _PHOTO_IDX_OK = True
 
@@ -8110,9 +8120,11 @@ async def photo_line_add(request: Request):
         raise HTTPException(400, f"La locación '{_photo_container(body.get('container'))}' no existe. "
                                  f"Pídele al supervisor que la dé de alta en Ubicaciones.")
     container = loc["name"]
+    # El nº de cartón es OPCIONAL: viene del código de barras, y ése se pierde
+    # por reflejo o distancia. Cuando está, es la llave que impide contar dos
+    # veces el mismo cartón; cuando no, el renglón se guarda igual (sin esa
+    # protección) porque lo que importa es el material y la cantidad.
     carton = str(body.get("carton") or "").strip().upper()
-    if not carton:
-        raise HTTPException(400, "El número de cartón es obligatorio")
     try:
         units = int(body.get("units"))
     except (TypeError, ValueError):
@@ -8120,9 +8132,10 @@ async def photo_line_add(request: Request):
     if units <= 0 or units > _PHOTO_MAX_UNITS:
         raise HTTPException(400, f"Cantidad fuera de rango (1..{_PHOTO_MAX_UNITS})")
 
-    ya = await db.wms_photo_lines.find_one({"container": container, "carton": carton}, {"_id": 0})
-    if ya:
-        return {"ok": False, "duplicado": True, "line": ya}
+    if carton:
+        ya = await db.wms_photo_lines.find_one({"container": container, "carton": carton}, {"_id": 0})
+        if ya:
+            return {"ok": False, "duplicado": True, "line": ya}
 
     doc = {"line_id": gen_id("pline"), "container": container, "carton": carton,
            "units": units, "user_id": user.get("user_id"),

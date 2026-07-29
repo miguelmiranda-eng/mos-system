@@ -80,6 +80,7 @@ _BANDAS = {
 # el que se calibró: normalizar aquí hace que una foto de 8 MP y una de 1 MP se
 # lean igual de bien.
 _ALTO_BANDA = 520
+_ALTO_LINEA = 150          # alto al que se lleva una línea suelta antes de leerla
 
 _PROP_H_W = 1.495          # distancia entre códigos ÷ ancho del código de cartón
 _PROP_SKU_W = 0.384        # ancho del código de SKU ÷ ancho del código de cartón
@@ -216,6 +217,177 @@ def _consenso(img, wl) -> str:
     return ""
 
 
+def _lineas_pagina(img):
+    """Todas las líneas de la imagen con su caja. Se usa cuando no hay códigos
+    de barras que sirvan de ancla: los rótulos de la plantilla hacen ese papel."""
+    try:
+        d = pytesseract.image_to_data(img, config="--psm 4",
+                                      output_type=pytesseract.Output.DICT)
+    except Exception:
+        return []
+    ls = {}
+    for i, txt in enumerate(d["text"]):
+        t = (txt or "").strip()
+        if not t:
+            continue
+        try:
+            if int(float(d["conf"][i])) < 20:
+                continue
+        except (TypeError, ValueError):
+            continue
+        k = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
+        c = ls.setdefault(k, {"t": [], "x0": 10**9, "y0": 10**9, "x1": 0, "y1": 0})
+        c["t"].append(t)
+        c["x0"] = min(c["x0"], d["left"][i]); c["y0"] = min(c["y0"], d["top"][i])
+        c["x1"] = max(c["x1"], d["left"][i] + d["width"][i])
+        c["y1"] = max(c["y1"], d["top"][i] + d["height"][i])
+    out = []
+    for c in ls.values():
+        c["texto"] = " ".join(c["t"])
+        c["cy"] = (c["y0"] + c["y1"]) / 2
+        c["alto"] = c["y1"] - c["y0"]
+        out.append(c)
+    return sorted(out, key=lambda l: l["cy"])
+
+
+def _parecido(linea, rotulo) -> float:
+    u = re.sub(r"[^A-Z]", "", linea["texto"].upper())
+    if not u:
+        return 0.0
+    if rotulo in u:
+        return 0.97
+    return max(difflib.SequenceMatcher(None, rotulo, u).ratio(),
+               difflib.SequenceMatcher(None, rotulo, u[:len(rotulo) + 2]).ratio())
+
+
+# Rótulo de cada campo, en el orden vertical de la plantilla.
+_ORDEN = [("customer", "CUSTOMER"), ("manufacturer", "MANUFACTURER"),
+          ("style", "STYLE"), ("color", "COLOR"), ("size", "SIZE"),
+          ("description", "DESCRIPTION"), ("country_of_origin", "COUNTRYOFORIGIN"),
+          ("fabric_content", "FABRICCONTENT"), ("dozens", "DOZENS"),
+          ("pieces", "PIECES"), ("units", "UNITS")]
+
+
+# Posición vertical de cada rótulo en la plantilla, en las mismas coordenadas
+# normalizadas que _BANDAS. Permiten reconstruir la geometría sin códigos.
+_U_ROTULO = {c: _BANDAS[c][0] for c, _ in _ORDEN if c in _BANDAS}
+_PROP_XA = 0.087           # xA ≈ borde izquierdo de los rótulos + esto × W
+
+
+def _anclas_rotulos(lineas):
+    """Rótulos detectados, en el orden vertical de la plantilla."""
+    anclas, piso = {}, -1.0
+    for campo, rot in _ORDEN:
+        cands = [ln for ln in lineas if ln["cy"] > piso and _parecido(ln, rot) >= 0.82]
+        if not cands:
+            continue
+        ln = min(cands, key=lambda l: l["cy"])
+        anclas[campo] = ln
+        piso = ln["cy"]
+    return anclas
+
+
+def _geometria_por_rotulos(img):
+    """Deriva (xA, yA, W, H) de los rótulos, para cuando no hay códigos.
+
+    Con dos rótulos cualesquiera basta: se conoce su posición en la plantilla,
+    así que una recta da escala y desplazamiento, y de ahí salen las mismas
+    bandas que ya están calibradas. Así un rótulo ilegible deja de costar su
+    campo — lo cubren los demás."""
+    lineas = _lineas_pagina(img)
+    if not lineas:
+        return None, []
+    anclas = _anclas_rotulos(lineas)
+    pts = [(_U_ROTULO[c], ln["cy"]) for c, ln in anclas.items() if c in _U_ROTULO]
+    if len(pts) < 2:
+        return None, lineas
+    n = len(pts)
+    su = sum(p[0] for p in pts); sy = sum(p[1] for p in pts)
+    suu = sum(p[0] * p[0] for p in pts); suy = sum(p[0] * p[1] for p in pts)
+    den = n * suu - su * su
+    if abs(den) < 1e-9:
+        return None, lineas
+    H = (n * suy - su * sy) / den          # cy = yA + u·H  (mínimos cuadrados)
+    yA = (sy - H * su) / n
+    if H <= 0:
+        return None, lineas
+    W = H / _PROP_H_W
+    izq = [ln["x0"] for c, ln in anclas.items() if c not in ("size", "units", "pieces")]
+    xA = (min(izq) if izq else 0) + _PROP_XA * W
+    return (xA, yA, W, H), lineas
+
+
+def _por_rotulos(img, campos):
+    """Lee la etiqueta anclándose en sus rótulos, sin necesitar los códigos.
+
+    Los rótulos se buscan EN ORDEN: exigir que aparezcan de arriba abajo como en
+    la plantilla descarta los falsos positivos, que es lo que antes mandaba el
+    valor de un campo al campo de al lado."""
+    lineas = _lineas_pagina(img)
+    if not lineas:
+        return campos
+    anclas, piso = {}, -1.0
+    for campo, rot in _ORDEN:
+        cands = [ln for ln in lineas if ln["cy"] > piso and _parecido(ln, rot) >= 0.82]
+        if not cands:
+            continue
+        ln = min(cands, key=lambda l: l["cy"])
+        anclas[campo] = ln
+        piso = ln["cy"]
+
+    for campo, ln in anclas.items():
+        margen = (ln["x1"] - ln["x0"]) * 0.6 + ln["alto"]
+        x0, x1 = ln["x0"] - margen, ln["x1"] + margen
+        cands = [o for o in lineas
+                 if o is not ln
+                 and ln["cy"] + ln["alto"] * 0.4 < o["cy"] < ln["cy"] + ln["alto"] * 3.2
+                 and min(x1, o["x1"]) - max(x0, o["x0"]) > 0
+                 and not _es_rotulo(o["texto"])]
+        if not cands:
+            continue
+        v = min(cands, key=lambda l: l["cy"])
+        m = max(4, (v["y1"] - v["y0"]) // 5)
+        recorte = img.crop((max(0, v["x0"] - m), max(0, v["y0"] - m),
+                            min(img.width, v["x1"] + m), min(img.height, v["y1"] + m)))
+        f = max(0.6, min(6.0, _ALTO_LINEA / max(1, recorte.height)))
+        recorte = recorte.resize((max(1, int(recorte.width * f)),
+                                  max(1, int(recorte.height * f))), Image.LANCZOS)
+        wl = _BANDAS[campo][4] if campo in _BANDAS else None
+        valor = _VALIDA[campo](_consenso(recorte, wl))
+        if valor:
+            campos[campo] = valor
+    return campos
+
+
+def _por_bandas(img, campos, xA, yA, W, H):
+    """Recorta cada campo por su banda y lo lee. `xA/yA/W/H` es la geometría de
+    la etiqueta, venga de los códigos o derivada de los rótulos."""
+    for campo, (y0, y1, x0, x1, wl) in _BANDAS.items():
+        if campos.get(campo):
+            continue
+        box = (max(0, int(xA + x0 * W)), max(0, int(yA + y0 * H)),
+               min(img.width, int(xA + x1 * W)), min(img.height, int(yA + y1 * H)))
+        if box[2] - box[0] < 8 or box[3] - box[1] < 8:
+            continue
+        banda = img.crop(box)
+        # Normalizar el alto de la banda en vez de escalar x3 a ciegas. Con una
+        # foto de tablet de 8 MP, el x3 dejaba recortes enormes y Tesseract se
+        # degradaba: llegó a leer "12" donde la etiqueta dice "72" — y la
+        # cantidad es justo el dato que no puede salir mal.
+        f = max(0.5, min(4.0, _ALTO_BANDA / max(1, banda.height)))
+        banda = banda.resize((max(1, int(banda.width * f)),
+                              max(1, int(banda.height * f))), Image.LANCZOS)
+        ln = _linea_valor(banda, wl)
+        if not ln:
+            continue
+        m = max(4, (ln["y1"] - ln["y0"]) // 5)      # margen para no cortar trazos
+        recorte = banda.crop((max(0, ln["x0"] - m), max(0, ln["y0"] - m),
+                              min(banda.width, ln["x1"] + m),
+                              min(banda.height, ln["y1"] + m)))
+        campos[campo] = _VALIDA[campo](_consenso(recorte, wl))
+    return campos
+
+
 def _cajas_de(res):
     return {b["data"]: b for b in res.get("barcodes", [])}
 
@@ -282,6 +454,18 @@ def parse_label(image_bytes: bytes) -> dict:
     img, cajas = _enderezar(image_bytes, bc)
     a_cart, a_sku = cajas.get(campos["carton"]), cajas.get(campos["sku"])
 
+    # Sin ningún código legible se lee igual, anclando en los rótulos. Los
+    # códigos son una ayuda (dan la geometría exacta y el nº de cartón gratis),
+    # NO un requisito: en el piso se pierden por reflejo, distancia o movimiento,
+    # y el texto de la etiqueta sigue perfectamente legible.
+    if not a_cart and not a_sku:
+        geo, _ = _geometria_por_rotulos(img)
+        if not geo:
+            return campos
+        xA, yA, W, H = geo
+        campos = _por_bandas(img, campos, xA, yA, W, H)
+        return _por_rotulos(img, campos)
+
     # Geometría. Con los dos códigos sale exacta. Con uno solo se usa la
     # proporción de la plantilla, que es constante (medida sobre las fotos de
     # referencia: la distancia entre códigos es 1.495x el ancho del de cartón,
@@ -307,26 +491,10 @@ def parse_label(image_bytes: bytes) -> dict:
     if H <= 0 or W <= 0:
         return campos
 
-    for campo, (y0, y1, x0, x1, wl) in _BANDAS.items():
-        box = (max(0, int(xA + x0 * W)), max(0, int(yA + y0 * H)),
-               min(img.width, int(xA + x1 * W)), min(img.height, int(yA + y1 * H)))
-        if box[2] - box[0] < 8 or box[3] - box[1] < 8:
-            continue
-        banda = img.crop(box)
-        # Normalizar el alto de la banda en vez de escalar x3 a ciegas. Con una
-        # foto de tablet de 8 MP, el x3 dejaba recortes enormes y Tesseract se
-        # degradaba: llegó a leer "12" donde la etiqueta dice "72" — y la
-        # cantidad es justo el dato que no puede salir mal.
-        f = _ALTO_BANDA / max(1, banda.height)
-        f = max(0.5, min(4.0, f))
-        banda = banda.resize((max(1, int(banda.width * f)),
-                              max(1, int(banda.height * f))), Image.LANCZOS)
-        ln = _linea_valor(banda, wl)
-        if not ln:
-            continue
-        m = max(4, (ln["y1"] - ln["y0"]) // 5)      # margen para no cortar trazos
-        recorte = banda.crop((max(0, ln["x0"] - m), max(0, ln["y0"] - m),
-                              min(banda.width, ln["x1"] + m),
-                              min(banda.height, ln["y1"] + m)))
-        campos[campo] = _VALIDA[campo](_consenso(recorte, wl))
+    campos = _por_bandas(img, campos, xA, yA, W, H)
+
+    # Lo que la geometría no alcanzó a sacar, se reintenta por rótulos: son dos
+    # caminos independientes y rara vez fallan en lo mismo.
+    if any(not campos[c] for c, _ in _ORDEN):
+        campos = _por_rotulos(img, campos)
     return campos
