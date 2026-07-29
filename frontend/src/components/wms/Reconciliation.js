@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Loader2, RefreshCw, Trash2, MapPin, PackageX, PackagePlus,
   Unlock, CheckCircle2, ListChecks, Download, Ban, History, PackageCheck, RotateCcw, Search, X,
-  Ghost, ScanSearch, Save,
+  Ghost, ScanSearch, Save, Camera,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
 import { ModuleHeader, Btn, Chip, Th } from "./ui";
+import PhotoInventoryTab from "./PhotoInventory";
 
 // Panel PC de conciliación (admin): cajas faltantes + creadas para resolver, y
 // el registro de ubicaciones ya conciliadas (con opción de reabrir).
@@ -19,6 +20,7 @@ const TABS = [
   { id: "log", label: "Ubicaciones conciliadas", icon: ListChecks },
   { id: "adjustments", label: "Ajustes de cajas", icon: History },
   { id: "lpn", label: "Bloqueadas por LPN", icon: Ban },
+  { id: "photo", label: "Inventario por foto", icon: Camera },
 ];
 
 const ADJ_TYPE_LABELS = {
@@ -294,7 +296,7 @@ export const ReconciliationModule = () => {
       <ModuleHeader
         title="Conciliación"
         subtitle="Cajas por resolver y registro de ubicaciones conciliadas"
-        right={
+        right={tab === "photo" ? null : (
           <>
             {/* Buscador de locaciones */}
             <div className="relative">
@@ -332,7 +334,7 @@ export const ReconciliationModule = () => {
               <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
             </button>
           </>
-        }
+        )}
       />
 
       <div className="flex gap-1 border-b border-border">
@@ -666,6 +668,9 @@ export const ReconciliationModule = () => {
         </div>
         );
       })()}
+
+      {/* ── Inventario por foto ── */}
+      {tab === "photo" && <PhotoInventoryTab />}
 
       {/* ── Ajustes de cajas ── */}
       {tab === "adjustments" && (

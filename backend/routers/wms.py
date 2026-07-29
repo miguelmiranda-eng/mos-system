@@ -7917,6 +7917,198 @@ async def recon_phantom_atender(request: Request):
     return {"ok": True, "phantom_id": pid}
 
 
+# ── Inventario por foto ─────────────────────────────────────────────────────
+# Material físico que no se puede casar con el sistema (las cajas del import de
+# Excel traen box_id sintético "LPN_xxxx", que el cartón no tiene impreso). Se
+# lee la etiqueta por BARCODE —determinista, no OCR ni IA— y el operador sólo
+# confirma la cantidad, que es el único dato que no viaja en un código.
+
+_LABEL_MAX_BYTES = 12 * 1024 * 1024
+
+
+@router.post("/recon/label-scan")
+async def recon_label_scan(request: Request, file: UploadFile = File(...)):
+    """Decodifica los dos barcodes de una foto de etiqueta de cartón.
+    Devuelve { ok, carton, sku, barcodes[], variante }. No escribe nada: es una
+    lectura pura, el renglón se arma en el cliente y se exporta a Excel."""
+    await _require_recon_role(request)
+    from services.label_barcode import decode_label, barcode_disponible, motor_error
+    if not barcode_disponible():
+        raise HTTPException(503, f"Lector de barcode no disponible en el servidor: {motor_error()}")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Foto vacía")
+    if len(data) > _LABEL_MAX_BYTES:
+        raise HTTPException(413, "La foto pesa más de 12 MB; baja la resolución de la cámara")
+    try:
+        result = decode_label(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo procesar la imagen: {e}")
+    return result
+
+
+# Los renglones capturados viven en colecciones PROPIAS de esta herramienta.
+# No tocan wms_boxes ni wms_inventory a propósito: este material no está en el
+# sistema, así que no hay nada que conciliar — sólo levantar una lista para
+# sacarlo. Así la herramienta no puede corromper el inventario.
+_PHOTO_IDX_OK = False
+
+
+async def _ensure_photo_indexes():
+    """Índices perezosos. El único que importa es (lote, carton): es lo que hace
+    imposible el doble conteo cuando dos operadores fotografían el mismo cartón."""
+    global _PHOTO_IDX_OK
+    if _PHOTO_IDX_OK:
+        return
+    await db.wms_photo_lines.create_index([("lote", 1), ("carton", 1)], unique=True,
+                                          name="uniq_lote_carton")
+    await db.wms_photo_lines.create_index([("created_at", -1)], name="by_created")
+    await db.wms_photo_skus.create_index([("sku", 1)], unique=True, name="uniq_sku")
+    _PHOTO_IDX_OK = True
+
+
+# Campos descriptivos del material. Se capturan UNA vez por SKU (todos los
+# cartones del mismo SKU comparten material; sólo cambia la cantidad). País y
+# contenido son obligatorios para el papeleo de salida.
+_PHOTO_SKU_FIELDS = ("style", "color", "size", "description", "country_of_origin",
+                     "fabric_content", "customer", "manufacturer")
+_PHOTO_SKU_REQUIRED = ("country_of_origin", "fabric_content")
+_PHOTO_LOTE_DEFAULT = "RP-GEN"
+_PHOTO_MAX_UNITS = 100000
+
+
+def _photo_lote(v) -> str:
+    return (str(v or "").strip().upper() or _PHOTO_LOTE_DEFAULT)
+
+
+def _sku_completo(doc) -> bool:
+    return bool(doc) and all(str(doc.get(f) or "").strip() for f in _PHOTO_SKU_REQUIRED)
+
+
+@router.post("/recon/photo/line")
+async def photo_line_add(request: Request):
+    """Agrega un renglón capturado. body: { carton, sku, units, lote? }.
+    El cartón es único por lote: si ya fue capturado responde duplicado:true con
+    el renglón existente (y NO lo duplica ni lo pisa)."""
+    user = await _require_recon_role(request)
+    await _ensure_photo_indexes()
+    body = await request.json()
+    lote = _photo_lote(body.get("lote"))
+    carton = str(body.get("carton") or "").strip().upper()
+    sku = str(body.get("sku") or "").strip().upper()
+    if not carton or not sku:
+        raise HTTPException(400, "carton y sku requeridos")
+    try:
+        units = int(body.get("units"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "La cantidad debe ser un número entero")
+    if units <= 0 or units > _PHOTO_MAX_UNITS:
+        raise HTTPException(400, f"Cantidad fuera de rango (1..{_PHOTO_MAX_UNITS})")
+
+    ya = await db.wms_photo_lines.find_one({"lote": lote, "carton": carton}, {"_id": 0})
+    if ya:
+        return {"ok": False, "duplicado": True, "line": ya}
+
+    doc = {
+        "line_id": gen_id("pline"), "lote": lote, "carton": carton, "sku": sku,
+        "units": units, "user_id": user.get("user_id"),
+        "capturado_por": user.get("name", user.get("email", "?")),
+        "created_at": now_iso(),
+    }
+    try:
+        await db.wms_photo_lines.insert_one(dict(doc))
+    except Exception as e:                      # carrera contra otro operador
+        if "duplicate" not in str(e).lower():
+            raise
+        ya = await db.wms_photo_lines.find_one({"lote": lote, "carton": carton}, {"_id": 0})
+        return {"ok": False, "duplicado": True, "line": ya}
+
+    cat = await db.wms_photo_skus.find_one({"sku": sku}, {"_id": 0})
+    return {"ok": True, "line": doc, "sku_catalogado": _sku_completo(cat), "sku_info": cat}
+
+
+@router.get("/recon/photo/lines")
+async def photo_lines(request: Request, lote: str = "", limit: int = 20000):
+    """Renglones capturados + resumen. Incluye qué SKU faltan por catalogar, que
+    es lo que bloquea la exportación."""
+    await _require_recon_role(request)
+    q = {"lote": _photo_lote(lote)} if lote else {}
+    # El resumen se calcula sobre TODO el lote, no sobre la página: la PDA pide
+    # pocas líneas para ir ligera y aun así tiene que mostrar el total real.
+    skus = sorted(s for s in await db.wms_photo_lines.distinct("sku", q) if s)
+    cat = {c["sku"]: c for c in await db.wms_photo_skus.find(
+        {"sku": {"$in": skus}}, {"_id": 0}).to_list(len(skus) or 1)}
+    agg = await db.wms_photo_lines.aggregate([
+        {"$match": q},
+        {"$group": {"_id": None, "u": {"$sum": "$units"}, "n": {"$sum": 1}}},
+    ]).to_list(1)
+    lines = await db.wms_photo_lines.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    for l in lines:                              # el front exporta sin re-cruzar
+        l["sku_info"] = cat.get(l.get("sku"))
+    return {
+        "lines": lines,
+        "lotes": sorted(await db.wms_photo_lines.distinct("lote")),
+        "resumen": {
+            "cartones": int(agg[0]["n"]) if agg else 0,
+            "unidades": int(agg[0]["u"]) if agg else 0,
+            "skus": len(skus),
+            "skus_sin_catalogar": [s for s in skus if not _sku_completo(cat.get(s))],
+        },
+    }
+
+
+@router.delete("/recon/photo/line/{line_id}")
+async def photo_line_delete(line_id: str, request: Request):
+    """Borra un renglón mal capturado. El operador puede deshacer lo suyo;
+    administración puede borrar cualquiera."""
+    user = await _require_recon_role(request)
+    doc = await db.wms_photo_lines.find_one({"line_id": line_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Renglón no encontrado")
+    if doc.get("user_id") != user.get("user_id") and get_admin_level(user) < 2:
+        raise HTTPException(403, "Sólo puedes borrar los renglones que capturaste")
+    await db.wms_photo_lines.delete_one({"line_id": line_id})
+    await log_movement(user, "photo_line_delete",
+                       {"carton": doc.get("carton"), "sku": doc.get("sku"),
+                        "units": doc.get("units"), "lote": doc.get("lote")})
+    return {"ok": True, "line_id": line_id}
+
+
+@router.get("/recon/photo/skus")
+async def photo_skus(request: Request):
+    """Catálogo de material por SKU (lo que completa el Excel de salida)."""
+    await _require_recon_role(request)
+    docs = await db.wms_photo_skus.find({}, {"_id": 0}).sort("sku", 1).to_list(5000)
+    for d in docs:
+        d["completo"] = _sku_completo(d)
+    return {"skus": docs}
+
+
+@router.post("/recon/photo/sku")
+async def photo_sku_upsert(request: Request):
+    """Alta/edición del material de un SKU. body: { sku, style, color, size,
+    description, country_of_origin, fabric_content, customer, manufacturer }."""
+    user = await require_supersu(request)
+    await _ensure_photo_indexes()
+    body = await request.json()
+    sku = str(body.get("sku") or "").strip().upper()
+    if not sku:
+        raise HTTPException(400, "sku requerido")
+    upd = {f: str(body.get(f) or "").strip() for f in _PHOTO_SKU_FIELDS}
+    faltan = [f for f in _PHOTO_SKU_REQUIRED if not upd[f]]
+    if faltan:
+        raise HTTPException(400, f"Faltan datos obligatorios para la salida: {', '.join(faltan)}")
+    upd.update({"sku": sku, "updated_at": now_iso(),
+                "updated_by": user.get("name", user.get("email", "?"))})
+    await db.wms_photo_skus.update_one({"sku": sku}, {"$set": upd}, upsert=True)
+    await log_movement(user, "photo_sku_upsert", {"sku": sku})
+    doc = await db.wms_photo_skus.find_one({"sku": sku}, {"_id": 0})
+    return {"ok": True, "sku": doc}
+
+
 # ── Alertas push al celular ─────────────────────────────────────────────────
 # Web Push (VAPID): el dispositivo se suscribe desde la campana del sidebar
 # del WMS. Solo administración (nivel 2+): las alarmas son de supervisión.

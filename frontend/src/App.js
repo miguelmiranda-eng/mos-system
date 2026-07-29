@@ -275,7 +275,7 @@ const ProtectedRoute = ({ children, allowCustomer = false, supersuOnly = false }
         navigate('/wms', { replace: true });
       } else if (user.role === 'customer' && !allowCustomer) {
         navigate('/wms', { replace: true });
-      } else if (user.role === 'picker' && !['/wms', '/pda', '/pda-recon'].includes(window.location.pathname)) {
+      } else if (user.role === 'picker' && !['/wms', '/pda', '/pda-recon', '/pda-foto'].includes(window.location.pathname)) {
         // Pickers use the WMS launcher: "Picking" returns to their original /pda
         // view, "Putaway 2.0" is the WMS module. Allow those; bounce anything
         // else back to the launcher (covers the iPad PWA entry too).
@@ -669,6 +669,7 @@ const WMS = lazy(() => import("./components/WMS"));
 const OperatorView = lazy(() => import("./components/OperatorView"));
 const PdaPicker = lazy(() => import("./components/pda/PdaPicker"));
 const PdaRecon = lazy(() => import("./components/pda/PdaRecon"));
+const PdaPhoto = lazy(() => import("./components/pda/PdaPhoto"));
 const AutomationCenter = lazy(() => import("./components/AutomationCenter"));
 const ActivityLogCenter = lazy(() => import("./components/ActivityLogCenter"));
 const LogsCenter = lazy(() => import("./components/LogsCenter"));
@@ -835,6 +836,11 @@ function AppRouter() {
       <Route path="/pda-recon" element={
         <ProtectedRoute>
           <PdaRecon />
+        </ProtectedRoute>
+      } />
+      <Route path="/pda-foto" element={
+        <ProtectedRoute>
+          <PdaPhoto />
         </ProtectedRoute>
       } />
       <Route path="/automation-center" element={

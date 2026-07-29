@@ -6,6 +6,7 @@ import {
   CheckCircle, History, ArrowLeft, Warehouse, FileDown,
   ScanLine, X, ChevronRight, Settings, Loader2, Menu,
   LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Bell, BellOff,
+  Camera,
 } from "lucide-react";
 
 import InventoryDashboard from "./InventoryDashboard";
@@ -377,6 +378,14 @@ export default function WMS() {
                 <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
                 <span className="text-xl sm:text-2xl font-semibold text-center">Conciliación</span>
                 <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
+              </button>
+              {/* Inventario por foto (/pda-foto): material que no está en el
+                  sistema. Mismo permiso que conciliación (backend /recon/*). */}
+              <button onClick={() => navigate('/pda-foto')} data-testid="picker-launch-photo"
+                className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
+                <Camera className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                <span className="text-xl sm:text-2xl font-semibold text-center">Inventario por foto</span>
+                <span className="text-xs text-muted-foreground text-center max-w-[220px]">Fotografía la etiqueta del cartón y confirma la cantidad</span>
               </button>
             </div>
           </div>

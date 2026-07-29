@@ -27,3 +27,6 @@ google-auth-oauthlib==1.2.0
 google-api-python-client==2.125.0
 apscheduler==3.10.4
 pywebpush
+
+pyzbar==0.1.9
+Pillow>=10.0.0
