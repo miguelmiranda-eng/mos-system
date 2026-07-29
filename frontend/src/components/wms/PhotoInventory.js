@@ -1,24 +1,26 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Loader2, RefreshCw, Download, Trash2, Camera, Save, AlertTriangle } from "lucide-react";
+import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
+import { Loader2, RefreshCw, Download, Trash2, Camera, Save, AlertTriangle, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { fetcher, poster, useWmsCatalogs, mergeUnique } from "./lib";
+import { fetcher } from "./lib";
 import { Card, StatCard, SoftAlert, Btn, Chip, Th, EmptyState, TableShell, tableCls, cls } from "./ui";
 
 // Inventario por foto — panel PC. El piso captura cartones en /pda-foto (foto de
-// la etiqueta -> barcodes -> cantidad). Aquí se completa el material de cada SKU
-// (país y contenido, que NO viajan en barcode y hacen falta para sacar el
-// material) y se exporta el Excel.
+// la etiqueta → modal editable → renglón). Aquí se revisa, se corrige lo que
+// haya quedado mal y se exporta el Excel para sacar el material.
 
 const CAMPOS = [
+  { k: "sku", label: "SKU" },
   { k: "style", label: "Style" },
   { k: "color", label: "Color" },
   { k: "size", label: "Talla" },
   { k: "description", label: "Descripción" },
-  { k: "country_of_origin", label: "País de origen", req: true, cat: "countries" },
-  { k: "fabric_content", label: "Contenido", req: true, cat: "fabrics" },
-  { k: "customer", label: "Cliente", cat: "customers" },
-  { k: "manufacturer", label: "Fabricante", cat: "manufacturers" },
+  { k: "country_of_origin", label: "País de origen", aduana: true },
+  { k: "fabric_content", label: "Contenido", aduana: true },
+  { k: "customer", label: "Cliente" },
+  { k: "manufacturer", label: "Fabricante" },
+  { k: "dozens", label: "Docenas" },
+  { k: "pieces", label: "Piezas" },
 ];
 
 const fmt = (iso) => {
@@ -28,56 +30,38 @@ const fmt = (iso) => {
 };
 
 export const PhotoInventoryTab = () => {
-  const [lote, setLote] = useState("");
+  const [container, setContainer] = useState("");
   const [data, setData] = useState(null);
-  const [skus, setSkus] = useState([]);
-  const [draft, setDraft] = useState({});      // sku -> campos editados sin guardar
-  const [editing, setEditing] = useState(null);
+  const [editing, setEditing] = useState(null);   // line_id abierto
+  const [draft, setDraft] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const catalogs = useWmsCatalogs();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [d, s] = await Promise.all([
-        fetcher(`/recon/photo/lines${lote ? `?lote=${encodeURIComponent(lote)}` : ""}`),
-        fetcher("/recon/photo/skus"),
-      ]);
-      setData(d); setSkus(s.skus || []);
+      setData(await fetcher(`/recon/photo/lines${container ? `?container=${encodeURIComponent(container)}` : ""}`));
     } catch { toast.error("No se pudo cargar el inventario por foto"); }
     finally { setLoading(false); }
-  }, [lote]);
+  }, [container]);
 
   useEffect(() => { load(); }, [load]);
 
-  const resumen = data?.resumen || { cartones: 0, unidades: 0, skus: 0, skus_sin_catalogar: [] };
-  const pendientes = resumen.skus_sin_catalogar || [];
-  const catBySku = useMemo(() => Object.fromEntries(skus.map(s => [s.sku, s])), [skus]);
+  const resumen = data?.resumen || { cartones: 0, unidades: 0, sin_aduana: 0 };
+  const lines = useMemo(() => data?.lines || [], [data]);
 
-  // Todo SKU visto en los renglones, esté o no catalogado: los pendientes son
-  // justo los que hay que llenar, así que tienen que aparecer en la lista.
-  const skusEnLista = useMemo(() => {
-    const vistos = [...new Set((data?.lines || []).map(l => l.sku).filter(Boolean))].sort();
-    return vistos.map(sku => catBySku[sku] || { sku, completo: false });
-  }, [data, catBySku]);
-
-  const opciones = (campo) => {
-    if (campo.cat === "countries") return mergeUnique(catalogs.countries);
-    if (campo.cat === "fabrics") return mergeUnique(catalogs.fabrics);
-    if (campo.cat === "customers") return mergeUnique(catalogs.customers);
-    if (campo.cat === "manufacturers") return mergeUnique(catalogs.manufacturers);
-    return [];
-  };
-
-  const saveSku = async (sku) => {
-    const d = { ...(catBySku[sku] || {}), ...(draft[sku] || {}), sku };
+  const saveLine = async (line) => {
+    const d = draft[line.line_id] || {};
+    if (!Object.keys(d).length) { setEditing(null); return; }
     setSaving(true);
     try {
-      const res = await poster("/recon/photo/sku", d);
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/wms/recon/photo/line/${line.line_id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify(d),
+      });
       if (res.ok) {
-        toast.success(`SKU ${sku} guardado`);
-        setDraft(p => { const n = { ...p }; delete n[sku]; return n; });
+        toast.success(`${line.carton} actualizado`);
+        setDraft(p => { const n = { ...p }; delete n[line.line_id]; return n; });
         setEditing(null); load();
       } else {
         const e = await res.json().catch(() => ({}));
@@ -98,51 +82,47 @@ export const PhotoInventoryTab = () => {
   };
 
   const exportar = () => {
-    const lines = data?.lines || [];
     if (!lines.length) { toast.error("No hay cartones capturados"); return; }
-    if (pendientes.length && !window.confirm(
-      `${pendientes.length} SKU sin país de origen / contenido:\n${pendientes.join(", ")}\n\n` +
-      `Esas columnas saldrán vacías en el Excel. ¿Exportar de todos modos?`)) return;
+    if (resumen.sin_aduana && !window.confirm(
+      `${resumen.sin_aduana} cartón(es) sin país de origen o contenido.\n\n` +
+      `Esas columnas saldrán vacías en el Excel de salida. ¿Exportar de todos modos?`)) return;
 
     const wb = XLSX.utils.book_new();
-    const cartones = lines.map(l => {
-      const m = catBySku[l.sku] || l.sku_info || {};
-      return {
-        Lote: l.lote, Carton: l.carton, SKU: l.sku,
-        Style: m.style || "", Color: m.color || "", Talla: m.size || "",
-        Descripcion: m.description || "",
-        "Pais de origen": m.country_of_origin || "", Contenido: m.fabric_content || "",
-        Cliente: m.customer || "", Fabricante: m.manufacturer || "",
-        Unidades: l.units,
-        "Capturado por": l.capturado_por || "", Fecha: fmt(l.created_at),
-      };
-    });
+    const cartones = lines.map(l => ({
+      Contenedor: l.container, Carton: l.carton, SKU: l.sku || "",
+      Style: l.style || "", Color: l.color || "", Talla: l.size || "",
+      Descripcion: l.description || "",
+      "Pais de origen": l.country_of_origin || "", Contenido: l.fabric_content || "",
+      Cliente: l.customer || "", Fabricante: l.manufacturer || "",
+      Docenas: l.dozens || "", Piezas: l.pieces || "", Unidades: l.units,
+      "Capturado por": l.capturado_por || "", Fecha: fmt(l.created_at),
+    }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cartones), "Cartones");
 
-    // Agrupado por SKU: es la vista que pide el papeleo de salida.
-    const porSku = {};
+    // Agrupado por material: la vista que pide el papeleo de salida.
+    const grupos = {};
     for (const l of lines) {
-      const m = catBySku[l.sku] || l.sku_info || {};
-      const g = porSku[l.sku] || (porSku[l.sku] = {
-        SKU: l.sku, Style: m.style || "", Color: m.color || "", Talla: m.size || "",
-        "Pais de origen": m.country_of_origin || "", Contenido: m.fabric_content || "",
+      const key = [l.sku, l.style, l.color, l.size, l.country_of_origin].join("|");
+      const g = grupos[key] || (grupos[key] = {
+        SKU: l.sku || "", Style: l.style || "", Color: l.color || "", Talla: l.size || "",
+        "Pais de origen": l.country_of_origin || "", Contenido: l.fabric_content || "",
         Cartones: 0, Unidades: 0,
       });
       g.Cartones += 1; g.Unidades += Number(l.units) || 0;
     }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.values(porSku)), "Resumen por SKU");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.values(grupos)), "Resumen por material");
 
     const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `inventario_foto_${(lote || "todos").toLowerCase()}_${stamp}.xlsx`);
+    XLSX.writeFile(wb, `inventario_foto_${(container || "todos").toLowerCase().replace(/\s+/g, "_")}_${stamp}.xlsx`);
     toast.success(`${cartones.length} cartones exportados`);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <select value={lote} onChange={e => setLote(e.target.value)} className={`${cls.input} w-auto`}>
-          <option value="">Todos los lotes</option>
-          {(data?.lotes || []).map(l => <option key={l} value={l}>{l}</option>)}
+        <select value={container} onChange={e => setContainer(e.target.value)} className={`${cls.input} w-auto`}>
+          <option value="">Todos los contenedores</option>
+          {(data?.containers || []).map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <Btn onClick={load} disabled={loading}>
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Actualizar
@@ -152,120 +132,89 @@ export const PhotoInventoryTab = () => {
         </Btn>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <StatCard label="Cartones" value={resumen.cartones} />
         <StatCard label="Unidades" value={resumen.unidades.toLocaleString()} />
-        <StatCard label="SKU distintos" value={resumen.skus} />
-        <StatCard label="SKU sin catalogar" value={pendientes.length}
-          sub={pendientes.length ? "faltan país y contenido" : "listo para exportar"} />
+        <StatCard label="Sin datos de salida" value={resumen.sin_aduana}
+          sub={resumen.sin_aduana ? "falta país o contenido" : "listo para exportar"} />
       </div>
 
-      {pendientes.length > 0 && (
-        <SoftAlert tone="warning" title={`${pendientes.length} SKU sin país de origen o contenido`}>
-          Sin esos datos el Excel sale incompleto para sacar el material. Llénalos abajo:
-          se capturan una sola vez por SKU y aplican a todos sus cartones.
+      {resumen.sin_aduana > 0 && (
+        <SoftAlert tone="warning" title={`${resumen.sin_aduana} cartón(es) sin país de origen o contenido`}>
+          Son datos de la etiqueta que hacen falta para sacar el material. Ábrelos abajo y complétalos
+          antes de exportar.
         </SoftAlert>
       )}
 
-      {/* ── Catálogo de material por SKU ── */}
       <Card className="overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center gap-2">
           <Camera className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">Material por SKU</span>
-          <span className="text-xs text-muted-foreground">— se captura una vez y aplica a todos los cartones de ese SKU</span>
+          <span className="text-sm font-semibold">Cartones capturados {lines.length ? `(${lines.length})` : ""}</span>
         </div>
-        {skusEnLista.length === 0 ? (
-          <EmptyState title="Todavía no hay SKU capturados" hint="Aparecen conforme el piso fotografía cartones." />
-        ) : (
-          <div className="divide-y divide-border/60">
-            {skusEnLista.map(s => {
-              const abierto = editing === s.sku;
-              const d = { ...s, ...(draft[s.sku] || {}) };
-              return (
-                <div key={s.sku} className="px-4 py-3">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="font-mono text-sm font-semibold">{s.sku}</span>
-                    {s.completo
-                      ? <Chip tone="success">Completo</Chip>
-                      : <Chip tone="warning"><AlertTriangle className="w-3 h-3" /> Falta país / contenido</Chip>}
-                    <span className="text-xs text-muted-foreground truncate">
-                      {[s.style, s.color, s.size].filter(Boolean).join(" · ")}
-                      {s.country_of_origin ? ` — ${s.country_of_origin}` : ""}
-                    </span>
-                    <Btn className="ml-auto" onClick={() => setEditing(abierto ? null : s.sku)}>
-                      {abierto ? "Cerrar" : "Editar"}
-                    </Btn>
-                  </div>
-                  {abierto && (
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      {CAMPOS.map(campo => {
-                        const opts = opciones(campo);
-                        return (
-                          <div key={campo.k}>
-                            <label className="block text-xs font-medium text-muted-foreground mb-1">
-                              {campo.label}{campo.req && <span className="text-red-500"> *</span>}
-                            </label>
-                            <input list={opts.length ? `pi-${campo.k}` : undefined}
-                              className={cls.input} value={d[campo.k] || ""}
-                              onChange={e => setDraft(p => ({ ...p, [s.sku]: { ...(p[s.sku] || {}), [campo.k]: e.target.value } }))} />
-                            {opts.length > 0 && (
-                              <datalist id={`pi-${campo.k}`}>
-                                {opts.map(o => <option key={o} value={o} />)}
-                              </datalist>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <div className="sm:col-span-2 lg:col-span-4">
-                        <Btn variant="primary" onClick={() => saveSku(s.sku)} disabled={saving}>
-                          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar SKU
-                        </Btn>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      {/* ── Cartones capturados ── */}
-      <Card className="overflow-hidden">
-        <div className="px-4 py-3 border-b border-border text-sm font-semibold">
-          Cartones capturados {data?.lines?.length ? `(${data.lines.length})` : ""}
-        </div>
-        {!data?.lines?.length ? (
+        {!lines.length ? (
           <EmptyState title="Sin cartones" hint="El piso los captura desde Inventario por foto en la PDA." />
         ) : (
-          <TableShell maxH="max-h-[60vh]">
+          <TableShell maxH="max-h-[65vh]">
             <thead className={tableCls.thead}>
               <tr>
                 <Th>Cartón</Th><Th>SKU</Th><Th>Material</Th><Th>País / contenido</Th>
-                <Th right>Unidades</Th><Th>Lote</Th><Th>Capturado por</Th><Th>Fecha</Th><Th></Th>
+                <Th right>Unidades</Th><Th>Contenedor</Th><Th>Capturado por</Th><Th>Fecha</Th><Th></Th>
               </tr>
             </thead>
             <tbody>
-              {data.lines.map(l => {
-                const m = catBySku[l.sku] || l.sku_info || {};
+              {lines.map(l => {
+                const abierto = editing === l.line_id;
+                const d = { ...l, ...(draft[l.line_id] || {}) };
                 return (
-                  <tr key={l.line_id} className={tableCls.row}>
-                    <td className={`${cls.td} font-mono`}>{l.carton}</td>
-                    <td className={`${cls.td} font-mono`}>{l.sku}</td>
-                    <td className={cls.td}>{[m.style, m.color, m.size].filter(Boolean).join(" · ") || <span className="text-muted-foreground">—</span>}</td>
-                    <td className={cls.td}>
-                      {m.country_of_origin
-                        ? <span className="text-xs">{m.country_of_origin}<br /><span className="text-muted-foreground">{m.fabric_content}</span></span>
-                        : <Chip tone="warning">Falta</Chip>}
-                    </td>
-                    <td className={`${cls.td} text-right tabular-nums font-semibold`}>{l.units}</td>
-                    <td className={cls.td}>{l.lote}</td>
-                    <td className={cls.td}>{l.capturado_por}</td>
-                    <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(l.created_at)}</td>
-                    <td className={cls.td}>
-                      <Btn variant="danger" onClick={() => delLine(l)}><Trash2 className="w-4 h-4" /></Btn>
-                    </td>
-                  </tr>
+                  <Fragment key={l.line_id}>
+                    <tr className={tableCls.row}>
+                      <td className={`${cls.td} font-mono`}>{l.carton}</td>
+                      <td className={`${cls.td} font-mono`}>{l.sku || <span className="text-muted-foreground">—</span>}</td>
+                      <td className={cls.td}>{[l.style, l.color, l.size].filter(Boolean).join(" · ") || <span className="text-muted-foreground">—</span>}</td>
+                      <td className={cls.td}>
+                        {l.country_of_origin
+                          ? <span className="text-xs">{l.country_of_origin}<br /><span className="text-muted-foreground">{l.fabric_content}</span></span>
+                          : <Chip tone="warning"><AlertTriangle className="w-3 h-3" /> Falta</Chip>}
+                      </td>
+                      <td className={`${cls.td} text-right tabular-nums font-semibold`}>{l.units}</td>
+                      <td className={cls.td}>{l.container}</td>
+                      <td className={cls.td}>{l.capturado_por}</td>
+                      <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(l.created_at)}</td>
+                      <td className={`${cls.td} whitespace-nowrap`}>
+                        <Btn onClick={() => setEditing(abierto ? null : l.line_id)}>
+                          {abierto ? <X className="w-4 h-4" /> : "Editar"}
+                        </Btn>
+                        <Btn variant="danger" className="ml-1" onClick={() => delLine(l)}><Trash2 className="w-4 h-4" /></Btn>
+                      </td>
+                    </tr>
+                    {abierto && (
+                      <tr className="border-b border-border/60 bg-muted/30">
+                        <td colSpan={9} className="px-4 py-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-muted-foreground mb-1">Unidades</label>
+                              <input type="number" min="1" className={cls.input} value={d.units ?? ""}
+                                onChange={e => setDraft(p => ({ ...p, [l.line_id]: { ...(p[l.line_id] || {}), units: e.target.value } }))} />
+                            </div>
+                            {CAMPOS.map(campo => (
+                              <div key={campo.k}>
+                                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                                  {campo.label}{campo.aduana && <span className="text-amber-600 dark:text-amber-400"> *</span>}
+                                </label>
+                                <input className={cls.input} value={d[campo.k] || ""}
+                                  onChange={e => setDraft(p => ({ ...p, [l.line_id]: { ...(p[l.line_id] || {}), [campo.k]: e.target.value } }))} />
+                              </div>
+                            ))}
+                            <div className="col-span-2 sm:col-span-3 lg:col-span-6">
+                              <Btn variant="primary" onClick={() => saveLine(l)} disabled={saving}>
+                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar cartón
+                              </Btn>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>

@@ -7918,12 +7918,79 @@ async def recon_phantom_atender(request: Request):
 
 
 # ── Inventario por foto ─────────────────────────────────────────────────────
-# Material físico que no se puede casar con el sistema (las cajas del import de
-# Excel traen box_id sintético "LPN_xxxx", que el cartón no tiene impreso). Se
-# lee la etiqueta por BARCODE —determinista, no OCR ni IA— y el operador sólo
-# confirma la cantidad, que es el único dato que no viaja en un código.
+# Material que va a salir del país y NO está identificado en el sistema: las
+# cajas del import de Excel traen box_id sintético "LPN_xxxx" y el cartón físico
+# no lo tiene impreso, así que no hay forma de casarlos. La lista se levanta
+# desde la etiqueta: se fotografía, se lee, el operador confirma en pantalla y
+# el renglón queda guardado con TODO su material. Aquí no se concilia nada.
+#
+# Dos lecturas sobre la misma foto:
+#   · visión  -> la etiqueta completa (país de origen y contenido incluidos, que
+#                son datos aduanales y no viajan en ningún barcode).
+#   · barcode -> cartón y SKU exactos; pisan lo que haya leído la visión, porque
+#                son los campos de identidad y ahí un dígito mal arruina todo.
+# Nada bloquea: lo que no se pudo leer sale vacío y el operador lo completa.
 
 _LABEL_MAX_BYTES = 12 * 1024 * 1024
+
+
+@router.post("/recon/label-read")
+async def recon_label_read(request: Request, file: UploadFile = File(...)):
+    """Lee una foto de etiqueta y devuelve los campos para el modal de captura.
+    Devuelve { campos: {...}, fuentes: {campo: "barcode"|"vision"}, avisos: [] }.
+    No escribe nada. Nunca falla por lectura parcial: los campos que no se
+    pudieron leer vienen vacíos para que el operador los teclee."""
+    await _require_recon_role(request)
+    from services.label_barcode import decode_label, barcode_disponible
+    from services.label_vision import read_label, vision_disponible, CAMPOS
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Foto vacía")
+    if len(data) > _LABEL_MAX_BYTES:
+        raise HTTPException(413, "La foto pesa más de 12 MB; baja la resolución de la cámara")
+    try:                                        # falla temprano y claro: si no es
+        from PIL import Image                   # imagen, el modal saldría vacío y
+        Image.open(io.BytesIO(data)).verify()   # el operador no sabría por qué
+    except Exception:
+        raise HTTPException(400, "El archivo no es una imagen que se pueda leer")
+
+    campos = {c: "" for c in CAMPOS}
+    fuentes, avisos = {}, []
+
+    # 1) Visión: la etiqueta completa. Si falla, seguimos con lo que dé el
+    #    barcode — media lectura sigue siendo mejor que mandar al operador a
+    #    teclear el cartón de 11 dígitos a mano.
+    if vision_disponible():
+        try:
+            leidos = await read_label(data)
+            for c, v in leidos.items():
+                if v:
+                    campos[c] = v
+                    fuentes[c] = "vision"
+        except Exception as e:
+            logger.warning("label-read: visión falló: %s", e)
+            avisos.append("No se pudo leer la etiqueta automáticamente; captura los datos a mano.")
+    else:
+        avisos.append("Lectura automática no configurada (falta ANTHROPIC_API_KEY); captura a mano.")
+
+    # 2) Barcode: determinista, gana sobre la visión en cartón y SKU.
+    if barcode_disponible():
+        try:
+            bc = decode_label(data)
+            for c in ("carton", "sku"):
+                if bc.get(c):
+                    campos[c] = bc[c]
+                    fuentes[c] = "barcode"
+        except Exception as e:
+            logger.warning("label-read: barcode falló: %s", e)
+
+    if not campos["carton"]:
+        avisos.append("No se leyó el número de cartón; escríbelo antes de guardar.")
+    if not campos["units"]:
+        avisos.append("No se leyó la cantidad; confírmala contra la etiqueta.")
+
+    return {"campos": campos, "fuentes": fuentes, "avisos": avisos}
 
 
 @router.post("/recon/label-scan")
@@ -7950,57 +8017,59 @@ async def recon_label_scan(request: Request, file: UploadFile = File(...)):
     return result
 
 
-# Los renglones capturados viven en colecciones PROPIAS de esta herramienta.
-# No tocan wms_boxes ni wms_inventory a propósito: este material no está en el
-# sistema, así que no hay nada que conciliar — sólo levantar una lista para
-# sacarlo. Así la herramienta no puede corromper el inventario.
+# Los renglones capturados viven en una colección PROPIA de esta herramienta.
+# No toca wms_boxes ni wms_inventory a propósito: este material no está en el
+# sistema y no hay nada que conciliar — sólo levantar la lista para sacarlo del
+# país. El inventario del WMS se depura aparte, a mano, cuando todo haya salido.
 _PHOTO_IDX_OK = False
 
 
 async def _ensure_photo_indexes():
-    """Índices perezosos. El único que importa es (lote, carton): es lo que hace
+    """Índices perezosos. El que importa es (container, carton): es lo que hace
     imposible el doble conteo cuando dos operadores fotografían el mismo cartón."""
     global _PHOTO_IDX_OK
     if _PHOTO_IDX_OK:
         return
-    await db.wms_photo_lines.create_index([("lote", 1), ("carton", 1)], unique=True,
-                                          name="uniq_lote_carton")
+    await db.wms_photo_lines.create_index([("container", 1), ("carton", 1)], unique=True,
+                                          name="uniq_container_carton")
     await db.wms_photo_lines.create_index([("created_at", -1)], name="by_created")
-    await db.wms_photo_skus.create_index([("sku", 1)], unique=True, name="uniq_sku")
     _PHOTO_IDX_OK = True
 
 
-# Campos descriptivos del material. Se capturan UNA vez por SKU (todos los
-# cartones del mismo SKU comparten material; sólo cambia la cantidad). País y
-# contenido son obligatorios para el papeleo de salida.
-_PHOTO_SKU_FIELDS = ("style", "color", "size", "description", "country_of_origin",
-                     "fabric_content", "customer", "manufacturer")
-_PHOTO_SKU_REQUIRED = ("country_of_origin", "fabric_content")
-_PHOTO_LOTE_DEFAULT = "RP-GEN"
+# Todo lo que trae la etiqueta. El renglón se guarda completo: cada cartón lleva
+# su propio material, sin depender de ningún catálogo.
+_PHOTO_FIELDS = ("sku", "style", "color", "size", "description", "country_of_origin",
+                 "fabric_content", "customer", "manufacturer", "dozens", "pieces")
+# Para exportar hace falta el papeleo aduanal. No se bloquea la captura por esto
+# —el piso no debe frenarse—, pero se marca para que no salga un Excel con huecos.
+_PHOTO_ADUANA = ("country_of_origin", "fabric_content")
+_PHOTO_CONTAINER_DEFAULT = "RP-GEN"
 _PHOTO_MAX_UNITS = 100000
 
 
-def _photo_lote(v) -> str:
-    return (str(v or "").strip().upper() or _PHOTO_LOTE_DEFAULT)
+def _photo_container(v) -> str:
+    return (str(v or "").strip().upper() or _PHOTO_CONTAINER_DEFAULT)
 
 
-def _sku_completo(doc) -> bool:
-    return bool(doc) and all(str(doc.get(f) or "").strip() for f in _PHOTO_SKU_REQUIRED)
+def _photo_completo(doc) -> bool:
+    return all(str((doc or {}).get(f) or "").strip() for f in _PHOTO_ADUANA)
 
 
 @router.post("/recon/photo/line")
 async def photo_line_add(request: Request):
-    """Agrega un renglón capturado. body: { carton, sku, units, lote? }.
-    El cartón es único por lote: si ya fue capturado responde duplicado:true con
-    el renglón existente (y NO lo duplica ni lo pisa)."""
+    """Guarda un renglón ya confirmado por el operador.
+    body: { container, carton, units, sku?, style?, color?, size?, description?,
+            country_of_origin?, fabric_content?, customer?, manufacturer?,
+            dozens?, pieces? }
+    El cartón es único por contenedor: si ya se capturó responde duplicado:true
+    con el renglón existente y NO lo duplica ni lo pisa."""
     user = await _require_recon_role(request)
     await _ensure_photo_indexes()
     body = await request.json()
-    lote = _photo_lote(body.get("lote"))
+    container = _photo_container(body.get("container"))
     carton = str(body.get("carton") or "").strip().upper()
-    sku = str(body.get("sku") or "").strip().upper()
-    if not carton or not sku:
-        raise HTTPException(400, "carton y sku requeridos")
+    if not carton:
+        raise HTTPException(400, "El número de cartón es obligatorio")
     try:
         units = int(body.get("units"))
     except (TypeError, ValueError):
@@ -8008,54 +8077,79 @@ async def photo_line_add(request: Request):
     if units <= 0 or units > _PHOTO_MAX_UNITS:
         raise HTTPException(400, f"Cantidad fuera de rango (1..{_PHOTO_MAX_UNITS})")
 
-    ya = await db.wms_photo_lines.find_one({"lote": lote, "carton": carton}, {"_id": 0})
+    ya = await db.wms_photo_lines.find_one({"container": container, "carton": carton}, {"_id": 0})
     if ya:
         return {"ok": False, "duplicado": True, "line": ya}
 
-    doc = {
-        "line_id": gen_id("pline"), "lote": lote, "carton": carton, "sku": sku,
-        "units": units, "user_id": user.get("user_id"),
-        "capturado_por": user.get("name", user.get("email", "?")),
-        "created_at": now_iso(),
-    }
+    doc = {"line_id": gen_id("pline"), "container": container, "carton": carton,
+           "units": units, "user_id": user.get("user_id"),
+           "capturado_por": user.get("name", user.get("email", "?")),
+           "created_at": now_iso()}
+    for f in _PHOTO_FIELDS:
+        doc[f] = str(body.get(f) or "").strip()
+    doc["completo"] = _photo_completo(doc)
     try:
         await db.wms_photo_lines.insert_one(dict(doc))
     except Exception as e:                      # carrera contra otro operador
         if "duplicate" not in str(e).lower():
             raise
-        ya = await db.wms_photo_lines.find_one({"lote": lote, "carton": carton}, {"_id": 0})
+        ya = await db.wms_photo_lines.find_one({"container": container, "carton": carton}, {"_id": 0})
         return {"ok": False, "duplicado": True, "line": ya}
+    return {"ok": True, "line": doc}
 
-    cat = await db.wms_photo_skus.find_one({"sku": sku}, {"_id": 0})
-    return {"ok": True, "line": doc, "sku_catalogado": _sku_completo(cat), "sku_info": cat}
+
+@router.put("/recon/photo/line/{line_id}")
+async def photo_line_update(line_id: str, request: Request):
+    """Corrige un renglón ya guardado (el operador se equivocó al confirmar)."""
+    user = await _require_recon_role(request)
+    doc = await db.wms_photo_lines.find_one({"line_id": line_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Renglón no encontrado")
+    if doc.get("user_id") != user.get("user_id") and get_admin_level(user) < 2:
+        raise HTTPException(403, "Sólo puedes corregir los renglones que capturaste")
+    body = await request.json()
+    upd = {}
+    if body.get("units") is not None:
+        try:
+            units = int(body.get("units"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "La cantidad debe ser un número entero")
+        if units <= 0 or units > _PHOTO_MAX_UNITS:
+            raise HTTPException(400, f"Cantidad fuera de rango (1..{_PHOTO_MAX_UNITS})")
+        upd["units"] = units
+    for f in _PHOTO_FIELDS:
+        if f in body:
+            upd[f] = str(body.get(f) or "").strip()
+    if not upd:
+        raise HTTPException(400, "Nada que actualizar")
+    upd["completo"] = _photo_completo({**doc, **upd})
+    upd["updated_at"] = now_iso()
+    upd["updated_by"] = user.get("name", user.get("email", "?"))
+    await db.wms_photo_lines.update_one({"line_id": line_id}, {"$set": upd})
+    await log_movement(user, "photo_line_update", {"carton": doc.get("carton"), "campos": sorted(upd)})
+    return {"ok": True, "line": await db.wms_photo_lines.find_one({"line_id": line_id}, {"_id": 0})}
 
 
 @router.get("/recon/photo/lines")
-async def photo_lines(request: Request, lote: str = "", limit: int = 20000):
-    """Renglones capturados + resumen. Incluye qué SKU faltan por catalogar, que
-    es lo que bloquea la exportación."""
+async def photo_lines(request: Request, container: str = "", limit: int = 20000):
+    """Renglones capturados + resumen del contenedor."""
     await _require_recon_role(request)
-    q = {"lote": _photo_lote(lote)} if lote else {}
-    # El resumen se calcula sobre TODO el lote, no sobre la página: la PDA pide
-    # pocas líneas para ir ligera y aun así tiene que mostrar el total real.
-    skus = sorted(s for s in await db.wms_photo_lines.distinct("sku", q) if s)
-    cat = {c["sku"]: c for c in await db.wms_photo_skus.find(
-        {"sku": {"$in": skus}}, {"_id": 0}).to_list(len(skus) or 1)}
+    q = {"container": _photo_container(container)} if container else {}
+    # El resumen se calcula sobre TODO el contenedor, no sobre la página: la PDA
+    # pide pocas líneas para ir ligera y aun así muestra el total real.
     agg = await db.wms_photo_lines.aggregate([
         {"$match": q},
         {"$group": {"_id": None, "u": {"$sum": "$units"}, "n": {"$sum": 1}}},
     ]).to_list(1)
+    incompletos = await db.wms_photo_lines.count_documents({**q, "completo": False})
     lines = await db.wms_photo_lines.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    for l in lines:                              # el front exporta sin re-cruzar
-        l["sku_info"] = cat.get(l.get("sku"))
     return {
         "lines": lines,
-        "lotes": sorted(await db.wms_photo_lines.distinct("lote")),
+        "containers": sorted(await db.wms_photo_lines.distinct("container")),
         "resumen": {
             "cartones": int(agg[0]["n"]) if agg else 0,
             "unidades": int(agg[0]["u"]) if agg else 0,
-            "skus": len(skus),
-            "skus_sin_catalogar": [s for s in skus if not _sku_completo(cat.get(s))],
+            "sin_aduana": incompletos,
         },
     }
 
@@ -8073,40 +8167,8 @@ async def photo_line_delete(line_id: str, request: Request):
     await db.wms_photo_lines.delete_one({"line_id": line_id})
     await log_movement(user, "photo_line_delete",
                        {"carton": doc.get("carton"), "sku": doc.get("sku"),
-                        "units": doc.get("units"), "lote": doc.get("lote")})
+                        "units": doc.get("units"), "container": doc.get("container")})
     return {"ok": True, "line_id": line_id}
-
-
-@router.get("/recon/photo/skus")
-async def photo_skus(request: Request):
-    """Catálogo de material por SKU (lo que completa el Excel de salida)."""
-    await _require_recon_role(request)
-    docs = await db.wms_photo_skus.find({}, {"_id": 0}).sort("sku", 1).to_list(5000)
-    for d in docs:
-        d["completo"] = _sku_completo(d)
-    return {"skus": docs}
-
-
-@router.post("/recon/photo/sku")
-async def photo_sku_upsert(request: Request):
-    """Alta/edición del material de un SKU. body: { sku, style, color, size,
-    description, country_of_origin, fabric_content, customer, manufacturer }."""
-    user = await require_supersu(request)
-    await _ensure_photo_indexes()
-    body = await request.json()
-    sku = str(body.get("sku") or "").strip().upper()
-    if not sku:
-        raise HTTPException(400, "sku requerido")
-    upd = {f: str(body.get(f) or "").strip() for f in _PHOTO_SKU_FIELDS}
-    faltan = [f for f in _PHOTO_SKU_REQUIRED if not upd[f]]
-    if faltan:
-        raise HTTPException(400, f"Faltan datos obligatorios para la salida: {', '.join(faltan)}")
-    upd.update({"sku": sku, "updated_at": now_iso(),
-                "updated_by": user.get("name", user.get("email", "?"))})
-    await db.wms_photo_skus.update_one({"sku": sku}, {"$set": upd}, upsert=True)
-    await log_movement(user, "photo_sku_upsert", {"sku": sku})
-    doc = await db.wms_photo_skus.find_one({"sku": sku}, {"_id": 0})
-    return {"ok": True, "sku": doc}
 
 
 # ── Alertas push al celular ─────────────────────────────────────────────────

@@ -1,10 +1,13 @@
 """Smoke: renglones de "Inventario por foto" (/wms/recon/photo/*).
-Fija lo que puede salir caro si se rompe:
+Este material sale del país, así que lo que se fija aquí es lo que puede salir
+caro si se rompe:
   - el mismo cartón NO se cuenta dos veces (ni entre operadores distintos),
-  - una cantidad inválida no entra,
-  - el SKU sin país/contenido aparece como "sin catalogar" (bloquea la salida),
-  - el catálogo de material NO lo edita un picker, y no se guarda incompleto,
-  - un operador borra lo suyo pero NO lo de otro,
+  - una cantidad inválida o un cartón vacío no entran,
+  - el renglón guarda TODO el material de la etiqueta (no depende de catálogos),
+  - los renglones sin país de origen / contenido quedan marcados para que no se
+    exporte un manifiesto con huecos aduanales,
+  - un operador corrige y borra lo suyo, pero NO lo de otro,
+  - el resumen es del contenedor completo aunque la PDA pida pocas líneas,
   - la herramienta jamás escribe en wms_boxes / wms_inventory.
 
 SEGURIDAD: base DESECHABLE, se niega contra prod, se borra al terminar.
@@ -40,10 +43,17 @@ raw = pymongo.MongoClient(MONGO)
 sdb = raw[SMOKE_DB]
 ok = fail = 0
 
-LOTE = "RP-GEN"
+CONT = "CONTENEDOR 1"
 CARTON = "A2524611066"
 CARTON2 = "A2524611099"
-SKU = "71603"
+CARTON3 = "A2524611100"
+
+ETIQUETA = {
+    "sku": "71603", "style": "5000", "color": "BLACK", "size": "L",
+    "description": "T-SHIRT", "country_of_origin": "HONDURAS",
+    "fabric_content": "100% COTTON", "customer": "GLO", "manufacturer": "GILDAN",
+    "dozens": "6", "pieces": "72",
+}
 
 
 def check(n, cond, det=""):
@@ -56,7 +66,7 @@ def check(n, cond, det=""):
 
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
-    for c in ["users", "user_sessions", "wms_photo_lines", "wms_photo_skus",
+    for c in ["users", "user_sessions", "wms_photo_lines",
               "wms_boxes", "wms_inventory", "wms_movements"]:
         sdb[c].delete_many({})
     sdb.users.insert_many([
@@ -74,6 +84,7 @@ async def main():
     from httpx import ASGITransport, AsyncClient
     from server import app
     tr = ASGITransport(app=app)
+    L = "/api/wms/recon/photo/line"
 
     async with AsyncClient(transport=tr, base_url="http://smoke") as p1, \
                AsyncClient(transport=tr, base_url="http://smoke") as p2, \
@@ -84,88 +95,87 @@ async def main():
             r = await c.post("/api/auth/login", json={"email": mail, "password": pw})
             check(f"login {quien}", r.status_code == 200, f"{r.status_code}")
 
-        print("\n== captura de un renglón ==")
-        r = await p1.post("/api/wms/recon/photo/line",
-                          json={"carton": CARTON, "sku": SKU, "units": 72, "lote": LOTE})
+        print("\n== captura de un cartón con toda su etiqueta ==")
+        r = await p1.post(L, json={"container": CONT, "carton": CARTON, "units": 72, **ETIQUETA})
         d = r.json() if r.status_code == 200 else {}
+        line = d.get("line") or {}
         check("picker captura (200 ok:true)", r.status_code == 200 and d.get("ok") is True,
               f"{r.status_code} {r.text[:160]}")
-        check("guarda cantidad y cartón", (d.get("line") or {}).get("units") == 72
-              and (d.get("line") or {}).get("carton") == CARTON, f"{d.get('line')}")
-        check("avisa que el SKU no está catalogado", d.get("sku_catalogado") is False, f"{d}")
+        check("guarda cantidad y cartón", line.get("units") == 72 and line.get("carton") == CARTON,
+              f"{line}")
+        check("guarda el material completo de la etiqueta",
+              all(line.get(k) == v for k, v in ETIQUETA.items()),
+              f"{ {k: line.get(k) for k in ETIQUETA} }")
+        check("marcado como completo (tiene país y contenido)", line.get("completo") is True, f"{line}")
 
         print("\n== doble conteo: el mismo cartón NO entra dos veces ==")
-        r = await p1.post("/api/wms/recon/photo/line",
-                          json={"carton": CARTON, "sku": SKU, "units": 40, "lote": LOTE})
-        d = r.json() if r.status_code == 200 else {}
-        check("mismo operador -> duplicado:true", d.get("duplicado") is True, f"{r.text[:160]}")
-        r = await p2.post("/api/wms/recon/photo/line",
-                          json={"carton": CARTON, "sku": SKU, "units": 99, "lote": LOTE})
-        d = r.json() if r.status_code == 200 else {}
-        check("OTRO operador -> duplicado:true", d.get("duplicado") is True, f"{r.text[:160]}")
-        n = sdb.wms_photo_lines.count_documents({"lote": LOTE, "carton": CARTON})
+        r = await p1.post(L, json={"container": CONT, "carton": CARTON, "units": 40})
+        check("mismo operador -> duplicado:true", r.json().get("duplicado") is True, f"{r.text[:160]}")
+        r = await p2.post(L, json={"container": CONT, "carton": CARTON, "units": 99})
+        check("OTRO operador -> duplicado:true", r.json().get("duplicado") is True, f"{r.text[:160]}")
+        n = sdb.wms_photo_lines.count_documents({"container": CONT, "carton": CARTON})
         check("sigue habiendo UN solo renglón", n == 1, f"n={n}")
-        b = sdb.wms_photo_lines.find_one({"carton": CARTON})
-        check("el duplicado NO pisó la cantidad original", b.get("units") == 72, f"units={b.get('units')}")
+        check("el duplicado NO pisó la cantidad original",
+              sdb.wms_photo_lines.find_one({"carton": CARTON}).get("units") == 72)
 
-        print("\n== cantidades inválidas ==")
+        print("\n== capturas inválidas ==")
         for bad in (0, -5, "muchas", None):
-            r = await p1.post("/api/wms/recon/photo/line",
-                              json={"carton": f"A99{bad}", "sku": SKU, "units": bad, "lote": LOTE})
+            r = await p1.post(L, json={"container": CONT, "carton": f"A99{bad}", "units": bad})
             check(f"units={bad!r} -> 400", r.status_code == 400, f"{r.status_code}")
+        r = await p1.post(L, json={"container": CONT, "carton": "  ", "units": 10})
+        check("cartón vacío -> 400", r.status_code == 400, f"{r.status_code}")
 
-        print("\n== resumen y SKU pendientes ==")
-        await p1.post("/api/wms/recon/photo/line",
-                      json={"carton": CARTON2, "sku": SKU, "units": 24, "lote": LOTE})
-        r = await p1.get("/api/wms/recon/photo/lines", params={"lote": LOTE})
+        print("\n== renglón sin datos aduanales: entra, pero queda marcado ==")
+        r = await p1.post(L, json={"container": CONT, "carton": CARTON2, "units": 24, "style": "2000"})
         d = r.json() if r.status_code == 200 else {}
-        res = d.get("resumen", {})
-        check("2 cartones / 96 unidades / 1 sku",
-              res.get("cartones") == 2 and res.get("unidades") == 96 and res.get("skus") == 1, f"{res}")
-        check("el SKU aparece como pendiente de catalogar",
-              res.get("skus_sin_catalogar") == [SKU], f"{res.get('skus_sin_catalogar')}")
+        check("se guarda igual (no frena al piso)", d.get("ok") is True, f"{r.text[:160]}")
+        check("completo:false (falta país/contenido)", (d.get("line") or {}).get("completo") is False,
+              f"{d.get('line')}")
 
-        # La PDA pide pocas líneas para ir ligera: el total NO puede venir de la
-        # página, o el contador de piso mentiría.
-        r = await p1.get("/api/wms/recon/photo/lines", params={"lote": LOTE, "limit": 1})
+        print("\n== resumen del contenedor ==")
+        r = await p1.get("/api/wms/recon/photo/lines", params={"container": CONT})
+        res = (r.json() if r.status_code == 200 else {}).get("resumen", {})
+        check("2 cartones / 96 unidades / 1 sin aduana",
+              res.get("cartones") == 2 and res.get("unidades") == 96 and res.get("sin_aduana") == 1,
+              f"{res}")
+        r = await p1.get("/api/wms/recon/photo/lines", params={"container": CONT, "limit": 1})
         d = r.json() if r.status_code == 200 else {}
         check("con limit=1 devuelve 1 línea", len(d.get("lines", [])) == 1, f"{len(d.get('lines', []))}")
-        check("pero el resumen sigue siendo del lote completo (2 / 96)",
+        check("pero el resumen sigue siendo del contenedor completo",
               d.get("resumen", {}).get("cartones") == 2 and d.get("resumen", {}).get("unidades") == 96,
               f"{d.get('resumen')}")
 
-        print("\n== catálogo de material (país y contenido) ==")
-        r = await p1.post("/api/wms/recon/photo/sku", json={"sku": SKU, "country_of_origin": "HONDURAS",
-                                                           "fabric_content": "100% COTTON"})
-        check("un picker NO edita el catálogo (403)", r.status_code == 403, f"{r.status_code}")
-
-        r = await su.post("/api/wms/recon/photo/sku", json={"sku": SKU, "style": "5000", "color": "BLACK"})
-        check("sin país/contenido -> 400", r.status_code == 400, f"{r.status_code} {r.text[:140]}")
-
-        r = await su.post("/api/wms/recon/photo/sku", json={
-            "sku": SKU, "style": "5000", "color": "BLACK", "size": "L",
-            "country_of_origin": "HONDURAS", "fabric_content": "100% COTTON",
-            "customer": "GLO", "manufacturer": "GILDAN"})
-        check("supersu con todo -> 200", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
-
-        r = await p1.get("/api/wms/recon/photo/lines", params={"lote": LOTE})
+        print("\n== corregir un renglón mal confirmado ==")
+        lid2 = sdb.wms_photo_lines.find_one({"carton": CARTON2})["line_id"]
+        r = await p2.put(f"{L}/{lid2}", json={"units": 30})
+        check("un picker NO corrige el renglón de otro (403)", r.status_code == 403, f"{r.status_code}")
+        r = await p1.put(f"{L}/{lid2}", json={"units": 30, "country_of_origin": "NICARAGUA",
+                                             "fabric_content": "50% COTTON 50% POLY"})
         d = r.json() if r.status_code == 200 else {}
-        check("ya no quedan SKU pendientes",
-              d.get("resumen", {}).get("skus_sin_catalogar") == [], f"{d.get('resumen')}")
-        l0 = (d.get("lines") or [{}])[0]
-        check("el renglón trae el material para el Excel",
-              (l0.get("sku_info") or {}).get("country_of_origin") == "HONDURAS",
-              f"{l0.get('sku_info')}")
+        check("el que capturó sí puede corregirlo", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
+        check("la corrección se guardó", (d.get("line") or {}).get("units") == 30, f"{d.get('line')}")
+        check("al completar aduana pasa a completo:true", (d.get("line") or {}).get("completo") is True,
+              f"{d.get('line')}")
+        r = await p1.get("/api/wms/recon/photo/lines", params={"container": CONT})
+        check("ya no quedan renglones sin aduana",
+              r.json().get("resumen", {}).get("sin_aduana") == 0, f"{r.json().get('resumen')}")
+
+        print("\n== contenedores separados: el mismo cartón puede ir en otro ==")
+        r = await p1.post(L, json={"container": "CONTENEDOR 2", "carton": CARTON, "units": 12})
+        check("mismo cartón en OTRO contenedor -> se permite", r.json().get("ok") is True, f"{r.text[:160]}")
+        r = await p1.get("/api/wms/recon/photo/lines", params={"container": CONT})
+        check("y no contamina el resumen del primero",
+              r.json().get("resumen", {}).get("cartones") == 2, f"{r.json().get('resumen')}")
 
         print("\n== borrar renglones ==")
-        lid = sdb.wms_photo_lines.find_one({"carton": CARTON2})["line_id"]
-        r = await p2.delete(f"/api/wms/recon/photo/line/{lid}")
+        r = await p1.post(L, json={"container": CONT, "carton": CARTON3, "units": 5})
+        lid3 = r.json()["line"]["line_id"]
+        r = await p2.delete(f"{L}/{lid3}")
         check("un picker NO borra el renglón de otro (403)", r.status_code == 403, f"{r.status_code}")
-        r = await p1.delete(f"/api/wms/recon/photo/line/{lid}")
-        check("el que capturó sí puede borrarlo", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
-        check("el renglón se fue", sdb.wms_photo_lines.count_documents({"carton": CARTON2}) == 0)
-        lid1 = sdb.wms_photo_lines.find_one({"carton": CARTON})["line_id"]
-        r = await su.delete(f"/api/wms/recon/photo/line/{lid1}")
+        r = await p1.delete(f"{L}/{lid3}")
+        check("el que capturó sí puede borrarlo", r.status_code == 200, f"{r.status_code}")
+        check("el renglón se fue", sdb.wms_photo_lines.count_documents({"carton": CARTON3}) == 0)
+        r = await su.delete(f"{L}/{lid2}")
         check("administración borra cualquiera", r.status_code == 200, f"{r.status_code}")
 
         print("\n== la herramienta no toca el inventario ==")
