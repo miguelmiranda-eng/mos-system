@@ -4232,21 +4232,35 @@ async def get_inventory(
                             Allows the UI to load in chunks without freezing.
     """
     await require_auth(request)
+
+    # Escapar SIEMPRE el texto del usuario: el valor es una subcadena a buscar,
+    # no un patrón. Sin esto, un style/sku con caracteres especiales de regex
+    # (paréntesis, '+', '#', 'PO#1849'…) rompe o distorsiona la búsqueda.
+    # (El endpoint /inventory/facets ya escapaba; aquí faltaba.)
+    def rx(v):
+        return {"$regex": re.escape(v), "$options": "i"}
+
     query = {}
-    if sku: query["sku"] = {"$regex": sku, "$options": "i"}
-    if style: query["style"] = {"$regex": style, "$options": "i"}
-    if color: query["color"] = {"$regex": color, "$options": "i"}
-    if size: query["size"] = {"$regex": size, "$options": "i"}
-    if customer: query["customer"] = {"$regex": customer, "$options": "i"}
+    # El filtro de la columna "Style" del grid manda `sku`, pero la identidad de
+    # negocio vive en `style` (p.ej. style="BOXY TEE", sku="BOXY"). Buscar solo en
+    # `sku` vaciaba la tabla para todo estilo donde style≠sku. Se busca en AMBOS,
+    # igual que /inventory/facets, que es quien llena el desplegable de sugerencias.
+    if sku: query["$or"] = [{"sku": rx(sku)}, {"style": rx(sku)}]
+    if style: query["style"] = rx(style)
+    if color: query["color"] = rx(color)
+    if size: query["size"] = rx(size)
+    if customer: query["customer"] = rx(customer)
     if category == "LOW_STOCK":
         query["units_on_hand"] = {"$lte": 10, "$gt": 0}
     elif category:
-        query["category"] = {"$regex": category, "$options": "i"}
-    if location: query["location"] = {"$regex": location, "$options": "i"}
-    if description: query["description"] = {"$regex": description, "$options": "i"}
-    if country_of_origin: query["country_of_origin"] = {"$regex": country_of_origin, "$options": "i"}
-    if fabric_content: query["fabric_content"] = {"$regex": fabric_content, "$options": "i"}
-    # Optionally hide stock parked in SAT-held locations.
+        query["category"] = rx(category)
+    if location: query["location"] = rx(location)
+    if description: query["description"] = rx(description)
+    if country_of_origin: query["country_of_origin"] = rx(country_of_origin)
+    if fabric_content: query["fabric_content"] = rx(fabric_content)
+    # Optionally hide stock parked in SAT-held locations. Usa `location` con $nin,
+    # que colisionaría con un filtro de columna `location` (mismo campo). Solo se
+    # aplica cuando no hay filtro de location, así que no hay choque de claves.
     if exclude_hold and not location:
         held = await _hold_location_names()
         if held:
