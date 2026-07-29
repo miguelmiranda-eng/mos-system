@@ -36,6 +36,7 @@ import { MoverModule } from "./wms/Mover";
 import { AuditModule } from "./wms/Audit";
 import { ReconciliationModule } from "./wms/Reconciliation";
 import IncidentsModule from "./wms/Incidents";
+import ReportsModule from "./wms/Reports";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -63,6 +64,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'reconciliation': return ctx.currentUser?.role === 'supersu'
       ? <ReconciliationModule /> : <ReceivingModule />;
     case 'audit':        return <AuditModule />;
+    case 'reports':      return <ReportsModule />;
     // Incidencias: solo super usuario. El mosaico ya viene filtrado; esta guarda
     // es por si el módulo se alcanza por otra vía. El backend igual devuelve 403.
     case 'incidents':    return ctx.currentUser?.role === 'supersu'
@@ -243,6 +245,8 @@ export default function WMS() {
     { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
     // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
     { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
+    // Reportes: material de supervisión (nivel 1+). El backend valida el nivel.
+    { id: 'reports', label: 'Reportes', icon: BarChart3, color: 'text-sky-400', desc: 'Recibos, putaway y pick tickets: pendiente, productividad, historial y excepciones', adminOnly: true },
     // Incidencias del sistema: material no encontrado, duplicados bloqueados,
     // errores de recepción. SOLO super usuario (el backend responde 403 al resto).
     { id: 'incidents', label: 'Incidencias', icon: ShieldAlert, color: 'text-orange-400', desc: 'Alertas del sistema: material no encontrado, duplicados bloqueados y errores de recepción', supersuOnly: true },
