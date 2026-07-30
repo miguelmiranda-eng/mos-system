@@ -66,89 +66,6 @@ function LocationInput({ value, onChange, onPick, onSubmit, locations, placehold
   );
 }
 
-// ─── Cascading Color → Estilo → Talla filter over inventory lines ────────────
-// A big bin (a CARRO can hold hundreds of SKUs) makes the reconcile/units line
-// pickers a wall of rows. These helpers + <LineFilters> let the operator narrow
-// by color, then style, then size — each dropdown lists only values still
-// reachable given the OTHER active picks, so the options shrink as you go.
-const lineStyle = (r) => String(r?.style || r?.sku || "").trim();
-const lineColor = (r) => String(r?.color || "").trim();
-const lineSize = (r) => String(r?.size || "").trim();
-const LINE_DIMS = [
-  { key: "color", label: "Color", get: lineColor },
-  { key: "style", label: "Estilo", get: lineStyle },
-  { key: "size", label: "Talla", get: lineSize },
-];
-// Distinct, non-empty values for a dimension, human-sorted (numeric-aware).
-const distinctValues = (rows, get) => {
-  const seen = new Set();
-  for (const r of rows) { const v = get(r); if (v) seen.add(v); }
-  return [...seen].sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
-};
-// Show the filter bar only once the list is long enough to be a chore.
-const LINE_FILTER_THRESHOLD = 6;
-
-// Render-prop: owns the cascade state, hands back the filtered rows so each mode
-// keeps its own row markup and onClick untouched.
-function LineFilters({ lines, testidPrefix, children }) {
-  const [f, setF] = useState({ color: "", style: "", size: "" });
-
-  // Rows passing every ACTIVE filter except the one named (used to build that
-  // dropdown's option list); pass no name to apply them all (the visible list).
-  const rowsPassing = useCallback((skip) => lines.filter(r =>
-    LINE_DIMS.every(d => d.key === skip || !f[d.key] || d.get(r) === f[d.key])
-  ), [lines, f]);
-
-  // Clear any narrower pick that fell out of range after a broader change.
-  const setDim = (key, val) => setF(prev => {
-    const next = { ...prev, [key]: val };
-    for (const d of LINE_DIMS) {
-      if (!next[d.key]) continue;
-      const reachable = distinctValues(
-        lines.filter(r => LINE_DIMS.every(o => o.key === d.key || !next[o.key] || o.get(r) === next[o.key])),
-        d.get,
-      );
-      if (!reachable.includes(next[d.key])) next[d.key] = "";
-    }
-    return next;
-  });
-  const clear = () => setF({ color: "", style: "", size: "" });
-
-  const filtered = useMemo(() => lines.filter(r =>
-    LINE_DIMS.every(d => !f[d.key] || d.get(r) === f[d.key])
-  ), [lines, f]);
-  const active = f.color || f.style || f.size;
-
-  if (lines.length <= LINE_FILTER_THRESHOLD) return children(lines);
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-3 gap-2">
-        {LINE_DIMS.map(({ key, label, get }) => {
-          const opts = distinctValues(rowsPassing(key), get);
-          return (
-            <select key={key} value={f[key]} onChange={e => setDim(key, e.target.value)}
-              data-testid={`${testidPrefix}-filter-${key}`}
-              className="h-10 px-2 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors">
-              <option value="">{label} · todos</option>
-              {opts.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground px-0.5">
-        <span className="tabular-nums">{filtered.length} de {lines.length}</span>
-        {active && (
-          <button onClick={clear} className="text-primary font-medium flex items-center gap-1">
-            <X className="w-3 h-3" /> Limpiar filtros
-          </button>
-        )}
-      </div>
-      {children(filtered)}
-    </div>
-  );
-}
-
 // Big choice button used on the mode picker.
 function ModeButton({ icon: Icon, title, subtitle, color, onClick, testid }) {
   return (
@@ -814,26 +731,20 @@ export function MoverModule({ currentUser }) {
                         <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
                           <Search className="w-4 h-4" /> Elige el SKU a mover
                         </div>
-                        <LineFilters lines={contents.lines} testidPrefix="mover-units">
-                          {(rows) => rows.length === 0 ? (
-                            <div className="text-sm text-muted-foreground p-3 rounded-lg border border-dashed border-border text-center">
-                              Ningún SKU coincide con los filtros.
+                        {contents.lines.map((r, i) => (
+                          <button key={i} onClick={() => { setSelectedLine(r); setQty(String(r.units_on_hand || "")); }}
+                            data-testid={`mover-units-line-${i}`}
+                            className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
+                            <div className="min-w-0">
+                              <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
+                              <div className="text-xs text-muted-foreground truncate">{r.color} · {r.size}</div>
                             </div>
-                          ) : rows.map((r, i) => (
-                            <button key={i} onClick={() => { setSelectedLine(r); setQty(String(r.units_on_hand || "")); }}
-                              data-testid={`mover-units-line-${i}`}
-                              className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
-                              <div className="min-w-0">
-                                <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
-                                <div className="text-xs text-muted-foreground truncate">{r.color} · {r.size}</div>
-                              </div>
-                              <div className="text-right flex-shrink-0">
-                                <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
-                                <div className="text-[10px] text-muted-foreground">disp.</div>
-                              </div>
-                            </button>
-                          ))}
-                        </LineFilters>
+                            <div className="text-right flex-shrink-0">
+                              <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
+                              <div className="text-[10px] text-muted-foreground">disp.</div>
+                            </div>
+                          </button>
+                        ))}
                       </div>
                     ) : (
                       <div className="bg-card border border-border rounded-lg p-5 space-y-4">
@@ -926,28 +837,22 @@ export function MoverModule({ currentUser }) {
                         <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
                           <Search className="w-4 h-4" /> Elige el producto a reconciliar
                         </div>
-                        <LineFilters lines={contents.lines} testidPrefix="mover-reconcile">
-                          {(rows) => rows.length === 0 ? (
-                            <div className="text-sm text-muted-foreground p-3 rounded-lg border border-dashed border-border text-center">
-                              Ningún producto coincide con los filtros.
+                        {contents.lines.map((r, i) => (
+                          <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
+                            data-testid={`mover-reconcile-line-${i}`}
+                            className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
+                            <div className="min-w-0">
+                              <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {r.color} · {r.size}{r.description ? ` · ${r.description}` : ""}
+                              </div>
                             </div>
-                          ) : rows.map((r, i) => (
-                            <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
-                              data-testid={`mover-reconcile-line-${i}`}
-                              className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
-                              <div className="min-w-0">
-                                <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
-                                <div className="text-xs text-muted-foreground truncate">
-                                  {r.color} · {r.size}{r.description ? ` · ${r.description}` : ""}
-                                </div>
-                              </div>
-                              <div className="text-right flex-shrink-0">
-                                <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
-                                <div className="text-[10px] text-muted-foreground">disp.</div>
-                              </div>
-                            </button>
-                          ))}
-                        </LineFilters>
+                            <div className="text-right flex-shrink-0">
+                              <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
+                              <div className="text-[10px] text-muted-foreground">disp.</div>
+                            </div>
+                          </button>
+                        ))}
                       </div>
                     ) : (
                       <div className="bg-card border border-border rounded-lg p-5 space-y-4">
