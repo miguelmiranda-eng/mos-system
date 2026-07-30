@@ -288,32 +288,99 @@ export default function PdaRecon() {
                 </button>
               </>
             ) : (
-              <>
-                <p className="text-xs text-slate-400 text-center">¿A qué caja corresponde? Tócala para casarla.</p>
-                <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[45vh] overflow-y-auto">
-                  {pick.candidates.map((c) => (
-                    <button key={c.box_id} onClick={() => bindLpn(c)} disabled={busy}
-                      className="w-full flex items-center gap-3 px-3 py-3 text-left active:bg-white/10 disabled:opacity-50">
-                      <PackageCheck className="w-5 h-5 text-emerald-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-mono text-sm truncate">{c.box_id}</div>
-                        <div className="text-xs text-slate-400 truncate">
-                          {`${c.sku || c.style || ""} ${c.color || ""} ${c.size || ""}`.trim()}
-                        </div>
-                      </div>
-                      <span className="text-xs font-black text-emerald-300 shrink-0">{c.units}u</span>
-                    </button>
-                  ))}
-                </div>
-                <button onClick={() => setPick(null)} disabled={busy}
-                  className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20 disabled:opacity-50">
-                  Cancelar
-                </button>
-              </>
+              <PickCandidates key={pick.code} candidates={pick.candidates} busy={busy}
+                onBind={bindLpn} onCancel={() => setPick(null)} />
             )}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+// Selector de la caja del sistema a la que casar un LPN físico. Los candidatos
+// (cajas fantasma LPN sin etiqueta atada de esta ubicación) pueden ser cientos
+// en un CARRO, así que sobre >6 se ofrece una cascada Color → Estilo → Talla:
+// cada desplegable sólo muestra los valores AÚN alcanzables dados los otros
+// filtros. Se remonta por `key={pick.code}` en cada LPN nuevo, así los filtros
+// arrancan limpios sin necesitar un efecto de reset.
+function PickCandidates({ candidates, busy, onBind, onCancel }) {
+  const [f, setF] = useState({ color: "", style: "", size: "" });
+  const norm = (v) => String(v ?? "").trim();
+  const styleOf = (c) => norm(c.style || c.sku);
+  // `skip` excluye su propio eje para que un desplegable no se auto-recorte.
+  const match = (c, skip) =>
+    (skip === "color" || !f.color || norm(c.color) === f.color) &&
+    (skip === "style" || !f.style || styleOf(c) === f.style) &&
+    (skip === "size" || !f.size || norm(c.size) === f.size);
+  const optsFor = (skip, get) => {
+    const s = new Set();
+    for (const c of candidates) if (match(c, skip)) { const v = norm(get(c)); if (v) s.add(v); }
+    return [...s].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  };
+  const colors = optsFor("color", (c) => c.color);
+  const styles = optsFor("style", styleOf);
+  const sizes = optsFor("size", (c) => c.size);
+  const filtered = candidates.filter((c) => match(c, null));
+  const anyFilter = f.color || f.style || f.size;
+  const showFilters = candidates.length > 6;
+  const selCls = (on) =>
+    `min-w-0 px-2 py-2 rounded-xl bg-white/5 border text-xs font-mono uppercase outline-none ${on ? "border-emerald-400/60 text-emerald-200" : "border-white/10 text-slate-300"}`;
+
+  return (
+    <>
+      <p className="text-xs text-slate-400 text-center">
+        {showFilters
+          ? <>Filtra y toca la caja · <span className="text-slate-200 font-black">{filtered.length}</span> de {candidates.length}</>
+          : <>¿A qué caja corresponde? Tócala para casarla.</>}
+      </p>
+
+      {showFilters && (
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            <select value={f.color} onChange={(e) => setF((s) => ({ ...s, color: e.target.value }))} className={selCls(!!f.color)}>
+              <option value="">Color</option>
+              {colors.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <select value={f.style} onChange={(e) => setF((s) => ({ ...s, style: e.target.value }))} className={selCls(!!f.style)}>
+              <option value="">Estilo</option>
+              {styles.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <select value={f.size} onChange={(e) => setF((s) => ({ ...s, size: e.target.value }))} className={selCls(!!f.size)}>
+              <option value="">Talla</option>
+              {sizes.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+          {anyFilter && (
+            <button onClick={() => setF({ color: "", style: "", size: "" })}
+              className="w-full text-[11px] text-slate-400 active:text-slate-200 uppercase tracking-widest font-black">
+              Limpiar filtros
+            </button>
+          )}
+        </>
+      )}
+
+      <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[45vh] overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="p-4 text-center text-sm text-slate-500">Ninguna caja con esos filtros.</div>
+        ) : filtered.map((c) => (
+          <button key={c.box_id} onClick={() => onBind(c)} disabled={busy}
+            className="w-full flex items-center gap-3 px-3 py-3 text-left active:bg-white/10 disabled:opacity-50">
+            <PackageCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-sm truncate">{c.box_id}</div>
+              <div className="text-xs text-slate-400 truncate">
+                {`${c.sku || c.style || ""} ${c.color || ""} ${c.size || ""}`.trim()}
+              </div>
+            </div>
+            <span className="text-xs font-black text-emerald-300 shrink-0">{c.units}u</span>
+          </button>
+        ))}
+      </div>
+      <button onClick={onCancel} disabled={busy}
+        className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20 disabled:opacity-50">
+        Cancelar
+      </button>
+    </>
   );
 }
