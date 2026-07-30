@@ -28,6 +28,7 @@ import {
   CalendarClock,
   Zap,
   Package,
+  Factory,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -262,6 +263,10 @@ const Sidebar = ({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
+                    <button onClick={() => { navigate('/produccion'); if (isMobile) onClose(); }} className={navItem(false)} title="Tablero de Producción">
+                      <Factory size={15} className={iconCls(false)} />
+                      <span>Producción</span>
+                    </button>
                     <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title="Control de Calidad">
                       <ShieldCheck size={15} className={iconCls(false)} />
                       <span>Control de Calidad</span>
