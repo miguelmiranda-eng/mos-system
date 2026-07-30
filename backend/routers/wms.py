@@ -8282,6 +8282,118 @@ async def photo_line_delete(line_id: str, request: Request):
     return {"ok": True, "line_id": line_id}
 
 
+# ── Bote de fotos (captura simple, sin OCR ni renglones) ─────────────────────
+# El piso SÓLO toma fotos y se guardan: no hay contenedor, ni modal, ni datos que
+# capturar. Cada foto lleva un consecutivo global y se SEGMENTA en packing lists
+# de PHOTO_PACKING_SIZE (una lista por cada 550, en orden de captura). Después la
+# IA lee las fotos por partes —nunca las 24,500 de golpe— y arma cada packing con
+# la información que saca de ellas.
+PHOTO_PACKING_SIZE = 550
+
+
+async def _next_photo_seq() -> int:
+    """Consecutivo global atómico para ordenar y segmentar las fotos por packing.
+    Atómico (find_one_and_update $inc) para no chocar si varios suben a la vez."""
+    doc = await db.wms_counters.find_one_and_update(
+        {"_id": "photo_archive_seq"}, {"$inc": {"value": 1}},
+        upsert=True, return_document=ReturnDocument.AFTER,
+    )
+    return int(doc.get("value", 1))
+
+
+def _packing_no(seq: int) -> int:
+    return (max(1, int(seq)) - 1) // PHOTO_PACKING_SIZE + 1
+
+
+_PHOTO_ARCH_IDX_OK = False
+
+
+async def _ensure_photo_archive_indexes():
+    """Índices perezosos: a 24.5k fotos, ordenar por consecutivo y filtrar por
+    packing sin índice escanearía toda la colección en cada subida y en la galería."""
+    global _PHOTO_ARCH_IDX_OK
+    if _PHOTO_ARCH_IDX_OK:
+        return
+    try:
+        await db.wms_photo_archive.create_index([("seq", -1)], name="by_seq")
+        await db.wms_photo_archive.create_index([("packing_no", 1), ("seq", -1)], name="by_packing_seq")
+    except Exception as e:
+        logger.warning("photo_archive: índice no creado (%s)", e)
+    _PHOTO_ARCH_IDX_OK = True
+
+
+@router.post("/recon/photo/archive")
+async def photo_archive_add(request: Request, file: UploadFile = File(...)):
+    """Guarda UNA foto tal cual (sin leerla). Le asigna consecutivo y su packing.
+    No crea renglón: sólo aloja la imagen para procesarla después con IA."""
+    user = await _require_recon_role(request)
+    await _ensure_photo_archive_indexes()
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Foto vacía")
+    if len(data) > _LABEL_MAX_BYTES:
+        raise HTTPException(413, "La foto pesa más de 12 MB; baja la resolución de la cámara")
+    try:
+        from PIL import Image
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        raise HTTPException(400, "El archivo no es una imagen que se pueda leer")
+    seq = await _next_photo_seq()
+    packing = _packing_no(seq)
+    foto = _save_label_photo(data, f"packing_{packing:03d}", file.content_type or "")
+    doc = {
+        "photo_id": gen_id("parch"), "seq": seq, "packing_no": packing,
+        "photo_key": foto["photo_key"], "photo_url": foto["photo_url"],
+        "uploaded_by": user.get("name", user.get("email", "?")),
+        "user_id": user.get("user_id"), "created_at": now_iso(),
+    }
+    await db.wms_photo_archive.insert_one(dict(doc))
+    en_packing = await db.wms_photo_archive.count_documents({"packing_no": packing})
+    total = await db.wms_photo_archive.count_documents({})
+    return {"ok": True, "photo": doc, "total": total, "packing_no": packing,
+            "en_packing": en_packing, "packing_size": PHOTO_PACKING_SIZE}
+
+
+@router.get("/recon/photo/archive")
+async def photo_archive_list(request: Request, packing: int = 0, limit: int = 200, offset: int = 0):
+    """Fotos guardadas (más recientes primero) + resumen por packing. Se pagina:
+    la galería pide de a poco y el total real sale del conteo, no de la página."""
+    await _require_recon_role(request)
+    await _ensure_photo_archive_indexes()
+    q = {"packing_no": int(packing)} if packing else {}
+    total = await db.wms_photo_archive.count_documents({})
+    items = await db.wms_photo_archive.find(q, {"_id": 0}).sort("seq", -1) \
+        .skip(max(0, int(offset))).to_list(min(max(1, int(limit)), 1000))
+    agg = await db.wms_photo_archive.aggregate([
+        {"$group": {"_id": "$packing_no", "n": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ]).to_list(2000)
+    packings = [{"packing_no": g["_id"], "fotos": g["n"]} for g in agg]
+    return {"total": total, "items": items, "packings": packings,
+            "packing_size": PHOTO_PACKING_SIZE}
+
+
+@router.delete("/recon/photo/archive/{photo_id}")
+async def photo_archive_delete(photo_id: str, request: Request):
+    """Borra una foto mal tomada (registro + archivo). El operador borra las
+    suyas; administración (nivel 2+) cualquiera."""
+    user = await _require_recon_role(request)
+    doc = await db.wms_photo_archive.find_one({"photo_id": photo_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Foto no encontrada")
+    if doc.get("user_id") != user.get("user_id") and get_admin_level(user) < 2:
+        raise HTTPException(403, "Sólo puedes borrar las fotos que tomaste")
+    try:
+        from pathlib import Path
+        p = Path(_PHOTO_IMG_ROOT) / doc.get("photo_key", "")
+        if doc.get("photo_key") and p.exists():
+            p.unlink()
+    except Exception as e:
+        logger.warning("photo/archive: no se pudo borrar el archivo: %s", e)
+    await db.wms_photo_archive.delete_one({"photo_id": photo_id})
+    return {"ok": True, "photo_id": photo_id}
+
+
 # ── Alertas push al celular ─────────────────────────────────────────────────
 # Web Push (VAPID): el dispositivo se suscribe desde la campana del sidebar
 # del WMS. Solo administración (nivel 2+): las alarmas son de supervisión.
