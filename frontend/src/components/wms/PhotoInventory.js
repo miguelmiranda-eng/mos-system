@@ -29,6 +29,10 @@ const fmt = (iso) => {
   return isNaN(d) ? String(iso).slice(0, 16) : d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 };
 
+// La foto se sirve en /api/uploads (fuera de /api/wms); el backend guarda la URL
+// relativa y aquí la volvemos absoluta contra el backend.
+const IMG = (u) => (u ? `${process.env.REACT_APP_BACKEND_URL}${u}` : "");
+
 export const PhotoInventoryTab = () => {
   const [container, setContainer] = useState("");
   const [data, setData] = useState(null);
@@ -157,7 +161,7 @@ export const PhotoInventoryTab = () => {
           <TableShell maxH="max-h-[65vh]">
             <thead className={tableCls.thead}>
               <tr>
-                <Th>Cartón</Th><Th>SKU</Th><Th>Material</Th><Th>País / contenido</Th>
+                <Th>Foto</Th><Th>Cartón</Th><Th>SKU</Th><Th>Material</Th><Th>País / contenido</Th>
                 <Th right>Unidades</Th><Th>Contenedor</Th><Th>Capturado por</Th><Th>Fecha</Th><Th></Th>
               </tr>
             </thead>
@@ -168,6 +172,14 @@ export const PhotoInventoryTab = () => {
                 return (
                   <Fragment key={l.line_id}>
                     <tr className={tableCls.row}>
+                      <td className={cls.td}>
+                        {l.photo_url ? (
+                          <a href={IMG(l.photo_url)} target="_blank" rel="noreferrer" title="Ver foto">
+                            <img src={IMG(l.photo_url)} alt="" loading="lazy"
+                              className="w-10 h-10 rounded object-cover border border-border" />
+                          </a>
+                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                      </td>
                       <td className={`${cls.td} font-mono`}>{l.carton}</td>
                       <td className={`${cls.td} font-mono`}>{l.sku || <span className="text-muted-foreground">—</span>}</td>
                       <td className={cls.td}>{[l.style, l.color, l.size].filter(Boolean).join(" · ") || <span className="text-muted-foreground">—</span>}</td>
@@ -189,7 +201,7 @@ export const PhotoInventoryTab = () => {
                     </tr>
                     {abierto && (
                       <tr className="border-b border-border/60 bg-muted/30">
-                        <td colSpan={9} className="px-4 py-3">
+                        <td colSpan={10} className="px-4 py-3">
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                             <div>
                               <label className="block text-xs font-medium text-muted-foreground mb-1">Unidades</label>

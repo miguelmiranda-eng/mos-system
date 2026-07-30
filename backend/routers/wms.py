@@ -7948,12 +7948,37 @@ async def recon_phantom_atender(request: Request):
 _LABEL_MAX_BYTES = 12 * 1024 * 1024
 
 
+# ── Persistencia de la foto de etiqueta ─────────────────────────────────────
+# La foto se guarda en el MISMO disco persistente que los adjuntos de órdenes
+# (uploads/invoices, servido por GET /api/uploads/{path}), en un subfolder por
+# contenedor. Se conserva el original: el packing list se arma al final con
+# estas fotos. Devuelve la llave y la URL relativa para ligarlas al renglón.
+_PHOTO_IMG_ROOT = "uploads/invoices"           # raíz servida por /api/uploads
+_PHOTO_IMG_SUBDIR = "photo_inventory"
+_PHOTO_EXT_BY_CT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+    "image/webp": "webp", "image/heic": "heic", "image/heif": "heif",
+}
+
+
+def _save_label_photo(data: bytes, container: str, content_type: str = "") -> dict:
+    from pathlib import Path
+    ext = _PHOTO_EXT_BY_CT.get((content_type or "").lower(), "jpg")
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", (container or "sin_contenedor")).strip("_") or "sin_contenedor"
+    rel = f"{_PHOTO_IMG_SUBDIR}/{safe}/{gen_id('pimg')}.{ext}"
+    path = Path(_PHOTO_IMG_ROOT) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"photo_key": rel, "photo_url": f"/api/uploads/{rel}"}
+
+
 @router.post("/recon/label-read")
 async def recon_label_read(request: Request, file: UploadFile = File(...)):
     """Lee una foto de etiqueta y devuelve los campos para el modal de captura.
-    Devuelve { campos: {...}, fuentes: {campo: "barcode"}, avisos: [] }.
-    No escribe nada. Nunca falla por lectura parcial: los campos que no se
-    pudieron leer vienen vacíos para que el operador los teclee."""
+    Devuelve { campos: {...}, fuentes: {campo: "barcode"}, avisos: [], photo_url }.
+    Además GUARDA la foto en disco y regresa su URL para que el operador vea que
+    ya quedó y para ligarla al renglón. Nunca falla por lectura parcial: los
+    campos que no se pudieron leer vienen vacíos para que el operador los teclee."""
     await _require_recon_role(request)
     from services.label_barcode import decode_label, barcode_disponible
     from services.label_ocr import CAMPOS, parse_label, ocr_disponible
@@ -7968,6 +7993,16 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
         Image.open(io.BytesIO(data)).verify()   # el operador no sabría por qué
     except Exception:
         raise HTTPException(400, "El archivo no es una imagen que se pueda leer")
+
+    # Guardamos la foto ANTES de leerla: aunque el OCR salga flojo, la imagen ya
+    # quedó a salvo y el modal la muestra como "guardada". Si el guardado falla,
+    # no tumbamos la captura — sólo va sin URL.
+    try:
+        foto = _save_label_photo(data, (request.query_params.get("container") or "").strip(),
+                                 file.content_type or "")
+    except Exception as e:
+        logger.warning("label-read: no se pudo guardar la foto: %s", e)
+        foto = {"photo_key": "", "photo_url": ""}
 
     campos = {c: "" for c in CAMPOS}
     fuentes, avisos = {}, []
@@ -8013,7 +8048,7 @@ async def recon_label_read(request: Request, file: UploadFile = File(...)):
     elif faltan:
         avisos.append("Falta por capturar: " + ", ".join(faltan) + ".")
 
-    return {"campos": campos, "fuentes": fuentes, "avisos": avisos}
+    return {"campos": campos, "fuentes": fuentes, "avisos": avisos, **foto}
 
 
 @router.post("/recon/label-scan")
@@ -8157,6 +8192,12 @@ async def photo_line_add(request: Request):
            "created_at": now_iso()}
     for f in _PHOTO_FIELDS:
         doc[f] = str(body.get(f) or "").strip()
+    # La foto ya se guardó en /recon/label-read; aquí sólo ligamos su referencia
+    # al renglón para poder mostrarla y armar el packing al final.
+    for k in ("photo_key", "photo_url"):
+        v = str(body.get(k) or "").strip()
+        if v:
+            doc[k] = v
     doc["completo"] = _photo_completo(doc)
     try:
         await db.wms_photo_lines.insert_one(dict(doc))

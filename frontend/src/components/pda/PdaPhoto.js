@@ -4,10 +4,13 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   Camera, ChevronLeft, Loader2, Trash2, Package, Save, Container,
-  ScanBarcode, Sparkles, AlertTriangle, X,
+  ScanBarcode, Sparkles, AlertTriangle, X, CheckCircle2,
 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
+// Las fotos se sirven en /api/uploads (fuera de /api/wms); el backend devuelve la
+// URL relativa y aquí la volvemos absoluta contra el mismo backend.
+const IMG = (u) => (u ? `${process.env.REACT_APP_BACKEND_URL}${u}` : "");
 const fetcher = (u) => fetch(`${API}${u}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
 const poster = (u, b) => fetch(`${API}${u}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(b) });
 // Sin Content-Type a propósito: el navegador pone el boundary del multipart.
@@ -101,10 +104,10 @@ export default function PdaPhoto() {
     if (!file) return;
     setBusy(true);
     try {
-      const res = await uploader("/recon/label-read", file);
+      const res = await uploader(`/recon/label-read?container=${encodeURIComponent(container)}`, file);
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(d.detail || "No se pudo leer la foto"); buzz([120, 60, 120]); return; }
-      setDraft(d.campos || {});
+      setDraft({ ...(d.campos || {}), photo_key: d.photo_key || "", photo_url: d.photo_url || "" });
       setFuentes(d.fuentes || {});
       setAvisos(d.avisos || []);
       buzz(50);
@@ -235,7 +238,12 @@ export default function PdaPhoto() {
               {lines.length === 0 && <div className="p-4 text-center text-sm text-slate-500">Aún no hay cartones en {container}</div>}
               {lines.map(l => (
                 <div key={l.line_id} className="flex items-center gap-3 px-3 py-2.5">
-                  <Package className={`w-5 h-5 shrink-0 ${l.completo ? "text-sky-400" : "text-amber-400"}`} />
+                  {l.photo_url ? (
+                    <img src={IMG(l.photo_url)} alt="" loading="lazy"
+                      className="w-9 h-9 rounded-lg object-cover shrink-0 border border-white/10" />
+                  ) : (
+                    <Package className={`w-5 h-5 shrink-0 ${l.completo ? "text-sky-400" : "text-amber-400"}`} />
+                  )}
                   <span className="flex-1 min-w-0">
                     <span className="block font-mono text-sm truncate">{l.carton}</span>
                     <span className="block text-[10px] text-slate-500 truncate">
@@ -263,6 +271,23 @@ export default function PdaPhoto() {
               <button type="button" onClick={() => { setDraft(null); setAvisos([]); }}
                 className="p-2 -mr-1 rounded-xl active:bg-white/10"><X className="w-5 h-5" /></button>
             </div>
+
+            {/* La foto ya quedó guardada en el server: se la mostramos para que el
+                operador lo VEA, con su sello verde. Si no hay URL, algo falló al
+                guardar y se lo avisamos para que la repita. */}
+            {draft.photo_url ? (
+              <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500/50">
+                <img src={IMG(draft.photo_url)} alt="Etiqueta capturada"
+                  className="w-full max-h-48 object-cover" />
+                <div className="absolute top-2 left-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-black text-[10px] font-black uppercase tracking-widest shadow-lg">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Foto guardada
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 flex items-center gap-2 text-xs font-bold text-amber-300">
+                <AlertTriangle className="w-4 h-4 shrink-0" /> La foto no se pudo guardar — usa "Repetir foto".
+              </div>
+            )}
 
             {avisos.map((a, i) => (
               <div key={i} className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3 flex items-start gap-2 text-xs text-amber-300">
