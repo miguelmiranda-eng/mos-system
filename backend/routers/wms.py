@@ -12203,6 +12203,54 @@ async def cycle_counts_report_timeline(
     }
 
 
+async def _cc_pieces_discrepancy(count_id: str, scan_locs: list) -> dict:
+    """Piezas faltantes y sobrantes de un conteo box_scan — robusto en conteos en
+    curso Y aprobados. Se usa para el IRA ponderado por piezas.
+
+      • SOBRANTES (extra): la caja se movió a la ubicación y sigue VIVA, así que
+        sus unidades se leen directo de la caja.
+      • FALTANTES (missing): en un conteo ya resuelto quedaron en 0 (depleted).
+        Para ésas se recupera el `old_units` del movimiento `cycle_count_shrink`
+        de ESTE conteo — el rastro de lo que la caja tenía antes de agotarse. Si
+        el conteo aún no se resuelve, la caja sigue viva y se lee su unidad.
+    """
+    missing_ids, extra_ids = set(), set()
+    for sl in scan_locs:
+        missing_ids.update(sl.get("missing") or [])
+        extra_ids.update(sl.get("extra") or [])
+    all_ids = missing_ids | extra_ids
+    live: dict[str, int] = {}
+    if all_ids:
+        async for b in db.wms_boxes.find(
+            {"box_id": {"$in": list(all_ids)}},
+            {"_id": 0, "box_id": 1, "units": 1, "qty": 1},
+        ):
+            live[b["box_id"]] = int(b.get("units") or b.get("qty") or 0)
+    # Sobrantes: vivas -> unidades de la caja.
+    pieces_extra = sum(live.get(bid, 0) for bid in extra_ids)
+    # Faltantes agotadas: recuperar old_units del shrink de este conteo.
+    depleted_missing = [bid for bid in missing_ids if live.get(bid, 0) <= 0]
+    audit: dict[str, int] = {}
+    if depleted_missing:
+        async for m in db.wms_movements.find(
+            {"type": "cycle_count_shrink", "details.count_id": count_id,
+             "details.box_id": {"$in": depleted_missing}},
+            {"_id": 0, "details.box_id": 1, "details.old_units": 1},
+        ):
+            d = m.get("details") or {}
+            bid = d.get("box_id")
+            if bid and bid not in audit:
+                try:
+                    audit[bid] = int(d.get("old_units") or 0)
+                except (TypeError, ValueError):
+                    audit[bid] = 0
+    pieces_missing = sum(
+        (live[bid] if live.get(bid, 0) > 0 else audit.get(bid, 0))
+        for bid in missing_ids
+    )
+    return {"pieces_missing": pieces_missing, "pieces_extra": pieces_extra}
+
+
 @router.get("/cycle-counts/{count_id}/report")
 async def get_cycle_count_report(count_id: str, request: Request):
     """
@@ -12354,6 +12402,53 @@ async def get_cycle_count_report(count_id: str, request: Request):
         "locations_by_pass": pass_tally,
     }
 
+    # ── KPIs de precisión de inventario (ILA / IRA / discrepancias) ───────────
+    # TODO sale del SNAPSHOT del conteo — no de datos vivos — para que un conteo
+    # ya aprobado no muestre cifras que su propia resolución acaba de corregir.
+    #   • Piezas en sistema  = Σ system_qty de las líneas (snapshot, ambos modos).
+    #   • Cajas en sistema   = Σ expected_boxes (solo box_scan; las líneas no
+    #                          snapshotean cajas).
+    #   • Discrepancia box_scan -> en CAJAS (lo que ese modo mide de raíz);
+    #                     por líneas -> en PIEZAS.
+    #   • ILA = ubicaciones perfectas ÷ ubicaciones cerradas (solo box_scan).
+    #   • IRA = 1 − |Δpiezas| ÷ piezas en sistema (ponderado por piezas).
+    is_box = bool(scan_locs)
+    system_pieces = sum(int(l.get("system_qty") or 0) for l in lines)
+    if is_box:
+        system_boxes = sum(len(sl.get("expected_boxes") or []) for sl in scan_locs)
+        net_disc = boxes_extra - boxes_missing          # sobrantes − faltantes (cajas)
+        abs_disc = boxes_extra + boxes_missing          # sobrantes + faltantes (cajas)
+        disc_unit = "cajas"
+        closed = [sl for sl in scan_locs if sl.get("status") in ("ok", "supervisor")]
+        perfect = [sl for sl in closed
+                   if not (sl.get("missing") or sl.get("extra") or sl.get("unknown_boxes"))]
+        ila_pct = round(len(perfect) / len(closed) * 100, 1) if closed else None
+        pd = await _cc_pieces_discrepancy(count["count_id"], scan_locs)
+        abs_pieces = pd["pieces_missing"] + pd["pieces_extra"]
+    else:
+        system_boxes = None
+        net_disc = units_over - units_short             # piezas
+        abs_disc = units_over + units_short
+        disc_unit = "piezas"
+        ila_pct = None
+        abs_pieces = units_over + units_short
+    # IRA acotado a [0, 100]: si lo sobrante supera al sistema (caso extremo) no
+    # baja de 0. Sin piezas en sistema, precisión 100% por convención.
+    ira_pct = round(max(0.0, (1 - abs_pieces / system_pieces) * 100), 1) if system_pieces > 0 else 100.0
+
+    inventory_kpis = {
+        "mode": count.get("mode") or ("box_scan" if is_box else "lines"),
+        "is_box_scan": is_box,
+        "system_pieces": system_pieces,
+        "system_boxes": system_boxes,
+        "net_discrepancy": net_disc,
+        "abs_discrepancy": abs_disc,
+        "discrepancy_unit": disc_unit,
+        "abs_discrepancy_pieces": abs_pieces,
+        "ila_pct": ila_pct,
+        "ira_pct": ira_pct,
+    }
+
     return {
         "count_id": count["count_id"],
         "name": count.get("name", ""),
@@ -12381,6 +12476,7 @@ async def get_cycle_count_report(count_id: str, request: Request):
             "duration_mins": duration_mins,
         },
         "box_kpis": box_kpis,
+        "inventory_kpis": inventory_kpis,
         "discrepancy_table": discrepancy_table,
         "all_lines": all_lines_table,
         "location_breakdown": location_breakdown,

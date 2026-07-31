@@ -178,6 +178,20 @@ export const CycleCountModule = () => {
       ["Unidades Faltantes",         reportDetail.kpis.units_short],
       ["Unidades Sobrantes",         reportDetail.kpis.units_over],
       ["Total Ajustes Aplicados",    reportDetail.kpis.adjusted_count],
+      ...(reportDetail.inventory_kpis ? (() => {
+        const inv = reportDetail.inventory_kpis;
+        const u = inv.discrepancy_unit || 'piezas';
+        return [
+          ["", ""],
+          ["=== PRECISIÓN DE INVENTARIO (ILA / IRA) ===", ""],
+          ["Total Piezas en Sistema",    inv.system_pieces ?? 0],
+          ["Total Cajas en Sistema",     inv.system_boxes != null ? inv.system_boxes : 'N/A'],
+          [`Discrepancia Neta (${u})`,      inv.net_discrepancy ?? 0],
+          [`Discrepancia Absoluta (${u})`,  inv.abs_discrepancy ?? 0],
+          ["ILA (Inventory Location Accuracy)", inv.ila_pct != null ? `${inv.ila_pct}%` : 'N/A'],
+          ["IRA (Inventory Record Accuracy)",   inv.ira_pct != null ? `${inv.ira_pct}%` : 'N/A'],
+        ];
+      })() : []),
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
     wsSummary['!cols'] = [{ wch: 32 }, { wch: 40 }];
@@ -1420,6 +1434,39 @@ export const CycleCountModule = () => {
               hint="Se muestran los datos de ese conteo: líneas, unidades y cajas." />
           ) : (
             <>
+              {/* ── Inventario: piezas/cajas en sistema, discrepancias, ILA/IRA ── */}
+              {kpiReport.inventory_kpis && (() => {
+                const inv = kpiReport.inventory_kpis;
+                const unidad = inv.discrepancy_unit || 'piezas';
+                const netSigno = inv.net_discrepancy > 0 ? '+' : '';
+                return (
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Inventario</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                      <StatCard label="Piezas en sistema" value={(inv.system_pieces ?? 0).toLocaleString()} />
+                      <StatCard label="Cajas en sistema" value={inv.system_boxes != null ? inv.system_boxes.toLocaleString() : '—'} />
+                      <StatCard label="Discrepancia neta"
+                        value={`${netSigno}${(inv.net_discrepancy ?? 0).toLocaleString()}`}
+                        sub={unidad} />
+                      <StatCard label="Discrepancia absoluta"
+                        value={(inv.abs_discrepancy ?? 0).toLocaleString()}
+                        sub={unidad} />
+                      <StatCard label="ILA"
+                        value={inv.ila_pct != null ? `${inv.ila_pct}%` : '—'}
+                        sub="Inventory Location Accuracy" />
+                      <StatCard label="IRA"
+                        value={inv.ira_pct != null ? `${inv.ira_pct}%` : '—'}
+                        sub="Inventory Record Accuracy" />
+                    </div>
+                    {inv.is_box_scan && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Discrepancia en cajas · ILA por ubicación · IRA ponderado por piezas.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* ── Precisión del conteo ──────────────────────────────────── */}
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Precisión</h3>
