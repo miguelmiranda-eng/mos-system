@@ -291,8 +291,12 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
       - un solo renglón sobrante + un solo lote sin renglón -> es el mismo
         renglón con el país/composición mal puestos: se reetiqueta
       - lote físico sin renglón -> se crea desde la caja
-      - renglón con saldo y sin ninguna caja -> NO se borra (puede ser saldo
-        legado real): se marca pending_cycle_count
+      - renglón con saldo y sin ninguna caja -> depende:
+          · si el físico de la celda YA está cubierto por otros renglones
+            respaldados (hay `usados` y no quedan `faltantes`) y no tiene
+            allocation -> es papel DUPLICADO y se consolida (elimina)
+          · si no hay respaldo que lo cubra (caso ambiguo/legado) -> NO se borra:
+            se marca pending_cycle_count (y alarma roja si brota en un movimiento)
 
     Es la pieza del modelo "mover cajas y recalcular": autocorrectiva — si un
     renglón quedó mal ayer, la siguiente operación sobre ese material lo repara.
@@ -388,6 +392,22 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
                 await db.wms_inventory.delete_one({"_id": r["_id"]})
                 notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
                                 f"agotado por el movimiento: eliminado")
+                continue
+            # DUPLICADO totalmente cubierto: hay renglones respaldados por cajas
+            # (`usados`) y NINGÚN lote físico quedó sin renglón (`faltantes` vacío),
+            # así que el físico de esta celda ya está 100% contabilizado por otros
+            # renglones. Un renglón sin cajas aquí es papel duplicado (típicamente
+            # el lote/país viejo tras re-etiquetar las cajas), no un lote distinto
+            # pendiente de recibir: se consolida. Requiere `usados` no vacío para
+            # no borrar un saldo posiblemente legado cuando NO hay respaldo alguno
+            # (ese caso ambiguo sigue yendo a conteo, abajo). Nunca toca un renglón
+            # con allocation comprometida. Es la misma regla que fix_phantom_dup_rows.
+            if (usados and not faltantes
+                    and int(r.get("units_on_hand") or 0) > 0
+                    and int(r.get("units_allocated") or 0) <= 0):
+                await db.wms_inventory.delete_one({"_id": r["_id"]})
+                notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                                f"duplicado (físico ya cubierto por otro lote): consolidado")
                 continue
             if int(r.get("units_on_hand") or 0) > 0 and not r.get("pending_cycle_count"):
                 await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
@@ -3205,11 +3225,12 @@ _BOX_EDITABLE_FIELDS = {
 
 @router.put("/boxes/{box_id}")
 async def update_box(box_id: str, request: Request):
-    """Edit a received box. If `units` changes, the inventory row for the
-    box's location is rebalanced by the delta so the on-hand stays accurate.
-    Other field edits propagate to the box doc only — they don't affect
-    inventory aggregations because those bucket on (sku, color, size,
-    location), not on description/country/fabric/lot."""
+    """Edit a received box. LA CAJA MANDA: tras parchear la caja, el marcador de
+    inventario se REESCRIBE desde las cajas vía _reproject_material_rows si cambió
+    algo que lo afecta — las unidades O los campos del LOTE (país/composición),
+    porque el renglón se llavea por (sku,color,talla,ubicación,país,composición) y
+    editar el país mueve la caja de renglón. (No confundir: NO es cierto que editar
+    país/tela "no afecte las agregaciones"; sí lo hace y por eso se reproyecta.)"""
     user = await require_auth(request)
     body = await request.json()
 

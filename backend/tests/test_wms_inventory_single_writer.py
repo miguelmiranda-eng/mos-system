@@ -36,7 +36,12 @@ WMS = os.path.join(os.path.dirname(__file__), "..", "routers", "wms.py")
 #           (55/20 -> 43/16).
 ALLOWLIST = {
     # ── El escritor legítimo y las piezas del modelo nuevo ──
-    "_reproject_material_rows": 6,        # EL reescritor (la caja manda)
+    "_reproject_material_rows": 7,        # EL reescritor (la caja manda). 2026-07-30:
+                                          # +1 delete_one -> consolida un renglón
+                                          # fantasma DUPLICADO cuando el físico ya
+                                          # está 100% cubierto por otro lote (papel
+                                          # viejo tras re-etiquetar cajas). Blindado
+                                          # en smoke_wms_move_location_lote.
     "_reconcile_missing_inventory_row": 1,  # crea fila desde cajas (modelo nuevo)
     "_selftest_cleanup": 1,               # limpieza del autotest de Auditoría
     # ── DEUDA (olas pendientes): migrar a cajas-primero + reescritor ──

@@ -155,6 +155,63 @@ async def main():
               rojo is not None and rojo.get("location") == "PS06-A08",
               f"{rojo and rojo.get('location')}")
 
+        print("\n== Fantasma CUBIERTO por otro lote: se CONSOLIDA (no sólo marca) ==")
+        # Renglón NICARAGUA sin cajas, pero el físico (REP. DOMINICANA) YA está
+        # cubierto por su propio renglón respaldado -> el Nicaragua es papel
+        # duplicado y debe consolidarse al reproyectar (caso del reporte
+        # 2026-07-30 PS01-A07). Disparamos la reproyección con una edición de caja.
+        sdb.wms_locations.insert_one({"name": "PS06-A11", "location_id": "loc_PS06-A11"})
+        sdb.wms_inventory.insert_many([
+            {"inventory_id": "inv_dup_rd", "sku": "5000-BLUE-M", "style": "5000",
+             "color": "BLUE", "size": "M", "location": "PS06-A11",
+             "country_of_origin": "REPUBLICA DOMINICANA", "fabric_content": "100% COTTON",
+             "units_on_hand": 60, "total_boxes": 1, "units_allocated": 0},
+            {"inventory_id": "inv_dup_nic", "sku": "5000-BLUE-M", "style": "5000",
+             "color": "BLUE", "size": "M", "location": "PS06-A11",
+             "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
+             "units_on_hand": 60, "total_boxes": 1, "units_allocated": 0},  # FANTASMA
+        ])
+        sdb.wms_boxes.insert_one({
+            "box_id": "SMK-RD1", "style": "5000", "sku": "5000-BLUE-M", "color": "BLUE",
+            "size": "M", "location": "PS06-A11", "units": 60, "qty": 60,
+            "status": "located", "country_of_origin": "REPUBLICA DOMINICANA",
+            "fabric_content": "100% COTTON",
+        })
+        r = await c.put("/api/wms/boxes/SMK-RD1", json={"country_of_origin": "REPUBLICA DOMINICANA"})
+        check("edit box 200", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        filas_dup = list(sdb.wms_inventory.find({"location": "PS06-A11", "style": "5000"}))
+        check("el renglón fantasma NICARAGUA se CONSOLIDÓ (sólo queda el respaldado)",
+              len(filas_dup) == 1 and filas_dup[0].get("country_of_origin") == "REPUBLICA DOMINICANA",
+              f"{[(f.get('country_of_origin'), f.get('units_on_hand')) for f in filas_dup]}")
+        check("conservación: papel de la celda = físico (60u)",
+              sum(f.get("units_on_hand", 0) for f in filas_dup) == 60,
+              f"{sum(f.get('units_on_hand', 0) for f in filas_dup)}")
+
+        print("\n== Fantasma con ALLOCATION: NO se consolida (se respeta el picking) ==")
+        sdb.wms_locations.insert_one({"name": "PS06-A12", "location_id": "loc_PS06-A12"})
+        sdb.wms_inventory.insert_many([
+            {"inventory_id": "inv_al_rd", "sku": "5000-GOLD-M", "style": "5000",
+             "color": "GOLD", "size": "M", "location": "PS06-A12",
+             "country_of_origin": "REPUBLICA DOMINICANA", "fabric_content": "100% COTTON",
+             "units_on_hand": 60, "total_boxes": 1, "units_allocated": 0},
+            {"inventory_id": "inv_al_nic", "sku": "5000-GOLD-M", "style": "5000",
+             "color": "GOLD", "size": "M", "location": "PS06-A12",
+             "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON",
+             "units_on_hand": 60, "total_boxes": 1, "units_allocated": 20},  # comprometido
+        ])
+        sdb.wms_boxes.insert_one({
+            "box_id": "SMK-GD1", "style": "5000", "sku": "5000-GOLD-M", "color": "GOLD",
+            "size": "M", "location": "PS06-A12", "units": 60, "qty": 60,
+            "status": "located", "country_of_origin": "REPUBLICA DOMINICANA",
+            "fabric_content": "100% COTTON",
+        })
+        r = await c.put("/api/wms/boxes/SMK-GD1", json={"country_of_origin": "REPUBLICA DOMINICANA"})
+        check("edit box 200", r.status_code == 200, f"{r.status_code}")
+        nic = sdb.wms_inventory.find_one({"location": "PS06-A12", "country_of_origin": "NICARAGUA"})
+        check("el fantasma con allocation NO se borró (va a conteo)",
+              nic is not None and nic.get("pending_cycle_count") is True,
+              f"{nic and nic.get('pending_cycle_count')}")
+
         print("\n== OLA 2: ajustar caja, borrar caja y putaway reescriben el marcador ==")
         sdb.wms_locations.insert_one({"name": "PS06-A09", "location_id": "loc_PS06-A09"})
         sdb.wms_inventory.insert_one({
