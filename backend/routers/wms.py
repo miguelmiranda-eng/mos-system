@@ -282,6 +282,53 @@ async def _record_incident(kind, user, mensaje, **campos):
         logger.exception("no se pudo registrar la incidencia %s", kind)
 
 
+def _emparejar_sobrantes(sobrantes, faltantes):
+    """Casa renglones sin cajas con lotes físicos sin renglón. Función PURA.
+
+    Devuelve `(parejas, sobrantes_libres, faltantes_libres)`, donde cada pareja
+    es `(renglón, firma_del_lote, acumulado_de_cajas)` y significa: ese renglón
+    y ese lote son LA MISMA COSA, sólo que el renglón tiene el país o la
+    composición mal puestos. Reetiquetarlo conserva su identidad —inventory_id,
+    allocations, historia— en vez de crear una fila nueva y dejar la vieja como
+    saldo fantasma.
+
+    DOS REGLAS, EN ORDEN
+      1. Un solo sobrante y un solo faltante -> son ese par, sin más. Es el
+         comportamiento histórico y se conserva tal cual.
+      2. Si no, se empareja por CANTIDAD EXACTA y sólo cuando la correspondencia
+         es ÚNICA EN AMBOS SENTIDOS: un solo lote con esas unidades y un solo
+         renglón sobrante con esas unidades.
+
+    POR QUÉ LA REGLA 2 (2026-08-03)
+    Antes sólo existía la 1. Con 1 sobrante y 2 faltantes se caía al camino de
+    "crear", nacían las dos filas nuevas y la vieja seguía viva: el papel se
+    DUPLICABA. Es el patrón detrás de las 503 celdas / 338k unidades medidas en
+    producción — p. ej. RP10-A14, renglón REPUBLICA DOMINICANA 2,232u contra
+    cajas HAITI 2,232u: mismo material, misma cantidad, sólo el país distinto.
+
+    Ante un empate NO se adivina: equivocar el país es dato aduanal incorrecto,
+    peor que dejar la celda para conteo físico.
+    """
+    parejas = []
+    libres_s = list(sobrantes)
+    libres_f = dict(faltantes)
+
+    if len(libres_s) == 1 and len(libres_f) == 1:
+        f, acc = next(iter(libres_f.items()))
+        return [(libres_s[0], f, acc)], [], {}
+
+    for r in list(libres_s):
+        u_r = int(r.get("units_on_hand") or 0)
+        cands = [(f, a) for f, a in libres_f.items() if int(a.get("units") or 0) == u_r]
+        mismos_s = sum(1 for x in libres_s if int(x.get("units_on_hand") or 0) == u_r)
+        if len(cands) == 1 and mismos_s == 1:
+            f, acc = cands[0]
+            parejas.append((r, f, acc))
+            libres_s.remove(r)
+            libres_f.pop(f)
+    return parejas, libres_s, libres_f
+
+
 async def _reproject_material_rows(style, sku, color, size, location, *, user=None, contexto=None, moved_sigs=None):
     """Reconstruye el resumen de UN material en UNA ubicación desde sus CAJAS.
 
@@ -354,9 +401,26 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
             sobrantes.extend(rs)
     faltantes = {f: acc for f, acc in lotes.items() if f not in usados}
 
-    if len(sobrantes) == 1 and len(faltantes) == 1:
-        f, acc = next(iter(faltantes.items()))
-        r = sobrantes[0]
+    # ── Emparejar renglón sobrante con lote sin renglón ──────────────────────
+    # Un renglón que quedó sin cajas y un lote físico sin renglón suelen ser LA
+    # MISMA COSA: el renglón con el país/composición mal puestos. Reetiquetarlo
+    # conserva su identidad (inventory_id, allocations, historia) en vez de crear
+    # uno nuevo y dejar el viejo como saldo fantasma.
+    #
+    # HISTORIA: esto sólo se hacía en el caso exacto 1 sobrante ↔ 1 faltante.
+    # Con 1 sobrante y 2 faltantes caía al `else`, CREABA las dos filas y dejaba
+    # viva la vieja: el papel se DUPLICABA. Es el patrón detrás de las 503 celdas
+    # / 338k unidades medidas el 2026-08-03 (RP10-A14: renglón REPUBLICA
+    # DOMINICANA 2,232u contra cajas HAITI 2,232u — el mismo material, la misma
+    # cantidad, sólo el país distinto).
+    #
+    # Ahora se emparejan también por CANTIDAD EXACTA, y sólo cuando la
+    # correspondencia es ÚNICA en AMBOS sentidos: un solo lote con esas unidades
+    # y un solo renglón sobrante con esas unidades. Si hay empate no se adivina —
+    # equivocar el país es peor que dejarlo para conteo, porque es dato aduanal.
+    parejas, libres_s, libres_f = _emparejar_sobrantes(sobrantes, faltantes)
+
+    for r, f, acc in parejas:
         s = acc["sample"]
         await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
             "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
@@ -366,76 +430,83 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
             "updated_at": now_iso(),
         }, "$unset": {"pending_cycle_count": "", "pending_cycle_count_reason": ""}})
         acc["row_id"] = r.get("inventory_id")
+        # Un lote reetiquetado YA tiene renglón que lo respalda: cuenta como
+        # `usado` para la regla de consolidación de más abajo.
+        usados.add(f)
         notables.append(f"renglón reetiquetado a [{f[0] or 'sin país'}] con {acc['units']}u/{acc['boxes']}c")
-    else:
-        for f, acc in faltantes.items():
-            s = acc["sample"]
-            nuevo_id = gen_id("inv")
-            await db.wms_inventory.insert_one({
-                "inventory_id": nuevo_id,
-                "sku": s.get("sku") or (style or sku), "style": s.get("style") or style,
-                "color": (color or "").strip(), "size": (size or "").strip(),
-                "customer": s.get("customer", ""), "manufacturer": s.get("manufacturer", ""),
-                "description": s.get("description", ""),
-                "country_of_origin": s.get("country_of_origin", "") or s.get("coo", ""),
-                "fabric_content": s.get("fabric_content", ""),
-                "location": location,
-                "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
-                "units_allocated": 0, "updated_at": now_iso(),
-            })
-            acc["row_id"] = nuevo_id
-            notables.append(f"renglón creado [{f[0] or 'sin país'}] con {acc['units']}u/{acc['boxes']}c")
-        for r in sobrantes:
-            # Si las cajas de ESTE lote acaban de salir en esta misma operación,
-            # el renglón sin cajas no es saldo legado: es el residuo del
-            # movimiento y se elimina (equivale al viejo "delete on empty").
-            if moved_sigs and ledger.row_signature(r) in moved_sigs:
-                await db.wms_inventory.delete_one({"_id": r["_id"]})
-                notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
-                                f"agotado por el movimiento: eliminado")
-                continue
-            # DUPLICADO totalmente cubierto: hay renglones respaldados por cajas
-            # (`usados`) y NINGÚN lote físico quedó sin renglón (`faltantes` vacío),
-            # así que el físico de esta celda ya está 100% contabilizado por otros
-            # renglones. Un renglón sin cajas aquí es papel duplicado (típicamente
-            # el lote/país viejo tras re-etiquetar las cajas), no un lote distinto
-            # pendiente de recibir: se consolida. Requiere `usados` no vacío para
-            # no borrar un saldo posiblemente legado cuando NO hay respaldo alguno
-            # (ese caso ambiguo sigue yendo a conteo, abajo). Nunca toca un renglón
-            # con allocation comprometida. Es la misma regla que fix_phantom_dup_rows.
-            if (usados and not faltantes
-                    and int(r.get("units_on_hand") or 0) > 0
-                    and int(r.get("units_allocated") or 0) <= 0):
-                await db.wms_inventory.delete_one({"_id": r["_id"]})
-                notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
-                                f"duplicado (físico ya cubierto por otro lote): consolidado")
-                continue
-            if int(r.get("units_on_hand") or 0) > 0 and not r.get("pending_cycle_count"):
-                await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
-                    "pending_cycle_count": True,
-                    "pending_cycle_count_reason": "saldo sin cajas detectado al recalcular tras una operación",
-                }})
-                # ALARMA ROJA cuando esto brota DURANTE un movimiento: o el
-                # residuo no casó por lote (bug/datos — PS06-A04 2026-07-23,
-                # 194u duplicadas en papel por una firma vacía) o un saldo
-                # legado acaba de quedar al descubierto. En ambos casos alguien
-                # debe ir a contar; la azul de reproyección no basta.
-                if moved_sigs and user is not None:
-                    await _record_incident(
-                        "saldo_sin_cajas_tras_movimiento", user,
-                        f"El renglón {ledger.describe(style, sku, color, size)} "
-                        f"[{ledger.canon_coo(r.get('country_of_origin'))}] en {location} "
-                        f"conservó {int(r.get('units_on_hand') or 0)}u pero quedó SIN cajas "
-                        f"tras un movimiento. Lote del renglón vs lotes movidos: "
-                        f"{ledger.row_signature(r)} vs {sorted(moved_sigs)}. "
-                        "Requiere conteo físico; si el lote de las cajas está vacío, "
-                        "puede ser dato incompleto en las cajas, no material real.",
-                        material=ledger.describe(style, sku, color, size),
-                        location=location,
-                        units=int(r.get("units_on_hand") or 0),
-                        **(contexto or {}))
-                notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
-                                f"con {r.get('units_on_hand')}u sin cajas: marcado para conteo")
+
+    for f, acc in libres_f.items():
+        s = acc["sample"]
+        nuevo_id = gen_id("inv")
+        await db.wms_inventory.insert_one({
+            "inventory_id": nuevo_id,
+            "sku": s.get("sku") or (style or sku), "style": s.get("style") or style,
+            "color": (color or "").strip(), "size": (size or "").strip(),
+            "customer": s.get("customer", ""), "manufacturer": s.get("manufacturer", ""),
+            "description": s.get("description", ""),
+            "country_of_origin": s.get("country_of_origin", "") or s.get("coo", ""),
+            "fabric_content": s.get("fabric_content", ""),
+            "location": location,
+            "units_on_hand": acc["units"], "total_boxes": acc["boxes"],
+            "units_allocated": 0, "updated_at": now_iso(),
+        })
+        acc["row_id"] = nuevo_id
+        notables.append(f"renglón creado [{f[0] or 'sin país'}] con {acc['units']}u/{acc['boxes']}c")
+    for r in libres_s:
+        # Si las cajas de ESTE lote acaban de salir en esta misma operación,
+        # el renglón sin cajas no es saldo legado: es el residuo del
+        # movimiento y se elimina (equivale al viejo "delete on empty").
+        if moved_sigs and ledger.row_signature(r) in moved_sigs:
+            await db.wms_inventory.delete_one({"_id": r["_id"]})
+            notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                            f"agotado por el movimiento: eliminado")
+            continue
+        # DUPLICADO totalmente cubierto: hay renglones respaldados por cajas
+        # (`usados`) y NINGÚN lote físico quedó sin renglón (`faltantes` vacío),
+        # así que el físico de esta celda ya está 100% contabilizado por otros
+        # renglones. Un renglón sin cajas aquí es papel duplicado (típicamente
+        # el lote/país viejo tras re-etiquetar las cajas), no un lote distinto
+        # pendiente de recibir: se consolida. Requiere `usados` no vacío para
+        # no borrar un saldo posiblemente legado cuando NO hay respaldo alguno
+        # (ese caso ambiguo sigue yendo a conteo, abajo). Nunca toca un renglón
+        # con allocation comprometida. Es la misma regla que fix_phantom_dup_rows.
+        #
+        # Se mira `libres_f` (lotes que SIGUEN sin renglón tras el emparejamiento),
+        # no `faltantes` (los de antes): un lote recién reetiquetado ya tiene su
+        # fila y no debe impedir que se consolide el papel sobrante.
+        if (usados and not libres_f
+                and int(r.get("units_on_hand") or 0) > 0
+                and int(r.get("units_allocated") or 0) <= 0):
+            await db.wms_inventory.delete_one({"_id": r["_id"]})
+            notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                            f"duplicado (físico ya cubierto por otro lote): consolidado")
+            continue
+        if int(r.get("units_on_hand") or 0) > 0 and not r.get("pending_cycle_count"):
+            await db.wms_inventory.update_one({"_id": r["_id"]}, {"$set": {
+                "pending_cycle_count": True,
+                "pending_cycle_count_reason": "saldo sin cajas detectado al recalcular tras una operación",
+            }})
+            # ALARMA ROJA cuando esto brota DURANTE un movimiento: o el
+            # residuo no casó por lote (bug/datos — PS06-A04 2026-07-23,
+            # 194u duplicadas en papel por una firma vacía) o un saldo
+            # legado acaba de quedar al descubierto. En ambos casos alguien
+            # debe ir a contar; la azul de reproyección no basta.
+            if moved_sigs and user is not None:
+                await _record_incident(
+                    "saldo_sin_cajas_tras_movimiento", user,
+                    f"El renglón {ledger.describe(style, sku, color, size)} "
+                    f"[{ledger.canon_coo(r.get('country_of_origin'))}] en {location} "
+                    f"conservó {int(r.get('units_on_hand') or 0)}u pero quedó SIN cajas "
+                    f"tras un movimiento. Lote del renglón vs lotes movidos: "
+                    f"{ledger.row_signature(r)} vs {sorted(moved_sigs)}. "
+                    "Requiere conteo físico; si el lote de las cajas está vacío, "
+                    "puede ser dato incompleto en las cajas, no material real.",
+                    material=ledger.describe(style, sku, color, size),
+                    location=location,
+                    units=int(r.get("units_on_hand") or 0),
+                    **(contexto or {}))
+            notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                            f"con {r.get('units_on_hand')}u sin cajas: marcado para conteo")
 
     # Las cajas de cada lote quedan vinculadas a SU renglón (la UI lista los
     # LPNs de un renglón por inventory_id; sin esto el cajón quedaría huérfano).
@@ -7609,46 +7680,89 @@ async def recon_commit(request: Request):
                       "recon_flagged_by": uname, "recon_batch": commit_id}})
         faltantes = len(missing_ids)
 
-    # Reconstruir inventario de la ubicacion desde las cajas AHORA presentes.
+    # ── Reconstruir el inventario de la ubicacion desde las cajas presentes ──
+    #
+    # AGRUPA POR LOTE, no solo por material. Hasta 2026-08-03 la llave era
+    # (style, color, size) a secas y los metadatos salian de la PRIMERA caja del
+    # cursor: una ubicacion con cajas de Honduras y de Nicaragua del mismo
+    # style/color/talla se fundia en UN renglon etiquetado con el pais de una de
+    # las dos, al azar. Eso destruye exactamente lo que services/inventory_ledger
+    # existe para proteger —el pais de origen es requisito legal de etiquetado en
+    # confeccion importada a EUA— y contradice el indice unico
+    # uniq_inventory_material_lote, que incluye pais y composicion justamente
+    # para que dos lotes COEXISTAN.
+    #
+    # units_allocated SE CONSERVA. El bloque borraba todos los renglones de la
+    # ubicacion y los reinsertaba con 0: cualquier compromiso de picking abierto
+    # ahi desaparecia del papel sin dejar rastro. Ahora se guarda lo comprometido
+    # por lote antes de borrar y se restituye al reinsertar.
     from collections import defaultdict as _dd
     present = await db.wms_boxes.find({
         "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"},
         "status": "located", "units": {"$gt": 0},
-    }, {"_id": 0, "style": 1, "sku": 1, "color": 1, "size": 1, "units": 1, "customer": 1,
-        "manufacturer": 1, "country_of_origin": 1, "fabric_content": 1}).to_list(5000)
-    groups = _dd(lambda: {"units": 0, "boxes": 0, "meta": {}})
+    }, {"_id": 0, "box_id": 1, "style": 1, "sku": 1, "color": 1, "size": 1, "units": 1,
+        "customer": 1, "manufacturer": 1, "country_of_origin": 1, "coo": 1,
+        "fabric_content": 1}).to_list(5000)
+
+    # Compromisos vigentes, indexados por (material + lote canonico) para poder
+    # devolverlos al renglon que les corresponde tras la reconstruccion.
+    alloc_previo = {}
+    for r in pre_inv:
+        a = int(r.get("units_allocated") or 0)
+        if a <= 0:
+            continue
+        k = (_RECON_NORM(r.get("style") or r.get("sku")), _RECON_NORM(r.get("color")),
+             _RECON_NORM(r.get("size"))) + ledger.row_signature(r)
+        alloc_previo[k] = alloc_previo.get(k, 0) + a
+
+    groups = _dd(lambda: {"units": 0, "boxes": 0, "meta": {}, "ids": []})
     for b in present:
-        key = (b.get("style") or b.get("sku") or "", b.get("color") or "", b.get("size") or "")
+        key = ((b.get("style") or b.get("sku") or ""), (b.get("color") or ""),
+               (b.get("size") or "")) + ledger.row_signature(b)
         g = groups[key]
         g["units"] += int(b.get("units") or 0)
         g["boxes"] += 1
+        if b.get("box_id"):
+            g["ids"].append(b["box_id"])
         if not g["meta"]:
-            g["meta"] = {k: b.get(k, "") for k in ("customer", "manufacturer", "country_of_origin", "fabric_content", "sku")}
+            g["meta"] = {k: b.get(k, "") for k in
+                         ("customer", "manufacturer", "country_of_origin", "coo",
+                          "fabric_content", "sku")}
     await db.wms_inventory.delete_many({"location": {"$regex": f"^{re.escape(location)}$", "$options": "i"}})
-    if groups:
-        for (st, co, sz), g in groups.items():
-            dst_id = gen_id("inv")
-            await db.wms_inventory.insert_one({
-                "inventory_id": dst_id, "style": st, "sku": g["meta"].get("sku") or st,
-                "color": co, "size": sz, "location": location,
-                "units_on_hand": g["units"], "units_allocated": 0, "total_boxes": g["boxes"],
-                "customer": g["meta"].get("customer", ""), "manufacturer": g["meta"].get("manufacturer", ""),
-                "country_of_origin": g["meta"].get("country_of_origin", ""),
-                "fabric_content": g["meta"].get("fabric_content", ""),
-                "recon_batch": commit_id, "updated_at": now_iso(),
-            })
-            # Update matching boxes at this location to point to the new inventory_id
-            style_norm = _RECON_NORM(st)
-            color_norm = _RECON_NORM(co)
-            size_norm = _RECON_NORM(sz)
-            await db.wms_boxes.update_many({
-                "location": {"$regex": f"^{re.escape(location)}$", "$options": "i"},
-                "status": "located",
-                "$or": [{"sku": {"$regex": f"^{style_norm}$", "$options": "i"}},
-                        {"style": {"$regex": f"^{style_norm}$", "$options": "i"}}],
-                "color": {"$regex": f"^{color_norm}$", "$options": "i"},
-                "size": {"$regex": f"^{size_norm}$", "$options": "i"},
-            }, {"$set": {"inventory_id": dst_id}})
+    for (st, co, sz, l_coo, l_fab), g in groups.items():
+        dst_id = gen_id("inv")
+        k_alloc = (_RECON_NORM(st), _RECON_NORM(co), _RECON_NORM(sz), l_coo, l_fab)
+        # Nunca comprometer mas de lo que hay fisicamente en el lote.
+        alloc = min(alloc_previo.pop(k_alloc, 0), g["units"])
+        await db.wms_inventory.insert_one({
+            "inventory_id": dst_id, "style": st, "sku": g["meta"].get("sku") or st,
+            "color": co, "size": sz, "location": location,
+            "units_on_hand": g["units"], "units_allocated": alloc, "total_boxes": g["boxes"],
+            "customer": g["meta"].get("customer", ""), "manufacturer": g["meta"].get("manufacturer", ""),
+            "country_of_origin": (g["meta"].get("country_of_origin", "")
+                                  or g["meta"].get("coo", "")),
+            "fabric_content": g["meta"].get("fabric_content", ""),
+            "recon_batch": commit_id, "updated_at": now_iso(),
+        })
+        # Las cajas de ESTE lote quedan ligadas a SU renglon. Se hace por box_id
+        # (no por regex de style/color/size) porque ese match no distingue lotes
+        # y reasignaba las cajas de Honduras al renglon de Nicaragua.
+        if g["ids"]:
+            await db.wms_boxes.update_many(
+                {"box_id": {"$in": g["ids"]}}, {"$set": {"inventory_id": dst_id}})
+
+    # Compromisos que quedaron sin lote fisico al que volver: el material
+    # comprometido ya no esta en la ubicacion. Se registra para que nadie
+    # descubra semanas despues que un pick ticket apunta a la nada.
+    if alloc_previo:
+        await _record_incident(
+            "recon_allocation_huerfana", user,
+            f"La conciliacion de {location} dejo {sum(alloc_previo.values())} unidades "
+            f"comprometidas sin lote fisico que las respalde "
+            f"({len(alloc_previo)} combinacion(es) material+lote). El pick ticket que "
+            f"las reservo apunta a material que ya no esta en la ubicacion.",
+            location=location, commit_id=commit_id,
+            unidades=sum(alloc_previo.values()))
 
     # Registrar/bloquear la ubicacion.
     lock_doc = {
