@@ -11805,25 +11805,60 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
             color = (r.get("color") or "").strip().upper()
             size = (r.get("size") or "").strip().upper()
             customer = (r.get("customer") or "").strip().upper()
+            # Lote: país de origen y composición. Son la IDENTIDAD del material
+            # junto con style/color/talla (ver services/inventory_ledger.py), y
+            # sin ellos la caja nace con firma vacía: no casa con ningún renglón
+            # y el reescritor la deja como lote aparte. Además el país es
+            # requisito legal de etiquetado en confección importada a EUA.
+            coo = re.sub(r"\s+", " ", str(r.get("country_of_origin") or "")).strip().upper()
+            fabric = re.sub(r"\s+", " ", str(r.get("fabric_content") or "")).strip().upper()
             sku = _auto_sku(style, color, size)
             existing = await db.wms_boxes.find_one(
                 {"$or": [{"box_id": bid}, {"barcode": bid}, {"lpn_id": bid}]})
-            real_id = existing.get("box_id") if existing else bid
+            escaneado = None
             if existing:
-                await db.wms_boxes.update_one(
-                    {"box_id": real_id},
-                    {"$set": {"units": units, "qty": units, "location": loc, "status": "stored",
-                              "updated_at": now_iso(), "updated_by": user.get("user_id")}},
-                )
+                real_id = existing.get("box_id")
+                upd = {"units": units, "qty": units, "location": loc, "status": "stored",
+                       "updated_at": now_iso(), "updated_by": user.get("user_id")}
+                # Completar el lote si la caja existente venía sin él; nunca
+                # pisar un dato que ya traía.
+                if coo and not (existing.get("country_of_origin") or "").strip():
+                    upd["country_of_origin"] = coo
+                    upd["coo"] = coo
+                if fabric and not (existing.get("fabric_content") or "").strip():
+                    upd["fabric_content"] = fabric
+                await db.wms_boxes.update_one({"box_id": real_id}, {"$set": upd})
             else:
-                await db.wms_boxes.insert_one({
+                # NÚMERO DE CAJA DEL SISTEMA. Antes el box_id era el código que
+                # el operador escaneó ('A-123'), así que una caja nacida en el
+                # conteo no seguía la secuencia BOX-###### del almacén: quedaba
+                # fuera del consecutivo, no se podía reimprimir su etiqueta con
+                # el formato de la casa y convivía con box_ids de formatos
+                # arbitrarios. Ahora se reserva de `counters` igual que en
+                # recepción y en el split de /move-units.
+                seq = await _reserve_box_seqs(1)
+                real_id = f"BOX-{seq:06d}"
+                doc = {
                     "box_id": real_id, "barcode": real_id, "lpn_id": real_id,
+                    "seq_num": seq,
                     "sku": sku, "style": style, "color": color, "size": size,
                     "units": units, "qty": units, "location": loc, "status": "stored",
-                    "customer": customer, "is_adjustment": True,
-                    "created_at": now_iso(), "updated_at": now_iso(),
-                    "updated_by": user.get("user_id"),
-                })
+                    "customer": customer,
+                    "country_of_origin": coo, "coo": coo, "fabric_content": fabric,
+                    "is_adjustment": True,
+                    "created_at": now_iso(), "received_at": now_iso(),
+                    "updated_at": now_iso(), "updated_by": user.get("user_id"),
+                }
+                # El código que el operador escaneó ES la etiqueta física del
+                # cartón. Se conserva como `physical_lpn` para que volver a
+                # escanearlo encuentre esta caja (_find_box_by_lpn). El índice
+                # es único y sparse: si ese código ya está ligado a otra caja no
+                # se reclama, y la caja nueva vive sólo con su BOX-######.
+                if bid and not await _find_box_by_lpn(bid):
+                    doc["physical_lpn"] = _norm_lpn(bid)
+                    doc["lpn_aliases"] = [_norm_lpn(bid)]
+                    escaneado = bid
+                await db.wms_boxes.insert_one(doc)
             # LA CAJA MANDA: la caja ya quedó viva arriba; el marcador se
             # reescribe desde las cajas (antes: _cc_add_inventory, aritmética).
             await _reproject_material_rows(
@@ -11832,11 +11867,14 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
             await log_movement(user, "cycle_count_manual_create", {
                 "box_id": real_id, "location": loc, "style": style, "sku": sku,
                 "color": color, "size": size,
+                "country_of_origin": coo, "fabric_content": fabric,
+                "codigo_escaneado": bid, "physical_lpn": escaneado,
                 "old_units": 0, "new_units": units, "delta_units": units,
                 "via": "cycle_count", "count_id": count_id,
             })
             created += 1
-            items.append({"box_id": real_id, "action": "create", "units": units})
+            items.append({"box_id": real_id, "action": "create", "units": units,
+                          "codigo_escaneado": bid, "physical_lpn": escaneado})
         else:  # discard (u otra acción -> descartar)
             await log_movement(user, "cycle_count_manual_discard", {
                 "box_id": bid, "location": loc, "via": "cycle_count", "count_id": count_id,
@@ -11857,7 +11895,11 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
         }},
     )
     await notify_badge_change("cycle_count")
-    return {"location": loc, "created": created, "discarded": discarded, "status": "ok"}
+    # `items` lleva el box_id que asignó el sistema para cada caja creada: el
+    # operador escaneó 'A-123' pero la caja nace como BOX-######, y necesita
+    # saber qué etiqueta imprimir y pegar en el cartón.
+    return {"location": loc, "created": created, "discarded": discarded,
+            "status": "ok", "items": items}
 
 
 @router.get("/cycle-counts")

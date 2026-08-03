@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { useAuth } from "../../App";
-import { fetcher, poster, putter, deleter, logLoadError } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsCatalogs, mergeUnique } from "./lib";
 import { PrefixLocationInput } from "./PrefixLocationInput";
 import { Btn, Chip, cls, EmptyState, StatCard, Th } from "./ui";
 
@@ -81,6 +81,13 @@ export const CycleCountModule = () => {
   // Resolución manual del supervisor: { [`${loc}:${boxId}`]: {action,units,sku,color,size,customer} }
   const [supForm, setSupForm] = useState({});
   const [resolvingSup, setResolvingSup] = useState(false);
+  // País y composición para las cajas que nacen en el conteo: se ofrecen desde
+  // el catálogo curado (mismo origen que Receiving) en vez de texto libre. Es
+  // lo que evita que vuelvan a entrar valores como 'WASH COLD' o una
+  // composición en el campo país, que hubo que limpiar de 748 cajas.
+  const wmsCat = useWmsCatalogs();
+  const countryOptions = mergeUnique(wmsCat.countries);
+  const fabricOptions = mergeUnique(wmsCat.fabrics);
   // ── Modal de confirmación genérico para acciones destructivas ───────────────
   // { title, message, onConfirm } | null
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -608,17 +615,41 @@ export const CycleCountModule = () => {
         const f = supForm[`${loc}:${b}`] || {};
         const action = f.action || 'discard';
         return action === 'create'
-          ? { box_id: b, action, units: parseInt(f.units, 10) || 0, style: f.style || '', color: f.color || '', size: f.size || '', customer: f.customer || '' }
+          ? { box_id: b, action, units: parseInt(f.units, 10) || 0, style: f.style || '', color: f.color || '', size: f.size || '', customer: f.customer || '',
+              country_of_origin: f.country_of_origin || '', fabric_content: f.fabric_content || '' }
           : { box_id: b, action: 'discard' };
       });
       const bad = resolutions.find(r => r.action === 'create' && (!r.units || r.units <= 0 || !r.style));
       if (bad) { toast.error(`Falta el estilo o unidades (>0) para crear ${bad.box_id}`); return; }
+      // El país y la composición son la identidad del LOTE: sin ellos la caja
+      // nace con firma vacía y no casa con ningún renglón. Se avisa, pero no se
+      // bloquea — en piso puede tocar un cartón sin etiqueta legible.
+      const sinLote = resolutions.filter(r => r.action === 'create' && (!r.country_of_origin || !r.fabric_content));
+      if (sinLote.length) {
+        const seguir = window.confirm(
+          `${sinLote.length} caja(s) se crearán SIN país de origen o sin contenido de tela.\n\n` +
+          `Esos campos son la identidad del lote: sin ellos la caja no se puede casar con su ` +
+          `renglón de inventario y el país es requisito de etiquetado para exportación.\n\n` +
+          `¿Continuar de todas formas?`);
+        if (!seguir) return;
+      }
       setResolvingSup(true);
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/resolve-supervisor`, { location: loc, resolutions });
         if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
         const data = await res.json();
+        // El número de caja lo asigna el sistema (secuencia BOX-######), no el
+        // código que se escaneó: hay que decírselo al operador para que sepa
+        // qué etiqueta imprimir y pegar en el cartón.
+        const nuevas = (data.items || []).filter(i => i.action === 'create');
         toast.success(`${loc}: resuelta · ${data.created} creada(s), ${data.discarded} descartada(s)`);
+        if (nuevas.length) {
+          toast.info(
+            `Cajas creadas — imprime y pega estas etiquetas:\n` +
+            nuevas.map(i => `${i.box_id}${i.codigo_escaneado && i.codigo_escaneado !== i.box_id
+              ? `  (escaneaste ${i.codigo_escaneado})` : ''}`).join('\n'),
+            { duration: 15000 });
+        }
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
       } catch { toast.error('Error de conexión'); }
@@ -901,9 +932,30 @@ export const CycleCountModule = () => {
                                       <input value={f.style || ''} onChange={e => upd({ style: e.target.value })} placeholder="Estilo *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
                                       <input value={f.color || ''} onChange={e => upd({ color: e.target.value })} placeholder="Color" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
                                       <input value={f.size || ''} onChange={e => upd({ size: e.target.value })} placeholder="Talla" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      {/* País y composición: el LOTE. Van por catálogo curado, no
+                                          texto libre — es lo que impide que vuelvan a entrar
+                                          valores como 'WASH COLD' en el campo país. */}
+                                      <SearchableSelect
+                                        value={f.country_of_origin || ''}
+                                        onChange={v => upd({ country_of_origin: v })}
+                                        options={countryOptions}
+                                        placeholder="País de origen *"
+                                        allowCreate={false}
+                                        testId={`cc-sup-coo-${b}`} />
+                                      <SearchableSelect
+                                        value={f.fabric_content || ''}
+                                        onChange={v => upd({ fabric_content: v })}
+                                        options={fabricOptions}
+                                        placeholder="Contenido de tela *"
+                                        allowCreate={false}
+                                        testId={`cc-sup-fabric-${b}`} />
                                       <div className="col-span-2 text-[11px] text-muted-foreground font-mono">
                                         SKU: <span className="text-foreground font-medium">{ccAutoSku(f.style, f.color, f.size) || '—'}</span>
                                         <span className="opacity-70"> · se genera solo</span>
+                                      </div>
+                                      <div className="col-span-2 text-[11px] text-muted-foreground">
+                                        N° de caja: <span className="text-foreground font-medium font-mono">BOX-######</span>
+                                        <span className="opacity-70"> · lo asigna el sistema al crear; imprime esa etiqueta para el cartón</span>
                                       </div>
                                     </div>
                                   )}
