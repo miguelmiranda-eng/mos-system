@@ -100,7 +100,13 @@ export function MoverModule({ currentUser }) {
   const [originInput, setOriginInput] = useState("");
   const [mode, setMode] = useState(null); // 'all' | 'box' | 'units' | 'reconcile'
   // Generar caja (material de producción sin LPN)
-  const [genForm, setGenForm] = useState({ style: '', color: '', size: '', units: '', customer: '', location: '' });
+  // country_of_origin y fabric_content son el LOTE: junto con style/color/talla
+  // forman la identidad del material (services/inventory_ledger.py). Sin ellos
+  // la caja nace con firma vacía, no casa con ningún renglón y el reescritor la
+  // trata como lote aparte — y el país es requisito de etiquetado para
+  // exportación. El backend ya los aceptaba y los valida contra el catálogo
+  // curado; este formulario simplemente no los mandaba.
+  const [genForm, setGenForm] = useState({ style: '', color: '', size: '', units: '', customer: '', location: '', country_of_origin: '', fabric_content: '' });
   const [genSubmitting, setGenSubmitting] = useState(false);
   const [genLastBox, setGenLastBox] = useState('');
   // Style/color options for the generate-box form — solo-catálogo (los valores
@@ -115,6 +121,8 @@ export function MoverModule({ currentUser }) {
   const { all: genSizeOptions } = useWmsSizes();
   const genCat = useWmsCatalogs();
   const genCustomerOptions = mergeUnique(genCat.customers, genOptions.customers);
+  const genCountryOptions = mergeUnique(genCat.countries);
+  const genFabricOptions = mergeUnique(genCat.fabrics);
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -250,6 +258,17 @@ export function MoverModule({ currentUser }) {
   const handleGenerateBox = async () => {
     if (!genForm.style.trim() || !genForm.location.trim() || !(Number(genForm.units) > 0)) {
       toast.error('Estilo, unidades (>0) y ubicación son requeridos'); return;
+    }
+    // El lote no bloquea —en piso puede tocar material sin etiqueta legible—
+    // pero se avisa qué se pierde: una caja sin país ni composición no casa con
+    // su renglón de inventario, y el país es requisito de etiquetado al exportar.
+    if (!genForm.country_of_origin.trim() || !genForm.fabric_content.trim()) {
+      const seguir = window.confirm(
+        'La caja se creará SIN país de origen o sin contenido de tela.\n\n' +
+        'Esos campos son la identidad del lote: sin ellos la caja no se puede casar ' +
+        'con su renglón de inventario, y el país es requisito de etiquetado para ' +
+        'exportación.\n\n¿Continuar de todas formas?');
+      if (!seguir) return;
     }
     setGenSubmitting(true);
     try {
@@ -435,6 +454,16 @@ export function MoverModule({ currentUser }) {
               <SearchableSelect options={locNames} value={genForm.location}
                 onChange={v => setGenForm(f => ({ ...f, location: v }))}
                 placeholder="Ubicación * (existente)" testId="gen-location" allowCreate={false} />
+              {/* El LOTE. Sólo catálogo, como el resto: con texto libre vuelven a
+                  entrar valores como 'WASH COLD' en el campo país, que hubo que
+                  limpiar de 748 cajas. Se conservan al generar la siguiente caja
+                  (igual que ubicación y cliente) porque un lote se etiqueta en tanda. */}
+              <SearchableSelect options={genCountryOptions} value={genForm.country_of_origin}
+                onChange={v => setGenForm(f => ({ ...f, country_of_origin: v }))}
+                placeholder="País de origen * (solo catálogo)" testId="gen-coo" allowCreate={false} />
+              <SearchableSelect options={genFabricOptions} value={genForm.fabric_content}
+                onChange={v => setGenForm(f => ({ ...f, fabric_content: v }))}
+                placeholder="Contenido de tela * (solo catálogo)" testId="gen-fabric" allowCreate={false} />
             </div>
             <button onClick={handleGenerateBox} disabled={genSubmitting} data-testid="gen-submit"
               className="w-full h-14 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
