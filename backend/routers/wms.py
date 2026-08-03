@@ -11,6 +11,7 @@ from wms_constants import (
 from services import inventory_ledger as ledger
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata
 from contextvars import ContextVar
 
@@ -5138,12 +5139,31 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             else:
                 merged[key] = {**l, "_origins": [l["country_of_origin"]] if l.get("country_of_origin") else []}
 
-        # Surface material that lives only as PHYSICAL BOXES — carts (CARRO N),
-        # transit and putaway-pending slots — so the picker sees stock wherever it
-        # physically sits, even when no inventory row backs it (or the row drifted).
-        # Shelves already covered by wms_inventory keep the inventory figure; we
-        # don't double-count those. Picking from such a location deducts the cart
-        # boxes directly (see _deduct_pick_boxes), which is exactly what we want.
+        # LA CAJA MANDA TAMBIÉN AL OFRECER (no sólo al descontar).
+        #
+        # HISTORIA: aquí decía `if loc in merged: continue  # trust it`. Es decir,
+        # si la ubicación tenía renglón, el picker veía el PAPEL y las cajas
+        # físicas se ignoraban por completo. El resto del WMS ya trata la caja
+        # como la verdad y reescribe el renglón desde ella; este punto —el único
+        # que le habla al operador— seguía confiando en el derivado.
+        #
+        # Medido contra producción el 2026-08-03: 54 celdas con saldo en papel y
+        # CERO cajas vivas (15,216 u que el picker ofrecía y no existen; 25 de
+        # ellas con todas sus cajas `depleted`, o sea material ya surtido), y 20
+        # celdas con cajas físicas y ningún renglón (1,935 u reales que el picker
+        # NO veía). 16,154 celdas estaban sanas: el ajuste es quirúrgico.
+        #
+        # Regla nueva, por ubicación:
+        #   · papel Y cajas -> min(papel, cajas). Nunca ofrecer lo que no está.
+        #   · papel SIN cajas -> se sigue mostrando (puede ser saldo legado real,
+        #     29 celdas/6,325 u), pero marcado `sin_verificar` para que la PDA lo
+        #     pinte distinto: el operador debe confirmarlo antes de contar con él.
+        #   · cajas SIN papel -> se ofrecen (comportamiento que ya existía).
+        #
+        # El filtro de status es el MISMO que usa _available_units (la guardia de
+        # oversell): sin él, este punto contaba cajas ya comprometidas —enviadas,
+        # en producción, recon_pending— que aquella rechazaba, y el picker recibía
+        # un 409 sobre stock que la propia pantalla le acababa de ofrecer.
         # Igual que arriba: _ci_eq exacto para usar el índice
         # sku_1_color_1_size_1_location_1_units_1 en vez de escanear wms_boxes (78k).
         box_q = {
@@ -5153,33 +5173,57 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             ],
             "size": _ci_eq(sz),
             "units": {"$gt": 0},
+            "status": {"$nin": list(_BOX_OUT_STATUSES)},
             "location": {"$exists": True, "$ne": ""},
         }
         if color:
             box_q["color"] = _ci_eq(color)
+        fisico: dict = {}
         for b in await db.wms_boxes.find(
             box_q, {"_id": 0, "location": 1, "units": 1, "qty": 1, "country_of_origin": 1}
-        ).to_list(2000):
+        ).to_list(5000):
             loc = b.get("location", "")
-            if not loc or loc in merged:
-                continue  # inventory already accounts for this location — trust it
             u = int((b.get("units") if b.get("units") is not None else b.get("qty", 0)) or 0)
-            if u <= 0:
+            if not loc or u <= 0:
                 continue
-            e = merged.setdefault(loc, {
-                "location": loc, "available": 0, "boxes": 0,
-                "country_of_origin": b.get("country_of_origin", ""), "_origins": [],
-            })
-            e["available"] += u
-            e["boxes"] += 1
+            f = fisico.setdefault(loc, {"units": 0, "boxes": 0, "origins": []})
+            f["units"] += u
+            f["boxes"] += 1
             coo = b.get("country_of_origin")
-            if coo and coo not in e["_origins"]:
-                e["_origins"].append(coo)
+            if coo and coo not in f["origins"]:
+                f["origins"].append(coo)
+
+        for loc, f in fisico.items():
+            m = merged.get(loc)
+            if m is None:
+                # Cajas sin renglón: material real que el papel no conoce.
+                merged[loc] = {
+                    "location": loc, "available": f["units"], "boxes": f["boxes"],
+                    "country_of_origin": "", "_origins": list(f["origins"]),
+                    "solo_cajas": True,
+                }
+                continue
+            # Papel y cajas: manda el MENOR. El papel ya viene neto de
+            # units_allocated, así que comprometido + faltante se respetan ambos.
+            if f["units"] < m["available"]:
+                m["papel_original"] = m["available"]
+                m["available"] = f["units"]
+                m["ajustado_por_cajas"] = True
+            m["boxes"] = f["boxes"]          # conteo real, no el denormalizado
+            for coo in f["origins"]:
+                if coo not in m["_origins"]:
+                    m["_origins"].append(coo)
+
+        # Renglón con saldo y ninguna caja viva: se muestra, pero señalado.
+        for loc, m in merged.items():
+            if loc not in fisico and not m.get("solo_cajas"):
+                m["sin_verificar"] = True
 
         locs = []
         for m in merged.values():
             m["country_of_origin"] = ", ".join(o for o in m.pop("_origins", []) if o)
-            locs.append(m)
+            if m["available"] > 0:
+                locs.append(m)
         total = sum(l["available"] for l in locs)
         for l in locs:
             l["percentage"] = round((l["available"] / total) * 100) if total > 0 else 0
@@ -7884,33 +7928,85 @@ async def recon_phantom_scan(request: Request):
     return await _run_phantom_scan(user)
 
 
+# Estado persistido del job nocturno. Vive en `wms_counters` (mismo patrón que
+# el consecutivo de fotos) porque el estado del job NO puede vivir en memoria:
+# ver el porqué en nightly_phantom_scan_loop.
+_PHANTOM_JOB_ID = "phantom_scan_job"
+_PHANTOM_HORA_UTC = 8        # 08:00 UTC ≈ 01:00 en el almacén
+_PHANTOM_PERIODO_H = 20      # no correr dos veces dentro de esta ventana
+_PHANTOM_ATRASO_H = 30       # pasadas estas horas se corre a la hora que sea
+
+
+async def _claim_phantom_scan(max_horas):
+    """Claim ATÓMICO del escaneo nocturno: devuelve True sólo si a ESTE proceso
+    le toca correrlo.
+
+    Hace falta porque el job ya no depende de un temporizador en memoria: la
+    marca de la última corrida se compara y se pisa en UNA sola operación, así
+    que ni dos workers de uvicorn ni dos reinicios seguidos disparan dos
+    escaneos completos sobre la misma base.
+    """
+    corte = (datetime.now(timezone.utc) - timedelta(hours=max_horas)).isoformat()
+    doc = await db.wms_counters.find_one_and_update(
+        {"_id": _PHANTOM_JOB_ID, "last_run_at": {"$lt": corte}},
+        {"$set": {"last_run_at": now_iso()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if doc is not None:
+        return True
+    # Nunca ha corrido: el índice único de `_id` hace que sólo UN proceso gane
+    # la inserción; los demás reciben DuplicateKeyError y ceden el turno.
+    try:
+        await db.wms_counters.insert_one({"_id": _PHANTOM_JOB_ID, "last_run_at": now_iso()})
+        return True
+    except DuplicateKeyError:
+        return False
+
+
 async def nightly_phantom_scan_loop():
-    """Job nocturno de salud (pendiente #3 del saneamiento): corre el escaneo
-    de stock fantasma todas las madrugadas a las 08:00 UTC (~01:00 en el
-    almacén). Lo arranca server.py en el startup. Cualquier descuadre
-    renglones-vs-cajas amanece en la pestaña Stock Fantasma y como incidencia,
-    sin esperar el WhatsApp del piso."""
+    """Job nocturno de salud: escaneo de stock fantasma de madrugada.
+
+    POR QUÉ NO ES UN `sleep` HASTA LAS 08:00
+    ────────────────────────────────────────
+    Lo era, y por eso dejó de correr. El temporizador se calculaba EN MEMORIA en
+    cada arranque, así que un contenedor que se reinicia una vez al día (deploy,
+    Easypanel) reiniciaba la cuenta antes de llegar a la hora y el escaneo no
+    disparaba NUNCA. Verificado el 2026-08-03: la última corrida era del
+    2026-07-29 — cinco días de descuadres invisibles, con la pestaña Stock
+    Fantasma mostrando datos rancios sin avisar que lo eran.
+
+    Ahora el estado vive en la BASE (`wms_counters`) y el loop sólo despierta
+    cada hora a preguntar si toca:
+      · a las 08:00 UTC, si no ha corrido en las últimas 20 h  -> corre
+      · si lleva más de 30 h sin correr                        -> corre YA
+        (catch-up: recupera el día que un reinicio se comió, a la hora que sea)
+    Un reinicio ya no puede saltarse el escaneo: a lo sumo lo retrasa una hora.
+    """
     import asyncio as _asyncio
-    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    # Gracia de arranque: el escaneo recorre cajas y renglones completos, así que
+    # no debe competir con el boot del backend ni con los índices.
+    await _asyncio.sleep(180)
     while True:
-        ahora = _dt.now(_tz.utc)
-        objetivo = ahora.replace(hour=8, minute=0, second=0, microsecond=0)
-        if objetivo <= ahora:
-            objetivo += _td(days=1)
-        await _asyncio.sleep((objetivo - ahora).total_seconds())
         try:
-            res = await _run_phantom_scan({"user_id": None, "name": "Sistema (job nocturno)"})
-            logger.info("Job nocturno de stock fantasma: %s pendientes (%s nuevos, %s resueltos)",
-                        res.get("count"), res.get("nuevos"), res.get("resueltos"))
-            # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
-            if res.get("nuevos"):
-                await _push_descuadre(
-                    "🌙 Job nocturno: fantasmas nuevos",
-                    f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
-                    f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
-                    url="/wms", tag="job-nocturno")
+            ahora = datetime.now(timezone.utc)
+            en_horario = ahora.hour == _PHANTOM_HORA_UTC
+            ventana = _PHANTOM_PERIODO_H if en_horario else _PHANTOM_ATRASO_H
+            if await _claim_phantom_scan(ventana):
+                etiqueta = "Sistema (job nocturno)" if en_horario else "Sistema (job nocturno, catch-up)"
+                res = await _run_phantom_scan({"user_id": None, "name": etiqueta})
+                logger.info("Job nocturno de stock fantasma [%s]: %s pendientes (%s nuevos, %s resueltos)",
+                            "horario" if en_horario else "catch-up",
+                            res.get("count"), res.get("nuevos"), res.get("resueltos"))
+                # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
+                if res.get("nuevos"):
+                    await _push_descuadre(
+                        "🌙 Job nocturno: fantasmas nuevos",
+                        f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
+                        f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
+                        url="/wms", tag="job-nocturno")
         except Exception:
-            logger.exception("Job nocturno de stock fantasma falló; reintenta mañana.")
+            logger.exception("Job nocturno de stock fantasma falló; reintenta en una hora.")
+        await _asyncio.sleep(3600)
 
 
 @router.post("/recon/phantom/registro")

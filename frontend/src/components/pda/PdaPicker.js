@@ -507,10 +507,15 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
       locsFor(sz).forEach(l => {
         const key = norm(l.location);
         if (!key) return;
-        if (!byLoc[key]) byLoc[key] = { location: l.location, available: 0, sizes: {} };
+        if (!byLoc[key]) byLoc[key] = { location: l.location, available: 0, sizes: {}, sinVerificar: false };
         const av = parseInt(l.available) || 0;
         byLoc[key].available += av;
         byLoc[key].sizes[sz] = (byLoc[key].sizes[sz] || 0) + av;
+        // El backend marca sin_verificar cuando la ubicación tiene saldo en el
+        // renglón pero NINGUNA caja viva que lo respalde. No se oculta (puede ser
+        // saldo legado real), pero el operador debe saber que va a una ubicación
+        // donde el sistema no puede probar que haya material.
+        if (l.sin_verificar) byLoc[key].sinVerificar = true;
       });
     });
     return Object.values(byLoc).sort((a, b) => b.available - a.available);
@@ -881,15 +886,20 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               ) : allLocs().map((l, i) => (
                 <button key={i} onClick={() => enterLocation(l)}
                   className="w-full rounded-xl border border-white/10 bg-black/20 p-3 flex items-center gap-3 active:bg-white/5 text-left">
-                  <MapPin className="w-5 h-5 text-blue-300 shrink-0" />
+                  <MapPin className={`w-5 h-5 shrink-0 ${l.sinVerificar ? 'text-amber-300' : 'text-blue-300'}`} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-mono font-black text-blue-300 text-lg">{l.location}</div>
+                    <div className={`font-mono font-black text-lg ${l.sinVerificar ? 'text-amber-300' : 'text-blue-300'}`}>{l.location}</div>
                     <div className="text-[10px] text-slate-500 truncate">
                       {Object.entries(l.sizes).map(([sz, q]) => `${sz}:${q}`).join(" · ")}
                     </div>
+                    {l.sinVerificar && (
+                      <div className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1 mt-0.5">
+                        <AlertTriangle className="w-3 h-3 shrink-0" /> Sin cajas registradas — verifica en piso
+                      </div>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="text-xl font-mono font-black text-emerald-400">{l.available}</div>
+                    <div className={`text-xl font-mono font-black ${l.sinVerificar ? 'text-amber-400' : 'text-emerald-400'}`}>{l.available}</div>
                     <div className="text-[9px] uppercase text-slate-500 font-black tracking-widest">pz</div>
                   </div>
                 </button>

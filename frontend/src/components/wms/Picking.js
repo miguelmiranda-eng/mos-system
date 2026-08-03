@@ -970,10 +970,15 @@ export const PickingModule = ({ currentUser } = {}) => {
                       {getSizeLocs(sz).length > 0 ? (
                         <div className="flex flex-wrap gap-2">
                           {getSizeLocs(sz).slice(0, 4).map((l, i) => (
-                            <div key={i} className="flex flex-col bg-card border border-border px-2 py-1 rounded-md" title={`${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
+                            <div key={i}
+                              className={`flex flex-col px-2 py-1 rounded-md border ${l.sin_verificar ? 'bg-amber-500/10 border-amber-500/40' : 'bg-card border-border'}`}
+                              title={l.sin_verificar
+                                ? `${l.available} units SIN CAJAS que las respalden — verificar en piso · ${l.country_of_origin || ''}`
+                                : `${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
                               <div className="flex items-center gap-2">
-                                <span className="text-foreground font-medium text-xs">{l.location}</span>
-                                <span className="font-semibold text-xs tabular-nums">{l.available}</span>
+                                <span className={`font-medium text-xs ${l.sin_verificar ? 'text-amber-400' : 'text-foreground'}`}>{l.location}</span>
+                                <span className={`font-semibold text-xs tabular-nums ${l.sin_verificar ? 'text-amber-400' : ''}`}>{l.available}</span>
+                                {l.sin_verificar && <span className="text-[9px] font-black uppercase text-amber-400">sin cajas</span>}
                               </div>
                               <div className="flex items-center justify-between mt-0.5 gap-2">
                                 {l.country_of_origin && <span className="text-[10px] text-muted-foreground">{l.country_of_origin}</span>}
