@@ -46,6 +46,25 @@ WMS_INDEXES = [
     # pasillo del conteo general pesa hasta ~280KB (scan_locations embebido) y se
     # reescribe entero en cada escaneo. Confirmado en vivo 2026-07-18.
     ("wms_cycle_counts", "count_id", {"unique": True}),
+    # wms_recon_phantom no tenia NINGUN indice. El escaneo de stock fantasma
+    # hace un find_one_and_update POR ITEM (~2,000 por corrida) buscando por
+    # phantom_id: sin indice, cada uno es un collection scan de la coleccion
+    # entera -> ~2,000 x 2,000 comparaciones por escaneo. Observado en vivo el
+    # 2026-08-03: el job nocturno reclamo su turno a las 23:19 y seguia sin
+    # terminar 5 minutos despues.
+    # NO unique, aunque phantom_id sea determinista por llave y el upsert ya
+    # asuma que identifica una sola fila: la coleccion tiene 3 documentos
+    # LEGADOS sin phantom_id que no son fantasmas — son bitacoras de borrados
+    # autorizados (hard_delete_location_phantom PO#1849,
+    # hard_delete_customer_material SPEKTRUM, delete_duplicate_pick_ticket) que
+    # se guardaron aqui en vez de en una coleccion de auditoria. Con `unique`
+    # el indice NO se crearia (tres nulls colisionan) y ensure_wms_indexes lo
+    # saltaria en silencio, dejando el escaneo lento para siempre: justo el
+    # modo de fallo que se acaba de corregir. El rendimiento lo da el indice,
+    # no la unicidad.
+    ("wms_recon_phantom", "phantom_id", {}),
+    # La pestana Stock Fantasma lista lo pendiente ordenado por delta.
+    ("wms_recon_phantom", [("status", 1), ("delta", -1)], {}),
     # Core (non-WMS) uniqueness guards against duplicate generated IDs.
     ("invoices", "invoice_id", {"unique": True}),
 ]

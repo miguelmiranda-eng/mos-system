@@ -8049,32 +8049,62 @@ _PHANTOM_JOB_ID = "phantom_scan_job"
 _PHANTOM_HORA_UTC = 8        # 08:00 UTC ≈ 01:00 en el almacén
 _PHANTOM_PERIODO_H = 20      # no correr dos veces dentro de esta ventana
 _PHANTOM_ATRASO_H = 30       # pasadas estas horas se corre a la hora que sea
+_PHANTOM_LOCK_H = 3          # un turno tomado y nunca liberado caduca aquí
 
 
 async def _claim_phantom_scan(max_horas):
-    """Claim ATÓMICO del escaneo nocturno: devuelve True sólo si a ESTE proceso
-    le toca correrlo.
+    """Toma el turno del escaneo nocturno. True sólo si a ESTE proceso le toca.
 
-    Hace falta porque el job ya no depende de un temporizador en memoria: la
-    marca de la última corrida se compara y se pisa en UNA sola operación, así
-    que ni dos workers de uvicorn ni dos reinicios seguidos disparan dos
-    escaneos completos sobre la misma base.
+    DOS MARCAS, NO UNA
+    ──────────────────
+      · `last_run_at`   — última corrida EXITOSA. Sólo se escribe al TERMINAR.
+      · `running_since` — turno tomado. Se libera al acabar, con éxito o no.
+
+    La primera versión pisaba `last_run_at` ANTES de ejecutar. Eso evitaba que
+    dos workers corrieran a la vez, pero si el escaneo reventaba a medias la
+    ventana de 20-30 h bloqueaba el reintento HASTA EL DÍA SIGUIENTE: un fallo
+    se comía la corrida entera sin que nadie se enterara. Justo el modo de
+    fallo silencioso que este job existe para eliminar.
+
+    Ahora un fallo libera el turno dejando `last_run_at` viejo, así que el
+    siguiente tick (una hora) reintenta. Y si el proceso muere sin liberar,
+    `running_since` caduca a las `_PHANTOM_LOCK_H` horas para que un turno
+    colgado no bloquee el job para siempre.
     """
-    corte = (datetime.now(timezone.utc) - timedelta(hours=max_horas)).isoformat()
+    ahora = datetime.now(timezone.utc)
+    corte_exito = (ahora - timedelta(hours=max_horas)).isoformat()
+    corte_lock = (ahora - timedelta(hours=_PHANTOM_LOCK_H)).isoformat()
     doc = await db.wms_counters.find_one_and_update(
-        {"_id": _PHANTOM_JOB_ID, "last_run_at": {"$lt": corte}},
-        {"$set": {"last_run_at": now_iso()}},
+        {"_id": _PHANTOM_JOB_ID,
+         "last_run_at": {"$lt": corte_exito},
+         # Nadie corriendo, o un turno tan viejo que su proceso ya murió.
+         "$or": [{"running_since": {"$exists": False}},
+                 {"running_since": None},
+                 {"running_since": {"$lt": corte_lock}}]},
+        {"$set": {"running_since": now_iso()}},
         return_document=ReturnDocument.AFTER,
     )
     if doc is not None:
         return True
     # Nunca ha corrido: el índice único de `_id` hace que sólo UN proceso gane
     # la inserción; los demás reciben DuplicateKeyError y ceden el turno.
+    # last_run_at nace en el epoch para que la PRIMERA corrida siempre proceda.
     try:
-        await db.wms_counters.insert_one({"_id": _PHANTOM_JOB_ID, "last_run_at": now_iso()})
+        await db.wms_counters.insert_one({
+            "_id": _PHANTOM_JOB_ID,
+            "last_run_at": "1970-01-01T00:00:00+00:00",
+            "running_since": now_iso()})
         return True
     except DuplicateKeyError:
         return False
+
+
+async def _release_phantom_scan(exito):
+    """Suelta el turno. `last_run_at` SÓLO avanza si el escaneo termino bien."""
+    upd = {"$unset": {"running_since": ""}}
+    if exito:
+        upd["$set"] = {"last_run_at": now_iso()}
+    await db.wms_counters.update_one({"_id": _PHANTOM_JOB_ID}, upd)
 
 
 async def nightly_phantom_scan_loop():
@@ -8107,17 +8137,25 @@ async def nightly_phantom_scan_loop():
             ventana = _PHANTOM_PERIODO_H if en_horario else _PHANTOM_ATRASO_H
             if await _claim_phantom_scan(ventana):
                 etiqueta = "Sistema (job nocturno)" if en_horario else "Sistema (job nocturno, catch-up)"
-                res = await _run_phantom_scan({"user_id": None, "name": etiqueta})
-                logger.info("Job nocturno de stock fantasma [%s]: %s pendientes (%s nuevos, %s resueltos)",
-                            "horario" if en_horario else "catch-up",
-                            res.get("count"), res.get("nuevos"), res.get("resueltos"))
-                # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
-                if res.get("nuevos"):
-                    await _push_descuadre(
-                        "🌙 Job nocturno: fantasmas nuevos",
-                        f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
-                        f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
-                        url="/wms", tag="job-nocturno")
+                exito = False
+                try:
+                    res = await _run_phantom_scan({"user_id": None, "name": etiqueta})
+                    exito = True
+                    logger.info("Job nocturno de stock fantasma [%s]: %s pendientes (%s nuevos, %s resueltos)",
+                                "horario" if en_horario else "catch-up",
+                                res.get("count"), res.get("nuevos"), res.get("resueltos"))
+                    # Amanecieron fantasmas nuevos -> alarma al celular con el resumen.
+                    if res.get("nuevos"):
+                        await _push_descuadre(
+                            "🌙 Job nocturno: fantasmas nuevos",
+                            f"{res['nuevos']} descuadre(s) nuevo(s) detectado(s); "
+                            f"{res.get('count')} pendientes en total. Revisa Conciliación → Stock Fantasma.",
+                            url="/wms", tag="job-nocturno")
+                finally:
+                    # Se suelta el turno pase lo que pase. Si el escaneo falló,
+                    # `last_run_at` NO avanza y el tick de la próxima hora
+                    # reintenta en vez de perder el día.
+                    await _release_phantom_scan(exito)
         except Exception:
             logger.exception("Job nocturno de stock fantasma falló; reintenta en una hora.")
         await _asyncio.sleep(3600)
