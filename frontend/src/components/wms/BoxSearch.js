@@ -116,6 +116,24 @@ export function BoxSearchBar({ compact = false }) {
                 </div>
               ) : (
                 <div className="space-y-4">
+                  {/* Cuarentena: caja de la carga inicial de Excel. No bloquea
+                      nada, pero quien la consulta debe saber que su número, sus
+                      piezas y su lote pueden no coincidir con el cartón. */}
+                  {data.inventario_corrupto && (
+                    <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-lg p-3 flex items-start gap-2">
+                      <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div className="text-xs leading-relaxed">
+                        <div className="font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
+                          Inventario no confiable
+                        </div>
+                        <div className="text-muted-foreground mt-0.5">
+                          Viene de la carga inicial de Excel: su número, sus piezas y su
+                          lote pueden no coincidir con el cartón físico. Esta ubicación
+                          debe auditarse en conteo cíclico.
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {/* Box summary */}
                   <div className="bg-muted/30 border border-border rounded-lg p-4">
                     <div className="flex items-start justify-between gap-3">

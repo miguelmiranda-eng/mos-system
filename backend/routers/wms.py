@@ -3281,7 +3281,9 @@ async def get_box(box_id: str, request: Request):
                 box["box_id"] = box_id
                 return box
         raise HTTPException(404, "Caja no encontrada")
-    return box
+    # Cuarentena del import: el buscador global de cajas es donde más se consulta
+    # una caja suelta, así que el aviso tiene que salir también aquí.
+    return {**box, **marca_corrupta(box)}
 
 
 # Fields the operator can edit after a box is received. Excludes box_id /
@@ -3605,6 +3607,9 @@ async def box_history(box_id: str, request: Request, limit: int = 300):
         "box_event_count": len(box_events),
         "sku_context": sku_context,
         "sku_context_count": len(sku_context),
+        # El buscador global del header es donde más se consulta una caja
+        # suelta: el aviso de cuarentena tiene que salir también aquí.
+        **(marca_corrupta(box) if box else {"inventario_corrupto": False}),
     }
 
 
@@ -6096,9 +6101,153 @@ async def save_pick_progress(ticket_id: str, request: Request):
 # el picker en realidad estaba jalando material de otra. El scan ata el LPN
 # fisico a un box_id especifico y desde ahi el descuento va a esa caja.
 
+# ==================== INVENTARIO CORRUPTO (CUARENTENA DEL IMPORT) ============
+# El material que entró por el import de Excel no tiene identidad confiable: sus
+# cajas se INVENTARON a partir de un agregado ("en RP10-A26 hay 5 cajas / 35 u"),
+# así que su box_id (LPN<hex>) no está impreso en ningún cartón, sus unidades son
+# un reparto ficticio y muchas no traen país ni composición. Medido 2026-08-03:
+# 34,557 cajas / 1,600,875 u en 1,680 ubicaciones — el 62% del almacén.
+#
+# Es el origen de casi todo lo que este módulo ha tenido que perseguir: las
+# unidades que no casan, los lotes sin país, los renglones duplicados.
+#
+# CUARENTENA, NO BLOQUEO. El 10% de los surtidos toca estas cajas: bloquearlas
+# pararía el almacén. En vez de eso, cuando el piso se topa con una se AVISA y
+# se levanta una tarea de auditoría con su ubicación. La lista se prioriza sola
+# —lo que más se toca, primero; lo que nadie toca, no estorba— en vez de
+# obligar a decidir por dónde empezar a auditar 1,680 ubicaciones.
+#
+# La salida de la cuarentena es física: se cuenta la ubicación y sus cajas se
+# reemplazan por cajas BOX- reales. Entonces deja de aparecer, sola.
+
+def es_caja_del_import(box) -> bool:
+    """True si la caja viene del import de Excel y aún no se ha saneado.
+
+    El criterio es el box_id: las cajas nacidas en el sistema (recepción, split,
+    conteo, MOVER) llevan el consecutivo BOX-######; las del import llevan un
+    LPN<hex> sintético. `saneada_at` la marca como ya auditada y la saca.
+    """
+    box = box or {}
+    if box.get("saneada_at"):
+        return False
+    return not str(box.get("box_id") or "").strip().upper().startswith("BOX-")
+
+
+AVISO_CORRUPTO = (
+    "INVENTARIO NO CONFIABLE: esta caja viene de la carga inicial de Excel. "
+    "Su número, sus piezas y su lote pueden no coincidir con el cartón físico. "
+    "Escanea la UBICACIÓN para que el equipo de conteo la audite."
+)
+
+
+def marca_corrupta(box) -> dict:
+    """Bloque que se agrega a cualquier respuesta que resuelva una caja escaneada,
+    para que la PDA pueda levantar el aviso sin consultar otra cosa."""
+    if not es_caja_del_import(box):
+        return {"inventario_corrupto": False}
+    return {"inventario_corrupto": True,
+            "corrupto_aviso": AVISO_CORRUPTO,
+            "corrupto_pide_ubicacion": True}
+
+
 def _norm_lpn(s):
     """Canoniza el LPN: strip, uppercase, quita espacios/guiones extras."""
     return re.sub(r"\s+", "", (s or "").strip().upper())
+
+
+@router.post("/quarantine/report")
+async def quarantine_report(request: Request):
+    """El piso se topó con una caja del import: levanta/actualiza la tarea de
+    auditoría de esa UBICACIÓN. body: { location, box_id? }
+
+    Idempotente por ubicación: si ya estaba reportada sólo suma un encuentro.
+    `encuentros` es lo que ordena la cola — una ubicación que estorba a diario
+    sube sola por encima de una que se tocó una vez.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    box_id = str(body.get("box_id") or "").strip().upper()
+    if not location:
+        raise HTTPException(400, "Escanea la ubicación para reportar el inventario no confiable")
+
+    # Foto del daño en esa ubicación, para que el supervisor sepa qué le espera.
+    cajas = await db.wms_boxes.find(
+        {"location": location, "units": {"$gt": 0}},
+        {"_id": 0, "box_id": 1, "units": 1, "saneada_at": 1}).to_list(5000)
+    delimport = [b for b in cajas if es_caja_del_import(b)]
+
+    ahora = now_iso()
+    update = {
+        "$set": {"ultimo_encuentro_at": ahora,
+                 "ultimo_encuentro_por": user.get("name", user.get("email", "")),
+                 "cajas_import": len(delimport),
+                 "unidades_import": sum(int(b.get("units") or 0) for b in delimport),
+                 "cajas_totales": len(cajas),
+                 "updated_at": ahora},
+        "$inc": {"encuentros": 1},
+        "$setOnInsert": {"status": "pendiente", "created_at": ahora,
+                         "primer_encuentro_por": user.get("name", user.get("email", ""))},
+    }
+    # Mongo rechaza un operador vacío, así que $addToSet sólo va si hay caja.
+    # Sin $slice: ese modificador es de $push y $addToSet lo rechaza
+    # ("Found unexpected fields after $each"). El array queda acotado solo,
+    # porque $addToSet deduplica y las cajas de una ubicación son finitas.
+    if box_id:
+        update["$addToSet"] = {"box_ids": box_id}
+    doc = await db.wms_quarantine_locations.find_one_and_update(
+        {"location": location}, update,
+        upsert=True, return_document=ReturnDocument.AFTER)
+
+    await log_movement(user, "quarantine_reported", {
+        "location": location, "box_id": box_id,
+        "cajas_import": len(delimport),
+        "unidades_import": sum(int(b.get("units") or 0) for b in delimport)})
+    return {"ok": True, "location": location,
+            "encuentros": (doc or {}).get("encuentros", 1),
+            "cajas_import": len(delimport),
+            "cajas_totales": len(cajas),
+            "unidades_import": sum(int(b.get("units") or 0) for b in delimport),
+            "status": (doc or {}).get("status", "pendiente"),
+            "message": f"{location} quedó en la lista de auditoría del conteo cíclico"}
+
+
+@router.get("/quarantine/locations")
+async def quarantine_locations(request: Request, status: str = "pendiente", limit: int = 500):
+    """Cola de ubicaciones por auditar, ordenada por cuánto estorban.
+
+    La lee el módulo de Conteo Cíclico para armar el conteo. `status=todos`
+    incluye las ya auditadas.
+    """
+    await require_auth(request)
+    q = {} if status == "todos" else {"status": status}
+    items = await db.wms_quarantine_locations.find(q, {"_id": 0}).sort(
+        [("encuentros", -1), ("unidades_import", -1)]).to_list(min(limit, 2000))
+    return {"count": len(items), "items": items}
+
+
+@router.post("/quarantine/resolve")
+async def quarantine_resolve(request: Request):
+    """Marca una ubicación como auditada. body: { location, nota? }
+
+    No toca cajas: sacarlas de la cuarentena es trabajo del conteo (contar y
+    reemplazarlas por cajas BOX- reales). Esto sólo la saca de la cola.
+    """
+    user = await require_inventory_level(request, 2)
+    body = await request.json()
+    location = _RECON_NORM(body.get("location"))
+    if not location:
+        raise HTTPException(400, "location es obligatoria")
+    r = await db.wms_quarantine_locations.update_one(
+        {"location": location},
+        {"$set": {"status": "auditada", "auditada_at": now_iso(),
+                  "auditada_por": user.get("name", user.get("email", "")),
+                  "nota": str(body.get("nota") or "").strip(),
+                  "updated_at": now_iso()}})
+    if not r.matched_count:
+        raise HTTPException(404, f"{location} no está en la lista de cuarentena")
+    await log_movement(user, "quarantine_resolved", {"location": location})
+    return {"ok": True, "location": location, "status": "auditada"}
 
 
 async def _find_box_by_lpn(lpn):
@@ -6191,6 +6340,10 @@ async def scan_box(ticket_id: str, request: Request):
             "box": box,
             "ticket_context": ticket_context,
             "sizes_needed": sizes_needed,
+            # Cuarentena del import: el pick NO se bloquea (el 10% de los
+            # surtidos toca estas cajas), pero la PDA levanta el aviso y pide
+            # la ubicación para la cola de auditoría.
+            **marca_corrupta(box),
         }
 
     # 2) LPN desconocido → pide binding (modal cuestionario)
@@ -7538,6 +7691,7 @@ async def recon_resolve_scan(request: Request):
             "box_id": box.get("box_id"),
             "here": _RECON_NORM(box.get("location")) == location,
             "box": {k: box.get(k) for k in ("box_id", "sku", "style", "color", "size", "units", "location", "physical_lpn")},
+            **marca_corrupta(box),
         }
     # LPN físico sin ligar -> candidatos placeholder (box_id LPN…, sin physical_lpn).
     candidates = await _cc_bind_candidates(location)

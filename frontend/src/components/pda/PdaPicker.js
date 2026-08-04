@@ -398,6 +398,13 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const [activeLocation, setActiveLocation] = useState(null);
   const [activeBox, setActiveBox] = useState(null);        // {box_id, units, lpn}
   const [unidentifiedLpn, setUnidentifiedLpn] = useState(null); // LPN escaneado que no existe en el sistema
+  // Caja de la carga inicial de Excel: su número, sus piezas y su lote pueden no
+  // coincidir con el cartón. NO se bloquea el surtido (el 10% de los picks las
+  // toca), pero se avisa y se le pide al operador escanear la ubicación para que
+  // el equipo de conteo sepa cuál auditar.
+  const [corrupto, setCorrupto] = useState(null);   // { box, lpn, aviso }
+  const [corruptoLoc, setCorruptoLoc] = useState("");
+  const [corruptoEnviando, setCorruptoEnviando] = useState(false);
   const [takeQty, setTakeQty] = useState(0);
   // Carrito de cajas escaneadas EN LA UBICACIÓN ACTIVA, aún sin descontar.
   // Cada item: { box_id, lpn, boxUnits, qty, size }. Se acumula multi-talla y
@@ -604,6 +611,15 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
       const data = await r.json();
       if (!r.ok) { toast.error(data.detail || "Error al escanear"); return; }
       if (data.status === "matched") {
+        // Caja de la carga inicial: se avisa ANTES de capturar cantidad y se
+        // pide la ubicación para la cola de auditoría. El surtido no se detiene:
+        // tras reportar (o saltar) se sigue al flujo normal.
+        if (data.inventario_corrupto) {
+          setCorrupto({ box: data.box, lpn, aviso: data.corrupto_aviso });
+          setCorruptoLoc("");
+          if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+          return;
+        }
         openBoxForQty(data.box, lpn);
       } else if (data.status === "wrong_ticket") {
         toast.error(data.message || "La caja no es de este ticket");
@@ -618,6 +634,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
       }
     } catch (e) { toast.error("Error de conexión al escanear"); }
   };
+
 
   // Abre una caja (ya identificada) para capturar cantidad. La TALLA sale de la
   // propia caja — así el flujo es ubicación-primero y un solo campo recibe
@@ -647,6 +664,33 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     setStage('quantity');
     toast.success(`✓ Caja ${box.box_id} · talla ${bsize} · ${box.units} pz`);
     if (navigator.vibrate) navigator.vibrate(60);
+  };
+
+  // Reporta la ubicación de una caja no confiable y sigue con el surtido. El
+  // reporte es idempotente por ubicación: escanear la misma diez veces suma
+  // encuentros, que es justo lo que ordena la cola de auditoría.
+  const reportarCorrupto = async (saltar) => {
+    const pend = corrupto;
+    if (!pend) return;
+    if (!saltar) {
+      const loc = cleanScan(corruptoLoc);
+      if (!loc) { toast.error("Escanea la ubicación"); return; }
+      setCorruptoEnviando(true);
+      try {
+        const r = await fetch(`${API}/quarantine/report`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ location: loc, box_id: pend.box?.box_id }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) toast.success(`${loc} anotada para auditoría (${d.unidades_import || 0} pz por revisar)`);
+        else toast.error(d.detail || "No se pudo reportar");
+      } catch { toast.error("Error de conexión al reportar"); }
+      finally { setCorruptoEnviando(false); }
+    }
+    setCorrupto(null);
+    setCorruptoLoc("");
+    openBoxForQty(pend.box, pend.lpn);   // el surtido continúa
   };
 
   // ── Acumular caja (NO descuenta; solo agrega al carrito local) ─────────────
@@ -1069,6 +1113,57 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             className="w-full h-14 rounded-2xl bg-white/5 active:bg-white/10 border border-white/10 text-slate-200 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2">
             <ChevronLeft className="w-4 h-4" /> Volver a cajas
           </button>
+        </div>
+      )}
+
+      {/* ══════ INVENTARIO NO CONFIABLE (carga inicial de Excel) ══════
+          Overlay, no un stage: el surtido NO se detiene. Se avisa, se pide la
+          ubicación para la cola de auditoría, y se sigue a capturar cantidad. */}
+      {corrupto && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-end sm:items-center justify-center p-3">
+          <div className="w-full max-w-md space-y-3">
+            <div className="bg-amber-500/15 border-2 border-amber-500/50 rounded-2xl p-4 text-center">
+              <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto mb-2" />
+              <div className="text-lg font-black uppercase tracking-widest text-amber-300 leading-tight">
+                Inventario no confiable
+              </div>
+              <div className="text-[11px] text-amber-100/80 mt-2 leading-relaxed">
+                Esta caja viene de la carga inicial. Su número, sus piezas y su lote
+                pueden no coincidir con el cartón físico.
+              </div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-amber-400/70 mt-3">Caja</div>
+              <div className="font-mono font-black text-amber-100 text-base break-all">
+                {corrupto.box?.box_id}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/40 p-3 space-y-2">
+              <div className="text-[11px] font-black uppercase tracking-widest text-slate-300">
+                Escanea la ubicación
+              </div>
+              <div className="text-[11px] text-slate-400 leading-relaxed">
+                Para que el equipo de conteo sepa cuál auditar. Puedes seguir
+                surtiendo normalmente.
+              </div>
+              <input
+                autoFocus value={corruptoLoc}
+                onChange={e => setCorruptoLoc(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') reportarCorrupto(false); }}
+                placeholder="Escanea o teclea la ubicación"
+                data-testid="pda-corrupto-loc"
+                className="w-full h-14 px-3 rounded-xl bg-black/40 border border-white/15 text-center font-mono font-black text-lg text-amber-100 uppercase tracking-widest outline-none focus:border-amber-400/60" />
+              <button onClick={() => reportarCorrupto(false)} disabled={corruptoEnviando}
+                data-testid="pda-corrupto-report"
+                className="w-full h-14 rounded-2xl bg-amber-500 active:bg-amber-600 text-black text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                {corruptoEnviando ? 'Enviando…' : 'Reportar y continuar'}
+              </button>
+              <button onClick={() => reportarCorrupto(true)} disabled={corruptoEnviando}
+                data-testid="pda-corrupto-skip"
+                className="w-full h-11 rounded-2xl bg-white/5 active:bg-white/10 border border-white/10 text-slate-400 text-xs font-black uppercase tracking-widest disabled:opacity-50">
+                Continuar sin reportar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

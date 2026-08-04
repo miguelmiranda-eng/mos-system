@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
@@ -92,7 +92,19 @@ export const CycleCountModule = () => {
   // { title, message, onConfirm } | null
   const [confirmDialog, setConfirmDialog] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'kpis' | 'efficiency'
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'kpis' | 'efficiency' | 'cuarentena'
+  // Cola de ubicaciones con material de la carga inicial de Excel, reportada
+  // por el piso al toparse con una caja no confiable.
+  const [cuarentena, setCuarentena] = useState(null);
+  const [loadingCuar, setLoadingCuar] = useState(false);
+  const loadCuarentena = useCallback(async () => {
+    setLoadingCuar(true);
+    try {
+      const d = await fetcher('/quarantine/locations');
+      setCuarentena(d.items || []);
+    } catch (e) { logLoadError('cola de auditoría')(e); setCuarentena([]); }
+    finally { setLoadingCuar(false); }
+  }, []);
 
   // ── KPIs de UN conteo (gate nivel 3, igual que el reporte) ────────────────
   // Reusa /cycle-counts/{id}/report: el mismo payload del Excel, pintado en
@@ -1212,6 +1224,22 @@ export const CycleCountModule = () => {
               EFICIENCIA
             </button>
           )}
+          {/* Cola de auditoría del material de la carga inicial. La llena el
+              piso: cada vez que un operador se topa con una caja no confiable
+              reporta su ubicación, y aquí se ve ordenada por cuánto estorba. */}
+          <button
+            onClick={() => { setActiveTab('cuarentena'); if (cuarentena === null && !loadingCuar) loadCuarentena(); }}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'cuarentena' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            data-testid="cc-tab-cuarentena"
+          >
+            <AlertTriangle className="w-4 h-4" />
+            POR AUDITAR
+            {cuarentena?.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-black text-[10px] font-bold tabular-nums">
+                {cuarentena.length}
+              </span>
+            )}
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -1623,6 +1651,89 @@ export const CycleCountModule = () => {
                 </div>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'cuarentena' && (
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="cc-cuarentena">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-sm">
+              <AlertTriangle className="w-4 h-4" /> Material de la carga inicial (Excel)
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+              Estas cajas se crearon a partir de un total, no de un cartón real: su
+              número no está impreso en ningún lado y sus piezas son un reparto
+              estimado. La lista la llena el piso — cada vez que un operador se topa
+              con una, reporta su ubicación. <b className="text-foreground">Las de
+              arriba son las que más estorban</b>: audítalas primero.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Btn variant="secondary" onClick={loadCuarentena} disabled={loadingCuar}>
+              {loadingCuar ? 'Cargando…' : 'Actualizar'}
+            </Btn>
+            {cuarentena?.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {cuarentena.length} ubicación{cuarentena.length === 1 ? '' : 'es'} ·{' '}
+                {cuarentena.reduce((s, i) => s + (i.unidades_import || 0), 0).toLocaleString()} pz por auditar
+              </span>
+            )}
+          </div>
+
+          {loadingCuar ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground p-6">
+              <Loader2 className="w-4 h-4 animate-spin" /> Cargando…
+            </div>
+          ) : !cuarentena?.length ? (
+            <EmptyState icon={CheckCircle} title="Nada por auditar"
+              subtitle="El piso no ha reportado cajas de la carga inicial. Aparecerán aquí conforme se las encuentren." />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <Th>Ubicación</Th>
+                    <Th className="text-right">Veces topada</Th>
+                    <Th className="text-right">Cajas sin auditar</Th>
+                    <Th className="text-right">Piezas</Th>
+                    <Th>Último reporte</Th>
+                    <Th>Acción</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cuarentena.map(it => (
+                    <tr key={it.location} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-3 py-2 font-mono font-semibold">{it.location}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                          (it.encuentros || 0) >= 5 ? 'bg-red-500/20 text-red-500'
+                          : (it.encuentros || 0) >= 2 ? 'bg-amber-500/20 text-amber-500'
+                          : 'bg-muted text-muted-foreground'}`}>
+                          {it.encuentros || 1}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{it.cajas_import ?? '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                        {(it.unidades_import || 0).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                        {(it.ultimo_encuentro_at || '').slice(0, 16).replace('T', ' ')}
+                        {it.ultimo_encuentro_por && <> · {it.ultimo_encuentro_por}</>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Btn variant="secondary"
+                          onClick={() => { setForm(f => ({ ...f, name: `Auditoría ${it.location}`, location_filter: it.location, include_empty: true })); setActiveTab('active'); setShowForm(true); }}
+                          data-testid={`cc-cuar-count-${it.location}`}>
+                          Crear conteo
+                        </Btn>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

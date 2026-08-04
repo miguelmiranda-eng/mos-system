@@ -65,6 +65,10 @@ WMS_INDEXES = [
     ("wms_recon_phantom", "phantom_id", {}),
     # La pestana Stock Fantasma lista lo pendiente ordenado por delta.
     ("wms_recon_phantom", [("status", 1), ("delta", -1)], {}),
+    # Cuarentena del material del import: el upsert por ubicacion corre en cada
+    # escaneo del piso, y la cola se lee ordenada por cuanto estorba.
+    ("wms_quarantine_locations", "location", {"unique": True}),
+    ("wms_quarantine_locations", [("status", 1), ("encuentros", -1)], {}),
     # Core (non-WMS) uniqueness guards against duplicate generated IDs.
     ("invoices", "invoice_id", {"unique": True}),
 ]
