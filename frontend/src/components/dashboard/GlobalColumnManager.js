@@ -2,10 +2,12 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
   GripVertical, Eye, EyeOff, Save, Loader2, Columns, Plus, Trash2,
-  Search, Pencil, Check, X, Lock, SlidersHorizontal, ChevronLeft,
+  Search, Pencil, Check, X, Lock, SlidersHorizontal, ChevronLeft, FunctionSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
+import { FormulaEditor } from "./FormulaEditor";
+import { validateFormula } from "../../lib/formula";
 
 // Type catalog shared by the add form and the per-row type editor. `estado`
 // is the UI label for a colored select; it persists as type 'select'.
@@ -45,6 +47,14 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
   const [dirtyOptionKeys, setDirtyOptionKeys] = useState([]);
   const [colorsDirty, setColorsDirty] = useState(false);
 
+  // Formula sub-editor (per column). Hasta ahora la fórmula solo se podía
+  // definir al CREAR la columna: si salía mal, la única salida era borrarla y
+  // rehacerla, perdiendo su posición y visibilidad.
+  const [fxEditorKey, setFxEditorKey] = useState(null);
+  const [fxDraft, setFxDraft] = useState("");
+  // Una orden real para la vista previa del editor de fórmulas.
+  const [sampleRow, setSampleRow] = useState(null);
+
   // Status-content sub-editor (per column)
   const [optEditorKey, setOptEditorKey] = useState(null); // column key being edited
   const [editorRows, setEditorRows] = useState([]);       // [{ value, color }]
@@ -72,7 +82,15 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     if (!isOpen) return;
     setLoading(true);
     setSearch(""); setShowAdd(false); setEditingKey(null); setOptEditorKey(null);
-    setDirtyOptionKeys([]); setColorsDirty(false);
+    setFxEditorKey(null); setDirtyOptionKeys([]); setColorsDirty(false);
+
+    // Una orden real para que el editor de fórmulas muestre el resultado de
+    // verdad y no solo "sintaxis correcta". Es opcional: si falla, el editor
+    // sigue validando, nada más sin vista previa.
+    fetch(`${API}/orders?limit=1`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setSampleRow(Array.isArray(d) ? d[0] || null : (d?.orders?.[0] || null)))
+      .catch(() => setSampleRow(null));
 
     Promise.all([
       fetch(`${API}/config/columns`, { credentials: "include" }).then(r => r.ok ? r.json() : {}),
@@ -164,6 +182,16 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     setOptEditorKey(col.key);
   };
   const editorCol = cols.find(c => c.key === optEditorKey);
+  const fxCol = cols.find(c => c.key === fxEditorKey);
+  const fxCheck = fxEditorKey ? validateFormula(fxDraft, cols) : null;
+
+  const openFxEditor = (col) => { setFxEditorKey(col.key); setFxDraft(col.formula || ""); };
+  const applyFxEditor = () => {
+    if (!fxCheck?.ok) { toast.error(fxCheck?.message || "La fórmula no es válida"); return; }
+    setCols(prev => prev.map(c => c.key === fxEditorKey ? { ...c, formula: fxDraft.trim() } : c));
+    toast.success(`Fórmula de "${fxCol?.label || fxEditorKey}" actualizada`);
+    setFxEditorKey(null);
+  };
   const setRowValue = (i, value) => setEditorRows(prev => prev.map((r, j) => j === i ? { ...r, value } : r));
   const setRowColor = (i, color) => setEditorRows(prev => prev.map((r, j) => j === i ? { ...r, color } : r));
   const removeRow = (i) => setEditorRows(prev => prev.filter((_, j) => j !== i));
@@ -221,6 +249,10 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     if (!key) { toast.error("Nombre inválido"); return; }
     if (cols.some(c => c.key === key) || removedDefaults.includes(key)) {
       toast.error("Ya existe una columna con ese nombre"); return;
+    }
+    if (newType === "formula") {
+      const check = validateFormula(newFormula, cols);
+      if (!check.ok) { toast.error(check.message); return; }
     }
     const def = { key, label: name, type: newType, width: 150, custom: true };
     if (newType === "formula") def.formula = newFormula.trim();
@@ -318,7 +350,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
             Gestor de Columnas
           </DialogTitle>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            Arrastra para reordenar · ojo para ocultar · lápiz para renombrar · controles para editar estados · aplica a todos los tableros.
+            Arrastra para reordenar · ojo para ocultar · lápiz para renombrar · controles para editar estados · ƒ para editar la fórmula · aplica a todos los tableros.
           </p>
         </DialogHeader>
 
@@ -388,6 +420,34 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
               </div>
             </div>
           </>
+        ) : fxEditorKey && fxCol ? (
+          /* ===== Formula editor ===== */
+          <>
+            <div className="px-6 py-3 border-b border-border flex items-center gap-3">
+              <button onClick={() => setFxEditorKey(null)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" title="Volver">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-black uppercase tracking-tight truncate">{fxCol.label}</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Fórmula de la columna</div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar">
+              <FormulaEditor value={fxDraft} onChange={setFxDraft} columns={cols} sampleRow={sampleRow} />
+            </div>
+
+            <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
+              <button onClick={() => setFxEditorKey(null)} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary">Cancelar</button>
+              <button
+                onClick={applyFxEditor}
+                disabled={!fxCheck?.ok}
+                className="px-6 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
+              >
+                <Check className="w-4 h-4" /> Aplicar
+              </button>
+            </div>
+          </>
         ) : (
           /* ===== Column list ===== */
           <>
@@ -432,12 +492,9 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                 </div>
 
                 {newType === "formula" && (
-                  <input
-                    value={newFormula}
-                    onChange={(e) => setNewFormula(e.target.value)}
-                    placeholder="Fórmula (ej: {quantity} * 2)"
-                    className="w-full h-9 px-3 bg-card border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-primary"
-                  />
+                  <div className="p-3 bg-card rounded-lg border border-border">
+                    <FormulaEditor value={newFormula} onChange={setNewFormula} columns={cols} sampleRow={sampleRow} />
+                  </div>
                 )}
 
                 {newType === "estado" && (
@@ -573,6 +630,11 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                             {isStatus && (
                               <button onClick={() => openOptEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Editar opciones del estado">
                                 <SlidersHorizontal className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {col.type === "formula" && (
+                              <button onClick={() => openFxEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={`Editar fórmula: ${col.formula || "(vacía)"}`}>
+                                <FunctionSquare className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {col.custom ? (

@@ -4,8 +4,10 @@ import { X, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toast } from "sonner";
+import { FormulaEditor } from "./FormulaEditor";
+import { validateFormula } from "../../lib/formula";
 
-export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
+export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns, sampleRow = null }) => {
   const { t } = useLang();
   const [columnName, setColumnName] = useState('');
   const [columnType, setColumnType] = useState('text');
@@ -14,12 +16,21 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
   const [newStatusVal, setNewStatusVal] = useState('');
   const [newStatusColor, setNewStatusColor] = useState('#3d85c6');
 
+  // La fórmula debe compilar ANTES de guardarse: una columna con sintaxis rota
+  // se pinta como #NAME? en cada renglón del tablero y hoy no había forma de
+  // editarla después de creada.
+  const formulaCheck = columnType === 'formula' ? validateFormula(formula, existingColumns) : null;
+
   const handleAdd = () => {
     if (!columnName.trim()) return;
     const key = columnName.toLowerCase().replace(/\s+/g, '_');
     if (existingColumns.some(c => c.key === key)) { toast.error(t('col_exists')); return; }
+    if (columnType === 'formula' && !formulaCheck?.ok) {
+      toast.error(formulaCheck?.message || 'La fórmula no es válida');
+      return;
+    }
     const colDef = { key, label: columnName, type: columnType, width: 150, custom: true };
-    if (columnType === 'formula') colDef.formula = formula;
+    if (columnType === 'formula') colDef.formula = formula.trim();
     if (columnType === 'estado') { colDef.type = 'select'; colDef.statusOptions = statusOptions; colDef.optionKey = `custom_${key}`; }
     onAdd(colDef);
     setColumnName(''); setColumnType('text'); setFormula(''); setStatusOptions([]);
@@ -44,7 +55,11 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
             <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('column_type')}</label>
             <Select value={columnType} onValueChange={setColumnType}>
               <SelectTrigger className="bg-secondary border-border" data-testid="column-type-select"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border z-[300]">
+              {/* SIN z-index propio: la base de SelectContent ya trae z-[1000], que
+                  vive por encima del overlay del Dialog (z-[900]). Como cn() usa
+                  tailwind-merge, cualquier z-[…] que se pase aquí REEMPLAZA al de
+                  base — un z-[300] mandaba el dropdown detrás del overlay. */}
+              <SelectContent className="bg-popover border-border">
                 <SelectItem value="text">{t('text')}</SelectItem>
                 <SelectItem value="number">{t('number')}</SelectItem>
                 <SelectItem value="date">{t('date')}</SelectItem>
@@ -58,8 +73,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
           {columnType === 'formula' && (
             <div className="space-y-2 p-3 bg-secondary/30 rounded border border-border">
               <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('formula')}</label>
-              <input type="text" value={formula} onChange={(e) => setFormula(e.target.value)} placeholder={t('formula_placeholder')} style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }} className="w-full border border-border rounded px-3 py-2 text-sm font-mono" data-testid="formula-input" />
-              <p className="text-xs text-muted-foreground">{t('formula_help')}</p>
+              <FormulaEditor value={formula} onChange={setFormula} columns={existingColumns} sampleRow={sampleRow} />
             </div>
           )}
           {columnType === 'estado' && (
@@ -87,7 +101,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns }) => {
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <button onClick={onClose} className="px-4 py-2 text-muted-foreground hover:text-foreground">{t('cancel')}</button>
-          <button onClick={handleAdd} disabled={!columnName.trim() || (columnType === 'formula' && !formula.trim()) || (columnType === 'estado' && statusOptions.length === 0)} className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50" data-testid="add-column-submit">{t('add')}</button>
+          <button onClick={handleAdd} disabled={!columnName.trim() || (columnType === 'formula' && !formulaCheck?.ok) || (columnType === 'estado' && statusOptions.length === 0)} className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50" data-testid="add-column-submit">{t('add')}</button>
         </div>
       </DialogContent>
     </Dialog>

@@ -186,31 +186,16 @@ export const getBoardStyle = (board) => {
   return { background: '#333', borderLeft: '5px solid #666' };
 };
 
-export const evaluateFormula = (field, order, allCols) => {
-  const col = allCols?.find(c => c.key === field);
-  if (!col?.formula) return '';
-  let expr = col.formula;
-  const refs = expr.match(/\b[a-z_]+\b/gi) || [];
-  for (const ref of refs) {
-    const refLower = ref.toLowerCase();
-    if (['if', 'then', 'else', 'and', 'or', 'sum', 'abs'].includes(refLower)) continue;
-    const val = parseFloat(order[refLower]) || 0;
-    expr = expr.replace(new RegExp(`\\b${ref}\\b`, 'g'), val);
-  }
-  const ifMatch = expr.match(/IF\s*\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)/i);
-  if (ifMatch) {
-    try {
-      const cond = Function(`"use strict"; return (${ifMatch[1]})`)();
-      expr = cond ? ifMatch[2] : ifMatch[3];
-    } catch { return '#ERROR'; }
-  }
-  try {
-    const sanitized = String(expr).replace(/[^0-9+\-*/().%\s]/g, '');
-    if (!sanitized.trim()) return '';
-    const result = Function(`"use strict"; return (${sanitized})`)();
-    return typeof result === 'number' ? (Number.isInteger(result) ? result : result.toFixed(2)) : result;
-  } catch { return '#ERROR'; }
-};
+// Las columnas de fórmula las resuelve lib/formula.js: un tokenizador + parser
+// de Pratt + evaluador con semántica real de Excel. Se re-exporta desde aquí
+// para no tocar los llamadores históricos (EditableCell, Dashboard).
+//
+// El evaluador que vivía en este archivo sustituía identificadores con
+// String.replace y terminaba en `Function()`, con un sanitizador
+// /[^0-9+\-*\/().%\s]/g que borraba toda letra y comilla — por eso el propio
+// ejemplo de la UI, IF(quantity > 100, 'Alto', 'Bajo'), devolvía vacío.
+export { evaluateFormula, evaluateFormulaValue, evalFormula, formatResult,
+         validateFormula, parseFormula, FUNCTION_CATALOG } from './formula';
 
 export const ACTION_COLORS = {
   'create_order': 'bg-green-500/20 text-green-400',

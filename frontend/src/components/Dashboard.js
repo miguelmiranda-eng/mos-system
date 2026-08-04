@@ -59,7 +59,7 @@ import CommandPalette from "./dashboard/CommandPalette";
 
 // Shared constants and hooks
 import { cn } from "../lib/utils";
-import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormula, API, normalizePublicUrl } from "../lib/constants";
+import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormulaValue, API, normalizePublicUrl } from "../lib/constants";
 import { useOrders, apiFetch } from "../hooks/useOrders";
 
 // ── Global order search ────────────────────────────────────────────────────
@@ -719,7 +719,13 @@ const Dashboard = () => {
       const exportData = ordersToExport.map(o => {
         const row = {};
         visibleColumns.forEach(col => {
-          row[col.label] = o[col.key] || '';
+          // Una columna de fórmula no tiene valor guardado en la orden: se
+          // calcula al pintar. Sin esto salía SIEMPRE en blanco en el Excel.
+          // evaluateFormulaValue conserva el tipo (número como número), para
+          // que Excel pueda sumar la columna en vez de recibir texto.
+          row[col.label] = col.type === 'formula'
+            ? evaluateFormulaValue(col.key, o, columns)
+            : (o[col.key] || '');
         });
         row[t('board')] = o.board;
 
@@ -2391,7 +2397,7 @@ const Dashboard = () => {
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
-      <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} />
+      <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} sampleRow={orders?.[0] || allOrders?.[0] || null} />
       <AnalyticsView isOpen={showAnalytics} onClose={() => setShowAnalytics(false)} allOrders={allOrders} options={options} />
       <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
       <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
