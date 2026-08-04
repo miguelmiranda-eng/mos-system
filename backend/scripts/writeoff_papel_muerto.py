@@ -148,6 +148,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="aplica (por defecto sólo simula)")
+    ap.add_argument("--sin-cajas", action="store_true",
+                    help="da de baja los renglones que NUNCA tuvieron caja (requiere "
+                         "verificación humana en piso: no hay evidencia en la base)")
+    ap.add_argument("--sin-rastro", action="store_true",
+                    help="da de baja los renglones cuyas cajas SÍ existieron y hoy están "
+                         "en 0, pero sin ningún movimiento que explique cómo se vaciaron")
     ap.add_argument("--revertir", metavar="ARCHIVO")
     ap.add_argument("--mongo", default=MONGODB_URL)
     args = ap.parse_args()
@@ -159,22 +165,55 @@ def main():
         return revertir(db, args.revertir)
 
     plan, sin_ev = planear(db)
+
+    # MODO --sin-cajas: los renglones que NUNCA tuvieron caja fisica. Aqui no hay
+    # evidencia documental posible —no hay caja de la que salir— asi que la baja
+    # descansa en una verificacion HUMANA en piso. Se registra como tal en el
+    # movimiento y en la incidencia, para que dentro de seis meses se sepa que
+    # esta baja la autorizo una persona y no un rastro en la base.
+    if args.sin_cajas:
+        plan = [{"row": r, "cajas": 0, "movs": [],
+                 "motivo": motivo, "sin_evidencia": True}
+                for r, motivo in sin_ev if motivo == "nunca hubo caja"]
+        sin_ev = [(r, m) for r, m in sin_ev if m != "nunca hubo caja"]
+
+    # MODO --sin-rastro: las cajas SI existieron y hoy estan en 0, pero ningun
+    # movimiento explica como se vaciaron. Es el grupo con MAS probabilidad de
+    # contener material real —encaja con el perfil de los writeoffs de julio que
+    # dejaron 292 cajas en 0 estando llenas en el rack (ver
+    # restore_ccok_writeoff_boxes.py)—, asi que la baja se registra como decision
+    # explicita del usuario, SIN verificacion fisica previa.
+    # Las CAJAS no se tocan: si el material aparece, siguen ahi para reactivarlas.
+    if args.sin_rastro:
+        plan = [{"row": r, "cajas": 0, "movs": [],
+                 "motivo": motivo, "sin_evidencia": True, "sin_rastro": True}
+                for r, motivo in sin_ev if motivo != "nunca hubo caja"]
+        sin_ev = [(r, m) for r, m in sin_ev if m == "nunca hubo caja"]
+
     u = sum(int(p["row"].get("units_on_hand") or 0) for p in plan)
     u_sin = sum(int(r.get("units_on_hand") or 0) for r, _ in sin_ev)
 
     print("=" * 96)
-    print("PAPEL MUERTO — saldo cuyo material ya salió, probado por movimientos")
+    if args.sin_cajas:
+        print("SALDO SIN NINGUNA CAJA FÍSICA — baja por verificación humana en piso")
+    else:
+        print("PAPEL MUERTO — saldo cuyo material ya salió, probado por movimientos")
     print("=" * 96)
     print(f"  A dar de baja       : {len(plan):>4} renglones {u:>9,} u")
-    print(f"  SIN evidencia (NO)  : {len(sin_ev):>4} renglones {u_sin:>9,} u  -> conteo físico\n")
+    print(f"  No se tocan         : {len(sin_ev):>4} renglones {u_sin:>9,} u\n")
     if plan:
-        print(f"  {'ubicacion':<13}{'style':<15}{'color':<13}{'sz':<4}{'piezas':>8}{'cajas':>7}  evidencia")
+        print(f"  {'ubicacion':<13}{'style':<15}{'color':<13}{'sz':<4}{'piezas':>8}{'cajas':>7}  "
+              f"{'marcado' if args.sin_cajas else 'evidencia'}")
         for p in sorted(plan, key=lambda x: -int(x["row"].get("units_on_hand") or 0)):
-            r, m = p["row"], p["movs"][0]
+            r = p["row"]
+            if p.get("sin_evidencia"):
+                nota = str(r.get("pending_cycle_count_reason") or "sin caja")[:52]
+            else:
+                m = p["movs"][0]
+                nota = f"{m.get('type')} {str(m.get('created_at'))[:10]} {str(m.get('user_name') or '')[:18]}"
             print(f"  {str(r.get('location'))[:12]:<13}{str(r.get('style'))[:14]:<15}"
                   f"{str(r.get('color'))[:12]:<13}{str(r.get('size'))[:3]:<4}"
-                  f"{int(r.get('units_on_hand') or 0):>8,}{p['cajas']:>7}  "
-                  f"{m.get('type')} {str(m.get('created_at'))[:10]} {str(m.get('user_name') or '')[:18]}")
+                  f"{int(r.get('units_on_hand') or 0):>8,}{p['cajas']:>7}  {nota}")
 
     if not args.apply:
         print("\n  DRY-RUN. Nada escrito. Repite con --apply.")
@@ -197,33 +236,66 @@ def main():
     n = 0
     for p in plan:
         r = p["row"]
-        m = p["movs"][0]
         res = db.wms_inventory.delete_one({"inventory_id": r.get("inventory_id")})
         if not res.deleted_count:
             continue
         n += 1
+        det = {"inventory_id": r.get("inventory_id"),
+               "location": r.get("location"), "style": r.get("style"),
+               "color": r.get("color"), "size": r.get("size"),
+               "units_dados_de_baja": int(r.get("units_on_hand") or 0),
+               "batch": lote}
+        if p.get("sin_rastro"):
+            det.update({
+                "cajas_agotadas": 0,
+                "evidencia_tipo": "ninguna",
+                "marcado_por_el_sistema": r.get("pending_cycle_count_reason"),
+                "reason": "Las cajas de este renglon EXISTIERON y hoy estan en 0, pero "
+                          "NINGUN movimiento explica como se vaciaron — perfil de los "
+                          "writeoffs de julio que dejaron cajas en 0 estando llenas. "
+                          "Baja ordenada por el usuario SIN verificacion fisica previa, "
+                          "con la reserva ya planteada. Las CAJAS siguen existiendo: si "
+                          "el material aparece en el rack, se reactivan y se restaura "
+                          "el renglon desde el respaldo de este lote."})
+        elif p.get("sin_evidencia"):
+            det.update({
+                "cajas_agotadas": 0,
+                "evidencia_tipo": "verificacion_humana",
+                "marcado_por_el_sistema": r.get("pending_cycle_count_reason"),
+                "reason": "El renglon NUNCA tuvo caja fisica: no hay evidencia posible "
+                          "en la base. Baja AUTORIZADA POR EL USUARIO tras verificar en "
+                          "piso que el material no esta en esa ubicacion."})
+        else:
+            m = p["movs"][0]
+            det.update({
+                "cajas_agotadas": p["cajas"],
+                "evidencia_tipo": m.get("type"),
+                "evidencia_fecha": str(m.get("created_at")),
+                "evidencia_usuario": m.get("user_name"),
+                "reason": "El material salio; el renglon se quedo atras. "
+                          "Baja con evidencia documental, sin conteo fisico."})
         db.wms_movements.insert_one({
             "movement_id": "mov_" + uuid.uuid4().hex[:12],
-            "type": "writeoff_papel_muerto",
-            "details": {"inventory_id": r.get("inventory_id"),
-                        "location": r.get("location"), "style": r.get("style"),
-                        "color": r.get("color"), "size": r.get("size"),
-                        "units_dados_de_baja": int(r.get("units_on_hand") or 0),
-                        "cajas_agotadas": p["cajas"],
-                        "evidencia_tipo": m.get("type"),
-                        "evidencia_fecha": str(m.get("created_at")),
-                        "evidencia_usuario": m.get("user_name"),
-                        "batch": lote,
-                        "reason": "El material salió; el renglón se quedó atrás. "
-                                  "Baja con evidencia documental, sin conteo físico."},
+            "type": "writeoff_papel_muerto", "details": det,
             "user_id": None, "user_name": "Sistema (writeoff_papel_muerto)",
             "created_at": ahora()})
+    if args.sin_rastro:
+        msg = (f"Se dieron de baja {n} renglones ({u:,} u) cuyas cajas existieron y hoy "
+               f"estan en 0 SIN ningun movimiento que lo explique. Es el grupo con mas "
+               f"probabilidad de contener material real; la baja la ordeno el usuario sin "
+               f"verificacion fisica previa. Las cajas NO se tocaron. Lote {lote}.")
+    elif args.sin_cajas:
+        msg = (f"Se dieron de baja {n} renglones ({u:,} u) que NUNCA tuvieron caja "
+               f"fisica. NO hay evidencia documental: la baja la AUTORIZO EL USUARIO "
+               f"tras verificar en piso. Lote {lote}.")
+    else:
+        msg = (f"Se dieron de baja {n} renglones ({u:,} u) cuyo material ya habia "
+               f"salido, probado por movimientos de picking o conteo. Lote {lote}. "
+               f"Quedan {len(sin_ev)} renglones ({u_sin:,} u) sin evidencia.")
     db.wms_incidents.insert_one({
         "incident_id": "inc_" + uuid.uuid4().hex[:12],
-        "kind": "writeoff_papel_muerto",
-        "mensaje": (f"Se dieron de baja {n} renglones ({u:,} u) cuyo material ya había "
-                    f"salido, probado por movimientos de picking o conteo. Lote {lote}. "
-                    f"Quedan {len(sin_ev)} renglones ({u_sin:,} u) sin evidencia, para conteo físico."),
+        "kind": "writeoff_papel_muerto", "mensaje": msg,
+        "autorizado_por_usuario": bool(args.sin_cajas),
         "batch": lote, "renglones": n, "unidades": u,
         "user_id": None, "user_name": "Sistema (writeoff_papel_muerto)",
         "created_at": ahora()})
