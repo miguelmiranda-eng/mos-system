@@ -4,6 +4,7 @@ import { Edit2, ExternalLink } from "lucide-react";
 import { getStatusColor, evaluateFormula, normalizePublicUrl } from "../../lib/constants";
 import { ColoredBadge } from "./ColoredBadge";
 import SearchableSelect from "../SearchableSelect";
+import { SizesCell } from "./SizesCell";
 
 // Job Title A/B: columnas con enlace capturado protegido (solo supersu edita o
 // borra un valor existente). El rol se lee una vez por sesión de pestaña: la
@@ -182,6 +183,21 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
         <input type="checkbox" checked={!!value} onChange={(e) => onUpdate(orderId, field, e.target.checked)}
           className="w-5 h-5 rounded border-border accent-primary cursor-pointer" data-testid={`checkbox-${field}-${orderId}`} />
       </div>
+    );
+  }
+
+  if (type === 'sizes') {
+    // `quantity` sale de la orden, no de la celda: la mini-tabla compara su
+    // propia suma contra la cantidad de la orden para marcar el descuadre.
+    const order = allOrders?.find(o => o.order_id === orderId);
+    return (
+      <SizesCell
+        value={value}
+        orderId={orderId}
+        quantity={order?.quantity}
+        onUpdate={onUpdate}
+        readOnly={readOnly}
+      />
     );
   }
 

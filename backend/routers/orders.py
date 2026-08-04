@@ -374,6 +374,28 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
         # If explicitly clearing board, we might want to default to SCHEDULING or allow it?
         # Following the "flattening" philosophy, let's allow it but warn.
         logger.warning(f"Board being cleared for order {order_id}")
+    # Tallas → cantidad. Editar tallas desde el tablero recalcula `quantity` con
+    # su suma, igual que ya hace la captura de una orden nueva (NewOrderForm deja
+    # Qty en solo-lectura cuando hay tallas). El cálculo vive AQUÍ y no en el
+    # cliente porque el tablero, el modal de nueva orden, el import de Excel y
+    # Printavo escriben todos por este endpoint: en el cliente habría que
+    # repetirlo cuatro veces y las cuatro podrían discrepar.
+    #
+    # Sólo aplica cuando la petición trae `sizes` y NO trae `quantity`: un
+    # llamador que manda ambos está declarando una cantidad a propósito
+    # (recepciones parciales, correcciones) y no se le sobrescribe.
+    #
+    # No hay barrido masivo: una orden cuyas tallas nadie toque conserva su
+    # cantidad tal cual, descuadre incluido. El tablero marca ese descuadre en
+    # rojo para que alguien lo revise, pero no lo corrige a sus espaldas.
+    if "sizes" in update_data and "quantity" not in update_data:
+        _tallas = update_data.get("sizes")
+        if isinstance(_tallas, dict):
+            update_data["quantity"] = sum(
+                int(v) for v in _tallas.values()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            )
+
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     # Board QC Lock: block moving OUT of CONTROL DE CALIDAD
     old_board = existing.get("board")
