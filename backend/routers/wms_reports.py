@@ -21,11 +21,17 @@ from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timedelta, timezone
 
 from deps import db, require_auth, get_admin_level
+from wms_constants import TICKET_OPEN_QUERY, TICKET_CLOSED_STATUSES
 
 router = APIRouter(prefix="/api/wms/reports")
 
 _MOVS_PUTAWAY = ["putaway", "putaway_bulk"]
-_TICKET_ABIERTO = {"$nin": ["completed", "cancelled"]}
+# Un pick ticket se cierra con status "confirmed" desde el 19-jun-2026; antes se
+# cerraba con "completed" y quedaron 342 así en el histórico. Estos reportes
+# miraban SÓLO "completed", de modo que la productividad y el SLA ignoraban todo
+# lo surtido desde junio y contaban los 1.012 tickets ya confirmados como
+# abiertos. Se usa el mismo predicado que el tablero y el guard de duplicados.
+_TICKET_CERRADO = {"$in": TICKET_CLOSED_STATUSES}
 
 
 async def _supervision(request: Request):
@@ -111,7 +117,7 @@ async def pendientes(request: Request):
 
     # Tickets abiertos: los vencidos primero, que son los que duelen.
     abiertos = await db.wms_pick_tickets.find(
-        {"status": _TICKET_ABIERTO},
+        dict(TICKET_OPEN_QUERY),
         {"_id": 0, "ticket_id": 1, "order_number": 1, "customer": 1, "style": 1,
          "total_pick_qty": 1, "status": 1, "picking_status": 1, "assigned_to_name": 1,
          "created_at": 1, "sla_deadline": 1},
@@ -173,7 +179,7 @@ async def productividad(request: Request, desde: str = "", hasta: str = "", oper
                     "cajas": {"$sum": {"$ifNull": ["$details.count", 1]}}}},
     ]).to_list(500)
 
-    tk_q = {**_rango(desde, hasta, "completed_at"), "status": "completed"}
+    tk_q = {**_rango(desde, hasta, "completed_at"), "status": _TICKET_CERRADO}
     if operador:
         tk_q["assigned_to_name"] = operador
     picking = await db.wms_pick_tickets.aggregate([
@@ -203,7 +209,7 @@ async def productividad(request: Request, desde: str = "", hasta: str = "", oper
                                (db.wms_pick_tickets, "completed_at", "tickets")):
         q = {**_rango(desde, hasta, campo)}
         if coll is db.wms_pick_tickets:
-            q["status"] = "completed"
+            q["status"] = _TICKET_CERRADO
         for d in await coll.aggregate([
             {"$match": q},
             {"$group": {"_id": {"$substr": [f"${campo}", 0, 10]}, "n": {"$sum": 1}}},
@@ -263,7 +269,7 @@ async def historial(request: Request, desde: str = "", hasta: str = "",
             "unidades_recibidas": sum(int(r.get("total_units") or 0) for r in recibos),
             "tickets": len(tickets),
             "unidades_surtidas": sum(int(t.get("total_pick_qty") or 0) for t in tickets
-                                     if t.get("status") == "completed"),
+                                     if t.get("status") in TICKET_CLOSED_STATUSES),
         },
     }
 
@@ -306,8 +312,8 @@ async def excepciones(request: Request, desde: str = "", hasta: str = "", limit:
     tarde = await db.wms_pick_tickets.find({
         **rango, "sla_deadline": {"$exists": True, "$ne": None},
         "$or": [
-            {"status": "completed", "$expr": {"$gt": ["$completed_at", "$sla_deadline"]}},
-            {"status": _TICKET_ABIERTO, "sla_deadline": {"$lt": ahora_iso}},
+            {"status": _TICKET_CERRADO, "$expr": {"$gt": ["$completed_at", "$sla_deadline"]}},
+            {**TICKET_OPEN_QUERY, "sla_deadline": {"$lt": ahora_iso}},
         ],
     }, {
         "_id": 0, "ticket_id": 1, "order_number": 1, "customer": 1, "style": 1,
@@ -316,7 +322,7 @@ async def excepciones(request: Request, desde: str = "", hasta: str = "", limit:
     }).sort("sla_deadline", 1).to_list(limit)
 
     for t in tarde:
-        t["situacion"] = ("completado tarde" if t.get("status") == "completed"
+        t["situacion"] = ("completado tarde" if t.get("status") in TICKET_CLOSED_STATUSES
                           else "vencido sin completar")
 
     por_persona = {}

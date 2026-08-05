@@ -7,6 +7,7 @@ from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
+    TICKET_OPEN_QUERY,
 )
 from services import inventory_ledger as ledger
 from datetime import datetime, timezone, timedelta
@@ -5331,23 +5332,43 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     if not order_number:
         raise HTTPException(400, "Numero de orden requerido")
 
+    color = data.get("color", "").strip()
+
     # --- Duplicate guard -----------------------------------------------------------
     # Prevent creating multiple active pick tickets for the same order unless the
     # caller explicitly confirms they want a duplicate (force_duplicate=True).
+    #
+    # La llave es (orden + style + color), NO la orden sola: una misma orden trae
+    # legítimamente varios estilos/colores — 5000/NATURAL y 5000B/NATURAL son dos
+    # tickets válidos de la orden 1743. Con la llave gruesa el aviso "ya existe"
+    # saltaba en 54 órdenes sin un solo duplicado real, y el equipo se acostumbró a
+    # pasarle por encima con force_duplicate, que es como se perdió su utilidad.
+    #
+    # Y bloquea EXACTAMENTE lo que el tablero muestra (TICKET_OPEN_QUERY): un ticket
+    # que el usuario no puede ver tampoco le puede impedir crear el suyo.
     if not force_duplicate:
-        existing = await db.wms_pick_tickets.find_one(
-            {
-                "order_number": order_number,
-                "status": {"$nin": ["confirmed", "cancelled"]},
-            },
+        # `order_number` filtra por índice; style/color se comparan normalizados en
+        # Python sobre el puñado de tickets abiertos de esa orden. Los tickets NO
+        # guardan style/color en mayúsculas ('Ice Grey'), y un regex
+        # case-insensitive en Mongo no usaría índices (ver _ci_eq).
+        abiertos = await db.wms_pick_tickets.find(
+            {"order_number": order_number, **TICKET_OPEN_QUERY},
             {"_id": 0, "ticket_id": 1, "created_by_name": 1, "created_at": 1,
              "style": 1, "color": 1, "total_pick_qty": 1, "status": 1, "picking_status": 1},
+        ).to_list(50)
+        existing = next(
+            (t for t in abiertos
+             if _ci_eq(t.get("style")) == _ci_eq(style)
+             and _ci_eq(t.get("color")) == _ci_eq(color)),
+            None,
         )
         if existing:
             raise HTTPException(
                 409,
                 {
-                    "message": f"Ya existe un pick ticket activo para la orden {order_number}.",
+                    "message": (f"Ya existe un pick ticket activo para la orden "
+                                f"{order_number} en {style or '(sin style)'} / "
+                                f"{color or '(sin color)'}."),
                     "existing_ticket": existing,
                 },
             )
@@ -5372,9 +5393,8 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     if total_qty == 0 and data.get("quantity"):
          total_qty = int(data.get("quantity"))
 
-    style = data.get("style", "").strip()
-    color = data.get("color", "").strip()
-    
+    # (style y color ya se leyeron arriba, para el guard de duplicados)
+
     # Auto-lookup locations for each size from inventory
     size_locations = {}
     if style:
@@ -5621,7 +5641,9 @@ async def list_pick_tickets(
         # Default load skips finished picks (the Completed tab fetches them on
         # demand) to save bandwidth/RAM on warehouse devices. Virtual pre-tickets
         # are still synthesized below since status stays empty.
-        query = {"status": {"$ne": "confirmed"}, "picking_status": {"$ne": "completed"}}
+        # MISMO predicado que usa el guard de duplicados: lo que se ve aquí es
+        # exactamente lo que bloquea crear un ticket nuevo.
+        query = dict(TICKET_OPEN_QUERY)
 
     skip = max(0, skip)
     limit = max(1, min(limit, 1000))
@@ -5648,7 +5670,14 @@ async def list_pick_tickets(
     ]
 
     real_tickets = await db.wms_pick_tickets.aggregate(pipeline).to_list(limit)
-    
+    # Cuántos tickets REALES trajo esta página. Se captura antes de anexar los
+    # pre-tickets virtuales porque `has_more` se calcula contra el count de la
+    # colección: medirlo después inflaba el avance con hasta 500 órdenes
+    # virtuales y el frontend daba la paginación por terminada en la primera
+    # página, dejando fuera del tablero todos los tickets salvo los 50 más
+    # nuevos.
+    n_real = len(real_tickets)
+
     # Process job titles and other order info
     for rt in real_tickets:
         oi = rt.pop("order_info", None)
@@ -5716,7 +5745,7 @@ async def list_pick_tickets(
 
     total = await db.wms_pick_tickets.count_documents(query)
     # has_more is based on real tickets only; virtual tickets are computed every call
-    has_more = (skip + len(real_tickets)) < total
+    has_more = (skip + n_real) < total
     return {"items": real_tickets, "total": total, "has_more": has_more}
 
 @router.put("/pick-tickets/virtual/{order_number}/dismiss")
@@ -6828,21 +6857,33 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
     new_order_number = body.get("order_number", ticket.get("order_number", "")).strip()
 
     # --- Duplicate guard for edits -------------------------------------------------
+    # Misma llave (orden + style + color) y mismo predicado de "abierto" que en la
+    # creación; ver internal_create_picking_ticket.
+    new_style = str(body.get("style", ticket.get("style", "") or "")).strip()
+    new_color = str(body.get("color", ticket.get("color", "") or "")).strip()
     if not force_duplicate and new_order_number:
-        existing = await db.wms_pick_tickets.find_one(
+        abiertos = await db.wms_pick_tickets.find(
             {
                 "order_number": new_order_number,
                 "ticket_id": {"$ne": ticket_id},
-                "status": {"$nin": ["confirmed", "cancelled"]},
+                **TICKET_OPEN_QUERY,
             },
             {"_id": 0, "ticket_id": 1, "created_by_name": 1, "created_at": 1,
              "style": 1, "color": 1, "total_pick_qty": 1, "status": 1, "picking_status": 1},
+        ).to_list(50)
+        existing = next(
+            (t for t in abiertos
+             if _ci_eq(t.get("style")) == _ci_eq(new_style)
+             and _ci_eq(t.get("color")) == _ci_eq(new_color)),
+            None,
         )
         if existing:
             raise HTTPException(
                 409,
                 {
-                    "message": f"Ya existe otro pick ticket activo para la orden {new_order_number}.",
+                    "message": (f"Ya existe otro pick ticket activo para la orden "
+                                f"{new_order_number} en {new_style or '(sin style)'} / "
+                                f"{new_color or '(sin color)'}."),
                     "existing_ticket": existing,
                 },
             )

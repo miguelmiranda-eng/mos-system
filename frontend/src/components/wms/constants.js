@@ -12,6 +12,11 @@ export const TicketStatus = Object.freeze({
   PENDING: "pending",
   CONFIRMED: "confirmed",
   IN_NECK_CUTTING: "in_neck_cutting",
+  // Convención vieja de cierre, dejó de escribirse el 19-jun-2026 y los 342
+  // tickets históricos se migraron a CONFIRMED. Se conserva para que cualquier
+  // predicado de "cerrado" siga siendo correcto si aparece un documento viejo.
+  COMPLETED: "completed",
+  CANCELLED: "cancelled",
 });
 
 export const PickingStatus = Object.freeze({

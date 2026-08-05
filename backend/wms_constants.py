@@ -16,6 +16,12 @@ class TicketStatus:
     PENDING = "pending"
     CONFIRMED = "confirmed"
     IN_NECK_CUTTING = "in_neck_cutting"
+    # Convención vieja de cierre, dejó de escribirse el 19-jun-2026 (hoy se
+    # cierra con CONFIRMED). Sigue viva en tickets históricos, así que todo
+    # predicado de "cerrado" tiene que contemplarla — no está aquí para usarse
+    # en escrituras nuevas.
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class PickingStatus:
@@ -23,6 +29,28 @@ class PickingStatus:
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+
+
+# Un pick ticket está ABIERTO si y sólo si el tablero lo muestra. Éste es el
+# único predicado que decide a la vez qué se lista y qué bloquea la creación de
+# un ticket nuevo, para que valga siempre la regla: si no lo puedes ver, no te
+# puede bloquear.
+#
+# Antes eran dos listas negras distintas y divergieron: el guard de duplicados
+# bloqueaba con `status $nin [confirmed, cancelled]` mientras el tablero ocultaba
+# `picking_status == completed`. Los tickets cerrados con la convención vieja
+# (status="completed") caían justo en medio: invisibles en las tres pestañas
+# pero bloqueando la creación. Dejó 319 órdenes imposibles de surtir — el equipo
+# no encontraba el ticket por ningún lado y al crear otro salía "ya existe".
+TICKET_OPEN_QUERY = {
+    "status": {"$nin": [TicketStatus.CONFIRMED, TicketStatus.COMPLETED,
+                        TicketStatus.CANCELLED]},
+    "picking_status": {"$ne": PickingStatus.COMPLETED},
+}
+
+# Estados terminales de un pick ticket (surtido y cerrado, en cualquiera de las
+# dos convenciones). Úsese para reportes de productividad/SLA.
+TICKET_CLOSED_STATUSES = [TicketStatus.CONFIRMED, TicketStatus.COMPLETED]
 
 
 class CycleCountStatus:
