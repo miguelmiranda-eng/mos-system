@@ -1037,6 +1037,13 @@ const Dashboard = () => {
                   readOnly={!canEditBoard}
                   isDark={isDark}
                   allOrders={orders}
+                  // La orden de ESTA fila. Las celdas de tallas y de posiciones
+                  // necesitan otros campos de la misma orden (quantity, la marca
+                  // de deducido) y sin esto tendrían que buscarla dentro de
+                  // `allOrders`: una pasada por celda sobre las ~1000 órdenes,
+                  // en cada render del tablero.
+                  order={order}
+                  productionSummary={productionSummary}
                   columns={visibleColumns}
                 />
               )}

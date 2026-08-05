@@ -151,6 +151,10 @@ export const DEFAULT_COLUMNS = [
   // Va justo después de Qty a propósito: la mini-tabla compara su suma contra
   // esa columna y marca el descuadre, así que se leen de un vistazo juntas.
   { key: 'sizes', label: 'Tallas', type: 'sizes', width: 260 },
+  // Sin esta columna el avance por talla no se puede calcular: 216 frentes de
+  // 216 pedidas es "listo" si la orden solo lleva frente, y "a la mitad" si
+  // lleva frente y espalda. Va junto a Tallas porque es la que la habilita.
+  { key: 'print_positions', label: 'Posiciones', type: 'positions', width: 120 },
   { key: 'due_date', label: 'Entrega', type: 'date', width: 150 },
   { key: 'blank_source', label: 'Blank Source', type: 'select', optionKey: 'blank_sources', width: 180 },
   { key: 'blank_status', label: 'Blank Status', type: 'select', optionKey: 'blank_statuses', width: 210 },

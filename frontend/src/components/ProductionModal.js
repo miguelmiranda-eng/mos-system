@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Dialog, DialogPortal, DialogOverlay, DialogHeader, DialogTitle } from "./ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -42,6 +42,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
   const [operator, setOperator] = useState('');
   const [shift, setShift] = useState('');
   const [designType, setDesignType] = useState('');
+  const [size, setSize] = useState('');
   const [stopCause, setStopCause] = useState('');
   const [supervisor, setSupervisor] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -64,8 +65,64 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
     }
   }, [isOpen]);
 
-  const remaining = matchedOrder ? Math.max(0, (matchedOrder.quantity || 0) - totalProduced) : 0;
-  const progress = matchedOrder && matchedOrder.quantity > 0 ? Math.min(100, (totalProduced / matchedOrder.quantity) * 100) : 0;
+  // ── Prendas terminadas vs impresiones registradas ──────────────────────────
+  // `totalProduced` suma TODOS los registros, y una prenda se imprime una vez
+  // por posición: 500 frentes + 500 espaldas de un pedido de 500 sumaban 1000 y
+  // el modal decía "RESTANTE 0 pz (100%)" con la mitad del trabajo pendiente.
+  // Afectaba a 214 órdenes.
+  //
+  // Con las posiciones de la orden se cuentan PRENDAS: la que va más atrasada
+  // manda, porque la prenda no está lista hasta que todas sus posiciones lo
+  // están. Sin posiciones capturadas se cae al comportamiento anterior (la suma
+  // cruda) para no cambiar la cifra a ciegas, y se avisa en la etiqueta.
+  const posiciones = Array.isArray(matchedOrder?.print_positions) ? matchedOrder.print_positions : [];
+  const porPosicion = useMemo(() => {
+    const out = {};
+    (logs || []).forEach(l => {
+      const p = (l.design_type || '').trim().toUpperCase();
+      if (p) out[p] = (out[p] || 0) + (parseInt(l.quantity_produced, 10) || 0);
+    });
+    return out;
+  }, [logs]);
+
+  const prendasHechas = posiciones.length > 0
+    ? Math.min(...posiciones.map(p => porPosicion[p] || 0))
+    : totalProduced;
+  const cuentaPrendas = posiciones.length > 0;
+
+  const remaining = matchedOrder ? Math.max(0, (matchedOrder.quantity || 0) - prendasHechas) : 0;
+  const progress = matchedOrder && matchedOrder.quantity > 0 ? Math.min(100, (prendasHechas / matchedOrder.quantity) * 100) : 0;
+
+  // ── Tallas de la orden ─────────────────────────────────────────────────────
+  // Se ofrecen SOLO las que trae la orden, con su cantidad pedida al lado: si el
+  // pedido es S/M/L/XL/2X, ofrecer las nueve del catalogo invita a capturar una
+  // talla que nadie pidio. Cuando la orden no trae desglose (802 de 2,189 no lo
+  // tienen) el selector queda vacio y la captura sigue funcionando sin talla.
+  const orderSizes = useMemo(() => {
+    const s = matchedOrder?.sizes;
+    if (!s || typeof s !== 'object') return [];
+    return Object.entries(s)
+      .map(([sz, qty]) => ({ sz, qty: parseInt(qty, 10) || 0 }))
+      .filter(x => x.qty > 0);
+  }, [matchedOrder]);
+
+  // ── Avance de ESTA talla en ESTE tipo de diseno ────────────────────────────
+  // Agrupar por talla a secas repetiria el sobreconteo que ya tiene el total:
+  // una prenda se imprime FRENTE y ESPALDA, asi que 500 frentes + 500 espaldas
+  // de un pedido de 500 sumarian 1000. Se cuenta solo contra el mismo
+  // design_type. Sin tipo de diseno elegido no se muestra nada, porque cualquier
+  // cifra seria enganosa.
+  const sizeProgress = useMemo(() => {
+    if (!size || !designType) return null;
+    const pedidas = orderSizes.find(x => x.sz === size)?.qty || 0;
+    const hechas = (logs || [])
+      .filter(l => (l.size || '') === size && (l.design_type || '') === designType)
+      .reduce((s, l) => s + (parseInt(l.quantity_produced, 10) || 0), 0);
+    return { pedidas, hechas, faltan: Math.max(0, pedidas - hechas), sobra: hechas > pedidas };
+  }, [size, designType, orderSizes, logs]);
+
+  // Al cambiar de orden, la talla elegida ya no aplica.
+  useEffect(() => { setSize(''); }, [matchedOrder?.order_id]);
 
   useEffect(() => {
     if (!orderSearch.trim()) { setMatchedOrder(null); setLogs([]); setTotalProduced(0); return; }
@@ -115,7 +172,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
     try {
       const res = await fetch(`${API}/production-logs`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ order_id: matchedOrder.order_id, quantity_produced: parseInt(quantity), machine, setup: parseInt(setup) || 0, operator, shift, design_type: designType, stop_cause: stopCause, supervisor })
+        body: JSON.stringify({ order_id: matchedOrder.order_id, quantity_produced: parseInt(quantity), machine, setup: parseInt(setup) || 0, operator, shift, design_type: designType, size, stop_cause: stopCause, supervisor })
       });
       if (res.ok) {
         toast.success(`${t('production_registered')}: ${quantity} ${t('pieces')} ${machine}`);
@@ -160,7 +217,20 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
             <div className="grid grid-cols-3 gap-3">
               <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('client')}</label><div className="h-8 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded text-foreground">{matchedOrder.client || '-'}</div></div>
               <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('total_quantity')}</label><div className="h-8 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded font-mono font-bold">{matchedOrder.quantity || 0} pz</div></div>
-              <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('remaining')}</label><div className="h-8 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded font-mono font-bold">{remaining} pz <span className={`ml-2 text-xs ${progress >= 100 ? 'text-green-400' : 'text-muted-foreground'}`}>({progress.toFixed(0)}%)</span></div></div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground"
+                       title={cuentaPrendas
+                         ? `Cuenta PRENDAS: la orden lleva ${posiciones.join(' + ')}, y una prenda no esta lista hasta que todas sus posiciones estan impresas. Impresiones registradas en total: ${totalProduced}.`
+                         : 'Esta orden no tiene posiciones de impresion capturadas, asi que esto suma impresiones, no prendas: si lleva frente y espalda, puede decir 100% con la mitad pendiente. Capturalas en la columna Posiciones del tablero.'}>
+                  {t('remaining')} {cuentaPrendas
+                    ? <span className="text-primary/70 normal-case font-normal">· prendas</span>
+                    : <span className="text-amber-500 normal-case font-normal">· sin posiciones</span>}
+                </label>
+                <div className="h-8 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded font-mono font-bold">
+                  {remaining} pz
+                  <span className={`ml-2 text-xs ${progress >= 100 ? 'text-green-400' : 'text-muted-foreground'}`}>({progress.toFixed(0)}%)</span>
+                </div>
+              </div>
             </div>
           )}
           {matchedOrder && <div className="w-full h-2 bg-secondary rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all ${progress >= 100 ? 'bg-green-500' : progress >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(progress, 100)}%` }} /></div>}
@@ -188,6 +258,62 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
               <Select value={designType} onValueChange={setDesignType}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-design-select"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{DESIGN_TYPES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent></Select>
             </div>
           </div>
+          {/* Row 2.5: talla que se esta pintando + avance de esa talla */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Talla</label>
+              {orderSizes.length > 0 ? (
+                <Select value={size} onValueChange={setSize}>
+                  <SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-size-select">
+                    <SelectValue placeholder="Talla" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border z-[1001]">
+                    {orderSizes.map(({ sz, qty }) => (
+                      <SelectItem key={sz} value={sz}>
+                        <span className="font-mono font-bold">{sz}</span>
+                        <span className="text-muted-foreground text-xs ml-2">{qty} pz</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="h-8 px-3 flex items-center text-xs bg-secondary/40 border border-border rounded text-muted-foreground/70 italic"
+                     data-testid="production-size-none">
+                  {matchedOrder ? 'la orden no trae tallas' : 'elige una orden'}
+                </div>
+              )}
+            </div>
+            {/* Avance de la talla elegida, contra el MISMO tipo de diseno */}
+            <div className="col-span-2">
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">
+                Avance de esa talla {designType ? `en ${designType}` : ''}
+              </label>
+              <div className="h-8 px-3 flex items-center gap-3 text-sm bg-secondary/60 border border-border rounded"
+                   data-testid="production-size-progress">
+                {!size ? (
+                  <span className="text-xs text-muted-foreground/70 italic">elige la talla</span>
+                ) : !designType ? (
+                  <span className="text-xs text-muted-foreground/70 italic">elige el tipo de diseno para poder contar</span>
+                ) : (
+                  <>
+                    <span className="font-mono text-xs">
+                      <b className="text-foreground">{sizeProgress.hechas}</b>
+                      <span className="text-muted-foreground"> / {sizeProgress.pedidas} pz</span>
+                    </span>
+                    <span className={`font-mono text-xs font-bold ${sizeProgress.sobra ? 'text-destructive' : sizeProgress.faltan === 0 ? 'text-green-400' : 'text-primary'}`}>
+                      {sizeProgress.sobra
+                        ? `sobran ${sizeProgress.hechas - sizeProgress.pedidas}`
+                        : sizeProgress.faltan === 0 ? 'completa' : `faltan ${sizeProgress.faltan}`}
+                    </span>
+                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${sizeProgress.sobra ? 'bg-destructive' : sizeProgress.faltan === 0 ? 'bg-green-500' : 'bg-primary'}`}
+                           style={{ width: `${sizeProgress.pedidas > 0 ? Math.min(100, (sizeProgress.hechas / sizeProgress.pedidas) * 100) : 0}%` }} />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
           {/* Row 3: supervisor, stop_cause */}
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Supervisor</label><input type="text" value={supervisor} onChange={(e) => setSupervisor(e.target.value)} placeholder="Nombre supervisor" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-supervisor-input" /></div>
@@ -209,6 +335,7 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
                 <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('machine')}</th>
                 <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Turno</th>
                 <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Diseno</th>
+                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Talla</th>
                 <th className="text-right py-1 px-2 text-[10px] text-muted-foreground font-bold">Setup</th>
                 {isAdmin && <th className="w-6"></th>}
               </tr></thead>
@@ -220,6 +347,11 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
                   <td className="py-1 px-2 text-[11px]"><span className="px-1 py-0.5 bg-primary/20 text-primary rounded text-[9px] font-bold">{log.machine}</span></td>
                   <td className="py-1 px-2 text-[11px] text-muted-foreground">{log.shift || '-'}</td>
                   <td className="py-1 px-2 text-[11px] text-muted-foreground">{log.design_type || '-'}</td>
+                  <td className="py-1 px-2 text-[11px]">
+                    {log.size
+                      ? <span className="px-1 py-0.5 bg-secondary border border-border rounded text-[9px] font-mono font-bold">{log.size}</span>
+                      : <span className="text-muted-foreground/50">-</span>}
+                  </td>
                   <td className="py-1 px-2 text-[11px] text-right text-muted-foreground">{log.setup || 0}</td>
                   {isAdmin && <td className="py-1 px-1"><button onClick={() => handleDeleteLog(log.log_id)} className="p-0.5 rounded hover:bg-destructive/20"><Trash2 className="w-3 h-3 text-destructive" /></button></td>}
                 </tr>

@@ -5,6 +5,7 @@ import { getStatusColor, evaluateFormula, normalizePublicUrl } from "../../lib/c
 import { ColoredBadge } from "./ColoredBadge";
 import SearchableSelect from "../SearchableSelect";
 import { SizesCell } from "./SizesCell";
+import { PositionsCell } from "./PositionsCell";
 
 // Job Title A/B: columnas con enlace capturado protegido (solo supersu edita o
 // borra un valor existente). El rol se lee una vez por sesión de pestaña: la
@@ -24,7 +25,7 @@ const userRole = () => {
 // row/selection/search-highlight change re-rendered every cell. Props from the
 // parent are stable (handleCellUpdate/options are useOrders refs, columns is
 // memoized), so the default shallow compare skips cells whose data didn't change.
-const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, columns: allCols, readOnly = false, className = "" }) => {
+const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, order, productionSummary, columns: allCols, readOnly = false, className = "" }) => {
   const { t } = useLang();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value || "");
@@ -187,14 +188,27 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
   }
 
   if (type === 'sizes') {
-    // `quantity` sale de la orden, no de la celda: la mini-tabla compara su
-    // propia suma contra la cantidad de la orden para marcar el descuadre.
-    const order = allOrders?.find(o => o.order_id === orderId);
+    // La orden de la fila llega por prop (`order`), no se busca en `allOrders`:
+    // eso era una pasada sobre las ~1000 órdenes POR CELDA en cada render.
     return (
       <SizesCell
         value={value}
         orderId={orderId}
         quantity={order?.quantity}
+        positions={order?.print_positions}
+        produced={productionSummary?.[order?.order_number]?.by_size}
+        onUpdate={onUpdate}
+        readOnly={readOnly}
+      />
+    );
+  }
+
+  if (type === 'positions') {
+    return (
+      <PositionsCell
+        value={value}
+        orderId={orderId}
+        inferred={!!order?.print_positions_inferred}
         onUpdate={onUpdate}
         readOnly={readOnly}
       />

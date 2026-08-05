@@ -38,7 +38,32 @@ export const sumaTallas = (sizes) =>
     ? Object.values(sizes).reduce((s, v) => s + num(v), 0)
     : 0;
 
-export const SizesCell = ({ value, orderId, quantity, onUpdate, readOnly = false }) => {
+/**
+ * Avance de una talla, contra las posiciones que la orden realmente lleva.
+ *
+ * `positions` son las que la orden requiere (["FRENTE","ESPALDA"]) y `producido`
+ * es {FRENTE: n, ESPALDA: n} de esa talla. Se toma la posición MENOS avanzada,
+ * no la suma: una prenda no está lista hasta que todas sus posiciones están
+ * impresas, así que 216 frentes y 0 espaldas de 216 pedidas es 0% terminado,
+ * no 50%. Sumar daría "listo" cuando falta la mitad del trabajo — exactamente
+ * el error que hoy comete el Producido/Restante del modal.
+ *
+ * Devuelve null cuando no se puede afirmar nada: sin posiciones capturadas no
+ * hay contra qué medir, y una barra inventada es peor que ninguna barra.
+ */
+const avanceDeTalla = (pedidas, posiciones, producido) => {
+  if (!pedidas || !Array.isArray(posiciones) || posiciones.length === 0) return null;
+  const porPosicion = posiciones.map(p => ({ p, n: Math.max(0, parseInt(producido?.[p], 10) || 0) }));
+  const menor = Math.min(...porPosicion.map(x => x.n));
+  return {
+    porPosicion,
+    hechas: menor,                                        // prendas realmente listas
+    pct: Math.min(100, Math.round((menor / pedidas) * 100)),
+    completa: menor >= pedidas,
+  };
+};
+
+export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpdate, readOnly = false }) => {
   const { adult: CATALOGO } = useWmsSizes();
   const [abierto, setAbierto] = useState(false);
   const [borrador, setBorrador] = useState({});
@@ -90,12 +115,34 @@ export const SizesCell = ({ value, orderId, quantity, onUpdate, readOnly = false
   const visibles = conValor.slice(0, MAX_VISIBLES);
   const ocultas = conValor.length - visibles.length;
 
-  const desglose = conValor.map(sz => `${sz}: ${num(sizes[sz])}`).join("   ");
+  // Avance por talla. Se calcula para TODAS (no solo las visibles) porque el
+  // tooltip las lista completas.
+  const avances = useMemo(() => {
+    const out = {};
+    conValor.forEach(sz => {
+      out[sz] = avanceDeTalla(num(sizes[sz]), positions, produced?.[sz]);
+    });
+    return out;
+  }, [conValor, sizes, positions, produced]);
+
+  const hayAvance = Object.values(avances).some(a => a && a.hechas > 0);
+
+  const desglose = conValor.map(sz => {
+    const a = avances[sz];
+    if (!a) return `${sz}: ${num(sizes[sz])} pedidas`;
+    const detalle = a.porPosicion.map(x => `${x.p} ${x.n}`).join(" · ");
+    return `${sz}: ${num(sizes[sz])} pedidas — ${detalle}${a.completa ? "  ✓ lista" : ""}`;
+  }).join("\n");
+
+  const nota = !positions || positions.length === 0
+    ? "\nSin posiciones de impresión capturadas: no se puede calcular el avance."
+    : "";
+
   const tituloCelda = conValor.length === 0
     ? undefined
-    : descuadra
-      ? `${desglose}\nSuma ${total} — no coincide con Qty ${qty}`
-      : `${desglose}\nTotal ${total}`;
+    : (descuadra
+        ? `${desglose}\n\nSuma ${total} — no coincide con Qty ${qty}`
+        : `${desglose}\n\nTotal ${total}`) + nota;
 
   const Resumen = (
     <div
@@ -131,6 +178,28 @@ export const SizesCell = ({ value, orderId, quantity, onUpdate, readOnly = false
                     </td>
                   ))}
                 </tr>
+                {/* Franja de avance: 3px bajo cada cantidad. Solo se dibuja si
+                    hay algo producido en alguna talla — una fila de barras
+                    vacías en cada renglón del tablero sería puro ruido. */}
+                {hayAvance && (
+                  <tr>
+                    {visibles.map(sz => {
+                      const a = avances[sz];
+                      return (
+                        <td key={sz} className="px-0.5 pt-0.5">
+                          <div className="h-[3px] w-full bg-muted/40 rounded-full overflow-hidden">
+                            {a && (
+                              <div
+                                className={`h-full rounded-full ${a.completa ? "bg-green-500" : "bg-primary"}`}
+                                style={{ width: `${a.pct}%` }}
+                              />
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

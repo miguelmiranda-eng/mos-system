@@ -10,6 +10,7 @@ import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "../ui/select";
 import { useLang } from "../../contexts/LanguageContext";
 import SearchableSelect from "../SearchableSelect";
+import { PositionsPicker, normalizarPosiciones } from "./PositionsCell";
 import { useWmsSizes } from "../wms/lib";
 
 export const NewOrderForm = ({
@@ -221,6 +222,33 @@ export const NewOrderForm = ({
     const col = allColumns.find(c => c.key === key);
     if (!col) return null;
     const value = formData[key] || '';
+
+    // Posiciones de impresión: las marca data entry al capturar la orden. Sin
+    // este caso el campo caía al input de texto de abajo y había que teclear
+    // "FRENTE,ESPALDA" a mano, con el backend rechazando cualquier variante mal
+    // escrita. Se usa el MISMO control que la celda del tablero para que las dos
+    // pantallas no puedan divergir.
+    if (col.type === 'positions') {
+      const activas = normalizarPosiciones(formData[key]);
+      return (
+        <div key={key} className="space-y-2">
+          <label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground/80 font-black">{col.label}</label>
+          <div className="flex items-center gap-2 h-9">
+            <PositionsPicker
+              value={activas}
+              readOnly={isPreview}
+              tamano="lg"
+              onChange={(pos) => !isPreview && set(key, pos)}
+            />
+            <span className="text-[10px] text-muted-foreground/70">
+              {activas.length === 0
+                ? 'sin marcar — el avance por talla no se podrá calcular'
+                : activas.join(' + ')}
+            </span>
+          </div>
+        </div>
+      );
+    }
 
     if ((col.type === 'select' || col.type === 'status') && col.optionKey) {
       const opts = options[col.optionKey] || [];
