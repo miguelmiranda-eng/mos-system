@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, get_dynamic_boards, logger, MASTER_API_KEY
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, MASTER_API_KEY
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -239,6 +239,35 @@ async def get_order(order_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Order not found")
     return _merge_custom_fields(order)
 
+def validar_posiciones(valor):
+    """Normaliza las posiciones de impresión al orden canónico, o falla.
+
+    Conjunto CERRADO (ver DESIGN_POSITIONS): de esto dependen el avance por talla
+    y el Producido/Restante, así que un valor inventado no rompería una etiqueta,
+    rompería una cifra que producción usa para decidir. Se rechaza en vez de
+    guardarse.
+
+    Se usa al CREAR y al EDITAR. Vivía solo en el update, y eso dejaba que una
+    orden naciera con posiciones basura que el tablero luego pintaba como si
+    fueran válidas.
+    """
+    if valor is None:
+        return []
+    if not isinstance(valor, list):
+        raise HTTPException(status_code=422, detail="print_positions debe ser una lista")
+    vistas = set()
+    for p in valor:
+        v = str(p or "").strip().upper()
+        if not v:
+            continue
+        if v not in DESIGN_POSITIONS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Posición inválida: {p!r}. Válidas: {', '.join(DESIGN_POSITIONS)}")
+        vistas.add(v)
+    return [p for p in DESIGN_POSITIONS if p in vistas]
+
+
 async def internal_create_order(order: OrderCreate, user: dict) -> dict:
     """Core logic for order creation, reusable by API and internal processes."""
     # Security: block duplicates only if existing order is NOT in the trash
@@ -268,6 +297,13 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
                 if k not in order_data:
                     order_data[k] = v
     
+    # Posiciones de impresión: se validan igual que al editar. Las que captura
+    # data entry en el formulario NO quedan marcadas como deducidas — son un dato
+    # capturado, no una suposición del sistema.
+    if order_data.get("print_positions") is not None:
+        order_data["print_positions"] = validar_posiciones(order_data["print_positions"])
+        order_data["print_positions_inferred"] = False
+
     # Safety: ensure board is NEVER null — default to SCHEDULING
     if not order_data.get("board"):
         logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
@@ -374,6 +410,19 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
         # If explicitly clearing board, we might want to default to SCHEDULING or allow it?
         # Following the "flattening" philosophy, let's allow it but warn.
         logger.warning(f"Board being cleared for order {order_id}")
+    # Posiciones de impresión. Conjunto cerrado (ver DESIGN_POSITIONS): un valor
+    # fuera de la lista se rechaza en vez de guardarse, porque de esto dependen
+    # los cálculos de avance por talla y el Producido/Restante.
+    #
+    # Editarlas a mano BORRA la marca de "deducido": el backfill dedujo las
+    # posiciones de los registros de producción que ya existían, y ese valor es
+    # un piso, no la verdad — una orden que lleva frente y espalda pero solo
+    # tiene frente registrado se dedujo como "solo frente". Cuando una persona
+    # lo confirma o corrige, deja de ser una suposición y la UI ya no lo marca.
+    if "print_positions" in update_data:
+        update_data["print_positions"] = validar_posiciones(update_data.get("print_positions"))
+        update_data["print_positions_inferred"] = False
+
     # Tallas → cantidad. Editar tallas desde el tablero recalcula `quantity` con
     # su suma, igual que ya hace la captura de una orden nueva (NewOrderForm deja
     # Qty en solo-lectura cuando hay tallas). El cálculo vive AQUÍ y no en el

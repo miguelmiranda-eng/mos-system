@@ -141,6 +141,14 @@ DEFAULT_OPTIONS = {
 BOARDS = DEFAULT_OPTIONS["boards"]
 MACHINES = [f"MAQUINA{i}" for i in range(1, 15)]
 
+# Posiciones de impresión que puede llevar una orden. Conjunto CERRADO, a
+# diferencia de `size` en un registro de producción: de esto dependen los
+# cálculos de avance (una talla no está terminada hasta que todas sus posiciones
+# lo están), así que un valor inventado no rompería una etiqueta, rompería una
+# cifra que producción usa para decidir. Se validan al escribir.
+# Son los mismos valores que `design_type` en production_logs.
+DESIGN_POSITIONS = ["FRENTE", "ESPALDA", "MANGA"]
+
 async def get_dynamic_boards():
     """Get boards from DB, falling back to defaults. Filter out Trash UI board."""
     config = await db.board_config.find_one({"config_id": "boards"}, {"_id": 0})
@@ -216,6 +224,7 @@ class OrderCreate(BaseModel):
     board: Optional[str] = "SCHEDULING"
     style: Optional[str] = None
     sizes: Optional[Dict[str, int]] = None
+    print_positions: Optional[List[str]] = None
     locked_by_qc: Optional[bool] = False
     art_sep_status: Optional[bool] = False
     art_neck_status: Optional[bool] = False
@@ -258,6 +267,11 @@ class OrderUpdate(BaseModel):
     sample: Optional[str] = None
     style: Optional[str] = None
     sizes: Optional[Dict[str, int]] = None
+    # Posiciones que lleva la orden, ej. ["FRENTE", "ESPALDA"]. Sin esto el
+    # sistema no puede saber si una talla ya está terminada: 216 frentes de 216
+    # pedidas es "listo" si la orden solo lleva frente, y "a la mitad" si lleva
+    # frente y espalda. Ver DESIGN_POSITIONS.
+    print_positions: Optional[List[str]] = None
     artwork_status: Optional[str] = None
     betty_column: Optional[str] = None
     shipping: Optional[str] = None
@@ -324,6 +338,11 @@ class ProductionLogCreate(BaseModel):
     design_type: Optional[str] = ""
     stop_cause: Optional[str] = ""
     supervisor: Optional[str] = ""
+    # Talla que se está imprimiendo. Opcional: los 4,013 registros anteriores no
+    # la tienen y obligarla frenaría la captura en piso. El modal ofrece SOLO las
+    # tallas que trae la orden, pero aquí no se rechaza una que no esté: igual que
+    # operator o supervisor, el backend guarda lo que llega (normalizado).
+    size: Optional[str] = ""
 
 class NeckLogCreate(BaseModel):
     # Captura Neck — mismo patrón que ProductionLogCreate pero solo cantidad +

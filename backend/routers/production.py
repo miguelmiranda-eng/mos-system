@@ -150,6 +150,10 @@ async def create_production_log(log: ProductionLogCreate, request: Request):
         "operator": log.operator or user.get("name", ""),
         "shift": log.shift or "",
         "design_type": log.design_type or "",
+        # Normalizada a MAYUSCULAS y sin espacios: las llaves de `sizes` en la
+        # orden ya son mayusculas, y sin esto "m" y "M" quedarian como dos tallas
+        # distintas al agrupar el avance.
+        "size": (log.size or "").strip().upper(),
         "stop_cause": log.stop_cause or "",
         "supervisor": log.supervisor or "",
         "client": order.get("client", ""),
@@ -204,22 +208,58 @@ async def get_production_summary(request: Request, date_from: str = None, date_t
             dt_query["$lte"] = utc_end.isoformat()
         query["created_at"] = dt_query
 
+    # Se agrupa por (orden, talla, posición) en vez de solo por orden, y los
+    # totales se rearman aquí. Una sola pasada, y de ella salen tres cosas:
+    #
+    #   total_produced : IDÉNTICO a lo que devolvía antes (suma de todo). La
+    #                    columna RESTANTE del tablero depende de esto, así que no
+    #                    puede cambiar de valor.
+    #   by_position    : {FRENTE: n, ...} contando TODOS los registros, con talla
+    #                    o sin ella. Es lo que permite contar prendas en vez de
+    #                    impresiones: una orden de 500 con frente y espalda está
+    #                    terminada cuando AMBAS llegan a 500, no cuando la suma
+    #                    llega a 1000.
+    #   by_size        : {M: {FRENTE: n, ...}} solo de los registros que traen
+    #                    talla. Hoy está vacío en todas las órdenes (la captura de
+    #                    talla es nueva) y se irá llenando; por eso agregarlo no
+    #                    engorda la respuesta de golpe.
     pipeline = [
         {"$match": query},
         {"$group": {
-            "_id": "$order_number", 
-            "total_produced": {"$sum": "$quantity_produced"}, 
-            "log_count": {"$sum": 1},
-            "last_date": {"$max": "$created_at"}
+            "_id": {"orden": "$order_number", "talla": "$size", "posicion": "$design_type"},
+            "qty": {"$sum": "$quantity_produced"},
+            "n": {"$sum": 1},
+            "last_date": {"$max": "$created_at"},
         }}
     ]
-    results = await db.production_logs.aggregate(pipeline).to_list(10000)
-    summary = {r["_id"]: {
-        "total_produced": r["total_produced"], 
-        "log_count": r["log_count"],
-        "last_date": r["last_date"]
-    } for r in results if r["_id"]}
-    
+    results = await db.production_logs.aggregate(pipeline).to_list(20000)
+
+    summary = {}
+    for r in results:
+        llave = r["_id"] or {}
+        orden = llave.get("orden")
+        if not orden:
+            continue
+        entrada = summary.setdefault(orden, {
+            "total_produced": 0, "log_count": 0, "last_date": None,
+            "by_position": {}, "by_size": {},
+        })
+        qty = r.get("qty") or 0
+        entrada["total_produced"] += qty
+        entrada["log_count"] += r.get("n") or 0
+        if r.get("last_date") and (entrada["last_date"] is None or r["last_date"] > entrada["last_date"]):
+            entrada["last_date"] = r["last_date"]
+
+        posicion = (llave.get("posicion") or "").strip().upper()
+        if posicion:
+            entrada["by_position"][posicion] = entrada["by_position"].get(posicion, 0) + qty
+
+        talla = (llave.get("talla") or "").strip().upper()
+        if talla and posicion:
+            por_talla = entrada["by_size"].setdefault(talla, {})
+            por_talla[posicion] = por_talla.get(posicion, 0) + qty
+
+
     if not date_from and not date_to:
         set_cache(cache_key, summary)
     return summary
