@@ -175,6 +175,7 @@ from routers.production import router as production_router
 from routers.wms import router as wms_router
 from routers.reports import router as reports_router
 from routers.wms_reports import router as wms_reports_router
+from routers.wms_returns import router as wms_returns_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
@@ -202,6 +203,7 @@ app.include_router(production_router)
 app.include_router(wms_router)
 app.include_router(reports_router)
 app.include_router(wms_reports_router)
+app.include_router(wms_returns_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)

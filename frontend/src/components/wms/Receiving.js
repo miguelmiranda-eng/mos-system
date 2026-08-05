@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
-import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Search, Download, ScanLine, AlertTriangle, ClipboardCheck } from "lucide-react";
+import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2, FileText, X, ChevronDown, Truck, Search, Download, ScanLine, AlertTriangle, ClipboardCheck, Undo2 } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
+import ReturnReceiving from "./ReturnReceiving";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
@@ -148,6 +149,10 @@ export const ReceivingModule = () => {
   const descOptions     = useMemo(() => mergeUnique(wmsCat.descriptions, fieldOptions.descriptions), [wmsCat.descriptions, fieldOptions.descriptions]);
   const countryOptions  = useMemo(() => mergeUnique(wmsCat.countries, fieldOptions.countries), [wmsCat.countries, fieldOptions.countries]);
   const fabricOptions   = useMemo(() => mergeUnique(wmsCat.fabrics, fieldOptions.fabrics), [wmsCat.fabrics, fieldOptions.fabrics]);
+  // Qué se está recibiendo: 'externo' (el flujo de siempre) o 'retorno'
+  // (sobrante que vuelve de producción). Arranca en externo, que es el 95% del
+  // trabajo diario.
+  const [intake, setIntake] = useState('externo');
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
@@ -840,6 +845,37 @@ export const ReceivingModule = () => {
 
   return (
     <div className="space-y-6">
+      {/* ── Qué se está recibiendo. Hasta ahora el módulo sólo sabía de material
+          externo y lo que sobraba de producción volvía por la puerta de atrás
+          (Generar caja, en Mover), sin país de origen en el 78% de los casos.
+          El retorno vive aquí, con su propio flujo. ── */}
+      <div className="inline-flex rounded-lg border border-border bg-card p-1" role="tablist">
+        {[
+          { id: 'externo', label: 'Material externo', icon: Truck },
+          { id: 'retorno', label: 'Material de retorno', icon: Undo2 },
+        ].map(v => {
+          const Icon = v.icon;
+          const activo = intake === v.id;
+          return (
+            <button
+              key={v.id}
+              role="tab"
+              aria-selected={activo}
+              onClick={() => setIntake(v.id)}
+              data-testid={`rcv-intake-${v.id}`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                activo ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon className="w-4 h-4" /> {v.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {intake === 'retorno' && <ReturnReceiving />}
+
+      {intake === 'externo' && <>
       {/* ── Barra de escaneo global: el flujo sano empieza escaneando el cartón.
           El código abre el formulario y dispara el lookup de UPC (autofill +
           candado). Beep/vibración según el resultado. ── */}
@@ -1607,6 +1643,7 @@ export const ReceivingModule = () => {
           </div>
         </div>
       )}
+      </>}
     </div>
   );
 };
