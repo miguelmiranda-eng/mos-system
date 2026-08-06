@@ -189,6 +189,7 @@ from routers.shipping import router as shipping_router
 from routers.packing import router as packing_router
 from routers.report_scheduler import router as report_scheduler_router, start_report_scheduler
 from routers.printavo_scheduler import router as printavo_scheduler_router, start_printavo_scheduler
+from routers.blanks_sweep_scheduler import router as blanks_sweep_router, start_blanks_sweep_scheduler
 from routers.printavo_export import router as printavo_export_router
 from routers.paint import router as paint_router
 from routers.samples import router as samples_router
@@ -217,6 +218,7 @@ app.include_router(shipping_router)
 app.include_router(packing_router)
 app.include_router(report_scheduler_router)
 app.include_router(printavo_scheduler_router)
+app.include_router(blanks_sweep_router)
 app.include_router(printavo_export_router)
 app.include_router(paint_router)
 app.include_router(samples_router)
@@ -244,6 +246,9 @@ async def startup_event():
     start_report_scheduler()
     # Printavo invoice auto-sync poller (no-op if disabled / unconfigured).
     start_printavo_scheduler()
+    # Barrido automático SCHEDULING → BLANKS por cancel_date (arranca apagado; se
+    # prende con PUT /api/blanks-sweep). Ver routers/blanks_sweep_scheduler.py.
+    start_blanks_sweep_scheduler()
     # Job nocturno de salud del inventario: escaneo de stock fantasma a las
     # 08:00 UTC (~01:00 del almacén). Solo detecta y reporta (cola + incidencia);
     # nunca reescribe renglones. Ver routers/wms.py::nightly_phantom_scan_loop.

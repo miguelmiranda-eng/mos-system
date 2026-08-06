@@ -321,6 +321,42 @@ const Dashboard = () => {
   const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
 
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
+  // Nivel de admin (1..5): supersu = 5; admin = su admin_level; cualquier otro = 0.
+  // Mismo cálculo que el backend get_admin_level() y que los módulos WMS del front.
+  const adminLevel = user?.role === 'supersu' ? 5 : (user?.role === 'admin' ? (parseInt(user?.admin_level, 10) || 1) : 0);
+  // Automatización "Barrido a BLANKS": solo Admin nivel 5 + supersu la ven/controlan.
+  const canSweepBlanks = adminLevel >= 5;
+  const [blanksSweep, setBlanksSweep] = useState(null);
+  useEffect(() => {
+    if (!canSweepBlanks) return undefined;
+    let alive = true;
+    fetch(`${API}/blanks-sweep`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d) setBlanksSweep(d); })
+      .catch(() => { });
+    return () => { alive = false; };
+  }, [canSweepBlanks]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggleBlanksSweep = async () => {
+    const next = !(blanksSweep?.enabled);
+    if (next && !window.confirm(
+      '¿Encender el barrido automático a BLANKS?\n\n' +
+      'Cada ' + (blanksSweep?.sweep_minutes || 10) + ' minutos moverá TODAS las órdenes de SCHEDULING ' +
+      'que tengan fecha de cancelación al tablero BLANKS, distribuidas por su cancel date.\n' +
+      'Las órdenes sin cancel date se quedan en SCHEDULING.'
+    )) return;
+    try {
+      const res = await fetch(`${API}/blanks-sweep`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (res.ok) {
+        setBlanksSweep(await res.json());
+        toast.success(next ? 'Barrido a BLANKS ENCENDIDO' : 'Barrido a BLANKS APAGADO');
+      } else {
+        toast.error('No se pudo cambiar el barrido (¿permisos?)');
+      }
+    } catch { toast.error('Error al cambiar el barrido'); }
+  };
 
   const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete, queueStatus = null, scheduledDay = undefined) => {
     const qcBoardOrders = orders.filter(o => orderIds.includes(o.order_id) && o.board === 'CONTROL DE CALIDAD');
@@ -1662,6 +1698,19 @@ const Dashboard = () => {
 
           {/* Top-right action buttons */}
           <div className="flex items-center gap-2 self-center">
+            {currentBoard === 'SCHEDULING' && canSweepBlanks && (
+              <button
+                onClick={toggleBlanksSweep}
+                title={blanksSweep?.enabled
+                  ? `Barrido automático a BLANKS: ENCENDIDO (cada ${blanksSweep?.sweep_minutes || 10} min). Click para apagar.`
+                  : 'Barrido automático a BLANKS: APAGADO. Click para encender.'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md transition-all whitespace-nowrap ${blanksSweep?.enabled ? 'bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-400' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                data-testid="blanks-sweep-toggle"
+              >
+                <span className={`inline-block w-2 h-2 rounded-full ${blanksSweep?.enabled ? 'bg-white animate-pulse' : 'bg-muted-foreground/50'}`} />
+                Auto→Blanks {blanksSweep?.enabled ? 'ON' : 'OFF'}
+              </button>
+            )}
             {currentBoard === 'SCHEDULING' && (
               <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
                 <Plus className="w-3.5 h-3.5" />
