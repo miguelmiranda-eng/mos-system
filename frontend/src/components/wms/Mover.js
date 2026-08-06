@@ -123,6 +123,11 @@ export function MoverModule({ currentUser }) {
   const genCustomerOptions = mergeUnique(genCat.customers, genOptions.customers);
   const genCountryOptions = mergeUnique(genCat.countries);
   const genFabricOptions = mergeUnique(genCat.fabrics);
+  // Estilo y Color: fusionar catálogo de configuración curado (/catalogs) con los
+  // valores del inventario, igual que los demás campos. Sin esto, un estilo/color
+  // dado de alta en configuración pero aún sin inventario no aparecía en el dropdown.
+  const genStyleOptions = mergeUnique(genCat.styles, genOptions.styles);
+  const genColorOptions = mergeUnique(genCat.colors, genOptions.colors);
   const [contents, setContents] = useState({ boxes: [], lines: [] });
   const [loading, setLoading] = useState(false);
   const [dest, setDest] = useState("");
@@ -436,10 +441,10 @@ export function MoverModule({ currentUser }) {
               Material que llega de producción sin etiqueta: crea su número de caja (LPN), imprímelo y pégalo en la caja física. Después podrás moverla o ajustarla normalmente.
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <SearchableSelect options={genOptions.styles} value={genForm.style}
+              <SearchableSelect options={genStyleOptions} value={genForm.style}
                 onChange={v => setGenForm(f => ({ ...f, style: v }))}
                 placeholder="Estilo * (solo catálogo)" testId="gen-style" allowCreate={false} />
-              <SearchableSelect options={genOptions.colors} value={genForm.color}
+              <SearchableSelect options={genColorOptions} value={genForm.color}
                 onChange={v => setGenForm(f => ({ ...f, color: v }))}
                 placeholder="Color (solo catálogo)" testId="gen-color" allowCreate={false} />
               <SearchableSelect options={genSizeOptions} value={genForm.size}
