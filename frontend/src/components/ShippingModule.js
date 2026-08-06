@@ -63,6 +63,9 @@ const ShippingModule = () => {
   const [targetMonth, setTargetMonth] = useState(() => new Date().getMonth() + 1);
   const [targetWeek, setTargetWeek] = useState(1);
   const [showAvailable, setShowAvailable] = useState(true);   // rail lateral de disponibles
+  const [weekEnvios, setWeekEnvios] = useState([]);           // conteo de envíos por semana [{year,month,week,envios}]
+  const [targetEnvio, setTargetEnvio] = useState(1);          // envío destino al programar
+  const [collapsedEnvios, setCollapsedEnvios] = useState(() => new Set());
 
   // Lock the background page scroll while the detail modal is open so iPad/iOS
   // doesn't scroll the page behind the modal (scroll-chaining) when the user
@@ -178,7 +181,7 @@ const ShippingModule = () => {
     setScheduledLoading(true);
     try {
       const res = await fetch(`${API}/scheduled-shipments`, { credentials: 'include' });
-      if (res.ok) { const d = await res.json(); setScheduled(d.items || []); }
+      if (res.ok) { const d = await res.json(); setScheduled(d.items || []); setWeekEnvios(d.weeks || []); }
       else toast.error('No se pudo cargar envíos programados');
     } catch { toast.error('Error de conexión'); }
     finally { setScheduledLoading(false); }
@@ -213,10 +216,11 @@ const ShippingModule = () => {
           scheduled_year: calYear,
           scheduled_month: targetMonth,
           scheduled_week: targetWeek,
+          shipment_no: targetEnvio,
         }),
       });
       if (res.ok) {
-        toast.success(`#${orderNumber} → ${MONTHS[targetMonth - 1]} S${targetWeek} ${calYear}`);
+        toast.success(`#${orderNumber} → ${MONTHS[targetMonth - 1]} S${targetWeek} · Envío ${targetEnvio}`);
         loadScheduled();
         if (availableSearch.trim()) loadAvailable(true);
       } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'No se pudo programar'); }
@@ -259,7 +263,7 @@ const ShippingModule = () => {
         'Año': r.scheduled_year ?? '',
         'Mes': r.scheduled_month ? MONTHS_FULL[r.scheduled_month - 1] : '',
         'Semana': r.scheduled_week ? `Semana ${r.scheduled_week}` : '',
-        'PL - Export': r.pl_export || '',
+        'PL - Export': r.pl_number || '',
         'Export date': r.scheduled_export_date || '',
         'Delivery to': r.delivery_to || '',
         'Days Com.': r.days_com ?? '',
@@ -273,6 +277,140 @@ const ShippingModule = () => {
     } catch { toast.error('No se pudo exportar'); }
     finally { setSchedExporting(false); }
   };
+
+  // ── Envíos por semana (grupos Envío 1, Envío 2, …) ──────────────────────────
+  const configuredEnvios = (m, w) => {
+    const c = weekEnvios.find((x) => x.scheduled_year === calYear && x.scheduled_month === m && x.scheduled_week === w);
+    return c ? c.envios : 0;
+  };
+  // Nº de grupos a mostrar = máx(configurado, mayor shipment_no presente, 1).
+  const enviosForWeek = (m, w) => {
+    let present = 0;
+    for (const r of scheduled) {
+      if (r.scheduled_year === calYear && r.scheduled_month === m && r.scheduled_week === w) {
+        present = Math.max(present, r.shipment_no || 1);
+      }
+    }
+    return Math.max(1, configuredEnvios(m, w), present);
+  };
+  const addEnvio = async (m, w) => {
+    const next = enviosForWeek(m, w) + 1;
+    try {
+      const res = await fetch(`${API}/scheduled-shipments/week-config`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ scheduled_year: calYear, scheduled_month: m, scheduled_week: w, envios: next }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setWeekEnvios((prev) => [
+          ...prev.filter((x) => !(x.scheduled_year === d.scheduled_year && x.scheduled_month === d.scheduled_month && x.scheduled_week === d.scheduled_week)),
+          d,
+        ]);
+        toast.success(`Envío ${next} agregado a Semana ${w}`);
+      } else toast.error('No se pudo agregar el envío');
+    } catch { toast.error('Error de conexión'); }
+  };
+  const toggleEnvio = (key) => setCollapsedEnvios((prev) => {
+    const n = new Set(prev);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
+
+  // Tabla de órdenes de un grupo (envío). `w` = semana, para las opciones de reprogramar.
+  const renderOrderTable = (glist, w) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left border-collapse">
+        <thead>
+          <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/60 border-b border-slate-200">
+            <th className="py-2.5 px-3">Orden</th>
+            <th className="py-2.5 px-3">Cust. PO</th>
+            <th className="py-2.5 px-3">Design #</th>
+            <th className="py-2.5 px-3">Cancel Date</th>
+            <th className="py-2.5 px-3">Cliente</th>
+            <th className="py-2.5 px-3">Branding</th>
+            <th className="py-2.5 px-3 text-right">Qty</th>
+            <th className="py-2.5 px-3">Status</th>
+            <th className="py-2.5 px-3">PL - Export</th>
+            <th className="py-2.5 px-3">Export date</th>
+            <th className="py-2.5 px-3">Delivery to</th>
+            <th className="py-2.5 px-3 text-right">Days Com.</th>
+            <th className="py-2.5 px-3">Notes</th>
+            <th className="py-2.5 px-3">Reprogramar</th>
+            <th className="py-2.5 px-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {glist.map((r, idx) => (
+            <tr key={r.shipment_id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${idx % 2 ? 'bg-slate-50/40' : ''}`}>
+              <td className="py-2.5 px-3"><span className="px-2 py-0.5 bg-blue-600 text-white text-[11px] font-black rounded-md whitespace-nowrap">#{r.order_number}</span></td>
+              <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.customer_po || '—'}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.design_num || '—'}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-500 whitespace-nowrap">{r.cancel_date || '—'}</td>
+              <td className="py-2.5 px-3 text-sm font-bold text-slate-700 whitespace-nowrap">{r.client || '—'}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.branding || '—'}</td>
+              <td className="py-2.5 px-3 text-sm font-bold text-slate-700 text-right tabular-nums">{r.quantity ?? '—'}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.production_status || '—'}</td>
+              <td className="py-2.5 px-3 text-sm">
+                {r.pl_url ? (
+                  <a href={r.pl_url} target="_blank" rel="noopener noreferrer"
+                    className="text-blue-600 font-bold hover:underline inline-flex items-center gap-1 whitespace-nowrap"
+                    title={r.pl_number || 'Packing list'}>
+                    <ExternalLink className="w-3 h-3" /> {r.pl_number || 'PL'}
+                  </a>
+                ) : r.pl_number ? (
+                  <span className="text-slate-600 whitespace-nowrap">{r.pl_number}</span>
+                ) : (
+                  <span className="text-slate-300">—</span>
+                )}
+              </td>
+              <td className="py-2.5 px-3">
+                <input type="date" defaultValue={r.scheduled_export_date || ''}
+                  onChange={(e) => updateScheduled(r.shipment_id, { scheduled_export_date: e.target.value })}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
+              </td>
+              <td className="py-2.5 px-3">
+                <input defaultValue={r.delivery_to || ''} placeholder="Destino"
+                  onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.delivery_to || '')) updateScheduled(r.shipment_id, { delivery_to: v }); }}
+                  className="w-32 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
+              </td>
+              <td className={`py-2.5 px-3 text-sm font-black text-right whitespace-nowrap tabular-nums ${typeof r.days_com === 'number' && r.days_com < 0 ? 'text-red-500' : 'text-slate-600'}`}>{r.days_com ?? '—'}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-500 max-w-[220px] truncate" title={r.notes || ''}>{r.notes || '—'}</td>
+              <td className="py-2.5 px-3">
+                <div className="flex items-center gap-1">
+                  <select value={r.scheduled_month || calMonth}
+                    onChange={(e) => updateScheduled(r.shipment_id, { scheduled_month: Number(e.target.value) })}
+                    title="Mover a mes"
+                    className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
+                    {MONTHS.map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
+                  </select>
+                  <select value={r.scheduled_week || 1}
+                    onChange={(e) => updateScheduled(r.shipment_id, { scheduled_week: Number(e.target.value) })}
+                    title="Mover a semana"
+                    className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
+                    {WEEKS.map((wk) => <option key={wk} value={wk}>S{wk}</option>)}
+                  </select>
+                  <select value={r.shipment_no || 1}
+                    onChange={(e) => updateScheduled(r.shipment_id, { shipment_no: Number(e.target.value) })}
+                    title="Mover a envío"
+                    className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
+                    {Array.from({ length: Math.max(enviosForWeek(calMonth, w), r.shipment_no || 1) }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>E{n}</option>
+                    ))}
+                  </select>
+                </div>
+              </td>
+              <td className="py-2.5 px-3">
+                <button onClick={() => unschedule(r.shipment_id, r.order_number)} title="Quitar"
+                  className="p-1.5 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   const handleFileChange = (e) => {
     const selectedFiles = Array.from(e.target.files);
@@ -709,6 +847,12 @@ const ShippingModule = () => {
                   className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700">
                   {WEEKS.map((w) => <option key={w} value={w}>Semana {w}</option>)}
                 </select>
+                <select value={targetEnvio} onChange={(e) => setTargetEnvio(Number(e.target.value))}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700">
+                  {Array.from({ length: Math.max(enviosForWeek(targetMonth, targetWeek), targetEnvio) }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>Envío {n}</option>
+                  ))}
+                </select>
               </div>
               <button onClick={() => setShowAvailable((v) => !v)}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${showAvailable ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
@@ -809,96 +953,48 @@ const ShippingModule = () => {
                   {WEEKS.map((w) => {
                     const list = scheduled.filter((r) => r.scheduled_year === calYear && r.scheduled_month === calMonth && r.scheduled_week === w);
                     const isTarget = targetMonth === calMonth && targetWeek === w;
+                    const nEnvios = enviosForWeek(calMonth, w);
                     return (
                       <div key={w} className={`rounded-2xl border overflow-hidden ${isTarget ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}>
-                        <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); }}
-                          className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 hover:bg-slate-100">
-                          <span className="text-sm font-black uppercase tracking-widest text-slate-600">Semana {w}</span>
-                          <span className="flex items-center gap-2">
-                            <span className="text-[11px] font-bold text-slate-400">{list.length} órdenes</span>
+                        <div className={`flex items-center justify-between px-4 py-2.5 ${isTarget ? 'bg-blue-50' : 'bg-slate-50'}`}>
+                          <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); }} className="flex items-center gap-2 text-left">
+                            <span className="text-sm font-black uppercase tracking-widest text-slate-600">Semana {w}</span>
+                            <span className="text-[11px] font-bold text-slate-400">{list.length} órdenes · {nEnvios} envío(s)</span>
                             {isTarget && <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">destino</span>}
-                          </span>
-                        </button>
-                        {list.length === 0 ? (
-                          <p className="text-[12px] text-slate-300 font-bold italic px-4 py-4">Vacía — click en "Semana {w}" para fijarla como destino de programación</p>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
-                              <thead>
-                                <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/60 border-b border-slate-200">
-                                  <th className="py-2.5 px-3">Orden</th>
-                                  <th className="py-2.5 px-3">Cust. PO</th>
-                                  <th className="py-2.5 px-3">Design #</th>
-                                  <th className="py-2.5 px-3">Cancel Date</th>
-                                  <th className="py-2.5 px-3">Cliente</th>
-                                  <th className="py-2.5 px-3">Branding</th>
-                                  <th className="py-2.5 px-3 text-right">Qty</th>
-                                  <th className="py-2.5 px-3">Status</th>
-                                  <th className="py-2.5 px-3">PL - Export</th>
-                                  <th className="py-2.5 px-3">Export date</th>
-                                  <th className="py-2.5 px-3">Delivery to</th>
-                                  <th className="py-2.5 px-3 text-right">Days Com.</th>
-                                  <th className="py-2.5 px-3">Notes</th>
-                                  <th className="py-2.5 px-3">Reprogramar</th>
-                                  <th className="py-2.5 px-3"></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {list.map((r, idx) => (
-                                  <tr key={r.shipment_id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${idx % 2 ? 'bg-slate-50/40' : ''}`}>
-                                    <td className="py-2.5 px-3"><span className="px-2 py-0.5 bg-blue-600 text-white text-[11px] font-black rounded-md whitespace-nowrap">#{r.order_number}</span></td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.customer_po || '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.design_num || '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-500 whitespace-nowrap">{r.cancel_date || '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm font-bold text-slate-700 whitespace-nowrap">{r.client || '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.branding || '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm font-bold text-slate-700 text-right tabular-nums">{r.quantity ?? '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{r.production_status || '—'}</td>
-                                    <td className="py-2.5 px-3">
-                                      <input defaultValue={r.pl_export || ''} placeholder="PL"
-                                        onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.pl_export || '')) updateScheduled(r.shipment_id, { pl_export: v }); }}
-                                        className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
-                                    </td>
-                                    <td className="py-2.5 px-3">
-                                      <input type="date" defaultValue={r.scheduled_export_date || ''}
-                                        onChange={(e) => updateScheduled(r.shipment_id, { scheduled_export_date: e.target.value })}
-                                        className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
-                                    </td>
-                                    <td className="py-2.5 px-3">
-                                      <input defaultValue={r.delivery_to || ''} placeholder="Destino"
-                                        onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.delivery_to || '')) updateScheduled(r.shipment_id, { delivery_to: v }); }}
-                                        className="w-32 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
-                                    </td>
-                                    <td className={`py-2.5 px-3 text-sm font-black text-right whitespace-nowrap tabular-nums ${typeof r.days_com === 'number' && r.days_com < 0 ? 'text-red-500' : 'text-slate-600'}`}>{r.days_com ?? '—'}</td>
-                                    <td className="py-2.5 px-3 text-sm text-slate-500 max-w-[220px] truncate" title={r.notes || ''}>{r.notes || '—'}</td>
-                                    <td className="py-2.5 px-3">
-                                      <div className="flex items-center gap-1">
-                                        <select value={r.scheduled_month || calMonth}
-                                          onChange={(e) => updateScheduled(r.shipment_id, { scheduled_month: Number(e.target.value) })}
-                                          title="Mover a mes"
-                                          className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
-                                          {MONTHS.map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
-                                        </select>
-                                        <select value={r.scheduled_week || 1}
-                                          onChange={(e) => updateScheduled(r.shipment_id, { scheduled_week: Number(e.target.value) })}
-                                          title="Mover a semana"
-                                          className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
-                                          {WEEKS.map((w) => <option key={w} value={w}>S{w}</option>)}
-                                        </select>
-                                      </div>
-                                    </td>
-                                    <td className="py-2.5 px-3">
-                                      <button onClick={() => unschedule(r.shipment_id, r.order_number)} title="Quitar"
-                                        className="p-1.5 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors">
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
+                          </button>
+                          <button onClick={() => addEnvio(calMonth, w)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700">
+                            + Envío
+                          </button>
+                        </div>
+                        <div className="p-2 space-y-2">
+                          {Array.from({ length: nEnvios }, (_, i) => i + 1).map((env) => {
+                            const gkey = `${calYear}-${calMonth}-${w}-${env}`;
+                            const glist = list.filter((r) => (r.shipment_no || 1) === env);
+                            const collapsed = collapsedEnvios.has(gkey);
+                            const isEnvTarget = isTarget && targetEnvio === env;
+                            return (
+                              <div key={env} className={`rounded-xl border overflow-hidden ${isEnvTarget ? 'border-blue-300' : 'border-slate-200'}`}>
+                                <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 border-b border-slate-200">
+                                  <button onClick={() => toggleEnvio(gkey)} className="flex items-center gap-2 flex-1 text-left">
+                                    <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+                                    <span className="text-xs font-black uppercase tracking-widest text-slate-600">Envío {env}</span>
+                                    <span className="text-[10px] font-bold text-slate-400">({glist.length})</span>
+                                  </button>
+                                  <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); setTargetEnvio(env); }}
+                                    className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isEnvTarget ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
+                                    {isEnvTarget ? 'destino' : 'fijar destino'}
+                                  </button>
+                                </div>
+                                {!collapsed && (
+                                  glist.length === 0
+                                    ? <p className="text-[12px] text-slate-300 font-bold italic px-3 py-3">Sin órdenes en este envío — fíjalo como destino y programa desde el buscador</p>
+                                    : renderOrderTable(glist, w)
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}

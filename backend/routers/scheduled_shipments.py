@@ -14,6 +14,7 @@ Endpoints (prefijo /api/scheduled-shipments):
   PUT    "/{id}"        → edita fecha export / destino / PL / estado
   DELETE "/{id}"        → desprograma
 """
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -21,14 +22,17 @@ from fastapi import APIRouter, Request, HTTPException
 
 from deps import db, require_auth, log_activity
 
+# Extrae etiqueta|url de un comentario [file]etiqueta|url[/file] (packing_link_seed).
+_FILE_RE = re.compile(r"\[file\](.*?)\|(.*?)\[/file\]")
+
 router = APIRouter(prefix="/api/scheduled-shipments", tags=["scheduled-shipments"])
 
 # Campos de la orden que la tabla necesita mostrar (unidos al leer).
 _ORDER_PROJ = {
-    "_id": 0, "order_number": 1, "customer_po": 1, "design_#": 1, "design_num": 1,
+    "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "design_#": 1, "design_num": 1,
     "cancel_date": 1, "client": 1, "branding": 1, "quantity": 1,
     "production_status": 1, "board": 1, "notes": 1,
-    "packing_link": 1, "packing_link_label": 1,
+    "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
 }
 
 
@@ -69,14 +73,36 @@ def _valid_week(v):
     return w
 
 
-def _row(sched: dict, order: dict | None) -> dict:
+MAX_ENVIOS = 50
+
+
+def _valid_shipment_no(v):
+    n = int(v)
+    if not (1 <= n <= MAX_ENVIOS):
+        raise ValueError
+    return n
+
+
+def _row(sched: dict, order: dict | None, pl_seed: dict | None = None) -> dict:
     o = order or {}
+    # PL (packing list): campo packing_link* de la orden, o el comentario
+    # packing_link_seed más fresco. Misma lógica que el modal de comentarios.
+    pl_label = o.get("packing_link_label")
+    pl_url = o.get("packing_link")
+    pl_at = str(o.get("packing_link_at") or "")
+    if pl_seed and (not pl_url or str(pl_seed.get("at") or "") >= pl_at):
+        pl_label = pl_seed.get("label") or pl_label
+        pl_url = pl_seed.get("url") or pl_url
     return {
+        "pl_number": pl_label or None,
+        "pl_url": pl_url or None,
         "shipment_id": sched.get("shipment_id"),
         "order_number": sched.get("order_number"),
         "scheduled_year": sched.get("scheduled_year"),
         "scheduled_month": sched.get("scheduled_month"),   # 1..12
         "scheduled_week": sched.get("scheduled_week"),     # 1..5 (semana del mes)
+        "shipment_no": sched.get("shipment_no") or 1,      # envío dentro de la semana
+
         "scheduled_export_date": sched.get("scheduled_export_date"),
         "delivery_to": sched.get("delivery_to"),
         "pl_export": sched.get("pl_export"),
@@ -105,9 +131,56 @@ async def list_scheduled(request: Request):
     await require_auth(request)
     scheds = await db.scheduled_shipments.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     nums = [s.get("order_number") for s in scheds if s.get("order_number")]
-    orders = await db.orders.find({"order_number": {"$in": nums}}, _ORDER_PROJ).to_list(len(nums) or 1)
+    # Excluir PAPELERA: hay order_number gemelos y la copia vieja vive en la basura
+    # sin packing; sin esto el join podía traer los datos de la gemela equivocada.
+    orders = await db.orders.find(
+        {"order_number": {"$in": nums}, "board": {"$ne": "PAPELERA DE RECICLAJE"}}, _ORDER_PROJ,
+    ).to_list(5000)
     by_num = {o["order_number"]: o for o in orders if o.get("order_number")}
-    return {"items": [_row(s, by_num.get(s.get("order_number"))) for s in scheds]}
+    # PL desde los comentarios packing_link_seed (por order_id), el más fresco por orden.
+    oids = [o.get("order_id") for o in orders if o.get("order_id")]
+    pl_by_num = {}
+    if oids:
+        seeds = await db.comments.find(
+            {"order_id": {"$in": oids}, "source": "packing_link_seed"},
+            {"_id": 0, "order_id": 1, "content": 1, "created_at": 1},
+        ).sort("created_at", 1).to_list(5000)
+        pl_by_oid = {}
+        for c in seeds:  # cronológico: el último gana
+            m = _FILE_RE.search(c.get("content") or "")
+            if m:
+                pl_by_oid[c["order_id"]] = {"label": m.group(1), "url": m.group(2), "at": c.get("created_at") or ""}
+        for o in orders:
+            seed = pl_by_oid.get(o.get("order_id"))
+            if seed and o.get("order_number"):
+                pl_by_num[o["order_number"]] = seed
+    # Conteo de envíos configurado por semana (para grupos vacíos que sobreviven recarga).
+    weeks = await db.scheduled_week_envios.find({}, {"_id": 0}).to_list(5000)
+    return {
+        "items": [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number"))) for s in scheds],
+        "weeks": weeks,
+    }
+
+
+@router.post("/week-config")
+async def set_week_envios(request: Request):
+    """Fija cuántos 'envíos' (grupos) tiene una semana. Permite tener grupos vacíos
+    (Envío 3) antes de asignarles órdenes."""
+    user = await require_auth(request)
+    body = await request.json()
+    try:
+        year = int(body.get("scheduled_year") or datetime.now(timezone.utc).year)
+        month = _valid_month(body.get("scheduled_month"))
+        week = _valid_week(body.get("scheduled_week"))
+        envios = int(body.get("envios"))
+        if not (1 <= envios <= MAX_ENVIOS):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="year/month(1..12)/week(1..5)/envios(1..50) requeridos")
+    key = {"scheduled_year": year, "scheduled_month": month, "scheduled_week": week}
+    await db.scheduled_week_envios.update_one(key, {"$set": {**key, "envios": envios}}, upsert=True)
+    await log_activity(user, "set_week_envios", {**key, "envios": envios})
+    return {**key, "envios": envios}
 
 
 @router.post("")
@@ -134,12 +207,17 @@ async def schedule_shipment(request: Request):
         year = int(body.get("scheduled_year") or datetime.now(timezone.utc).year)
     except (TypeError, ValueError):
         year = datetime.now(timezone.utc).year
+    try:
+        shipment_no = _valid_shipment_no(body.get("shipment_no") or 1)
+    except (TypeError, ValueError):
+        shipment_no = 1
 
     now = datetime.now(timezone.utc).isoformat()
     fields = {
         "scheduled_year": year,
         "scheduled_month": month,
         "scheduled_week": week,
+        "shipment_no": shipment_no,
         "scheduled_export_date": (body.get("scheduled_export_date") or None),
         "delivery_to": (body.get("delivery_to") or None),
         "pl_export": (body.get("pl_export") or None),
@@ -184,8 +262,10 @@ async def update_scheduled(shipment_id: str, request: Request):
             allowed["scheduled_week"] = _valid_week(body["scheduled_week"])
         if "scheduled_year" in body:
             allowed["scheduled_year"] = int(body["scheduled_year"])
+        if "shipment_no" in body:
+            allowed["shipment_no"] = _valid_shipment_no(body["shipment_no"])
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="mes (1..12), semana (1..5) o año inválidos")
+        raise HTTPException(status_code=400, detail="mes (1..12), semana (1..5), año o envío inválidos")
     if not allowed:
         raise HTTPException(status_code=400, detail="Nada que actualizar")
     allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
