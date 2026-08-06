@@ -225,6 +225,33 @@ async def list_shipped_orders(request: Request, skip: int = 0, limit: int = 50):
     return {"total": total, "skip": skip, "limit": limit, "items": items}
 
 
+@router.get("/available-to-ship")
+async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 50, search: str = ""):
+    """Órdenes DISPONIBLES para programar envío: sin el camioncito (packing_link
+    vacío), vivas, y que NO estén ya programadas (excluye las de scheduled_shipments).
+    Inverso de /shipped. NOTA: debe declararse ANTES de /{order_id}."""
+    await require_auth(request)
+    skip = max(0, skip)
+    limit = max(1, min(limit, 5000))
+    scheduled_nums = await db.scheduled_shipments.distinct("order_number")
+    q = {
+        "packing_link": {"$in": [None, ""]},
+        "board": {"$ne": "PAPELERA DE RECICLAJE"},
+        "order_number": {"$nin": scheduled_nums},
+    }
+    if search:
+        rx = {"$regex": re.escape(search), "$options": "i"}
+        q["$or"] = [{"order_number": rx}, {"client": rx}, {"customer_po": rx}]
+    proj = {
+        "_id": 0, "order_number": 1, "client": 1, "customer_po": 1, "branding": 1,
+        "quantity": 1, "cancel_date": 1, "production_status": 1, "board": 1,
+    }
+    total = await db.orders.count_documents(q)
+    items = await (db.orders.find(q, proj)
+                   .sort("cancel_date", 1).skip(skip).limit(limit).to_list(limit))
+    return {"total": total, "skip": skip, "limit": limit, "items": items}
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: str, request: Request):
     await require_auth(request)
