@@ -65,6 +65,38 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
   const hasContent = _pv ? !!(_pv.url || _pv.desc) : !!value;
   const linkLocked = PROTECTED_LINK_FIELDS.has(field) && hasContent && userRole() !== 'supersu';
 
+  // Tallas y posiciones son OBJETOS ({S,M,L} / {frente,espalda,...}) con celda
+  // dedicada que ya respeta readOnly. Deben resolverse ANTES del early-return de
+  // readOnly de abajo: si no, un usuario de solo lectura cae en el fallback
+  // genérico y se renderiza el objeto crudo → React #31 (crash del tablero MASTER
+  // para rol general). La orden de la fila llega por prop (`order`), no se busca
+  // en `allOrders` (era una pasada sobre ~1000 órdenes POR CELDA en cada render).
+  if (type === 'sizes') {
+    return (
+      <SizesCell
+        value={value}
+        orderId={orderId}
+        quantity={order?.quantity}
+        positions={order?.print_positions}
+        produced={productionSummary?.[order?.order_number]?.by_size}
+        onUpdate={onUpdate}
+        readOnly={readOnly}
+      />
+    );
+  }
+
+  if (type === 'positions') {
+    return (
+      <PositionsCell
+        value={value}
+        orderId={orderId}
+        inferred={!!order?.print_positions_inferred}
+        onUpdate={onUpdate}
+        readOnly={readOnly}
+      />
+    );
+  }
+
   if (readOnly || linkLocked) {
     if (type === 'checkbox') return <div className="flex items-center justify-center min-h-[32px]"><input type="checkbox" checked={!!value} disabled className="w-5 h-5 rounded border-border opacity-60" /></div>;
     if (type === 'link_desc') {
@@ -184,34 +216,6 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
         <input type="checkbox" checked={!!value} onChange={(e) => onUpdate(orderId, field, e.target.checked)}
           className="w-5 h-5 rounded border-border accent-primary cursor-pointer" data-testid={`checkbox-${field}-${orderId}`} />
       </div>
-    );
-  }
-
-  if (type === 'sizes') {
-    // La orden de la fila llega por prop (`order`), no se busca en `allOrders`:
-    // eso era una pasada sobre las ~1000 órdenes POR CELDA en cada render.
-    return (
-      <SizesCell
-        value={value}
-        orderId={orderId}
-        quantity={order?.quantity}
-        positions={order?.print_positions}
-        produced={productionSummary?.[order?.order_number]?.by_size}
-        onUpdate={onUpdate}
-        readOnly={readOnly}
-      />
-    );
-  }
-
-  if (type === 'positions') {
-    return (
-      <PositionsCell
-        value={value}
-        orderId={orderId}
-        inferred={!!order?.print_positions_inferred}
-        onUpdate={onUpdate}
-        readOnly={readOnly}
-      />
     );
   }
 
