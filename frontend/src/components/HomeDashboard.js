@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users,
   Database, Boxes, Tags, UserSquare, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, ShieldCheck, Search,
-  ChevronRight, Palette, ArrowLeft, Beaker, Brush,
+  ChevronRight, Palette, ArrowLeft, Beaker, Brush, Droplets,
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { GlobalColumnManager } from './dashboard/GlobalColumnManager';
@@ -13,7 +13,7 @@ import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
 const ICON_MAP = {
   Warehouse, Boxes, Database, History, Zap, Users, Tags,
   UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp,
-  ShieldCheck, Palette, Beaker, Brush,
+  ShieldCheck, Palette, Beaker, Brush, Droplets,
 };
 
 const SECTIONS_DEFS = [
@@ -30,6 +30,7 @@ const SECTIONS_DEFS = [
     items: [
       { name: 'Calendario de Ejemplos', path: '/samples', desc: 'Programa muestras por día con recursos y operadores.', icon: 'Beaker' },
       { name: 'Depto. de Pinturas', path: '/paint', desc: 'Calendarización de mezcla de tinta.', icon: 'Brush' },
+      { name: 'Calculadora de Blocker', path: '/blocker-tool', desc: 'Proyecta consumo por impresiones y cobertura del backlog.', icon: 'Droplets' },
     ]
   },
   {

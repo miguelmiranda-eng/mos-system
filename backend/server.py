@@ -194,6 +194,7 @@ from routers.scheduled_shipments import router as scheduled_shipments_router
 from routers.printavo_export import router as printavo_export_router
 from routers.paint import router as paint_router
 from routers.samples import router as samples_router
+from routers.tools import router as tools_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -224,6 +225,7 @@ app.include_router(blanks_sweep_router)
 app.include_router(printavo_export_router)
 app.include_router(paint_router)
 app.include_router(samples_router)
+app.include_router(tools_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -244,6 +246,13 @@ async def startup_event():
         logging.info("Core + WMS indexes ensured on startup.")
     except Exception as e:
         logging.error(f"Index creation failed: {e}")
+    # Los pollers de fondo escriben contra la base (sync Printavo, barrido de
+    # blanks, reportes, scan fantasma). Una instancia local de verificación debe
+    # arrancar con DISABLE_SCHEDULERS=1 para no competir con el servidor de
+    # producción, que es el único escritor autorizado de esos jobs.
+    if os.environ.get("DISABLE_SCHEDULERS") == "1":
+        logging.info("DISABLE_SCHEDULERS=1: schedulers apagados (instancia local de verificación).")
+        return
     # Daily production report scheduler (no-op if disabled / apscheduler missing).
     start_report_scheduler()
     # Printavo invoice auto-sync poller (no-op if disabled / unconfigured).

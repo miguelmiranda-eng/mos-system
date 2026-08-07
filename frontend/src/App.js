@@ -691,6 +691,7 @@ const PackingListTool = lazy(() => import("./components/PackingList"));
 const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
 const PrintavoSync = lazy(() => import("./components/PrintavoSync"));
 const PrintavoExport = lazy(() => import("./components/PrintavoExport"));
+const BlockerTool = lazy(() => import("./components/BlockerTool"));
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -883,6 +884,11 @@ function AppRouter() {
         <AdminRoute>
           <PrintavoExport />
         </AdminRoute>
+      } />
+      <Route path="/blocker-tool" element={
+        <ProtectedRoute>
+          <BlockerTool />
+        </ProtectedRoute>
       } />
       <Route path="/operators-center" element={
         <AdminRoute>
