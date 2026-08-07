@@ -159,7 +159,7 @@ const BlockerTool = () => {
               <PackageSearch className="w-4 h-4 text-blue-400" />
               <h2 className="text-sm font-black uppercase tracking-[0.2em] text-white">Backlog sin imprimir</h2>
               <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-500">
-                Órdenes en BLANKS · EJEMPLOS · SCREENS · INVENTARIO · EDI
+                Órdenes en SCHEDULING · BLANKS · SCREENS · NECK
               </span>
             </div>
             <button

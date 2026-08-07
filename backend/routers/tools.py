@@ -22,9 +22,10 @@ DEFAULT_POSITIONS_FALLBACK = 1.6
 
 ML_PER_BUCKET = 5 * 3785.41  # cubeta de 5 galones
 
-# Tableros donde la orden todavía no se imprime. FINAL BILL / COMPLETOS ya
-# pasaron por producción; PAPELERA se excluye siempre.
-PENDING_BOARDS = ["BLANKS", "EJEMPLOS", "SCREENS", "INVENTARIO", "EDI"]
+# Tableros donde la orden todavía no se imprime (definidos por el usuario
+# 2026-08-07): scheduling, blanks, screens y neck. "SCHEDULING" se incluye por
+# si el tablero se renombra de vuelta; hoy el nombre vivo es READY TO SCHEDULED.
+PENDING_BOARDS = ["SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"]
 
 # Misma clasificación de prenda oscura usada en el reporte de consumo.
 DARK_COLORS = {
