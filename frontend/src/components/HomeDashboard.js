@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users,
   Database, Boxes, Tags, UserSquare, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, ShieldCheck, Search,
-  ChevronRight, Palette, ArrowLeft, Beaker, Brush, Droplets,
+  ArrowLeft, Palette, Beaker, Brush, Droplets,
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { GlobalColumnManager } from './dashboard/GlobalColumnManager';
@@ -14,6 +14,15 @@ const ICON_MAP = {
   Warehouse, Boxes, Database, History, Zap, Users, Tags,
   UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp,
   ShieldCheck, Palette, Beaker, Brush, Droplets,
+};
+
+// Acento visual por sección (clases literales: Tailwind no compila strings dinámicos)
+const ACCENTS = {
+  inventory:  { chip: 'bg-blue-50 text-blue-600',    bar: 'bg-blue-500' },
+  production: { chip: 'bg-violet-50 text-violet-600', bar: 'bg-violet-500' },
+  config:     { chip: 'bg-teal-50 text-teal-600',    bar: 'bg-teal-500' },
+  catalogs:   { chip: 'bg-amber-50 text-amber-600',  bar: 'bg-amber-500' },
+  quality:    { chip: 'bg-emerald-50 text-emerald-600', bar: 'bg-emerald-500' },
 };
 
 const SECTIONS_DEFS = [
@@ -87,40 +96,36 @@ const HomeDashboard = () => {
   })).filter(s => s.items.length > 0);
 
   return (
-    <div className="relative min-h-screen bg-[#070d1a] text-slate-200 font-barlow overflow-y-auto pb-20">
-      {/* Ambient navy glow */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_900px_500px_at_top,rgba(37,99,235,0.14),transparent_60%)]" />
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 h-1/2 bg-[radial-gradient(ellipse_700px_400px_at_bottom_left,rgba(30,58,138,0.18),transparent_60%)]" />
-
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-barlow overflow-y-auto pb-16">
       {/* HEADER */}
-      <header className="sticky top-0 z-40 backdrop-blur-xl bg-[#070d1a]/80 border-b border-white/[0.06]">
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-lg border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-950/60 ring-1 ring-white/10">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-md shadow-blue-200 ring-1 ring-blue-100">
               <LayoutDashboard className="w-6 h-6 text-white" />
             </div>
             <div className="leading-none">
-              <h1 className="text-xl font-black uppercase tracking-tight text-white">
-                MOS <span className="text-blue-400">HOME</span>
+              <h1 className="text-xl font-black uppercase tracking-tight text-slate-900">
+                MOS <span className="text-blue-600">HOME</span>
               </h1>
-              <span className="block text-[9px] font-bold uppercase tracking-[0.35em] text-slate-500 mt-1.5">Industrial Intelligence</span>
+              <span className="block text-[9px] font-bold uppercase tracking-[0.35em] text-slate-400 mt-1.5">Industrial Intelligence</span>
             </div>
           </div>
 
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="relative flex-1 md:w-80">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 placeholder="Filtrar herramientas..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full h-11 pl-10 pr-4 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-slate-200 placeholder:text-slate-500 outline-none focus:border-blue-400/50 focus:bg-white/[0.06] transition-all"
+                className="w-full h-11 pl-10 pr-4 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all"
               />
             </div>
             <button
               onClick={() => navigate('/dashboard')}
-              className="h-11 px-5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] font-black uppercase tracking-widest text-slate-300 hover:text-white hover:border-blue-400/40 hover:bg-white/[0.07] flex items-center gap-2 whitespace-nowrap transition-all"
+              className="h-11 px-5 rounded-xl bg-white border border-slate-200 text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center gap-2 whitespace-nowrap transition-all"
             >
               <ArrowLeft className="w-4 h-4" /> Volver al CRM
             </button>
@@ -128,55 +133,57 @@ const HomeDashboard = () => {
         </div>
       </header>
 
-      <main className="relative max-w-7xl mx-auto px-4 md:px-8 pt-8 space-y-10">
-        {/* SECTIONS */}
+      <main className="max-w-7xl mx-auto px-4 md:px-8 pt-10 space-y-12">
         {filteredSections.length === 0 ? (
-          <div className="py-24 text-center text-slate-500 text-sm font-bold uppercase tracking-widest">
+          <div className="py-24 text-center text-slate-400 text-sm font-bold uppercase tracking-widest">
             Sin herramientas que coincidan con “{search}”
           </div>
         ) : (
-          <div className="space-y-9">
-            {filteredSections.map(section => (
+          filteredSections.map(section => {
+            const accent = ACCENTS[section.id] || ACCENTS.inventory;
+            return (
               <section key={section.id}>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-1 h-5 rounded-full bg-gradient-to-b from-blue-400 to-blue-700" />
-                  <h2 className="text-sm font-black uppercase tracking-[0.18em] text-slate-200">{section.title}</h2>
-                  <span className="text-[10px] font-mono text-slate-600">{String(section.items.length).padStart(2, '0')}</span>
-                  <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
+                <div className="flex items-center gap-3 mb-5">
+                  <div className={`w-1.5 h-6 rounded-full ${accent.bar}`} />
+                  <h2 className="text-base font-black uppercase tracking-[0.14em] text-slate-800">{section.title}</h2>
+                  <span className="text-xs font-semibold text-slate-400">{section.items.length}</span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                   {section.items.map((item, idx) => {
                     const ItemIcon = ICON_MAP[item.icon] || Factory;
                     return (
                       <button
                         key={idx}
                         onClick={() => handleCardClick(item)}
-                        className="group relative flex items-center gap-3.5 p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.07] hover:border-blue-400/40 hover:bg-white/[0.06] text-left transition-all duration-200 hover:shadow-[0_8px_30px_rgba(37,99,235,0.12)]"
+                        className="group flex flex-col items-start gap-4 p-6 rounded-2xl bg-white border border-slate-200 text-left shadow-sm hover:shadow-lg hover:border-blue-300 hover:-translate-y-0.5 transition-all duration-200"
                       >
-                        <div className="w-10 h-10 rounded-lg bg-blue-500/[0.08] border border-blue-400/15 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-500/20 group-hover:border-blue-400/30 transition-all">
-                          <ItemIcon className="w-5 h-5 text-blue-300/70 group-hover:text-blue-200 transition-colors" />
+                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${accent.chip}`}>
+                          <ItemIcon className="w-7 h-7" />
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-bold uppercase tracking-wide text-slate-100 truncate group-hover:text-white transition-colors">{item.name}</div>
-                          <div className="text-[10px] text-slate-500 truncate italic">{item.desc}</div>
+                        <div className="min-w-0">
+                          <div className="text-[15px] font-bold text-slate-900 leading-snug group-hover:text-blue-700 transition-colors">
+                            {item.name}
+                          </div>
+                          <p className="mt-1.5 text-[12.5px] text-slate-500 leading-relaxed">
+                            {item.desc}
+                          </p>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-700 group-hover:text-blue-300 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
                       </button>
                     );
                   })}
                 </div>
               </section>
-            ))}
-          </div>
+            );
+          })
         )}
       </main>
 
-      <footer className="relative max-w-7xl mx-auto px-4 md:px-8 mt-14 border-t border-white/[0.06] pt-6 flex flex-col md:flex-row justify-between items-center gap-3 text-[10px] font-black text-slate-600 uppercase tracking-[0.4em]">
+      <footer className="max-w-7xl mx-auto px-4 md:px-8 mt-16 border-t border-slate-200 pt-6 flex flex-col md:flex-row justify-between items-center gap-3 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">
         <div className="flex items-center gap-3">
-          <Factory className="w-4 h-4 text-blue-500/40" />
+          <Factory className="w-4 h-4 text-blue-400" />
           <span>Industrial OS</span>
-          <span className="text-slate-700">•</span>
+          <span className="text-slate-300">•</span>
           <span>v7.2.1</span>
         </div>
         <div>Prosper Manufacturing © 2026</div>
