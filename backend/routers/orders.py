@@ -820,8 +820,15 @@ async def add_order_link(order_id: str, request: Request):
     description = body.get("description", "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL required")
+    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "order_number": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
     link = {"url": url, "description": description, "created_at": datetime.now(timezone.utc).isoformat(), "added_by": user["name"]}
     await db.orders.update_one({"order_id": order_id}, {"$push": {"links": link}})
+    await log_activity(user, "add_order_link", {
+        "order_id": order_id, "order_number": order.get("order_number"),
+        "url": url, "description": description,
+    })
     await ws_manager.broadcast("order_change", {"action": "add_link", "order_id": order_id})
     return link
 
@@ -918,15 +925,20 @@ async def unpair_order_twin(order_id: str, request: Request):
 
 @router.delete("/{order_id}/links/{link_index}")
 async def delete_order_link(order_id: str, link_index: int, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     links = order.get("links", [])
     if link_index < 0 or link_index >= len(links):
         raise HTTPException(status_code=400, detail="Invalid link index")
-    links.pop(link_index)
+    removed = links.pop(link_index)
     await db.orders.update_one({"order_id": order_id}, {"$set": {"links": links}})
+    await log_activity(user, "delete_order_link", {
+        "order_id": order_id, "order_number": order.get("order_number"),
+        "url": removed.get("url"), "description": removed.get("description"),
+        "added_by": removed.get("added_by"),
+    })
     await ws_manager.broadcast("order_change", {"action": "delete_link", "order_id": order_id})
     return {"message": "Link deleted"}
 

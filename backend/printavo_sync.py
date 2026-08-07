@@ -397,6 +397,80 @@ def _max_visual_id(nodes) -> str:
     return str(top) if top is not None else None
 
 
+async def refresh_note_links(nodes: list) -> int:
+    """Re-lee el customerNote de los invoices visibles en esta pasada y actualiza
+    el link que el propio sync sembró en las órdenes existentes.
+
+    El link de packing se copiaba UNA sola vez al crear la orden; los quotes en
+    Printavo se arman duplicando el anterior, así que si el invoice se convertía
+    antes de que la nota recibiera su packing list definitivo, MOS congelaba el
+    link heredado del quote clonado y la corrección posterior en Printavo nunca
+    se propagaba (casos 2622 y 2568, 2026-08). Esta pasada corre en cada tick
+    sobre los MISMOS nodos ya traídos (costo API cero) y cierra esa ventana:
+
+      * solo toca la entrada cuyo added_by == "Printavo Sync" — una edición
+        humana toma posesión del link y el sync no la vuelve a pisar;
+      * si la orden no tiene ningún link y la nota ya trae URL, lo agrega
+        (sana órdenes cuya nota estaba vacía al crearse);
+      * nunca borra: si la nota quedó sin URL se conserva el último conocido.
+
+    Solo alcanza la ventana de invoices recientes del poll; una divergencia más
+    vieja que eso se corrige a mano (la orden ya viajó a producción de todos modos).
+    """
+    from deps import log_activity  # lazy: keeps the module import side-effect free
+
+    refreshed = 0
+    for node in nodes:
+        inv_id = node.get("id")
+        if not inv_id:
+            continue
+        note_url, note_label = _extract_note_link(node.get("customerNote"))
+        if not note_url:
+            continue
+        orders = await db.orders.find(
+            {"printavo_invoice_id": inv_id, "board": {"$ne": TRASH_BOARD}},
+            {"_id": 0, "order_id": 1, "order_number": 1, "links": 1},
+        ).to_list(20)
+        for order in orders:
+            links = order.get("links") or []
+            idx = next((i for i, l in enumerate(links)
+                        if l.get("added_by") == SYNC_USER["name"]), None)
+            if idx is None and links:
+                continue  # un humano curó los links de esta orden: no intervenir
+            old = links[idx] if idx is not None else None
+            if old and old.get("url") == note_url:
+                continue  # sin cambio
+            entry = {
+                "url": note_url,
+                "description": note_label or "Customer Notes",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "added_by": SYNC_USER["name"],
+            }
+            update = {"$set": {f"links.{idx}": entry}} if idx is not None \
+                else {"$push": {"links": entry}}
+            await db.orders.update_one({"order_id": order["order_id"]}, update)
+            refreshed += 1
+            logger.info(f"[printavo] link refresh {order.get('order_number')}: "
+                        f"{(old or {}).get('url')} -> {note_url}")
+            try:
+                await log_activity(SYNC_USER, "printavo_link_refresh", {
+                    "order_id": order["order_id"],
+                    "order_number": order.get("order_number"),
+                    "from_url": (old or {}).get("url"),
+                    "to_url": note_url,
+                })
+            except Exception as e:
+                logger.warning(f"[printavo] link refresh log failed: {e}")
+    if refreshed:
+        # Flush del cache de /api/orders (sin TTL, solo lo limpia el broadcast).
+        try:
+            from ws_manager import ws_manager
+            await ws_manager.broadcast("order_change", {"action": "link_refresh"})
+        except Exception as e:
+            logger.warning(f"[printavo] link refresh broadcast failed: {e}")
+    return refreshed
+
+
 async def sync_once(cfg: dict) -> dict:
     """Fetch recent invoices and create an order for each NEW one.
 
@@ -441,7 +515,17 @@ async def sync_once(cfg: dict) -> dict:
             logger.error(f"[printavo] invoice {node.get('visualId')} failed, releasing claim: {e}")
             await db.printavo_processed.delete_one({"_id": str(inv_id)})
 
-    return {"initialized": False, "created": created_total, "seen": len(nodes), "watermark": watermark}
+    # Propaga correcciones del customerNote a órdenes ya importadas (todos los
+    # nodos visibles, no solo los ready: la nota puede corregirse en cualquier
+    # momento mientras el invoice siga dentro de la ventana del poll).
+    refreshed = 0
+    try:
+        refreshed = await refresh_note_links(nodes)
+    except Exception as e:
+        logger.warning(f"[printavo] note-link refresh failed: {e}")
+
+    return {"initialized": False, "created": created_total, "refreshed": refreshed,
+            "seen": len(nodes), "watermark": watermark}
 
 
 # ── Final Bill pass ──────────────────────────────────────────────────────────
