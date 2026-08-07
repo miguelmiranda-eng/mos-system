@@ -29,9 +29,9 @@ const Metric = ({ label, value, unit, tone = 'text-slate-900' }) => (
 const BlockerTool = () => {
   const navigate = useNavigate();
 
-  // ----- parámetros compartidos (medidos en el análisis jul-ago 2026)
-  const [mlPerHit, setMlPerHit] = useState(0.80);
-  const [blockerShare, setBlockerShare] = useState(63); // % de hits que llevan blocker (mezcla actual)
+  // ----- parámetros compartidos (recalibrados con la regla de algodón, ago 2026)
+  const [mlPerHit, setMlPerHit] = useState(2.24);
+  const [blockerShare, setBlockerShare] = useState(22); // % de hits que llevan blocker (mezcla actual)
 
   // ----- calculadora de proyección
   const [projHits, setProjHits] = useState('');
@@ -87,7 +87,7 @@ const BlockerTool = () => {
           <div className="leading-none">
             <h1 className="text-lg font-black uppercase tracking-tight text-slate-900">Calculadora de Blocker</h1>
             <span className="block text-[9px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-1">
-              Velocity blocker grey · 0.80 mL por hit (medido jul-ago 2026)
+              Velocity blocker grey · 2.24 mL por hit con blocker · algodón 70%+ (100, 90/10, 80/20) no lleva
             </span>
           </div>
         </div>
@@ -120,8 +120,9 @@ const BlockerTool = () => {
             />
           </label>
           <p className="text-[10px] text-slate-400 max-w-xs leading-relaxed">
-            63% = mezcla actual (prenda oscura + diseños claros de 5+ colores). Si tu proyección
-            es solo de hits que llevan blocker, usa 100%.
+            22% = mezcla actual: solo prenda DE MEZCLA oscura o clara con diseño de 5+ colores
+            lleva blocker; la 100% algodón no lleva. Si tu proyección es solo de hits que llevan
+            blocker, usa 100%.
           </p>
         </Card>
 
@@ -249,6 +250,9 @@ const BlockerTool = () => {
                               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${o.is_dark ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
                                 {o.color || 'S/C'}
                               </span>
+                              <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${o.fabric === 'ALGODON' ? 'bg-emerald-50 text-emerald-700' : o.fabric === 'MEZCLA' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-400'}`}>
+                                {o.fabric === 'SIN DATO' ? 'S/T' : o.fabric}
+                              </span>
                             </td>
                             <td className="py-1.5 text-right text-slate-500">{fmt(o.pending_hits)} hits</td>
                             <td className="py-1.5 text-right font-bold text-slate-900">{fmt(o.ml / 1000, 1)} L</td>
@@ -262,7 +266,9 @@ const BlockerTool = () => {
 
               <p className="text-[10px] text-slate-400 leading-relaxed">
                 Hits pendientes = piezas de la orden × posiciones de impresión − hits ya registrados en producción.
-                Prenda oscura cuenta al 100%; prenda clara al {Math.round((forecast.params.light_factor) * 100)}% (diseños de 5+ colores).
+                La prenda con {Math.round(forecast.params.cotton_no_blocker_pct)}%+ de algodón (100%, 90/10, 80/20) no lleva blocker (tela resuelta vía pick tickets del WMS);
+                MEZCLA oscura cuenta al 100% y mezcla clara al {Math.round((forecast.params.light_factor) * 100)}% (diseños de 5+ colores).
+                Sin dato de tela se aplica el % de algodón medido en producción ({Math.round(forecast.params.dark_cotton_share * 100)}% oscuras / {Math.round(forecast.params.light_cotton_share * 100)}% claras).
                 Stock consultado en vivo del almacén de mantenimiento (MaintOps).
               </p>
             </div>

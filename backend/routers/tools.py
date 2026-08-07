@@ -3,7 +3,15 @@
 Calcula, sobre las órdenes que aún no pasan por impresión (tableros previos a
 producción), cuántos hits faltan y cuánto Velocity blocker grey requieren,
 comparado contra el stock vivo del almacén de mantenimiento (MaintOps/Supabase).
+
+Regla de negocio (usuario, ago 2026): la prenda con algodón alto NO lleva
+blocker — 100% algodón, 90/10 y 80/20 (umbral: >= 70% algodón). El blocker
+aplica solo a mezclas con poliéster significativo (60/40, 58/42, 52/48, 50/50,
+poliéster puro...) que además sean oscuras o lleven diseños de 5+ colores.
+La tela de cada orden se resuelve vía pick tickets del WMS
+(orden → estilo → fabric_content del inventario).
 """
+import re
 from fastapi import APIRouter, Request
 import httpx
 import os
@@ -12,13 +20,20 @@ from deps import db, require_auth, logger
 
 router = APIRouter(prefix="/api")
 
-# Factor medido en el análisis jul-ago 2026: 125 gal consumidos / ~590,800 hits
-# con blocker. Es el default; el frontend lo puede sobreescribir por query param.
-DEFAULT_ML_PER_HIT = 0.80
-# Proporción de hits de prenda clara que llevan blocker (diseños de 5+ colores).
+# Factor recalibrado con la regla de algodón (ago 2026): 125 gal consumidos en
+# jul-ago repartidos entre ~211,500 hits con blocker (prenda de mezcla oscura +
+# 15% de la clara de mezcla). El frontend lo puede sobreescribir por query param.
+DEFAULT_ML_PER_HIT = 2.24
+# Proporción de hits de prenda clara DE MEZCLA que llevan blocker (5+ colores).
 DEFAULT_LIGHT_FACTOR = 0.15
 # Posiciones de impresión promedio cuando la orden no trae print_positions.
 DEFAULT_POSITIONS_FALLBACK = 1.6
+# A partir de este % de algodón la prenda NO lleva blocker (100, 90/10, 80/20).
+COTTON_NO_BLOCKER_PCT = 70
+# Participación de prenda sin-blocker medida en la ventana jul-ago 2026, usada
+# como descuento cuando una orden pendiente aún no tiene ticket (tela desconocida).
+DARK_COTTON_SHARE = 0.67
+LIGHT_COTTON_SHARE = 0.49
 
 ML_PER_BUCKET = 5 * 3785.41  # cubeta de 5 galones
 
@@ -44,6 +59,23 @@ MAINTOPS_KEY = os.environ.get(
 )
 BLOCKER_ITEM_ID = 134  # Velocity blocker grey / Base Grey (cubeta 5 gal)
 
+_COTTON_PCT_RE = re.compile(
+    r"(\d+)\s*%?\s*(?:RING[ -]?SPUN\s+|COMBED\s+|PRE-SHRUNK\s+|RINGSPUN\s+|COMED\s+)*(?:COTTON|C\b)"
+)
+
+
+def _cotton_pct(fabric):
+    """% de algodón de la composición; None si no hay dato interpretable."""
+    f = (fabric or "").strip().upper()
+    if not f:
+        return None
+    m = _COTTON_PCT_RE.search(f)
+    if m:
+        return int(m.group(1))
+    if "COTTON" in f or re.search(r"\bC\b", f):
+        return None  # menciona algodón pero sin % legible
+    return 0  # composición conocida sin algodón (poliéster, nylon...)
+
 
 async def _fetch_blocker_stock():
     """Stock vivo de Velocity blocker en MaintOps. None si no hay conexión."""
@@ -60,6 +92,34 @@ async def _fetch_blocker_stock():
     except Exception as e:
         logger.warning(f"[blocker-forecast] MaintOps sin conexión: {e}")
         return None
+
+
+async def _fabric_by_order():
+    """order_number -> fabric_content, resuelto ticket → estilo → inventario WMS."""
+    fab_by_style = {}
+    async for r in db.wms_inventory.aggregate([
+        {"$match": {"style": {"$nin": [None, ""]}}},
+        {"$group": {"_id": {"s": "$style", "f": {"$ifNull": ["$fabric_content", ""]}},
+                    "u": {"$sum": "$units_on_hand"}}},
+    ]):
+        s = r["_id"]["s"].strip().upper()
+        f = (r["_id"]["f"] or "").strip().upper()
+        u = r["u"] or 0
+        if s not in fab_by_style or u > fab_by_style[s][1]:
+            fab_by_style[s] = (f, u)
+
+    fab_by_order = {}
+    async for t in db.wms_pick_tickets.find(
+        {}, {"_id": 0, "order_number": 1, "style": 1, "total_pick_qty": 1, "quantity": 1}
+    ):
+        on = str(t.get("order_number") or "").strip()
+        st = (t.get("style") or "").strip().upper()
+        if not on or st not in fab_by_style:
+            continue
+        qty = t.get("total_pick_qty") or t.get("quantity") or 0
+        if on not in fab_by_order or qty > fab_by_order[on][1]:
+            fab_by_order[on] = (fab_by_style[st][0], qty)
+    return {on: v[0] for on, v in fab_by_order.items()}
 
 
 def _positions_count(order) -> float:
@@ -96,9 +156,12 @@ async def blocker_forecast(
         ]):
             produced[row["_id"]] = row["hits"]
 
+    fabric_map = await _fabric_by_order()
+
     by_board = {}
     detail = []
-    total_hits = total_ml = 0.0
+    total_hits = total_ml = cotton_hits = 0.0
+    fabric_known = 0
     for o in orders:
         qty = o.get("quantity") or 0
         if not isinstance(qty, (int, float)) or qty <= 0:
@@ -110,10 +173,28 @@ async def blocker_forecast(
             continue
         color = (o.get("color") or "").strip().upper()
         is_dark = (color in DARK_COLORS) or not color
-        factor = 1.0 if is_dark else light_factor
+
+        fabric = fabric_map.get(str(o.get("order_number") or "").strip())
+        pct = _cotton_pct(fabric)
+        no_blocker = None if pct is None else (pct >= COTTON_NO_BLOCKER_PCT)
+        if no_blocker is not None:
+            fabric_known += 1
+
+        # Regla: algodón alto (>=70%: 100, 90/10, 80/20) no lleva blocker.
+        # Tela desconocida usa el descuento medido en produccion jul-ago 2026.
+        if no_blocker is True:
+            factor = 0.0
+        elif no_blocker is False:
+            factor = 1.0 if is_dark else light_factor
+        else:
+            factor = ((1 - DARK_COTTON_SHARE) if is_dark
+                      else light_factor * (1 - LIGHT_COTTON_SHARE))
+
         ml = pending * ml_per_hit * factor
 
         total_hits += pending
+        if no_blocker is True:
+            cotton_hits += pending
         total_ml += ml
         b = o.get("board") or "?"
         agg = by_board.setdefault(b, {"board": b, "orders": 0, "pending_hits": 0.0, "ml": 0.0})
@@ -127,6 +208,8 @@ async def blocker_forecast(
             "board": b,
             "pending_hits": round(pending),
             "is_dark": is_dark,
+            "fabric": ("ALGODON" if no_blocker is True else
+                       "MEZCLA" if no_blocker is False else "SIN DATO"),
             "ml": round(ml),
         })
 
@@ -137,10 +220,15 @@ async def blocker_forecast(
     detail.sort(key=lambda x: -x["ml"])
     return {
         "params": {"ml_per_hit": ml_per_hit, "light_factor": light_factor,
-                   "positions_fallback": positions_fallback},
+                   "positions_fallback": positions_fallback,
+                   "cotton_no_blocker_pct": COTTON_NO_BLOCKER_PCT,
+                   "dark_cotton_share": DARK_COTTON_SHARE,
+                   "light_cotton_share": LIGHT_COTTON_SHARE},
         "totals": {
             "orders": sum(b["orders"] for b in by_board.values()),
             "pending_hits": round(total_hits),
+            "cotton_hits": round(cotton_hits),
+            "fabric_known_orders": fabric_known,
             "ml": round(total_ml),
             "liters": round(total_ml / 1000, 1),
             "gallons": round(total_ml / 3785.41, 1),
