@@ -183,31 +183,7 @@ async def get_production_logs(order_id: str, request: Request):
     total_produced = sum(entry.get("quantity_produced", 0) for entry in logs)
     return {"logs": logs, "total_produced": total_produced}
 
-@router.get("/production-summary")
-async def get_production_summary(request: Request, date_from: str = None, date_to: str = None):
-    api_key = request.query_params.get("api_key")
-    if api_key != MASTER_API_KEY:
-        await require_auth(request)
-    cache_key = "prod_summary"
-    cached = get_cached(cache_key)
-    if cached and not date_from and not date_to: return cached
-
-    query = {}
-    if date_from or date_to:
-        tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
-        dt_query = {}
-        if date_from:
-            dt = datetime.strptime(date_from, "%Y-%m-%d")
-            local_start = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz)
-            utc_start = local_start.astimezone(timezone.utc)
-            dt_query["$gte"] = utc_start.isoformat()
-        if date_to:
-            dt = datetime.strptime(date_to, "%Y-%m-%d")
-            local_end = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz)
-            utc_end = local_end.astimezone(timezone.utc)
-            dt_query["$lte"] = utc_end.isoformat()
-        query["created_at"] = dt_query
-
+async def _compute_production_summary(query: dict) -> dict:
     # Se agrupa por (orden, talla, posición) en vez de solo por orden, y los
     # totales se rearman aquí. Una sola pasada, y de ella salen tres cosas:
     #
@@ -259,10 +235,46 @@ async def get_production_summary(request: Request, date_from: str = None, date_t
             por_talla = entrada["by_size"].setdefault(talla, {})
             por_talla[posicion] = por_talla.get(posicion, 0) + qty
 
-
-    if not date_from and not date_to:
-        set_cache(cache_key, summary)
     return summary
+
+
+@router.get("/production-summary")
+async def get_production_summary(request: Request, date_from: str = None, date_to: str = None):
+    api_key = request.query_params.get("api_key")
+    if api_key != MASTER_API_KEY:
+        await require_auth(request)
+    cache_key = "prod_summary"
+    cacheable = not date_from and not date_to
+    cached = get_cached(cache_key)
+    if cached and cacheable: return cached
+
+    if cacheable:
+        # Anti-estampida (mismo patrón que el gantt de abajo y orders.py): cada
+        # captura invalida este caché y su broadcast hace que TODOS los clientes
+        # conectados pidan el resumen casi a la vez; sin el lock, cada request
+        # de la ráfaga corría la agregación completa en paralelo.
+        if cache_key not in _cache_locks:
+            _cache_locks[cache_key] = asyncio.Lock()
+        async with _cache_locks[cache_key]:
+            cached = get_cached(cache_key)
+            if cached: return cached
+            summary = await _compute_production_summary({})
+            set_cache(cache_key, summary)
+            return summary
+
+    query = {}
+    tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")
+    dt_query = {}
+    if date_from:
+        dt = datetime.strptime(date_from, "%Y-%m-%d")
+        local_start = dt.replace(hour=0, minute=0, second=0, tzinfo=tijuana_tz)
+        dt_query["$gte"] = local_start.astimezone(timezone.utc).isoformat()
+    if date_to:
+        dt = datetime.strptime(date_to, "%Y-%m-%d")
+        local_end = dt.replace(hour=23, minute=59, second=59, tzinfo=tijuana_tz)
+        dt_query["$lte"] = local_end.astimezone(timezone.utc).isoformat()
+    query["created_at"] = dt_query
+    return await _compute_production_summary(query)
 
 # Shared filter helper for the LIST endpoints below — keeps the two listings
 # (production / neck) DRY.

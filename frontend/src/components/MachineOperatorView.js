@@ -9,6 +9,7 @@ import ProductionModal from "./ProductionModal";
 import { CommentsModal } from "./dashboard/CommentsModal";
 import { EditableCell } from "./dashboard/EditableCell";
 import { DEFAULT_COLUMNS } from "../lib/constants";
+import { apiFetch } from "../lib/http";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND}/api`;
@@ -31,8 +32,11 @@ const isHiddenBoard = (name) => {
 };
 const visibleBoards = (list) => (list || []).filter(b => !isHiddenBoard(b));
 
+// apiFetch en vez de fetch crudo: deduplica GETs idénticos en vuelo y les da
+// el TTL de 5s compartido — sin esto, cada pantalla de operador golpeaba el
+// proxy con requests repetidos durante las ráfagas de broadcasts.
 const fetcher = (path) =>
-  fetch(`${API}${path}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
+  apiFetch(`${API}${path}`).then(r => (r.ok ? r.json() : Promise.reject(r)));
 
 export default function MachineOperatorView() {
   const { user, logout } = useAuth();
@@ -116,6 +120,15 @@ export default function MachineOperatorView() {
 
   // Same WebSocket signal handling as Dashboard: refresh summaries on
   // production_update and reload the board on order_change.
+  //
+  // Debounce + jitter (mismo patrón que useOrders): el backend emite un
+  // broadcast POR CADA captura, así que una ráfaga de N capturas disparaba N
+  // recargas inmediatas en CADA pantalla de operador — estampida visible en el
+  // proxy. Los flags acumulan qué refrescar durante la ventana para que un
+  // order_change en medio de la ráfaga no se pierda. La captura propia no pasa
+  // por aquí: onProductionUpdate refresca directo.
+  const wsDebounceRef = useRef(null);
+  const wsPendingRef = useRef({ summaries: false, orders: false });
   useEffect(() => {
     if (!user) return;
     let ws;
@@ -126,15 +139,27 @@ export default function MachineOperatorView() {
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === "production_update" || msg.type === "neck_update") {
-            loadSummaries();
-            setRefreshTick(t => t + 1);
+            wsPendingRef.current.summaries = true;
+            wsPendingRef.current.orders = true;
           } else if (msg.type === "order_change") {
-            setRefreshTick(t => t + 1);
+            wsPendingRef.current.orders = true;
+          } else {
+            return;
           }
+          if (wsDebounceRef.current) clearTimeout(wsDebounceRef.current);
+          wsDebounceRef.current = setTimeout(() => {
+            const pending = wsPendingRef.current;
+            wsPendingRef.current = { summaries: false, orders: false };
+            if (pending.summaries) loadSummaries();
+            if (pending.orders) setRefreshTick(t => t + 1);
+          }, 800 + Math.random() * 1700);
         } catch { /* ignore */ }
       };
     } catch { /* ignore */ }
-    return () => { try { ws?.close(); } catch {} };
+    return () => {
+      if (wsDebounceRef.current) clearTimeout(wsDebounceRef.current);
+      try { ws?.close(); } catch {}
+    };
   }, [user, loadSummaries]);
 
   // Global search — same flow as Dashboard's handleGlobalSearch: hits backend,
@@ -146,7 +171,7 @@ export default function MachineOperatorView() {
     if (!q) return;
     setSearching(true);
     try {
-      const res = await fetch(`${API}/orders?search=${encodeURIComponent(q)}`, { credentials: "include" });
+      const res = await apiFetch(`${API}/orders?search=${encodeURIComponent(q)}`);
       if (!res.ok) { toast.error("Error al buscar"); return; }
       const all = await res.json();
       const filtered = (Array.isArray(all) ? all : []).filter(o => !isHiddenBoard(o.board));
@@ -185,10 +210,11 @@ export default function MachineOperatorView() {
     // Optimistic local update so the badge changes color immediately.
     setOrders(prev => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o));
     try {
-      const res = await fetch(`${API}/orders/${orderId}`, {
+      // apiFetch también invalida su caché GET de /orders tras la mutación,
+      // para que el siguiente reload no sirva datos de antes del cambio.
+      const res = await apiFetch(`${API}/orders/${orderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ [field]: value }),
       });
       if (!res.ok) {
