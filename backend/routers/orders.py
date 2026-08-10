@@ -24,18 +24,37 @@ try:
 except OSError:
     pass
 
+# Tableros TERMINALES: órdenes cerradas que solo se acumulan. Quedan FUERA de
+# MASTER (la vista de "todo lo vivo") — cada uno se consulta en su tablero.
+MASTER_EXCLUDED_BOARDS = {"FINAL BILL", "COMPLETOS", "EDI", "CANCELLED"}
+
 # ==================== CACHE SYSTEM FOR ORDERS ====================
 _orders_cache = {}
 _orders_cache_locks = {}
+# TTL de seguridad: la invalidación explícita de abajo solo escucha
+# order_change; si algún flujo mutara órdenes emitiendo otro evento (o
+# ninguno), el caché se auto-sana en 60s en vez de quedar rancio para siempre.
+_ORDERS_CACHE_TTL = 60
 
 def get_orders_cached(key: str):
-    # No TTL needed because we invalidate explicitly on every broadcast
-    return _orders_cache.get(key)
+    entry = _orders_cache.get(key)
+    if not entry:
+        return None
+    if time.time() - entry["ts"] > _ORDERS_CACHE_TTL:
+        del _orders_cache[key]
+        return None
+    return entry["data"]
 
-# Intercept ws_manager.broadcast to invalidate cache on any system update
+# Intercepta ws_manager.broadcast para invalidar el caché de listados, pero
+# SOLO en eventos que cambian órdenes. production_update / neck_update se
+# emiten POR CADA captura y no tocan la colección: limpiar en todo broadcast
+# dejaba el caché permanentemente frío en horas de captura y cada request de
+# MASTER recomputaba ~1,900 docs de a gratis.
 original_broadcast = ws_manager.broadcast
 async def patched_broadcast(*args, **kwargs):
-    _orders_cache.clear()
+    event_type = args[0] if args else kwargs.get("event_type")
+    if event_type == "order_change":
+        _orders_cache.clear()
     return await original_broadcast(*args, **kwargs)
 ws_manager.broadcast = patched_broadcast
 # =================================================================
@@ -83,8 +102,14 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
         if board == "MASTER":
             # Exclude trash AND ghost orders (null/missing board) using an indexable query
             # We use $in with dynamic boards because $nin causes a full collection scan
-            from deps import get_dynamic_boards
             active_boards = await get_dynamic_boards()
+            # MASTER = solo la operación viva. Los tableros TERMINALES solo
+            # acumulan (FINAL BILL ya es ~70% de las filas de MASTER y crece
+            # para siempre): incluirlos hacía que cada request pesara ~3.4 MB
+            # y que cada cliente montara ~1,900 filas. Cada terminal se
+            # consulta en su propio tablero.
+            active_boards = [b for b in active_boards
+                             if str(b).strip().upper() not in MASTER_EXCLUDED_BOARDS]
             query["board"] = {"$in": active_boards}
         elif board:
             query["board"] = board
@@ -142,7 +167,7 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
                 logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
                 cleaned_orders.append(order)
                 
-        _orders_cache[cache_key] = cleaned_orders
+        _orders_cache[cache_key] = {"data": cleaned_orders, "ts": time.time()}
         return cleaned_orders
 
 @router.get("/board-counts")
@@ -177,7 +202,7 @@ async def get_board_counts(request: Request):
         results = await db.orders.aggregate(pipeline).to_list(1000)
         # Convert to simple key-value: {BOARD_NAME: COUNT}
         counts = {r["_id"]: r["count"] for r in results if r["_id"]}
-        _orders_cache[cache_key] = counts
+        _orders_cache[cache_key] = {"data": counts, "ts": time.time()}
         return counts
 
 @router.get("/check-number")

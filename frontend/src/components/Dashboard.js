@@ -285,20 +285,14 @@ const Dashboard = () => {
   // raises this. Reset on board change.
   const [mobileLimit, setMobileLimit] = useState(50);
 
-  // Progressive rendering: Load 100 initially, then 200 more every 3 seconds
+  // Render acotado: 100 filas y botón "Cargar más" (+200), igual que el patrón
+  // de móvil. El viejo "progressive rendering" (+200 cada 3s hasta el total)
+  // terminaba montando TODO el tablero — en MASTER eran ~28k celdas editables
+  // en el DOM y cada evento del WS reconciliaba la tabla completa.
   useEffect(() => {
     setDisplayLimit(100);
     setMobileLimit(50);
   }, [currentBoard]);
-
-  useEffect(() => {
-    if (orders && Array.isArray(orders) && orders.length > displayLimit) {
-      const timer = setTimeout(() => {
-        setDisplayLimit(prev => prev + 200);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [orders, displayLimit]);
 
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
@@ -1246,9 +1240,14 @@ const Dashboard = () => {
     const _allOrders = (orders && Array.isArray(orders) ? orders : []);
     // While searching, render only the matches (small set) instead of all
     // displayLimit rows — this is what made search laggy on iPad.
+    // Los tableros con grupos por día se renderizan COMPLETOS (son los
+    // operativos, chicos): recortarlos haría mentir los conteos "(N)" de cada
+    // día. El recorte con "Cargar más" aplica a los planos grandes (MASTER).
     const visibleOrders = debouncedSearchQuery
       ? _allOrders.filter(matchesSearch).slice(0, 500)
-      : _allOrders.slice(0, displayLimit);
+      : (isDaySupportedBoard(currentBoard) && !groupByDate)
+        ? _allOrders
+        : _allOrders.slice(0, displayLimit);
 
     if (isMobile) {
       return (
@@ -2441,6 +2440,16 @@ const Dashboard = () => {
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
+                  {!debouncedSearchQuery && !(isDaySupportedBoard(currentBoard) && !groupByDate) && orders.length > displayLimit && (
+                    <button
+                      onClick={() => setDisplayLimit(n => n + 200)}
+                      style={{ gridColumn: '1 / -1' }}
+                      className="py-3 text-sm font-bold text-primary hover:bg-primary/5 transition-colors"
+                      data-testid="load-more-rows"
+                    >
+                      Cargar más ({(orders.length - displayLimit).toLocaleString()} restantes)
+                    </button>
+                  )}
                 </div>
                 )}
                 {orders.length === 0 && <div className="text-center py-12 text-muted-foreground">{t('no_orders')}</div>}
