@@ -23,10 +23,16 @@ import { toast } from "sonner";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Calendario de envíos programados: meses + semanas del mes (1..5).
+// Calendario de envíos programados: cascada mes → semana del mes (1..5) → día
+// de la semana → envío. El DÍA (1..7; 0/null = "Sin día") es propiedad del
+// ENVÍO (envio_days en la config de la semana), no de cada orden: mover un
+// envío de día arrastra todas sus órdenes.
 const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const MONTHS_FULL = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const WEEKS = [1, 2, 3, 4, 5];
+const DAYS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const DAYS_FULL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+const dayLabel = (d, full = false) => (d ? (full ? DAYS_FULL : DAYS)[d - 1] : 'Sin día');
 
 const ShippingModule = () => {
   const [orderNumbers, setOrderNumbers] = useState("");
@@ -66,6 +72,16 @@ const ShippingModule = () => {
   const [weekEnvios, setWeekEnvios] = useState([]);           // conteo de envíos por semana [{year,month,week,envios}]
   const [targetEnvio, setTargetEnvio] = useState(1);          // envío destino al programar
   const [collapsedEnvios, setCollapsedEnvios] = useState(() => new Set());
+  const [weekDayTab, setWeekDayTab] = useState({});           // pestaña de día activa por semana {"año-mes-sem": 0..7}
+  const [collapsedWeeks, setCollapsedWeeks] = useState(() => new Set());
+  // Config de la semana y día del envío (envio_days["<n>"]; 0 = "Sin día").
+  // Definidos aquí arriba porque scheduleOrder y el export los usan.
+  const weekCfg = (year, m, w) =>
+    weekEnvios.find((x) => x.scheduled_year === year && x.scheduled_month === m && x.scheduled_week === w);
+  const envioDayFor = (year, m, w, env) => {
+    const c = weekCfg(year, m, w);
+    return (c && c.envio_days && c.envio_days[String(env)]) || 0;
+  };
 
   // Lock the background page scroll while the detail modal is open so iPad/iOS
   // doesn't scroll the page behind the modal (scroll-chaining) when the user
@@ -220,7 +236,8 @@ const ShippingModule = () => {
         }),
       });
       if (res.ok) {
-        toast.success(`#${orderNumber} → ${MONTHS[targetMonth - 1]} S${targetWeek} · Envío ${targetEnvio}`);
+        const d = envioDayFor(calYear, targetMonth, targetWeek, targetEnvio);
+        toast.success(`#${orderNumber} → ${MONTHS[targetMonth - 1]} S${targetWeek} · Envío ${targetEnvio}${d ? ` (${DAYS[d - 1]})` : ''}`);
         loadScheduled();
         if (availableSearch.trim()) loadAvailable(true);
       } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'No se pudo programar'); }
@@ -263,6 +280,8 @@ const ShippingModule = () => {
         'Año': r.scheduled_year ?? '',
         'Mes': r.scheduled_month ? MONTHS_FULL[r.scheduled_month - 1] : '',
         'Semana': r.scheduled_week ? `Semana ${r.scheduled_week}` : '',
+        'Día': (() => { const d = envioDayFor(r.scheduled_year, r.scheduled_month, r.scheduled_week, r.shipment_no || 1); return d ? DAYS_FULL[d - 1] : ''; })(),
+        'Envío': `Envío ${r.shipment_no || 1}`,
         'PL - Export': r.pl_number || '',
         'Export date': r.scheduled_export_date || '',
         'Delivery to': r.delivery_to || '',
@@ -280,8 +299,25 @@ const ShippingModule = () => {
 
   // ── Envíos por semana (grupos Envío 1, Envío 2, …) ──────────────────────────
   const configuredEnvios = (m, w) => {
-    const c = weekEnvios.find((x) => x.scheduled_year === calYear && x.scheduled_month === m && x.scheduled_week === w);
-    return c ? c.envios : 0;
+    const c = weekCfg(calYear, m, w);
+    return c ? (c.envios || 0) : 0;
+  };
+  // Mueve el ENVÍO completo (con sus órdenes) a otro día de la semana.
+  const moveEnvioDay = async (m, w, env, day) => {
+    try {
+      const res = await fetch(`${API}/scheduled-shipments/envio-day`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ scheduled_year: calYear, scheduled_month: m, scheduled_week: w, shipment_no: env, day: day || null }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setWeekEnvios((prev) => [
+          ...prev.filter((x) => !(x.scheduled_year === d.scheduled_year && x.scheduled_month === d.scheduled_month && x.scheduled_week === d.scheduled_week)),
+          d,
+        ]);
+        toast.success(`Envío ${env} → ${dayLabel(day, true)}`);
+      } else toast.error('No se pudo mover el envío de día');
+    } catch { toast.error('Error de conexión'); }
   };
   // Nº de grupos a mostrar = máx(configurado, mayor shipment_no presente, 1).
   const enviosForWeek = (m, w) => {
@@ -311,6 +347,11 @@ const ShippingModule = () => {
     } catch { toast.error('Error de conexión'); }
   };
   const toggleEnvio = (key) => setCollapsedEnvios((prev) => {
+    const n = new Set(prev);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
+  const toggleWeek = (key) => setCollapsedWeeks((prev) => {
     const n = new Set(prev);
     if (n.has(key)) n.delete(key); else n.add(key);
     return n;
@@ -849,9 +890,10 @@ const ShippingModule = () => {
                 </select>
                 <select value={targetEnvio} onChange={(e) => setTargetEnvio(Number(e.target.value))}
                   className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700">
-                  {Array.from({ length: Math.max(enviosForWeek(targetMonth, targetWeek), targetEnvio) }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>Envío {n}</option>
-                  ))}
+                  {Array.from({ length: Math.max(enviosForWeek(targetMonth, targetWeek), targetEnvio) }, (_, i) => i + 1).map((n) => {
+                    const d = envioDayFor(calYear, targetMonth, targetWeek, n);
+                    return <option key={n} value={n}>Envío {n}{d ? ` · ${DAYS[d - 1]}` : ''}</option>;
+                  })}
                 </select>
               </div>
               <button onClick={() => setShowAvailable((v) => !v)}
@@ -886,7 +928,7 @@ const ShippingModule = () => {
                     className="bg-transparent text-sm w-full outline-none text-slate-700"
                   />
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 mb-3">Caen en <span className="text-blue-600 font-black">{MONTHS[targetMonth - 1]} · Semana {targetWeek} · {calYear}</span></p>
+                <p className="text-[10px] font-bold text-slate-400 mb-3">Caen en <span className="text-blue-600 font-black">{MONTHS[targetMonth - 1]} · Semana {targetWeek} · Envío {targetEnvio}{(() => { const d = envioDayFor(calYear, targetMonth, targetWeek, targetEnvio); return d ? ` (${DAYS[d - 1]})` : ''; })()} · {calYear}</span></p>
                 <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-2">
                   {!availableSearch.trim() ? (
                     <div className="h-full flex items-center justify-center px-2">
@@ -948,43 +990,102 @@ const ShippingModule = () => {
                   })}
                 </div>
               ) : (
-                /* Semanas del mes seleccionado */
+                /* Semanas del mes: cascada mes → (semana) → día → envío. Los
+                   días son pestañitas Lun..Dom (+ "S/D" al final, donde nacen
+                   los envíos); la pestaña activa muestra sus envíos. El día es
+                   del ENVÍO: moverlo de día arrastra sus órdenes. */
                 <div className="space-y-4">
                   {WEEKS.map((w) => {
                     const list = scheduled.filter((r) => r.scheduled_year === calYear && r.scheduled_month === calMonth && r.scheduled_week === w);
                     const isTarget = targetMonth === calMonth && targetWeek === w;
                     const nEnvios = enviosForWeek(calMonth, w);
+                    const allEnvs = Array.from({ length: nEnvios }, (_, i) => i + 1);
+                    const dayEnvsOf = (d) => allEnvs.filter((env) => envioDayFor(calYear, calMonth, w, env) === d);
+                    const dayOrdersOf = (d) => list.filter((r) => dayEnvsOf(d).includes(r.shipment_no || 1)).length;
+                    const TAB_ORDER = [1, 2, 3, 4, 5, 6, 7, 0]; // Lun..Dom y "Sin día" al final
+                    const wkey = `${calYear}-${calMonth}-${w}`;
+                    const selDay = weekDayTab[wkey] ?? (TAB_ORDER.find((d) => dayEnvsOf(d).length > 0) ?? 0);
+                    const dayEnvs = dayEnvsOf(selDay);
+                    const wCollapsed = collapsedWeeks.has(wkey);
                     return (
                       <div key={w} className={`rounded-2xl border overflow-hidden ${isTarget ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}>
-                        <div className={`flex items-center justify-between px-4 py-2.5 ${isTarget ? 'bg-blue-50' : 'bg-slate-50'}`}>
-                          <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); }} className="flex items-center gap-2 text-left">
-                            <span className="text-sm font-black uppercase tracking-widest text-slate-600">Semana {w}</span>
-                            <span className="text-[11px] font-bold text-slate-400">{list.length} órdenes · {nEnvios} envío(s)</span>
-                            {isTarget && <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">destino</span>}
-                          </button>
-                          <button onClick={() => addEnvio(calMonth, w)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700">
-                            + Envío
-                          </button>
+                        <div className={`flex items-center justify-between gap-3 flex-wrap px-4 py-2.5 ${isTarget ? 'bg-blue-50' : 'bg-slate-50'}`}>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => toggleWeek(wkey)} className="flex items-center gap-2 text-left">
+                              <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${wCollapsed ? '' : 'rotate-90'}`} />
+                              <span className="text-sm font-black uppercase tracking-widest text-slate-600">Semana {w}</span>
+                              <span className="text-[11px] font-bold text-slate-400">{list.length} órdenes · {nEnvios} envío(s)</span>
+                            </button>
+                            <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); }}
+                              className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isTarget ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
+                              {isTarget ? 'destino' : 'fijar destino'}
+                            </button>
+                          </div>
+                          {/* Pestañitas de día, a la derecha, empezando por Lunes.
+                              Elegir un día también expande la semana contraída. */}
+                          <div className="flex items-center gap-1 flex-wrap justify-end ml-auto">
+                            {TAB_ORDER.map((d) => {
+                              const nE = dayEnvsOf(d).length;
+                              const nO = dayOrdersOf(d);
+                              const active = selDay === d && !wCollapsed;
+                              return (
+                                <button key={d}
+                                  onClick={() => {
+                                    setWeekDayTab((prev) => ({ ...prev, [wkey]: d }));
+                                    setCollapsedWeeks((prev) => { const n = new Set(prev); n.delete(wkey); return n; });
+                                  }}
+                                  title={`${dayLabel(d, true)}: ${nE} envío(s) · ${nO} órdenes`}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                    active ? 'bg-blue-600 text-white shadow-sm'
+                                      : nE ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                        : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-100'}`}>
+                                  {d ? DAYS[d - 1] : 'S/D'}{nO ? ` · ${nO}` : ''}
+                                </button>
+                              );
+                            })}
+                            <button onClick={() => addEnvio(calMonth, w)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 ml-1 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700">
+                              + Envío
+                            </button>
+                          </div>
                         </div>
-                        <div className="p-2 space-y-2">
-                          {Array.from({ length: nEnvios }, (_, i) => i + 1).map((env) => {
+                        {/* Desglose de envíos del día activo */}
+                        {!wCollapsed && <div className="p-2 space-y-2">
+                          <div className="flex items-center gap-2 px-2 pt-1">
+                            <span className="text-xs font-black uppercase tracking-widest text-slate-700">{dayLabel(selDay, true)}</span>
+                            <span className="text-[10px] font-bold text-slate-400">{dayEnvs.length} envío(s) · {dayOrdersOf(selDay)} órdenes</span>
+                          </div>
+                          {dayEnvs.length === 0 && (
+                            <p className="text-[12px] text-slate-300 font-bold italic px-3 py-3">
+                              Sin envíos en {dayLabel(selDay, true)} — mueve aquí un envío con su selector de día, o agrega uno con "+ Envío"
+                            </p>
+                          )}
+                          {dayEnvs.map((env) => {
                             const gkey = `${calYear}-${calMonth}-${w}-${env}`;
                             const glist = list.filter((r) => (r.shipment_no || 1) === env);
                             const collapsed = collapsedEnvios.has(gkey);
                             const isEnvTarget = isTarget && targetEnvio === env;
                             return (
                               <div key={env} className={`rounded-xl border overflow-hidden ${isEnvTarget ? 'border-blue-300' : 'border-slate-200'}`}>
-                                <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 border-b border-slate-200">
+                                <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50/70 border-b border-slate-200">
                                   <button onClick={() => toggleEnvio(gkey)} className="flex items-center gap-2 flex-1 text-left">
                                     <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
                                     <span className="text-xs font-black uppercase tracking-widest text-slate-600">Envío {env}</span>
                                     <span className="text-[10px] font-bold text-slate-400">({glist.length})</span>
                                   </button>
-                                  <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); setTargetEnvio(env); }}
-                                    className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isEnvTarget ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
-                                    {isEnvTarget ? 'destino' : 'fijar destino'}
-                                  </button>
+                                  <div className="flex items-center gap-1.5">
+                                    {/* Mover el envío COMPLETO a otro día de la semana */}
+                                    <select value={selDay} onChange={(e) => moveEnvioDay(calMonth, w, env, Number(e.target.value))}
+                                      title="Mover envío a día"
+                                      className="bg-white border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 focus:border-blue-400 outline-none">
+                                      <option value={0}>Sin día</option>
+                                      {DAYS.map((dn, i) => <option key={i} value={i + 1}>{dn}</option>)}
+                                    </select>
+                                    <button onClick={() => { setTargetMonth(calMonth); setTargetWeek(w); setTargetEnvio(env); }}
+                                      className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isEnvTarget ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
+                                      {isEnvTarget ? 'destino' : 'fijar destino'}
+                                    </button>
+                                  </div>
                                 </div>
                                 {!collapsed && (
                                   glist.length === 0
@@ -994,7 +1095,7 @@ const ShippingModule = () => {
                               </div>
                             );
                           })}
-                        </div>
+                        </div>}
                       </div>
                     );
                   })}

@@ -13,6 +13,12 @@ Endpoints (prefijo /api/scheduled-shipments):
   POST   ""             → programa una orden (idempotente por order_number)
   PUT    "/{id}"        → edita fecha export / destino / PL / estado
   DELETE "/{id}"        → desprograma
+  POST   "/week-config"  → nº de envíos (grupos) de una semana
+  POST   "/envio-day"    → coloca un envío en un día de la semana (envio_days)
+
+La cascada del calendario es mes → semana → día → envío: el DÍA es propiedad
+del ENVÍO (envio_days en scheduled_week_envios), no de cada orden — mover un
+envío de día arrastra sus órdenes. Envíos sin día asignado = "Sin día".
 """
 import re
 import uuid
@@ -71,6 +77,17 @@ def _valid_week(v):
     if not (1 <= w <= 5):
         raise ValueError
     return w
+
+
+def _valid_day(v):
+    """Día de la semana 1..7 (1=Lunes) para un ENVÍO (grupo). Falsy → None
+    ("Sin día"): ahí viven los envíos aún no distribuidos en la semana."""
+    if v in (None, "", 0, "0"):
+        return None
+    d = int(v)
+    if not (1 <= d <= 7):
+        raise ValueError
+    return d
 
 
 MAX_ENVIOS = 50
@@ -180,7 +197,36 @@ async def set_week_envios(request: Request):
     key = {"scheduled_year": year, "scheduled_month": month, "scheduled_week": week}
     await db.scheduled_week_envios.update_one(key, {"$set": {**key, "envios": envios}}, upsert=True)
     await log_activity(user, "set_week_envios", {**key, "envios": envios})
-    return {**key, "envios": envios}
+    doc = await db.scheduled_week_envios.find_one(key, {"_id": 0})
+    return doc or {**key, "envios": envios}
+
+
+@router.post("/envio-day")
+async def set_envio_day(request: Request):
+    """Coloca un ENVÍO (grupo) en un día de la semana: envio_days["<n>"] = 1..7
+    (null = "Sin día"). El día vive en el envío, no en cada orden: mover el
+    envío de día arrastra todas sus órdenes."""
+    user = await require_auth(request)
+    body = await request.json()
+    try:
+        year = int(body.get("scheduled_year") or datetime.now(timezone.utc).year)
+        month = _valid_month(body.get("scheduled_month"))
+        week = _valid_week(body.get("scheduled_week"))
+        shipment_no = _valid_shipment_no(body.get("shipment_no"))
+        day = _valid_day(body.get("day"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="year/month(1..12)/week(1..5)/shipment_no(1..50)/day(1..7|null) requeridos")
+    key = {"scheduled_year": year, "scheduled_month": month, "scheduled_week": week}
+    # $setOnInsert formaliza el conteo cuando la semana aún no tiene config
+    # (sus envíos existían solo por órdenes presentes).
+    await db.scheduled_week_envios.update_one(
+        key,
+        {"$set": {f"envio_days.{shipment_no}": day}, "$setOnInsert": {"envios": shipment_no}},
+        upsert=True,
+    )
+    await log_activity(user, "set_envio_day", {**key, "shipment_no": shipment_no, "day": day})
+    doc = await db.scheduled_week_envios.find_one(key, {"_id": 0})
+    return doc
 
 
 @router.post("")
