@@ -128,7 +128,10 @@ export default function BulkInventoryAdjust() {
           Location, <b>Qty to Adjust</b>). La columna <b>Qty to Adjust</b> es el <b>ajuste</b>:
           un número positivo <b>suma</b> y uno negativo <b>resta</b> sobre la existencia actual.
           Verás una vista previa antes de aplicar. Las líneas que no existan se marcan como
-          <b>Nueva</b> y se crean al confirmar.
+          <b>Nueva</b> y se crean al confirmar. Si un material tiene varios lotes en la misma
+          locación (país/composición distintos), las restas se validan contra el <b>total</b> y
+          se reparten entre lotes; para afectar un lote específico —u obligatorio al sumar—
+          agrega la columna <b>Country of Origin</b>.
         </p>
         <div className="flex flex-wrap gap-2">
           <Btn onClick={downloadTemplate}>

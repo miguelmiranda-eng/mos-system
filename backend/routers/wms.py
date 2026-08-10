@@ -10674,14 +10674,35 @@ async def add_inventory_manual(request: Request):
 
 # ─── Bulk inventory adjustment (Mover · admin level 3) ───────────────────────
 async def _line_boxes(inv):
-    """Live LPN boxes backing an inventory line (by inventory_id, else identity)."""
+    """Live LPN boxes backing an inventory line (by inventory_id, else identity).
+
+    En celdas con VARIOS renglones del mismo style/color/size (lotes con país o
+    composición distintos) la identidad sku+location es ambigua: prefiere las
+    cajas cuyo coo/fabric coinciden con el renglón, para que una resta no vacíe
+    cajas del lote hermano. Una caja sin el dato no se descarta (cargas viejas),
+    y si NINGUNA coincide se regresa el conjunto completo (comportamiento
+    anterior) antes que dejar la resta sin cajas que rebajar."""
     by_identity = {
         "location": {"$regex": f"^{re.escape(inv.get('location', ''))}$", "$options": "i"},
         "sku": inv.get("sku") or inv.get("style") or "",
         "color": inv.get("color", ""), "size": inv.get("size", ""),
     }
     q = {"$or": [{"inventory_id": inv["inventory_id"]}, by_identity]} if inv.get("inventory_id") else by_identity
-    return await db.wms_boxes.find(q).sort("units", 1).to_list(2000)
+    boxes = await db.wms_boxes.find(q).sort("units", 1).to_list(2000)
+    coo = (inv.get("country_of_origin") or "").strip().upper()
+    fab = (inv.get("fabric_content") or "").strip().upper()
+    if not coo and not fab:
+        return boxes
+    def _same_lot(b):
+        bc = (b.get("coo") or b.get("country_of_origin") or "").strip().upper()
+        bf = (b.get("fabric_content") or "").strip().upper()
+        if coo and bc and bc != coo:
+            return False
+        if fab and bf and bf != fab:
+            return False
+        return True
+    strict = [b for b in boxes if _same_lot(b)]
+    return strict or boxes
 
 
 async def _reconcile_line_boxes(inv, delta):
@@ -10724,10 +10745,17 @@ async def _reconcile_line_boxes(inv, delta):
 @router.post("/inventory/bulk-adjust")
 async def bulk_adjust_inventory(request: Request):
     """Mass inventory adjustment from the 'Formato ajuste de inventario' Excel.
-    Admin level 3+. Each row's 'on_hand' is a DELTA (positive adds, negative
+    Inventory level 2+. Each row's 'on_hand' is a DELTA (positive adds, negative
     subtracts). dry_run=true returns the plan only (preview); dry_run=false
     applies it. Boxes (LPNs) are reconciled so the per-box sum tracks the new
-    line on-hand. A reason is mandatory to apply (audited per row)."""
+    line on-hand. A reason is mandatory to apply (audited per row).
+
+    Celdas con varios renglones del mismo style/color/size (lotes con país o
+    composición distintos): si la fila trae COO/Fabric se casa el renglón
+    exacto; sin ellos, las RESTAS se validan contra la suma y se reparten entre
+    renglones (chico→grande, sin bajar del comprometido) y las SUMAS piden
+    identidad única. Filas del mismo material dentro del archivo se acumulan
+    antes de validar."""
     user = await require_inventory_level(request, 2)
     body = await request.json()
     rows = body.get("rows") or []
@@ -10747,11 +10775,25 @@ async def bulk_adjust_inventory(request: Request):
     identity_ok = await _build_identity_checker()
 
     plan = []
+    # Una celda puede tener VARIOS renglones del mismo style/color/size (lotes
+    # con país/composición distintos — identidad completa del inventario). El
+    # match es jerárquico: si el archivo trae COO/Fabric se casa el renglón
+    # exacto; si no, se opera sobre el CONJUNTO: las restas se validan contra la
+    # SUMA y se reparten entre renglones, y las sumas exigen identidad única
+    # (no se inventa a qué lote acreditar unidades nuevas).
+    #
+    # `pending_by_inv` acumula los deltas ya planeados de filas ANTERIORES del
+    # mismo archivo: sin esto, 3 filas de -60 sobre una línea de 100 pasaban la
+    # validación una por una (100-60 cada vez) y el apply dejaba -80 sin que
+    # ninguna guardia saltara.
+    pending_by_inv = {}
     for idx, r in enumerate(rows):
         style = str(r.get("style", "") or "").strip().upper()
         color = str(r.get("color", "") or "").strip().upper()
         size = str(r.get("size", "") or "").strip().upper()
         location = str(r.get("location", "") or "").strip().upper()
+        coo = str(r.get("country_of_origin", "") or "").strip()
+        fab = str(r.get("fabric_content", "") or "").strip()
         label = f"{style}{('-' + color) if color else ''}{('-' + size) if size else ''} @ {location or '—'}"
         try:
             delta = int(float(r.get("on_hand")))
@@ -10765,28 +10807,75 @@ async def bulk_adjust_inventory(request: Request):
             plan.append({"row": idx + 1, "label": label, "status": "skip", "current": None, "delta": 0, "message": "Sin cambio (0)"})
             continue
         loc_rx = {"$regex": f"^{re.escape(location)}$", "$options": "i"}
-        inv = await db.wms_inventory.find_one({"style": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0}) \
-            or await db.wms_inventory.find_one({"sku": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0})
-        if inv:
-            current = int(inv.get("units_on_hand", 0) or 0)
-            allocated = int(inv.get("units_allocated", 0) or 0)
+        matches = await db.wms_inventory.find({"style": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0}).to_list(50)
+        if not matches:
+            matches = await db.wms_inventory.find({"sku": style, "color": color, "size": size, "location": loc_rx}, {"_id": 0}).to_list(50)
+        cell_count = len(matches)
+        if coo:
+            matches = [m for m in matches if (m.get("country_of_origin") or "").strip().upper() == coo.upper()]
+        if fab:
+            matches = [m for m in matches if (m.get("fabric_content") or "").strip().upper() == fab.upper()]
+        if matches:
+            def _eff(m):
+                # Existencia efectiva: lo del sistema MÁS lo ya planeado por
+                # filas previas de este mismo archivo.
+                return int(m.get("units_on_hand", 0) or 0) + pending_by_inv.get(m.get("inventory_id"), 0)
+            current = sum(_eff(m) for m in matches)
+            allocated = sum(int(m.get("units_allocated", 0) or 0) for m in matches)
             new_val = current + delta
+            multi = len(matches) > 1
             if new_val < 0:
-                plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta, "message": f"Quedaría negativo ({new_val})"})
+                msg = f"Quedaría negativo ({new_val})"
+                if multi:
+                    msg += f" · {len(matches)} renglones suman {current}"
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta, "message": msg})
             elif new_val < allocated:
                 plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta, "message": f"Quedaría {new_val} < comprometido {allocated}"})
+            elif delta > 0 and multi:
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta,
+                             "message": f"La celda tiene {len(matches)} renglones de este material (país/composición distintos); "
+                                        "para sumar especifica Country of Origin y Fabric Content en el archivo"})
             else:
-                plan.append({"row": idx + 1, "label": label, "status": "adjust", "inventory_id": inv.get("inventory_id"), "current": current, "delta": delta, "new": new_val})
+                if delta > 0:
+                    split = [{"inventory_id": matches[0].get("inventory_id"), "take": delta}]
+                else:
+                    # Reparto de la resta: del renglón más chico al más grande
+                    # (consolida remanentes, igual que el drawdown de cajas),
+                    # sin bajar ningún renglón de su comprometido.
+                    split, need = [], -delta
+                    for m in sorted(matches, key=_eff):
+                        if need <= 0:
+                            break
+                        avail = _eff(m) - int(m.get("units_allocated", 0) or 0)
+                        take = min(avail, need)
+                        if take <= 0:
+                            continue
+                        split.append({"inventory_id": m.get("inventory_id"), "take": -take})
+                        need -= take
+                    if need > 0:
+                        plan.append({"row": idx + 1, "label": label, "status": "error", "current": current, "delta": delta,
+                                     "message": f"No se pudo repartir la resta (faltan {need})"})
+                        continue
+                entry = {"row": idx + 1, "label": label, "status": "adjust", "current": current, "delta": delta,
+                         "new": new_val, "split": split}
+                if len(split) == 1:
+                    entry["inventory_id"] = split[0]["inventory_id"]
+                if multi:
+                    entry["message"] = f"Se reparte entre {len(split)} de {len(matches)} renglones (lotes distintos)"
+                plan.append(entry)
+                for part in split:
+                    pending_by_inv[part["inventory_id"]] = pending_by_inv.get(part["inventory_id"], 0) + part["take"]
         else:
             if delta < 0:
-                plan.append({"row": idx + 1, "label": label, "status": "error", "current": 0, "delta": delta, "message": "No existe la línea; no se puede restar"})
+                msg = "No existe la línea; no se puede restar"
+                if cell_count:
+                    msg = f"Ningún renglón coincide con ese País/Composición ({cell_count} del mismo material en la locación)"
+                plan.append({"row": idx + 1, "label": label, "status": "error", "current": 0, "delta": delta, "message": msg})
             else:
                 _cust = str(r.get("customer", "") or "").strip()
-                _coo = str(r.get("country_of_origin", "") or "").strip()
-                _fab = str(r.get("fabric_content", "") or "").strip()
                 _errs = identity_ok(_cust, {
                     "styles": style, "colors": color, "sizes": size,
-                    "countries": _coo, "fabrics": _fab,
+                    "countries": coo, "fabrics": fab,
                 })
                 if _errs:
                     plan.append({"row": idx + 1, "label": label, "status": "error",
@@ -10796,8 +10885,8 @@ async def bulk_adjust_inventory(request: Request):
                     continue
                 plan.append({"row": idx + 1, "label": label, "status": "new", "current": 0, "delta": delta, "new": delta,
                              "customer": _cust,
-                             "country_of_origin": _coo,
-                             "fabric_content": _fab,
+                             "country_of_origin": coo,
+                             "fabric_content": fab,
                              "style": style, "color": color, "size": size, "location": location})
 
     summary = {
@@ -10814,19 +10903,29 @@ async def bulk_adjust_inventory(request: Request):
     for p in plan:
         try:
             if p["status"] == "adjust":
-                inv = await db.wms_inventory.find_one({"inventory_id": p["inventory_id"]}, {"_id": 0})
-                if not inv:
-                    p["status"] = "error"; p["message"] = "La línea ya no existe"; continue
-                box_change = await _reconcile_line_boxes(inv, p["delta"])
-                await db.wms_inventory.update_one(
-                    {"inventory_id": p["inventory_id"]},
-                    {"$inc": {"units_on_hand": p["delta"], "total_boxes": box_change}, "$set": {"updated_at": now_iso()}},
-                )
-                await log_movement(user, "inventory_adjustment", {
-                    "inventory_id": p["inventory_id"], "sku": inv.get("sku"), "location": inv.get("location"),
-                    "delta": p["delta"], "new_on_hand": p["new"], "reason": reason, "bulk": True,
-                })
-                applied += 1
+                # Una parte por renglón tocado (1 para línea única, N cuando la
+                # resta se repartió entre lotes). Cada parte reconcilia SUS
+                # cajas y deja su propio rastro de auditoría.
+                parts_done = 0
+                for part in p.get("split") or []:
+                    inv = await db.wms_inventory.find_one({"inventory_id": part["inventory_id"]}, {"_id": 0})
+                    if not inv:
+                        p["status"] = "error"; p["message"] = "La línea ya no existe"; break
+                    box_change = await _reconcile_line_boxes(inv, part["take"])
+                    await db.wms_inventory.update_one(
+                        {"inventory_id": part["inventory_id"]},
+                        {"$inc": {"units_on_hand": part["take"], "total_boxes": box_change}, "$set": {"updated_at": now_iso()}},
+                    )
+                    await log_movement(user, "inventory_adjustment", {
+                        "inventory_id": part["inventory_id"], "sku": inv.get("sku"), "location": inv.get("location"),
+                        "delta": part["take"],
+                        "new_on_hand": int(inv.get("units_on_hand", 0) or 0) + part["take"],
+                        "reason": reason, "bulk": True,
+                        **({"line_delta": p["delta"], "split": True} if len(p["split"]) > 1 else {}),
+                    })
+                    parts_done += 1
+                if p["status"] == "adjust" and parts_done:
+                    applied += 1
             elif p["status"] == "new":
                 customer = await _canonical_customer(p.get("customer", ""))
                 style, color, size = p["style"], p["color"], p["size"]
