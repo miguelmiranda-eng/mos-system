@@ -5,14 +5,18 @@ import { poster } from "./lib";
 import { SoftAlert, Btn, cls } from "./ui";
 
 // Maps the 'Formato ajuste de inventario' headers (any casing/spacing) to the
-// fields the backend expects. "On Hand" is read as a DELTA: positive adds,
-// negative subtracts.
+// fields the backend expects. The canonical format is Customer, Style, Color,
+// Size, Location, "Qty to Adjust" — a DELTA: positive adds, negative subtracts.
+// The old "On Hand" / COO / Fabric headers stay as aliases so files generated
+// with the previous template keep importing; the wire field is still `on_hand`
+// because that's what /inventory/bulk-adjust reads.
 const HEADER_MAP = {
   customer: "customer",
   style: "style",
   color: "color",
   size: "size",
   location: "location",
+  "qty to adjust": "on_hand", qty_to_adjust: "on_hand", qtytoadjust: "on_hand", qty: "on_hand",
   "on hand": "on_hand", onhand: "on_hand", on_hand: "on_hand", ajuste: "on_hand",
   "country of origin": "country_of_origin", country_of_origin: "country_of_origin", coo: "country_of_origin",
   "fabric content": "fabric_content", fabric_content: "fabric_content",
@@ -101,7 +105,7 @@ export default function BulkInventoryAdjust() {
     try {
       const XLSX = await import("xlsx");
       const ws = XLSX.utils.aoa_to_sheet([[
-        "Customer", "Style", "Color", "Size", "Location", "On Hand", "Country of Origin", "Fabric Content",
+        "Customer", "Style", "Color", "Size", "Location", "Qty to Adjust",
       ]]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Ajuste");
@@ -120,10 +124,11 @@ export default function BulkInventoryAdjust() {
           <Boxes className="w-4 h-4 text-muted-foreground" /> Ajuste masivo de inventario
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Sube el Excel <b>Formato ajuste de inventario</b>. La columna <b>On Hand</b> es el
-          <b> ajuste</b>: un número positivo <b>suma</b> y uno negativo <b>resta</b> sobre la
-          existencia actual. Verás una vista previa antes de aplicar. Las líneas que no existan se
-          marcan como <b>Nueva</b> y se crean al confirmar.
+          Sube el Excel <b>Formato ajuste de inventario</b> (Customer, Style, Color, Size,
+          Location, <b>Qty to Adjust</b>). La columna <b>Qty to Adjust</b> es el <b>ajuste</b>:
+          un número positivo <b>suma</b> y uno negativo <b>resta</b> sobre la existencia actual.
+          Verás una vista previa antes de aplicar. Las líneas que no existan se marcan como
+          <b>Nueva</b> y se crean al confirmar.
         </p>
         <div className="flex flex-wrap gap-2">
           <Btn onClick={downloadTemplate}>
