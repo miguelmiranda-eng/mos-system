@@ -117,10 +117,6 @@ const Dashboard = () => {
   const [boardFilters, setBoardFilters] = useState({});
   const [selectedOrders, setSelectedOrders] = useState([]);
 
-  const handleSelectAll = () => setSelectedOrders(orders.map(o => o.order_id));
-  const handleDeselectAll = () => setSelectedOrders([]);
-  const toggleOrderSelection = (id) => setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-
   const [openFilter, setOpenFilter] = useState(null);
   // The raw typed value now lives inside <SearchBox> (local state → instant echo
   // on iPad). The parent only keeps the debounced value used for filtering, plus
@@ -266,6 +262,10 @@ const Dashboard = () => {
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
     groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
+
+  const handleSelectAll = () => setSelectedOrders(orders.map(o => o.order_id));
+  const handleDeselectAll = () => setSelectedOrders([]);
+  const toggleOrderSelection = (id) => setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   // Search wiring for <SearchBox>. Stable callbacks so the debounce effect inside
   // SearchBox doesn't re-subscribe on every Dashboard render.
@@ -555,6 +555,24 @@ const Dashboard = () => {
     fetchSavedViews();
   }, [fetchSavedViews]);
 
+  const handleApplyView = (view) => {
+    viewApplyingRef.current = true;
+    if (view === null) {
+      setFilters({});
+      setActiveViewName(null);
+      activeViewIdRef.current = null;
+    } else {
+      setFilters(view.filters || {});
+      setActiveViewName(view.name);
+      activeViewIdRef.current = view.view_id;
+      if (view.hidden_columns !== undefined)
+        setHiddenColumns(prev => ({ ...prev, [currentBoard]: view.hidden_columns || [] }));
+      if (view.column_order?.length)
+        setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: view.column_order }));
+      if (view.group_by_date !== undefined)
+        setGroupByDate(view.group_by_date || null);
+    }
+  };
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
     try {
@@ -574,24 +592,6 @@ const Dashboard = () => {
     } catch {
       toast.error(t('save_view_err'));
       setShowSaveView(false);
-    }
-  };
-  const handleApplyView = (view) => {
-    viewApplyingRef.current = true;
-    if (view === null) {
-      setFilters({});
-      setActiveViewName(null);
-      activeViewIdRef.current = null;
-    } else {
-      setFilters(view.filters || {});
-      setActiveViewName(view.name);
-      activeViewIdRef.current = view.view_id;
-      if (view.hidden_columns !== undefined)
-        setHiddenColumns(prev => ({ ...prev, [currentBoard]: view.hidden_columns || [] }));
-      if (view.column_order?.length)
-        setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: view.column_order }));
-      if (view.group_by_date !== undefined)
-        setGroupByDate(view.group_by_date || null);
     }
   };
   const handleTogglePinView = async (viewId, pinned) => { try { await fetch(`${API}/config/saved-views/${viewId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pinned: !pinned }) }); fetchSavedViews(); } catch { /* silent */ } };
@@ -643,6 +643,22 @@ const Dashboard = () => {
     const newOrder = [...currentOrder]; newOrder.splice(dragIdx, 1); newOrder.splice(targetIdx, 0, draggedCol);
     setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: newOrder }));
   };
+  const handleUpdateColumnOrder = (newOrder) => {
+    setBoardColumnOrders(prev => {
+      const updated = { ...prev, [currentBoard]: newOrder };
+
+      // Persist the new GLOBAL order (admins only reach here).
+      fetch(`${API}/config/board-layout/MASTER`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
+      }).catch(err => console.error('Error saving layout:', err));
+
+      return updated;
+    });
+  };
+
   const handleColumnDragEnd = () => {
     setDraggedCol(null);
     if (isAdmin) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
@@ -658,22 +674,6 @@ const Dashboard = () => {
       const cur = prev[currentBoard] || [];
       const next = cur.includes(colKey) ? cur.filter(k => k !== colKey) : [...cur, colKey];
       return { ...prev, [currentBoard]: next };
-    });
-  };
-
-  const handleUpdateColumnOrder = (newOrder) => {
-    setBoardColumnOrders(prev => {
-      const updated = { ...prev, [currentBoard]: newOrder };
-
-      // Persist the new GLOBAL order (admins only reach here).
-      fetch(`${API}/config/board-layout/MASTER`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
-      }).catch(err => console.error('Error saving layout:', err));
-
-      return updated;
     });
   };
 
