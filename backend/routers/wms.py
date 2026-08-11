@@ -462,6 +462,18 @@ async def _reproject_material_rows(style, sku, color, size, location, *, user=No
             notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
                             f"agotado por el movimiento: eliminado")
             continue
+        # Residuo NEGATIVO o en cero sin allocation: papel sin pregunta física
+        # que responder (no se puede ir a contar "-494 unidades"). Antes caía
+        # en el limbo — la consolidación y el conteo exigen units_on_hand > 0,
+        # así que un renglón negativo no matcheaba ninguna rama y quedaba
+        # eterno. Es lo que dejó 11 renglones en negativo (2026-08-11): bajas
+        # de papel aplicadas a celdas cuyas cajas ya se habían ido o bajo otra
+        # identidad de lote. Con allocation comprometida NO se toca.
+        if int(r.get("units_on_hand") or 0) <= 0 and int(r.get("units_allocated") or 0) <= 0:
+            await db.wms_inventory.delete_one({"_id": r["_id"]})
+            notables.append(f"renglón [{ledger.canon_coo(r.get('country_of_origin'))}] "
+                            f"con saldo {int(r.get('units_on_hand') or 0)}u sin cajas: residuo eliminado")
+            continue
         # DUPLICADO totalmente cubierto: hay renglones respaldados por cajas
         # (`usados`) y NINGÚN lote físico quedó sin renglón (`faltantes` vacío),
         # así que el físico de esta celda ya está 100% contabilizado por otros
