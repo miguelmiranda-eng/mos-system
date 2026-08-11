@@ -53,7 +53,6 @@ import NeckCaptureModal from "./NeckCaptureModal";
 import GanttView from "./GanttView";
 import CapacityPlanModal from "./CapacityPlanModal";
 import ProductionScreen from "./ProductionScreen";
-import DynamicLandscape from "./dashboard/DynamicLandscape";
 import Sidebar from "./dashboard/Sidebar";
 import CommandPalette from "./dashboard/CommandPalette";
 
@@ -898,6 +897,13 @@ const Dashboard = () => {
     return orderMatchesQuery(order, debouncedSearchQuery.toLowerCase());
   }, [debouncedSearchQuery]);
 
+  // Hoisted: este filter corría POR FILA en cada render (100+ filas × render);
+  // el resultado es idéntico para todas.
+  const dataColumns = useMemo(
+    () => visibleColumns.filter(c => c.key !== 'order_number'),
+    [visibleColumns]
+  );
+
   const renderOrderRow = useCallback((order) => {
     const sq = debouncedSearchQuery.toLowerCase();
     const getVal = (v) => {
@@ -1030,7 +1036,7 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {visibleColumns.filter(c => c.key !== 'order_number').map((col) => {
+        {dataColumns.map((col) => {
           const val = order[col.key];
           const width = col.key === 'order_number' ? 220 : (columnWidths[col.key] || col.width);
 
@@ -1051,7 +1057,7 @@ const Dashboard = () => {
                   </div>
                   <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/5">
                     <div
-                      className="h-full bg-gradient-to-r from-royal to-indigo-500 transition-all duration-500 shadow-[0_0_8px_rgba(65,105,225,0.4)]"
+                      className="h-full bg-royal transition-[width] duration-500"
                       style={{ width: `${Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%` }}
                     />
                   </div>
@@ -1103,7 +1109,7 @@ const Dashboard = () => {
 
                 <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/5 relative group/progress">
                   <div
-                    className={`h-full transition-all duration-700 ease-out shadow-sm ${progress >= 100 ? 'bg-green-500' :
+                    className={`h-full transition-[width] duration-700 ease-out ${progress >= 100 ? 'bg-green-500' :
                       progress >= 50 ? 'bg-amber-500' :
                         'bg-red-500'
                       }`}
@@ -1136,7 +1142,7 @@ const Dashboard = () => {
         </div>
       </React.Fragment>
     );
-  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, columnWidths, handleBulkMove, productionSummary, neckSummary]);
+  }, [debouncedSearchQuery, selectedOrders, isDark, currentBoard, highlightedOrderId, handleCellUpdate, options, isAdmin, t, visibleColumns, dataColumns, columnWidths, handleBulkMove, productionSummary, neckSummary]);
 
 
   const renderMobileOrderCard = (order) => {
@@ -1225,7 +1231,7 @@ const Dashboard = () => {
             </div>
             <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-700 ${done ? 'bg-green-500' : 'bg-primary'}`}
+                className={`h-full rounded-full transition-[width] duration-700 ${done ? 'bg-green-500' : 'bg-primary'}`}
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -1341,12 +1347,15 @@ const Dashboard = () => {
         return DAY_KEYS.map(d => ({ key: d, label: dayLabel(d), list: buckets[d] }));
       };
 
+      // Minimalista: fondo neutro y color SOLO en el texto — la semántica
+      // (azul=día, verde=activa, ámbar=cola) se conserva sin pintar bandas
+      // completas. El hover sigue dando feedback en gris neutro.
       const dayTone = isDark
-        ? { bar: 'bg-sky-500/5 border-sky-500/20', text: 'text-sky-300 hover:bg-sky-500/10', badge: 'bg-sky-500/15 text-sky-300' }
-        : { bar: 'bg-sky-50/60 border-sky-200', text: 'text-sky-700 hover:bg-sky-100', badge: 'bg-sky-100 text-sky-700' };
+        ? { bar: 'bg-transparent border-border/40', text: 'text-sky-300/90 hover:bg-muted/20', badge: 'text-sky-300/70' }
+        : { bar: 'bg-transparent border-border/60', text: 'text-sky-700 hover:bg-muted/40', badge: 'text-sky-600/70' };
       const noDayTone = isDark
-        ? { bar: 'bg-muted/10 border-muted/30', text: 'text-muted-foreground hover:bg-muted/20', badge: 'bg-muted/30 text-muted-foreground' }
-        : { bar: 'bg-gray-50 border-gray-200', text: 'text-gray-600 hover:bg-gray-100', badge: 'bg-gray-100 text-gray-700' };
+        ? { bar: 'bg-transparent border-border/40', text: 'text-muted-foreground hover:bg-muted/20', badge: 'text-muted-foreground/70' }
+        : { bar: 'bg-transparent border-border/60', text: 'text-gray-600 hover:bg-muted/40', badge: 'text-gray-500' };
 
       if (showQueueSplit) {
         // Outer: queue_status (Activa / En Cola). Inner: day-of-week.
@@ -1354,11 +1363,11 @@ const Dashboard = () => {
         const queuedOrders = visibleOrders.filter(o => o.queue_status === 'queued');
         const queueTones = {
           active: isDark
-            ? { bar: 'bg-emerald-500/10 border-emerald-500/30', text: 'text-emerald-300 hover:bg-emerald-500/20', badge: 'bg-emerald-500/20 text-emerald-300' }
-            : { bar: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700 hover:bg-emerald-100', badge: 'bg-emerald-100 text-emerald-700' },
+            ? { bar: 'bg-transparent border-border/40', text: 'text-emerald-300 hover:bg-muted/20', badge: 'text-emerald-300/70' }
+            : { bar: 'bg-transparent border-border/60', text: 'text-emerald-700 hover:bg-muted/40', badge: 'text-emerald-600/70' },
           queued: isDark
-            ? { bar: 'bg-amber-500/10 border-amber-500/30', text: 'text-amber-300 hover:bg-amber-500/20', badge: 'bg-amber-500/20 text-amber-300' }
-            : { bar: 'bg-amber-50 border-amber-200', text: 'text-amber-700 hover:bg-amber-100', badge: 'bg-amber-100 text-amber-700' },
+            ? { bar: 'bg-transparent border-border/40', text: 'text-amber-300 hover:bg-muted/20', badge: 'text-amber-300/70' }
+            : { bar: 'bg-transparent border-border/60', text: 'text-amber-700 hover:bg-muted/40', badge: 'text-amber-600/70' },
         };
         const renderQueueGroup = (queueKey, queueLabel, queueList, queueIcon, queueTone) => {
           // Keep the legacy "__machine_*" prefix so already-collapsed state
@@ -1440,13 +1449,13 @@ const Dashboard = () => {
       const totalQty = groupOrders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
       return (
         <React.Fragment key={dateKey}>
-          <div style={{ gridColumn: '1 / -1' }} className={`py-0 px-0 ${isDark ? 'bg-primary/10 border-b border-primary/30' : 'bg-blue-50 border-b border-blue-200'}`} data-testid={`date-group-${dateKey}`}>
-            <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-primary/20' : 'text-blue-700 hover:bg-blue-100'}`}>
+          <div style={{ gridColumn: '1 / -1' }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
+            <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-muted/20' : 'text-blue-700 hover:bg-muted/40'}`}>
               <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
               <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
               {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
               <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
-              <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${isDark ? 'bg-primary/20 text-primary' : 'bg-blue-100 text-blue-700'}`}>
+              <span className={`font-mono text-xs ml-2 ${isDark ? 'text-primary/70' : 'text-blue-600/70'}`}>
                 {totalQty.toLocaleString()} pcs
               </span>
             </button>
@@ -1689,7 +1698,7 @@ const Dashboard = () => {
             <div className="h-10 w-px bg-border/40 ml-2" />
 
             {/* Board Title Identifier */}
-            <div className="text-[2.5rem] mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/30 pointer-events-none select-none whitespace-nowrap leading-none ml-2">
+            <div className="text-[2.5rem] mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/15 pointer-events-none select-none whitespace-nowrap leading-none ml-2">
               {currentBoard}
             </div>
 

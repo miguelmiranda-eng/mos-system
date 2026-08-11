@@ -11,6 +11,16 @@ const ThemeContext = createContext();
      claros aunque el CRM esté en claro. */
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
+    // Migración 2026-08-11: el CRM adopta el look azulado del WMS como
+    // DEFAULT. Se pisa UNA sola vez la preferencia guardada (venía de la era
+    // del tema claro); el switch sigue vivo y lo que el usuario elija después
+    // de esta migración sí se respeta en cargas siguientes.
+    if (!localStorage.getItem('mos_theme_v2')) {
+      localStorage.setItem('mos_theme_v2', '1');
+      localStorage.setItem('mos_theme', 'dark');
+      localStorage.setItem('theme', 'dark');
+      return 'dark';
+    }
     // Support both keys for backwards compatibility
     return localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'dark';
   });

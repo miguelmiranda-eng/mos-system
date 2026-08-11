@@ -1,31 +1,17 @@
 import { getStatusColor } from "../../lib/constants";
 
-// Converts a hex color to rgba with given opacity
-const hexToRgba = (hex, opacity) => {
-  if (!hex || !hex.startsWith('#')) return null;
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-};
-
+// Minimalista (2026-08-11): solo la letra lleva el color — sin fondo, sin
+// borde, sin sombra. En oscuro se aclara poco (0.35) para que el color siga
+// reconocible sobre el azulado; en claro se oscurece para contraste en blanco.
 export const ColoredBadge = ({ value, isDark }) => {
   const color = getStatusColor(value);
   if (!value) return <span className="text-muted-foreground/40">—</span>;
 
   if (color) {
-    const bg = hexToRgba(color.bg, isDark ? 0.22 : 0.18);
-    const border = hexToRgba(color.bg, isDark ? 0.55 : 0.45);
-
     return (
       <span
-        className="inline-flex items-center px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase whitespace-nowrap tracking-wider border shadow-sm transition-all duration-300"
-        style={{
-          backgroundColor: bg,
-          borderColor: border,
-          color: isDark ? lightenHex(color.bg, 0.7) : darkenHex(color.bg, 0.2),
-          textShadow: isDark ? `0 0 10px ${hexToRgba(color.bg, 0.4)}` : 'none'
-        }}
+        className="inline-flex items-center text-[10px] font-black uppercase whitespace-nowrap tracking-wider"
+        style={{ color: isDark ? lightenHex(color.bg, 0.35) : darkenHex(color.bg, 0.2) }}
       >
         {value}
       </span>
@@ -33,7 +19,7 @@ export const ColoredBadge = ({ value, isDark }) => {
   }
 
   return (
-    <span className={`inline-flex items-center px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase whitespace-nowrap border tracking-wider shadow-sm ${isDark ? 'bg-zinc-800/40 border-zinc-700/50 text-zinc-400' : 'bg-gray-100/60 border-gray-300/50 text-gray-500'}`}>
+    <span className={`inline-flex items-center text-[10px] font-black uppercase whitespace-nowrap tracking-wider ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
       {value}
     </span>
   );

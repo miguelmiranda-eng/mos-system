@@ -193,7 +193,12 @@ h1, h2, h3, h4, h5, h6 {
   background-color: hsl(var(--card));
   border: 1px solid hsl(var(--border) / 0.5);
   border-radius: var(--radius);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Propiedades explícitas en vez de `all`: la tarjeta se usa por decenas en
+     una vista y `transition: all` obliga al motor a vigilar cada propiedad
+     (incl. layout) en cada hover. Solo cambian estas tres. */
+  transition: border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .enterprise-card:hover {
@@ -213,8 +218,8 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -315,11 +320,12 @@ html:not(.dark) body {
   background: hsl(224 60% 97%);
 }
 
-/* Sidebar — blanco con borde azul sutil */
+/* Sidebar — blanco con borde azul sutil. Minimalista: el borde hairline hace
+   el trabajo de separar; la sombra proyectada de 16px solo agregaba peso. */
 html:not(.dark) aside {
   background: #ffffff;
   border-right: 1px solid hsl(224 60% 90%) !important;
-  box-shadow: 4px 0 16px hsl(224 100% 56% / 0.06) !important;
+  box-shadow: none !important;
 }
 
 /* Header top bar */
@@ -327,7 +333,7 @@ html:not(.dark) .dashboard-header,
 html:not(.dark) header {
   background: #ffffff;
   border-bottom: 1px solid hsl(224 50% 90%) !important;
-  box-shadow: 0 2px 12px hsl(224 100% 56% / 0.07) !important;
+  box-shadow: none !important;
 }
 
 /* Cards y paneles */
@@ -335,7 +341,7 @@ html:not(.dark) .enterprise-card {
   box-shadow: 0 1px 4px hsl(224 80% 56% / 0.10), 0 1px 2px hsl(224 80% 56% / 0.06);
 }
 html:not(.dark) .enterprise-card:hover {
-  box-shadow: 0 4px 20px hsl(224 100% 56% / 0.14), 0 1px 4px hsl(224 80% 56% / 0.08);
+  box-shadow: 0 2px 8px hsl(224 100% 56% / 0.10);
   border-color: hsl(224 100% 56% / 0.30) !important;
 }
 
