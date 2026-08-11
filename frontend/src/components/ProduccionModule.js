@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeft, RefreshCw, Loader2, Gauge, Cog, Package, ClipboardList, Users,
-  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle,
+  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -31,6 +31,7 @@ const PERIODS = [
 const TABS = [
   { id: "general", label: "General", icon: Gauge },
   { id: "maquinas", label: "Máquinas", icon: Cog },
+  { id: "horas", label: "Hora x Hora", icon: Clock },
   { id: "empaque", label: "Empaque", icon: Package },
   { id: "ordenes", label: "Órdenes", icon: ClipboardList },
   { id: "operadores", label: "Operadores", icon: Users },
@@ -57,6 +58,46 @@ export default function ProduccionModule() {
   const [boards, setBoards] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tvMode, setTvMode] = useState(false);
+
+  // ── Modo TV: fullscreen + escala grande + rotación automática de pestañas.
+  const enterTv = async () => {
+    setTvMode(true);
+    try { await document.documentElement.requestFullscreen?.(); } catch { /* iOS/permiso */ }
+  };
+  const exitTv = useCallback(async () => {
+    setTvMode(false);
+    try { if (document.fullscreenElement) await document.exitFullscreen(); } catch { /* noop */ }
+  }, []);
+
+  // Esc (o salir de fullscreen por cualquier vía) apaga el modo TV.
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setTvMode(false); };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  // Fallback: si requestFullscreen falló (permiso/navegador), Esc sigue
+  // sacando del modo TV aunque no haya fullscreen que abandonar.
+  useEffect(() => {
+    if (!tvMode) return;
+    const onKey = (e) => { if (e.key === "Escape") exitTv(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tvMode, exitTv]);
+
+  // Rotación de pestañas cada 20s SOLO en modo TV. Un click manual en una
+  // pestaña no rompe nada: la rotación continúa desde donde quedó.
+  useEffect(() => {
+    if (!tvMode) return;
+    const id = setInterval(() => {
+      setTab(prev => {
+        const idx = TABS.findIndex(t => t.id === prev);
+        return TABS[(idx + 1) % TABS.length].id;
+      });
+    }, 20000);
+    return () => clearInterval(id);
+  }, [tvMode]);
 
   const load = useCallback(async (silent) => {
     silent ? setRefreshing(true) : setLoading(true);
@@ -95,8 +136,13 @@ export default function ProduccionModule() {
   const chartProps = { axis, grid, tooltipStyle };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
+    // zoom 1.3 en modo TV: escala TODO el módulo (todas las pestañas) para
+    // leerse a distancia sin duplicar estilos; Chrome/Edge de los TVs lo
+    // soportan y recharts se adapta solo vía ResponsiveContainer.
+    <div className="min-h-screen bg-background text-foreground" style={tvMode ? { zoom: 1.3 } : undefined}>
+      {/* Header — se oculta COMPLETO en modo TV: en el televisor solo vive el
+          dashboard; la orientación y la salida las da el overlay flotante. */}
+      {!tvMode && (
       <header className="sticky top-0 z-30 bg-background/95 backdrop-blur border-b border-border">
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate("/dashboard")}
@@ -124,6 +170,12 @@ export default function ProduccionModule() {
               className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
             </button>
+            <button onClick={tvMode ? exitTv : enterTv}
+              title={tvMode ? "Salir del modo TV (Esc)" : "Modo TV — pantalla completa, rotación de pestañas cada 20s"}
+              data-testid="produccion-tv-toggle"
+              className={`p-2 rounded-md transition-colors ${tvMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
+              <Tv className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
@@ -140,6 +192,21 @@ export default function ProduccionModule() {
           })}
         </div>
       </header>
+      )}
+
+      {/* Overlay del modo TV: pestaña actual + salida. Discreto, arriba a la
+          derecha; Esc también sale. */}
+      {tvMode && (
+        <div className="fixed top-3 right-3 z-50 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/85 border border-border shadow-sm">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {TABS.find(t => t.id === tab)?.label}
+          </span>
+          <button onClick={exitTv} title="Salir del modo TV (Esc)"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto p-4 md:p-6">
         {loading && !analytics ? (
@@ -148,6 +215,7 @@ export default function ProduccionModule() {
           <>
             {tab === "general" && <GeneralTab a={analytics} trend={trend} period={period} chart={chartProps} />}
             {tab === "maquinas" && <MaquinasTab a={analytics} cap={capacity} chart={chartProps} />}
+            {tab === "horas" && <HoraPorHoraTab a={analytics} period={period} chart={chartProps} />}
             {tab === "empaque" && <EmpaqueTab a={analytics} boards={boards} />}
             {tab === "ordenes" && <OrdenesTab a={analytics} />}
             {tab === "operadores" && <OperadoresTab a={analytics} />}
@@ -443,6 +511,211 @@ function OrdenesTab({ a }) {
           ))}
         </div>
       </Panel>
+    </div>
+  );
+}
+
+// Matriz hora × máquina ordenada POR TURNO: T1 = 7:00→19:00 y T2 = 19:00→7:00
+// (las horas 00-06 son la madrugada — el cierre del T2 que arrancó la noche
+// anterior — y van al FINAL, no al inicio). Las horas ya vienen convertidas a
+// America/Tijuana desde el backend; se verificó contra los timestamps crudos
+// (UTC con offset) y contra el campo `shift` de cada captura — no hay desfase,
+// lo que parecía corrido era el turno nocturno ordenado por hora numérica.
+const T1_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+const T2_HOURS = [19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6];
+const isT1 = (h) => h >= 7 && h <= 18;
+
+function HoraPorHoraTab({ a, period, chart }) {
+  const [modo, setModo] = useState("grafica");
+  const matrix = useMemo(() => {
+    const rows = (a?.by_machine_hour || []).filter(r => r.machine && r.machine !== "?");
+    const cells = {}, rowTotals = {}, colTotals = {}, t1Totals = {}, t2Totals = {};
+    let grandTotal = 0, maxCell = 0, t1Grand = 0, t2Grand = 0;
+    const machineSet = new Set();
+    rows.forEach(r => {
+      machineSet.add(r.machine);
+      const k = `${r.machine}|${r.hour}`;
+      cells[k] = (cells[k] || 0) + r.produced;
+      rowTotals[r.machine] = (rowTotals[r.machine] || 0) + r.produced;
+      colTotals[r.hour] = (colTotals[r.hour] || 0) + r.produced;
+      if (isT1(r.hour)) { t1Totals[r.machine] = (t1Totals[r.machine] || 0) + r.produced; t1Grand += r.produced; }
+      else { t2Totals[r.machine] = (t2Totals[r.machine] || 0) + r.produced; t2Grand += r.produced; }
+      grandTotal += r.produced;
+      maxCell = Math.max(maxCell, cells[k]);
+    });
+    const machines = [...machineSet].sort((x, y) =>
+      (parseInt(x.replace(/\D/g, ""), 10) || 0) - (parseInt(y.replace(/\D/g, ""), 10) || 0));
+    return { machines, cells, rowTotals, colTotals, t1Totals, t2Totals, t1Grand, t2Grand, grandTotal, maxCell };
+  }, [a]);
+
+  const { machines, cells, rowTotals, colTotals, t1Totals, t2Totals, t1Grand, t2Grand, grandTotal, maxCell } = matrix;
+  const multiDay = period === "week" || period === "month";
+  const hh = (h) => `${String(h).padStart(2, "0")}h`;
+  const allHours = [...T1_HOURS, ...T2_HOURS];
+  const bestHour = allHours.reduce((best, h) => (colTotals[h] || 0) > (colTotals[best] || 0) ? h : best, allHours[0]);
+  // Serie global por hora en orden de turno, para la gráfica de ritmo.
+  const hourSeries = allHours.map(h => ({ label: hh(h), produced: colTotals[h] || 0, t1: isT1(h) }));
+
+  if (machines.length === 0) {
+    return <div className="text-sm text-muted-foreground py-16 text-center">Sin capturas de producción en el periodo.</div>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Kpi icon={TrendingUp} label="Producido" value={fmtInt(grandTotal)} sub="en el periodo" accent="text-emerald-500" />
+        <Kpi icon={Clock} label="Turno 1 · 7am–7pm" value={fmtInt(t1Grand)} sub={grandTotal ? `${Math.round(t1Grand / grandTotal * 100)}% del total` : ""} accent="text-blue-500" />
+        <Kpi icon={Clock} label="Turno 2 · 7pm–7am" value={fmtInt(t2Grand)} sub={grandTotal ? `${Math.round(t2Grand / grandTotal * 100)}% del total` : ""} accent="text-violet-500" />
+        <Kpi icon={Zap} label="Mejor hora" value={colTotals[bestHour] ? hh(bestHour) : "—"} sub={colTotals[bestHour] ? `${fmtInt(colTotals[bestHour])} pz` : ""} accent="text-amber-500" />
+      </div>
+
+      {/* Switch Gráfica / Tabla — la tabla detallada no se pierde, solo deja
+          de ser la cara principal. */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs text-muted-foreground">
+          {multiDay ? "Suma por hora del día en el periodo · hora local Tijuana" : "Hora local Tijuana · 00–06h = madrugada del T2"}
+        </span>
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/60 border border-border">
+          <button onClick={() => setModo("grafica")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${modo === "grafica" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+            Gráfica
+          </button>
+          <button onClick={() => setModo("tabla")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${modo === "tabla" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+            Tabla
+          </button>
+        </div>
+      </div>
+
+      {modo === "grafica" && (
+        <>
+          <Panel title="Ritmo del día — todas las máquinas" icon={Activity}
+            right={
+              <span className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500 mr-1 align-middle" />T1 · 7am–7pm</span>
+                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500 mr-1 align-middle" />T2 · 7pm–7am</span>
+              </span>
+            }>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hourSeries} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: chart.axis }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
+                  <Tooltip contentStyle={chart.tooltipStyle} cursor={{ fill: chart.grid, opacity: 0.4 }} formatter={(v) => [fmtInt(v), "Piezas"]} />
+                  <Bar dataKey="produced" name="Piezas" radius={[3, 3, 0, 0]}>
+                    {hourSeries.map((e, i) => <Cell key={i} fill={e.t1 ? "#3b82f6" : "#8b5cf6"} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+
+          {/* Tarjetas por máquina: total, split T1/T2 y las 24 horas como
+              mini-barras (altura relativa al pico de ESA máquina — muestra su
+              patrón; el volumen lo dice el número). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {machines.map(m => {
+              const mMax = Math.max(1, ...allHours.map(h => cells[`${m}|${h}`] || 0));
+              return (
+                <div key={m} className="rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-semibold">{m.replace("MAQUINA", "Máquina ")}</span>
+                    <span className="text-lg font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
+                    <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-1 align-middle" />T1 {fmtInt(t1Totals[m] || 0)}</span>
+                    <span><span className="inline-block w-2 h-2 rounded-sm bg-violet-500 mr-1 align-middle" />T2 {fmtInt(t2Totals[m] || 0)}</span>
+                  </div>
+                  <div className="mt-2 flex items-end gap-[2px] h-16">
+                    {allHours.map(h => {
+                      const v = cells[`${m}|${h}`] || 0;
+                      return (
+                        <div key={h} title={`${hh(h)} · ${fmtInt(v)} pz`}
+                          className={`flex-1 rounded-sm ${v ? (isT1(h) ? "bg-blue-500" : "bg-violet-500") : "bg-muted"}`}
+                          style={{ height: v ? `${Math.max(8, Math.round((v / mMax) * 100))}%` : "3px" }} />
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1 flex justify-between text-[9px] text-muted-foreground font-mono">
+                    <span>07h</span><span>19h</span><span>06h</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {modo === "tabla" && (
+      <Panel title="Hora por hora por máquina" icon={Clock}
+        right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr>
+                <th rowSpan={2} className="sticky left-0 bg-card text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border whitespace-nowrap align-bottom">Máquina</th>
+                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-blue-600 dark:text-blue-400 border-l border-border/60">Turno 1 · 7:00 – 19:00</th>
+                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-violet-600 dark:text-violet-400 border-l border-border/60">Turno 2 · 19:00 – 7:00</th>
+                <th rowSpan={2} className="text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border border-l border-border/60 align-bottom">Total</th>
+              </tr>
+              <tr>
+                {T1_HOURS.map(h => (
+                  <th key={h} className={`text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-2 py-1.5 border-b border-border tabular-nums ${h === 7 ? "border-l border-border/60" : ""}`}>{hh(h)}</th>
+                ))}
+                <th className="text-right text-[10px] uppercase tracking-wider font-semibold px-2 py-1.5 border-b border-border bg-muted/30 text-blue-600 dark:text-blue-400">T1</th>
+                {T2_HOURS.map(h => (
+                  <th key={h} className={`text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-2 py-1.5 border-b border-border tabular-nums ${h === 19 ? "border-l border-border/60" : ""}`}>{hh(h)}</th>
+                ))}
+                <th className="text-right text-[10px] uppercase tracking-wider font-semibold px-2 py-1.5 border-b border-border bg-muted/30 text-violet-600 dark:text-violet-400">T2</th>
+              </tr>
+            </thead>
+            <tbody>
+              {machines.map(m => (
+                <tr key={m} className="border-b border-border/40">
+                  <td className="sticky left-0 bg-card px-3 py-1.5 font-medium whitespace-nowrap">{m.replace("MAQUINA", "Máquina ")}</td>
+                  {T1_HOURS.map(h => {
+                    const v = cells[`${m}|${h}`] || 0;
+                    return (
+                      <td key={h} className={`px-2 py-1.5 text-right tabular-nums ${h === 7 ? "border-l border-border/60" : ""}`}
+                        style={v ? { background: `rgba(59,130,246,${(0.06 + 0.24 * (v / maxCell)).toFixed(3)})` } : undefined}>
+                        {v ? fmtInt(v) : <span className="text-muted-foreground/30">·</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums bg-muted/30">{t1Totals[m] ? fmtInt(t1Totals[m]) : <span className="text-muted-foreground/30">·</span>}</td>
+                  {T2_HOURS.map(h => {
+                    const v = cells[`${m}|${h}`] || 0;
+                    return (
+                      <td key={h} className={`px-2 py-1.5 text-right tabular-nums ${h === 19 ? "border-l border-border/60" : ""}`}
+                        style={v ? { background: `rgba(139,92,246,${(0.06 + 0.24 * (v / maxCell)).toFixed(3)})` } : undefined}>
+                        {v ? fmtInt(v) : <span className="text-muted-foreground/30">·</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums bg-muted/30">{t2Totals[m] ? fmtInt(t2Totals[m]) : <span className="text-muted-foreground/30">·</span>}</td>
+                  <td className="px-3 py-1.5 text-right font-semibold tabular-nums border-l border-border/60">{fmtInt(rowTotals[m])}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-border">
+                <td className="sticky left-0 bg-card px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Total</td>
+                {T1_HOURS.map(h => (
+                  <td key={h} className={`px-2 py-2 text-right font-semibold tabular-nums ${h === 7 ? "border-l border-border/60" : ""}`}>{colTotals[h] ? fmtInt(colTotals[h]) : ""}</td>
+                ))}
+                <td className="px-2 py-2 text-right font-bold tabular-nums bg-muted/30 text-blue-600 dark:text-blue-400">{fmtInt(t1Grand)}</td>
+                {T2_HOURS.map(h => (
+                  <td key={h} className={`px-2 py-2 text-right font-semibold tabular-nums ${h === 19 ? "border-l border-border/60" : ""}`}>{colTotals[h] ? fmtInt(colTotals[h]) : ""}</td>
+                ))}
+                <td className="px-2 py-2 text-right font-bold tabular-nums bg-muted/30 text-violet-600 dark:text-violet-400">{fmtInt(t2Grand)}</td>
+                <td className="px-3 py-2 text-right font-bold tabular-nums border-l border-border/60">{fmtInt(grandTotal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Panel>
+      )}
     </div>
   );
 }

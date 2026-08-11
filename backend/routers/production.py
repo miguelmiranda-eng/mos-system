@@ -897,6 +897,36 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
     hourly_results = await db.production_logs.aggregate(hourly_pipeline).to_list(1000)
     hourly_trend = [{"hour": r["_id"], "produced": r["produced"]} for r in hourly_results]
 
+    # Hora × máquina — matriz para la vista "Hora x Hora" del módulo de
+    # Producción. La llave es la HORA DEL DÍA local (00-23, Tijuana): en
+    # "Hoy"/"Ayer" es literalmente el hora-por-hora; en periodos de varios
+    # días acumula por hora, mostrando el patrón de turno de cada máquina.
+    machine_hour_pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": {
+                "machine": "$machine",
+                "hour": {"$dateToString": {
+                    "format": "%H",
+                    "date": {"$toDate": "$created_at"},
+                    "timezone": "America/Tijuana"
+                }},
+            },
+            "produced": {"$sum": "$quantity_produced"},
+            "count": {"$sum": 1},
+        }},
+    ]
+    machine_hour_results = await db.production_logs.aggregate(machine_hour_pipeline).to_list(2000)
+    by_machine_hour = [
+        {
+            "machine": r["_id"].get("machine") or "?",
+            "hour": int(r["_id"]["hour"]),
+            "produced": r["produced"],
+            "count": r["count"],
+        }
+        for r in machine_hour_results if r["_id"].get("hour") is not None
+    ]
+
     # Distinct filters
     distinct_machines = sorted([m["machine"] for m in machines_data if m["machine"] != "?"])
     distinct_operators = sorted([o["operator"] for o in operators_data if o["operator"] != "?"])
@@ -931,6 +961,7 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         "by_shift": shifts_data, "by_client": clients_data,
         "by_po": po_data, "by_day": by_day_data, "trend_data": trend_data, "granularity": granularity,
         "hourly_trend": hourly_trend,
+        "by_machine_hour": by_machine_hour,
         "by_production_status": prod_status_data,
         "filters": {"machines": distinct_machines, "operators": distinct_operators, "clients": distinct_clients},
         "logs": result.get("recent_logs", [])
