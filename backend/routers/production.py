@@ -828,6 +828,12 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
             "as": "order_info"
         }},
         {"$unwind": "$order_info"},
+        # Solo órdenes que SIGUEN en un tablero de máquina: la meta es el
+        # tamaño de lo que el taller tiene en las máquinas. Una orden que ya
+        # avanzó (empaque, envío, completos...) dejaba su quantity COMPLETA
+        # inflando la meta solo por haber recibido una captura en el periodo,
+        # y la eficiencia se veía artificialmente baja.
+        {"$match": {"order_info.board": {"$regex": "^MAQUINA"}}},
         {"$group": {
             "_id": None,
             "total_target": {"$sum": "$order_info.quantity"}
