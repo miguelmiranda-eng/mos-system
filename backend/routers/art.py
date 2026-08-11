@@ -49,13 +49,17 @@ async def log_art_work(request: Request, log_data: ArtLogCreate):
         {"$set": {update_field: True}}
     )
 
-    # 4. Notify via WebSocket
+    # 4. Notify via WebSocket. Firma posicional (event_type, data): la firma
+    # vieja pasaba un dict como event_type, el interceptor de caché en
+    # orders.py no lo reconocía (solo invalida en "order_change") y el
+    # frontend ignoraba el mensaje — el status de arte quedaba rancio hasta
+    # el TTL sin que ningún cliente refetcheara.
     from ws_manager import ws_manager
-    await ws_manager.broadcast({
-        "type": "ORDER_UPDATED",
+    await ws_manager.broadcast("order_change", {
+        "action": "art_status",
         "order_id": order["order_id"],
+        "boards": [order.get("board")],
         "user": user["name"],
-        "action": f"Registered Art {log_data.type}"
     })
 
     return {"status": "success", "log_id": log_entry["log_id"]}
@@ -294,11 +298,14 @@ async def create_preorder(request: Request, data: dict):
     if "_id" in new_order:
         new_order.pop("_id")
     
+    # Misma corrección de firma que en /log: sin esto la pre-orden nueva no
+    # invalidaba el caché de listados ni provocaba refetch en los clientes.
     from ws_manager import ws_manager
-    await ws_manager.broadcast({
-        "type": "ORDER_CREATED",
-        "order": new_order,
-        "user": user["name"]
+    await ws_manager.broadcast("order_change", {
+        "action": "create",
+        "order_id": new_order["order_id"],
+        "boards": [new_order["board"]],
+        "user": user["name"],
     })
     
     return {"status": "success", "order_id": new_order["order_id"], "order_number": order_number}
