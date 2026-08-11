@@ -86,18 +86,8 @@ export default function ProduccionModule() {
     return () => window.removeEventListener("keydown", onKey);
   }, [tvMode, exitTv]);
 
-  // Rotación de pestañas cada 20s SOLO en modo TV. Un click manual en una
-  // pestaña no rompe nada: la rotación continúa desde donde quedó.
-  useEffect(() => {
-    if (!tvMode) return;
-    const id = setInterval(() => {
-      setTab(prev => {
-        const idx = TABS.findIndex(t => t.id === prev);
-        return TABS[(idx + 1) % TABS.length].id;
-      });
-    }, 20000);
-    return () => clearInterval(id);
-  }, [tvMode]);
+  // Sin rotación automática (pedido del usuario 2026-08-11): la pestaña se
+  // cambia manualmente desde los iconos del overlay flotante del modo TV.
 
   const load = useCallback(async (silent) => {
     silent ? setRefreshing(true) : setLoading(true);
@@ -194,15 +184,24 @@ export default function ProduccionModule() {
       </header>
       )}
 
-      {/* Overlay del modo TV: pestaña actual + salida. Discreto, arriba a la
-          derecha; Esc también sale. */}
+      {/* Overlay del modo TV: navegación manual de pestañas (iconos) +
+          etiqueta de la actual + salida. Esc también sale. */}
       {tvMode && (
-        <div className="fixed top-3 right-3 z-50 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/85 border border-border shadow-sm">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="fixed top-3 right-3 z-50 flex items-center gap-1 px-2 py-1.5 rounded-lg bg-background/85 border border-border shadow-sm">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)} title={t.label}
+                className={`p-1.5 rounded-md transition-colors ${tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
+                <Icon className="w-4 h-4" />
+              </button>
+            );
+          })}
+          <span className="mx-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
             {TABS.find(t => t.id === tab)?.label}
           </span>
           <button onClick={exitTv} title="Salir del modo TV (Esc)"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -234,7 +233,7 @@ function Kpi({ icon: Icon, label, value, sub, accent = "text-primary" }) {
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <Icon className={`w-4 h-4 ${accent}`} /> {label}
       </div>
-      <div className="mt-2 text-3xl font-semibold tabular-nums leading-none">{value}</div>
+      <div className="mt-2 text-2xl md:text-3xl font-semibold tabular-nums leading-none">{value}</div>
       {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
     </div>
   );
@@ -410,7 +409,7 @@ function MaquinasTab({ a, cap, chart }) {
 
       <Panel title="Carga por máquina" icon={Cog}
         right={<span className="text-xs text-muted-foreground">restante · días estimados</span>}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
           {machines.map(m => {
             const tone = LOAD_TONE[m.load_status] || LOAD_TONE.idle;
             const pct = Math.min(100, Math.round((m.estimated_days / 10) * 100));
@@ -614,13 +613,13 @@ function HoraPorHoraTab({ a, period, chart }) {
           {/* Tarjetas por máquina: total, split T1/T2 y las 24 horas como
               mini-barras (altura relativa al pico de ESA máquina — muestra su
               patrón; el volumen lo dice el número). */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
             {machines.map(m => {
               const mMax = Math.max(1, ...allHours.map(h => cells[`${m}|${h}`] || 0));
               return (
                 <div key={m} className="rounded-lg border border-border bg-card p-3">
                   <div className="flex items-baseline justify-between">
-                    <span className="text-sm font-semibold">{m.replace("MAQUINA", "Máquina ")}</span>
+                    <span className="text-xs font-semibold">{m.replace("MAQUINA", "M")}</span>
                     <span className="text-lg font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
@@ -651,7 +650,9 @@ function HoraPorHoraTab({ a, period, chart }) {
       <Panel title="Hora por hora por máquina" icon={Clock}
         right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
+          {/* text-xs + etiquetas M1..M14: las 27 columnas caben en el TV sin
+              scroll horizontal (con zoom 1.3 del modo TV incluido). */}
+          <table className="w-full text-xs border-collapse">
             <thead>
               <tr>
                 <th rowSpan={2} className="sticky left-0 bg-card text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border whitespace-nowrap align-bottom">Máquina</th>
@@ -673,7 +674,7 @@ function HoraPorHoraTab({ a, period, chart }) {
             <tbody>
               {machines.map(m => (
                 <tr key={m} className="border-b border-border/40">
-                  <td className="sticky left-0 bg-card px-3 py-1.5 font-medium whitespace-nowrap">{m.replace("MAQUINA", "Máquina ")}</td>
+                  <td className="sticky left-0 bg-card px-2 py-1.5 text-[11px] font-semibold whitespace-nowrap">{m.replace("MAQUINA", "M")}</td>
                   {T1_HOURS.map(h => {
                     const v = cells[`${m}|${h}`] || 0;
                     return (
