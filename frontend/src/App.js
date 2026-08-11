@@ -478,7 +478,7 @@ const LandingPage = () => {
 
       {/* Background Image */}
       <div className="absolute inset-0 z-0">
-        <img src="/tech_bg.png" alt="Tech Background" className="w-full h-full object-cover opacity-80 mix-blend-screen" />
+        <img src="/tech_bg.jpg" alt="Tech Background" className="w-full h-full object-cover opacity-80 mix-blend-screen" />
       </div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-12 flex flex-col flex-1">
@@ -509,7 +509,10 @@ const LandingPage = () => {
             <div className="mt-8 mb-10 md:mb-12 inline-block">
               <div className="flex items-center gap-4 px-6 py-4 bg-card/80 backdrop-blur-xl rounded-2xl border border-primary/30 shadow-[0_0_40px_rgba(255,193,7,0.15)] relative overflow-hidden group hover:border-primary/60 transition-colors cursor-default">
                 <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <div className="w-1.5 h-8 bg-primary rounded-full shadow-[0_0_15px_rgba(255,193,7,0.9)] animate-pulse"></div>
+                {/* Sin animate-pulse: era una animación infinita del compositor
+                    en una pantalla que se queda abierta; el glow estático da la
+                    misma señal de "sistema vivo". */}
+                <div className="w-1.5 h-8 bg-primary rounded-full shadow-[0_0_15px_rgba(255,193,7,0.9)]"></div>
                 <div className="flex flex-col text-left">
                   <span className="text-[11px] uppercase tracking-[0.25em] text-primary font-bold">Arquitectura Inteligente</span>
                   <span className="text-xl md:text-2xl font-black tracking-widest text-foreground font-barlow drop-shadow-md">

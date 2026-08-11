@@ -159,20 +159,43 @@ export const useOrders = (currentBoard, boardFilters) => {
     try { const res = await apiFetch(`${API}/config/options`); if (res.ok) setOptions(await res.json()); } catch { /* silent */ }
   }, []);
 
-  const fetchProductionSummary = useCallback(async () => {
-    try { const res = await apiFetch(`${API}/production-summary`); if (res.ok) setProductionSummary(await res.json()); } catch { /* silent */ }
+  // Guard anti re-render: estos fetches se disparan con CADA evento WS (una
+  // captura del taller por minuto = un fetch por cliente), pero casi siempre
+  // el payload viene idéntico (el backend lo cachea como bytes). Un objeto
+  // nuevo con los mismos datos rompe el React.memo de las ~3,000 celdas del
+  // tablero; comparando el texto crudo se salta el setState y el tablero no
+  // se entera. JSON.parse solo corre cuando el payload de verdad cambió.
+  const _lastPayloadRef = useRef({});
+  const _applyIfChanged = useCallback((key, text, apply) => {
+    if (_lastPayloadRef.current[key] === text) return;
+    _lastPayloadRef.current[key] = text;
+    apply(JSON.parse(text));
   }, []);
 
+  const fetchProductionSummary = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API}/production-summary`);
+      if (res.ok) _applyIfChanged('prod', await res.text(), setProductionSummary);
+    } catch { /* silent */ }
+  }, [_applyIfChanged]);
+
   const fetchNeckSummary = useCallback(async () => {
-    try { const res = await apiFetch(`${API}/neck-summary`); if (res.ok) setNeckSummary(await res.json()); } catch { /* silent */ }
-  }, []);
+    try {
+      const res = await apiFetch(`${API}/neck-summary`);
+      if (res.ok) _applyIfChanged('neck', await res.text(), setNeckSummary);
+    } catch { /* silent */ }
+  }, [_applyIfChanged]);
 
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await apiFetch(`${API}/notifications`);
-      if (res.ok) { const data = await res.json(); setNotifications(data.notifications || []); setUnreadCount(data.unread_count || 0); }
+      if (res.ok) {
+        _applyIfChanged('notifs', await res.text(), (data) => {
+          setNotifications(data.notifications || []); setUnreadCount(data.unread_count || 0);
+        });
+      }
     } catch { /* silent */ }
-  }, []);
+  }, [_applyIfChanged]);
 
   const fetchBoards = useCallback(async () => {
     try {

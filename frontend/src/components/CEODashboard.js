@@ -232,15 +232,20 @@ const CEODashboard = () => {
     <div className={`min-h-screen font-barlow p-4 md:p-8 lg:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
       isDark ? 'bg-[#050508]' : 'bg-[#f8fafc]'
     }`}>
-      {/* Dynamic Background Effects */}
+      {/* Dynamic Background Effects — radial-gradient estático: el mismo halo
+          que antes daban dos divs con blur(150px)/blur(120px) sobre media
+          pantalla, que costaban una rasterización GPU gigante en una vista que
+          vive encendida en un TV. Las clases animate-float-* no existían en
+          tailwind.config (nunca animaron) y .scanline tampoco estaba definida. */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        <div className={`absolute top-[-10%] right-[-10%] w-[50%] h-[50%] blur-[150px] rounded-full animate-float-slow transition-all duration-1000 ${
-          isDark ? 'bg-[#e94560]/10' : 'bg-emerald-400/10'
-        }`} />
-        <div className={`absolute bottom-[-5%] left-[-5%] w-[40%] h-[40%] blur-[120px] rounded-full animate-float-slower transition-all duration-1000 ${
-          isDark ? 'bg-blue-600/10' : 'bg-emerald-300/5'
-        }`} />
-        <div className={`absolute inset-0 scanline opacity-[0.03] transition-opacity ${isDark ? '' : 'hidden'}`} />
+        <div
+          className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%]"
+          style={{ background: `radial-gradient(circle, ${isDark ? 'rgba(233,69,96,0.10)' : 'rgba(52,211,153,0.10)'} 0%, transparent 70%)` }}
+        />
+        <div
+          className="absolute bottom-[-5%] left-[-5%] w-[40%] h-[40%]"
+          style={{ background: `radial-gradient(circle, ${isDark ? 'rgba(37,99,235,0.10)' : 'rgba(110,231,183,0.05)'} 0%, transparent 70%)` }}
+        />
       </div>
 
       <header className="mb-8 md:mb-12 relative z-10">

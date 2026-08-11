@@ -98,7 +98,11 @@ const HomeDashboard = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-barlow overflow-y-auto pb-16">
       {/* HEADER */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-lg border-b border-slate-200">
+      {/* Fondo sólido en vez de bg-white/90 + backdrop-blur-lg: un header
+          sticky con blur re-filtra el contenido en CADA frame de scroll — el
+          costo continuo más caro de la página de inicio. Al 90% de opacidad
+          la diferencia visual era imperceptible. */}
+      <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-md shadow-blue-200 ring-1 ring-blue-100">
