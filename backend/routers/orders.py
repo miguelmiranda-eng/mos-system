@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, MASTER_API_KEY
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, MASTER_API_KEY, json_response_bytes
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -29,6 +29,16 @@ except OSError:
 MASTER_EXCLUDED_BOARDS = {"FINAL BILL", "COMPLETOS", "EDI", "CANCELLED"}
 
 # ==================== CACHE SYSTEM FOR ORDERS ====================
+# Guarda la RESPUESTA ya serializada (bytes JSON), no los documentos: con el
+# caché de objetos, cada hit seguía pagando jsonable_encoder + json.dumps
+# sobre cientos de documentos. La respuesta no depende del usuario
+# (require_auth es solo compuerta), así que los mismos bytes sirven para
+# todos los clientes.
+#
+# Llaves: tuplas ("orders", board, limit, include_images) y ("board_counts",).
+# Tienen que ser tuplas: los tableros son nombres libres con espacios
+# ("READY TO SCHEDULED"), así que un string interpolado no se puede parsear
+# de vuelta con confianza para invalidar por tablero.
 _orders_cache = {}
 _orders_cache_locks = {}
 # TTL de seguridad: la invalidación explícita de abajo solo escucha
@@ -36,7 +46,7 @@ _orders_cache_locks = {}
 # ninguno), el caché se auto-sana en 60s en vez de quedar rancio para siempre.
 _ORDERS_CACHE_TTL = 60
 
-def get_orders_cached(key: str):
+def get_orders_cached(key):
     entry = _orders_cache.get(key)
     if not entry:
         return None
@@ -44,6 +54,32 @@ def get_orders_cached(key: str):
         del _orders_cache[key]
         return None
     return entry["data"]
+
+def _cache_and_respond(key, payload) -> Response:
+    body = json_response_bytes(payload)
+    _orders_cache[key] = {"data": body, "ts": time.time()}
+    return Response(content=body, media_type="application/json")
+
+def _invalidate_orders_cache(data):
+    # order_change con `boards` confiables borra solo: esos tableros, MASTER
+    # (agrega casi todos los tableros, cualquier cambio puede alterarlo), las
+    # llaves sin tablero (listado completo) y board_counts. Con boards ausente
+    # o dudoso (None adentro, lista vacía, tipos raros) se vacía TODO — el
+    # comportamiento histórico, siempre correcto. El premio son los tableros
+    # TERMINALES (FINAL BILL es ~70% de las filas y solo crece): dejan de
+    # recomputarse por cambios que no los tocan.
+    boards = None
+    if isinstance(data, dict):
+        raw = data.get("boards")
+        if isinstance(raw, (list, tuple)) and raw and all(
+                isinstance(b, str) and b.strip() for b in raw):
+            boards = set(raw)
+    if boards is None:
+        _orders_cache.clear()
+        return
+    for key in list(_orders_cache):
+        if key[0] != "orders" or key[1] in (None, "MASTER") or key[1] in boards:
+            del _orders_cache[key]
 
 # Intercepta ws_manager.broadcast para invalidar el caché de listados, pero
 # SOLO en eventos que cambian órdenes. production_update / neck_update se
@@ -54,7 +90,8 @@ original_broadcast = ws_manager.broadcast
 async def patched_broadcast(*args, **kwargs):
     event_type = args[0] if args else kwargs.get("event_type")
     if event_type == "order_change":
-        _orders_cache.clear()
+        data = args[1] if len(args) > 1 else kwargs.get("data")
+        _invalidate_orders_cache(data)
     return await original_broadcast(*args, **kwargs)
 ws_manager.broadcast = patched_broadcast
 # =================================================================
@@ -79,6 +116,77 @@ async def _run_automations(trigger_type, order, user, context=None):
     from routers.automations import run_automations
     return await run_automations(trigger_type, order, user, context)
 
+async def _fetch_orders(board, search, limit, include_images):
+    query = {}
+    if board == "MASTER":
+        # Exclude trash AND ghost orders (null/missing board) using an indexable query
+        # We use $in with dynamic boards because $nin causes a full collection scan
+        active_boards = await get_dynamic_boards()
+        # MASTER = solo la operación viva. Los tableros TERMINALES solo
+        # acumulan (FINAL BILL ya es ~70% de las filas de MASTER y crece
+        # para siempre): incluirlos hacía que cada request pesara ~3.4 MB
+        # y que cada cliente montara ~1,900 filas. Cada terminal se
+        # consulta en su propio tablero.
+        active_boards = [b for b in active_boards
+                         if str(b).strip().upper() not in MASTER_EXCLUDED_BOARDS]
+        query["board"] = {"$in": active_boards}
+    elif board:
+        query["board"] = board
+    # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
+    # These are fetched individually when opening the order details.
+    # 'images' (metadatos de adjuntos) era el 79% del payload del tablero
+    # (~3.5 MB) y NINGUNA vista lo lee del listado — los modales piden
+    # /orders/{id}/images bajo demanda. include_images=true lo restaura
+    # para integraciones externas que lo necesiten.
+    projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
+    if not include_images:
+        projection["images"] = 0
+    if search:
+        # Global, dynamic-column-safe search: match the query against ANY field
+        # value in Python — covers custom columns with odd names like
+        # 'bpo_(blank_po#)' and 'store_po#' that a fixed $or list keeps missing.
+        # The orders collection is small (~1.6k) so this is cheap. Skips
+        # id/date/asset keys so digits don't match a timestamp or image hash.
+        sq = search.strip().lower()
+        _skip_key = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
+        def _flat(v):
+            if v is None:
+                return ""
+            if isinstance(v, dict):
+                return " ".join(_flat(x) for x in v.values())
+            if isinstance(v, list):
+                return " ".join(_flat(x) for x in v)
+            return str(v).lower()
+        raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(5000)
+        ranked = []  # (0=exact field match, 1=substring) so exact hits rank first
+        for o in raw:
+            hit = exact = False
+            for k, v in o.items():
+                if _skip_key.search(k):
+                    continue
+                if sq in _flat(v):
+                    hit = True
+                    if isinstance(v, (str, int, float)) and str(v).strip().lower() == sq:
+                        exact = True
+                        break
+            if hit:
+                ranked.append((0 if exact else 1, o))
+        ranked.sort(key=lambda r: r[0])  # stable → keeps created_at desc within each tier
+        orders_raw = [o for _, o in ranked[:limit]]
+    else:
+        orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
+
+    # Safety loop to avoid serialization/merging crashes
+    cleaned_orders = []
+    for order in orders_raw:
+        try:
+            merged = _merge_custom_fields(order)
+            cleaned_orders.append(merged)
+        except Exception as e:
+            logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
+            cleaned_orders.append(order)
+    return cleaned_orders
+
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000,
                      include_images: bool = False):
@@ -86,89 +194,28 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
     if api_key != MASTER_API_KEY:
         await require_auth(request)
 
+    if search:
+        # Las búsquedas NO se cachean: cada string tecleado distinto (el
+        # autocomplete de arte pega una request POR TECLA) crearía una entrada
+        # con el listado serializado y un Lock que jamás se limpia, con
+        # hit-rate ~cero. Sin caché cuesta lo mismo que un miss.
+        return await _fetch_orders(board, search, limit, include_images)
+
     # Cache stampede protection
-    cache_key = f"orders_{board}_{search}_{limit}_{include_images}"
+    cache_key = ("orders", board, limit, include_images)
     cached = get_orders_cached(cache_key)
-    if cached is not None: return cached
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
 
     if cache_key not in _orders_cache_locks:
         _orders_cache_locks[cache_key] = asyncio.Lock()
-        
+
     async with _orders_cache_locks[cache_key]:
         cached = get_orders_cached(cache_key)
-        if cached is not None: return cached
-
-        query = {}
-        if board == "MASTER":
-            # Exclude trash AND ghost orders (null/missing board) using an indexable query
-            # We use $in with dynamic boards because $nin causes a full collection scan
-            active_boards = await get_dynamic_boards()
-            # MASTER = solo la operación viva. Los tableros TERMINALES solo
-            # acumulan (FINAL BILL ya es ~70% de las filas de MASTER y crece
-            # para siempre): incluirlos hacía que cada request pesara ~3.4 MB
-            # y que cada cliente montara ~1,900 filas. Cada terminal se
-            # consulta en su propio tablero.
-            active_boards = [b for b in active_boards
-                             if str(b).strip().upper() not in MASTER_EXCLUDED_BOARDS]
-            query["board"] = {"$in": active_boards}
-        elif board:
-            query["board"] = board
-        # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
-        # These are fetched individually when opening the order details.
-        # 'images' (metadatos de adjuntos) era el 79% del payload del tablero
-        # (~3.5 MB) y NINGUNA vista lo lee del listado — los modales piden
-        # /orders/{id}/images bajo demanda. include_images=true lo restaura
-        # para integraciones externas que lo necesiten.
-        projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
-        if not include_images:
-            projection["images"] = 0
-        if search:
-            # Global, dynamic-column-safe search: match the query against ANY field
-            # value in Python — covers custom columns with odd names like
-            # 'bpo_(blank_po#)' and 'store_po#' that a fixed $or list keeps missing.
-            # The orders collection is small (~1.6k) so this is cheap. Skips
-            # id/date/asset keys so digits don't match a timestamp or image hash.
-            sq = search.strip().lower()
-            _skip_key = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
-            def _flat(v):
-                if v is None:
-                    return ""
-                if isinstance(v, dict):
-                    return " ".join(_flat(x) for x in v.values())
-                if isinstance(v, list):
-                    return " ".join(_flat(x) for x in v)
-                return str(v).lower()
-            raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(5000)
-            ranked = []  # (0=exact field match, 1=substring) so exact hits rank first
-            for o in raw:
-                hit = exact = False
-                for k, v in o.items():
-                    if _skip_key.search(k):
-                        continue
-                    if sq in _flat(v):
-                        hit = True
-                        if isinstance(v, (str, int, float)) and str(v).strip().lower() == sq:
-                            exact = True
-                            break
-                if hit:
-                    ranked.append((0 if exact else 1, o))
-            ranked.sort(key=lambda r: r[0])  # stable → keeps created_at desc within each tier
-            orders_raw = [o for _, o in ranked[:limit]]
-        else:
-            orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
-        
-        # Safety loop to avoid serialization/merging crashes
-        cleaned_orders = []
-        for order in orders_raw:
-            try:
-                merged = _merge_custom_fields(order)
-                cleaned_orders.append(merged)
-            except Exception as e:
-                logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
-                cleaned_orders.append(order)
-                
-        _orders_cache[cache_key] = {"data": cleaned_orders, "ts": time.time()}
-        return cleaned_orders
+        if cached is not None:
+            return Response(content=cached, media_type="application/json")
+        cleaned_orders = await _fetch_orders(board, search, limit, include_images)
+        return _cache_and_respond(cache_key, cleaned_orders)
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
@@ -185,10 +232,10 @@ async def get_board_counts(request: Request):
     # producción se midieron 8 llamadas en 460 ms — ocho barridos completos.
     # El lock es la mitad que importa: sin él, las 8 concurrentes lanzan el
     # barrido a la vez; con él, una consulta y las demás leen el resultado.
-    cache_key = "board_counts"
+    cache_key = ("board_counts",)
     cached = get_orders_cached(cache_key)
     if cached is not None:
-        return cached
+        return Response(content=cached, media_type="application/json")
 
     if cache_key not in _orders_cache_locks:
         _orders_cache_locks[cache_key] = asyncio.Lock()
@@ -196,14 +243,13 @@ async def get_board_counts(request: Request):
     async with _orders_cache_locks[cache_key]:
         cached = get_orders_cached(cache_key)
         if cached is not None:
-            return cached
+            return Response(content=cached, media_type="application/json")
 
         pipeline = [{"$group": {"_id": "$board", "count": {"$sum": 1}}}]
         results = await db.orders.aggregate(pipeline).to_list(1000)
         # Convert to simple key-value: {BOARD_NAME: COUNT}
         counts = {r["_id"]: r["count"] for r in results if r["_id"]}
-        _orders_cache[cache_key] = {"data": counts, "ts": time.time()}
-        return counts
+        return _cache_and_respond(cache_key, counts)
 
 @router.get("/check-number")
 async def check_order_number(request: Request, order_number: str = None):

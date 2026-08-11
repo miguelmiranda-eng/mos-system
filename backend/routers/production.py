@@ -1,6 +1,6 @@
 """Production logs, gantt data, capacity plan, email routes."""
-from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, NeckLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY
+from fastapi import APIRouter, HTTPException, Request, Response
+from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, NeckLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY, json_response_bytes
 from ws_manager import ws_manager
 from datetime import datetime, timezone, timedelta
 import zoneinfo
@@ -246,21 +246,28 @@ async def get_production_summary(request: Request, date_from: str = None, date_t
     cache_key = "prod_summary"
     cacheable = not date_from and not date_to
     cached = get_cached(cache_key)
-    if cached and cacheable: return cached
+    if cached is not None and cacheable:
+        return Response(content=cached, media_type="application/json")
 
     if cacheable:
         # Anti-estampida (mismo patrón que el gantt de abajo y orders.py): cada
         # captura invalida este caché y su broadcast hace que TODOS los clientes
         # conectados pidan el resumen casi a la vez; sin el lock, cada request
         # de la ráfaga corría la agregación completa en paralelo.
+        #
+        # Se cachean los BYTES ya serializados, no el dict: el resumen trae una
+        # entrada por orden con desglose por posición y talla, y cada hit de la
+        # ráfaga volvía a serializarlo completo.
         if cache_key not in _cache_locks:
             _cache_locks[cache_key] = asyncio.Lock()
         async with _cache_locks[cache_key]:
             cached = get_cached(cache_key)
-            if cached: return cached
+            if cached is not None:
+                return Response(content=cached, media_type="application/json")
             summary = await _compute_production_summary({})
-            set_cache(cache_key, summary)
-            return summary
+            body = json_response_bytes(summary)
+            set_cache(cache_key, body)
+            return Response(content=body, media_type="application/json")
 
     query = {}
     tijuana_tz = zoneinfo.ZoneInfo("America/Tijuana")

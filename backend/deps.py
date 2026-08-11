@@ -6,7 +6,21 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-import os, uuid, logging
+from fastapi.encoders import jsonable_encoder
+import os, uuid, logging, json
+
+
+def json_response_bytes(payload) -> bytes:
+    """Serializa igual que el render por defecto de FastAPI (jsonable_encoder +
+    JSONResponse con separadores compactos): permite cachear respuestas como
+    bytes y servirlas idénticas byte a byte. jsonable_encoder es necesario
+    porque los documentos pueden traer datetimes crudos (BSON dates de los
+    imports de Excel) que json.dumps solo no sabe serializar."""
+    return json.dumps(
+        jsonable_encoder(payload), ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
