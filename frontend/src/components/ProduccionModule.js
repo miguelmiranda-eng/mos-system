@@ -17,6 +17,12 @@ import { useTheme } from "../contexts/ThemeContext";
 // eficiencia), /capacity-plan (carga por máquina) y /orders/board-counts (WIP
 // por etapa). Se refresca solo cada 60s. Estilo token-based: se adapta a claro/
 // oscuro sin ramas manuales salvo en los ejes/tooltip de recharts.
+//
+// Layout fit-to-screen (pedido 2026-08-12): la página mide exactamente la
+// altura del viewport y cada pestaña reparte ese espacio con flex/grid — las
+// gráficas se estiran/encogen (ResponsiveContainer) en vez de tener altura
+// fija, para ver TODO el tablero sin scroll. En pantallas muy chicas cada
+// pestaña conserva un min-h y <main> hace scroll como salvavidas.
 
 const PALETTE = ["#3b82f6", "#22c55e", "#eab308", "#8b5cf6", "#06b6d4", "#f97316", "#ec4899", "#14b8a6"];
 const fmtInt = (n) => (Number(n) || 0).toLocaleString("es-MX");
@@ -59,6 +65,20 @@ export default function ProduccionModule() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tvMode, setTvMode] = useState(false);
+  const [tvViewportH, setTvViewportH] = useState(null);
+
+  // Altura real del viewport en modo TV: se mide en px (innerHeight) y se
+  // divide entre el zoom para que el layout fit-to-screen siga midiendo
+  // exactamente una pantalla ya escalado. Se usa px y no 100vh porque el
+  // trato de las unidades vh dentro de un elemento con zoom cambió entre
+  // versiones de Chrome; los px se comportan igual en ambas.
+  useEffect(() => {
+    if (!tvMode) return;
+    const measure = () => setTvViewportH(window.innerHeight);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [tvMode]);
 
   // ── Modo TV: fullscreen + escala grande + rotación automática de pestañas.
   const enterTv = async () => {
@@ -126,15 +146,18 @@ export default function ProduccionModule() {
   const chartProps = { axis, grid, tooltipStyle };
 
   return (
-    // zoom 1.3 en modo TV: escala TODO el módulo (todas las pestañas) para
-    // leerse a distancia sin duplicar estilos; Chrome/Edge de los TVs lo
-    // soportan y recharts se adapta solo vía ResponsiveContainer.
-    <div className="min-h-screen bg-background text-foreground" style={tvMode ? { zoom: 1.3 } : undefined}>
+    // zoom 1.3 en modo TV: escala TODO el módulo para leerse a distancia. La
+    // altura se compensa (innerHeight/1.3) para que el layout fit-to-screen
+    // siga midiendo exactamente una pantalla ya escalado — sin scroll en el TV.
+    <div
+      className="h-screen flex flex-col overflow-hidden bg-background text-foreground"
+      style={tvMode && tvViewportH ? { zoom: 1.3, height: Math.round(tvViewportH / 1.3) } : undefined}
+    >
       {/* Header — se oculta COMPLETO en modo TV: en el televisor solo vive el
           dashboard; la orientación y la salida las da el overlay flotante. */}
       {!tvMode && (
-      <header className="sticky top-0 z-30 bg-background/95 backdrop-blur border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center gap-3 flex-wrap">
+      <header className="flex-none z-30 bg-background/95 border-b border-border">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-2 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate("/dashboard")}
             className="p-2 -ml-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -175,7 +198,7 @@ export default function ProduccionModule() {
             const Icon = t.icon;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
-                className={`flex items-center gap-2 px-3 md:px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+                className={`flex items-center gap-2 px-3 md:px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
                 <Icon className="w-4 h-4" /> {t.label}
               </button>
             );
@@ -207,9 +230,12 @@ export default function ProduccionModule() {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto p-4 md:p-6">
+      {/* overflow-auto = salvavidas: en pantallas grandes el contenido cabe
+          exacto y no hay scroll; en laptops chicas los min-h de cada pestaña
+          activan scroll en vez de aplastar las gráficas. */}
+      <main className="flex-1 min-h-0 overflow-auto w-full max-w-7xl mx-auto p-3 md:p-4">
         {loading && !analytics ? (
-          <div className="flex items-center justify-center py-32"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+          <div className="h-full flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
           <>
             {tab === "general" && <GeneralTab a={analytics} trend={trend} period={period} chart={chartProps} />}
@@ -229,25 +255,28 @@ export default function ProduccionModule() {
 
 function Kpi({ icon: Icon, label, value, sub, accent = "text-primary" }) {
   return (
-    <div className="bg-card border border-border rounded-lg p-4">
+    <div className="bg-card border border-border rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <Icon className={`w-4 h-4 ${accent}`} /> {label}
       </div>
-      <div className="mt-2 text-2xl md:text-3xl font-semibold tabular-nums leading-none">{value}</div>
-      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+      <div className="mt-1.5 text-xl md:text-2xl font-semibold tabular-nums leading-none">{value}</div>
+      {sub && <div className="mt-1 text-[11px] text-muted-foreground truncate">{sub}</div>}
     </div>
   );
 }
 
-function Panel({ title, icon: Icon, right, children, className = "" }) {
+// Panel flexible: como flex-col con min-h-0 puede estirarse (className="flex-1")
+// y su cuerpo hace scroll interno (bodyClassName="overflow-auto") sin empujar
+// la página — clave del layout sin scroll global.
+function Panel({ title, icon: Icon, right, children, className = "", bodyClassName = "" }) {
   return (
-    <div className={`bg-card border border-border rounded-lg ${className}`}>
-      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+    <div className={`bg-card border border-border rounded-lg flex flex-col min-h-0 ${className}`}>
+      <div className="flex-none px-4 py-2 border-b border-border flex items-center gap-2">
         {Icon && <Icon className="w-4 h-4 text-muted-foreground" />}
         <span className="text-sm font-semibold">{title}</span>
         {right && <div className="ml-auto">{right}</div>}
       </div>
-      <div className="p-4">{children}</div>
+      <div className={`flex-1 min-h-0 p-3 ${bodyClassName}`}>{children}</div>
     </div>
   );
 }
@@ -256,12 +285,12 @@ function Panel({ title, icon: Icon, right, children, className = "" }) {
 function RankBars({ rows, colorAt }) {
   const max = Math.max(1, ...rows.map(r => r.value));
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       {rows.length === 0 && <div className="text-sm text-muted-foreground py-2">Sin datos en el periodo.</div>}
       {rows.map((r, i) => (
         <div key={r.label + i} className="flex items-center gap-3">
           <div className="w-28 shrink-0 text-xs font-medium truncate" title={r.label}>{r.label}</div>
-          <div className="flex-1 h-6 rounded-md bg-muted/50 overflow-hidden">
+          <div className="flex-1 h-5 rounded-md bg-muted/50 overflow-hidden">
             <div className="h-full rounded-md transition-all" style={{ width: `${(r.value / max) * 100}%`, background: colorAt ? colorAt(i) : PALETTE[i % PALETTE.length] }} />
           </div>
           <div className="w-16 shrink-0 text-right text-sm font-semibold tabular-nums">{fmtInt(r.value)}</div>
@@ -278,8 +307,8 @@ function Ring({ pct, label, sub }) {
   const stroke = p >= 90 ? "#22c55e" : p >= 60 ? "#3b82f6" : p >= 30 ? "#eab308" : "#ef4444";
   return (
     <div className="flex flex-col items-center justify-center">
-      <div className="relative w-32 h-32">
-        <svg viewBox="0 0 120 120" className="w-32 h-32 -rotate-90">
+      <div className="relative w-28 h-28">
+        <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
           <circle cx="60" cy="60" r={r} fill="none" strokeWidth="12" className="stroke-muted" />
           <circle cx="60" cy="60" r={r} fill="none" strokeWidth="12" stroke={stroke}
             strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round"
@@ -290,7 +319,7 @@ function Ring({ pct, label, sub }) {
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
         </div>
       </div>
-      {sub && <div className="mt-2 text-xs text-muted-foreground text-center">{sub}</div>}
+      {sub && <div className="mt-1.5 text-xs text-muted-foreground text-center">{sub}</div>}
     </div>
   );
 }
@@ -317,41 +346,48 @@ function GeneralTab({ a, trend, period, chart }) {
   if (!a) return null;
   const shifts = (a.by_shift || []).map(s => ({ label: s._id || s.shift || "?", value: s.produced }));
   return (
-    <div className="space-y-5">
+    <div className="h-full min-h-[520px] flex flex-col gap-3">
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={TrendingUp} label="Producido" value={fmtInt(a.total_produced)} sub={`${fmtInt(a.total_logs)} registros`} accent="text-emerald-500" />
         <Kpi icon={Target} label="Meta (órdenes)" value={fmtInt(a.total_target)} sub={`Restan ${fmtInt(a.total_remaining)}`} accent="text-blue-500" />
         <Kpi icon={Zap} label="Eficiencia" value={`${a.efficiency ?? 0}%`} sub="producido vs meta" accent="text-violet-500" />
         <Kpi icon={Clock} label="Setup prom." value={`${fmtInt(a.avg_setup)} min`} sub="por registro" accent="text-amber-500" />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* Trend */}
-        <Panel className="xl:col-span-2" title={period === "today" ? "Producción por hora" : "Producción por día"} icon={Activity}>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="prodFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
-                <Tooltip contentStyle={chart.tooltipStyle} cursor={{ stroke: chart.axis, strokeWidth: 1 }} />
-                <Area type="monotone" dataKey="produced" name="Producido" stroke="#3b82f6" strokeWidth={2} fill="url(#prodFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <div className="xl:col-span-2 min-h-0 flex flex-col gap-3">
+          {/* Trend — la gráfica absorbe el alto sobrante de la pantalla */}
+          <Panel className="flex-1" title={period === "today" ? "Producción por hora" : "Producción por día"} icon={Activity}>
+            <div className="h-full min-h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="prodFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
+                  <Tooltip contentStyle={chart.tooltipStyle} cursor={{ stroke: chart.axis, strokeWidth: 1 }} />
+                  <Area type="monotone" dataKey="produced" name="Producido" stroke="#3b82f6" strokeWidth={2} fill="url(#prodFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+
+          {/* Por turno: pocos renglones (T1/T2), vive bajo el trend */}
+          <Panel className="flex-none" title="Producción por turno" icon={Clock}>
+            <RankBars rows={shifts} />
+          </Panel>
+        </div>
 
         {/* Eficiencia + meta */}
-        <Panel title="Avance vs meta" icon={Target}>
+        <Panel title="Avance vs meta" icon={Target} bodyClassName="overflow-auto">
           <Ring pct={a.efficiency} label="Eficiencia" sub={`${fmtInt(a.total_produced)} de ${fmtInt(a.total_target)} u`} />
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-3">
             <ProgressRow label="Avance global" produced={a.total_produced} target={a.total_target} />
             <div className="grid grid-cols-2 gap-2 pt-1">
               <div className="rounded-md border border-border p-2 text-center">
@@ -366,11 +402,6 @@ function GeneralTab({ a, trend, period, chart }) {
           </div>
         </Panel>
       </div>
-
-      {/* Por turno */}
-      <Panel title="Producción por turno" icon={Clock}>
-        <RankBars rows={shifts} />
-      </Panel>
     </div>
   );
 }
@@ -383,16 +414,16 @@ function MaquinasTab({ a, cap, chart }) {
   const machines = cap?.machines || [];
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="h-full min-h-[540px] flex flex-col gap-3">
+      <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={Boxes} label="En producción" value={fmtInt(cap?.in_production)} sub="unidades en máquinas" accent="text-blue-500" />
         <Kpi icon={CheckCircle2} label="Completado" value={fmtInt(cap?.total_completed)} sub="board COMPLETOS" accent="text-emerald-500" />
         <Kpi icon={Cog} label="Máquinas activas" value={fmtInt(machines.filter(m => m.order_count > 0).length)} sub={`de ${machines.length}`} accent="text-violet-500" />
         <Kpi icon={AlertTriangle} label="Saturadas" value={fmtInt(machines.filter(m => m.load_status === "red").length)} sub="> 7 días de carga" accent="text-red-500" />
       </div>
 
-      <Panel title="Producción por máquina (periodo)" icon={Activity}>
-        <div className="h-72">
+      <Panel className="flex-1" title="Producción por máquina (periodo)" icon={Activity}>
+        <div className="h-full min-h-[160px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={byMachine} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
@@ -407,32 +438,35 @@ function MaquinasTab({ a, cap, chart }) {
         </div>
       </Panel>
 
-      <Panel title="Carga por máquina" icon={Cog}
-        right={<span className="text-xs text-muted-foreground">restante · días estimados</span>}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
+      {/* Tarjetas compactas y en más columnas para que las ~14 máquinas quepan
+          en 2 renglones; si no caben, el cuerpo del panel scrollea interno. */}
+      <Panel className="flex-none max-h-[38%]" title="Carga por máquina" icon={Cog}
+        right={<span className="text-xs text-muted-foreground">restante · días estimados</span>}
+        bodyClassName="overflow-auto">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 gap-2">
           {machines.map(m => {
             const tone = LOAD_TONE[m.load_status] || LOAD_TONE.idle;
             const pct = Math.min(100, Math.round((m.estimated_days / 10) * 100));
             return (
-              <div key={m.machine} className="rounded-lg border border-border p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold">{m.machine.replace("MAQUINA", "Máquina ")}</span>
-                  <span className={`px-2 py-0.5 rounded-md border text-[10px] font-medium ${tone.chip}`}>{tone.label}</span>
+              <div key={m.machine} className="rounded-lg border border-border p-2">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-semibold truncate">{m.machine.replace("MAQUINA", "M")}</span>
+                  <span className={`px-1.5 py-0.5 rounded border text-[9px] font-medium whitespace-nowrap ${tone.chip}`}>{tone.label}</span>
                 </div>
-                <div className="mt-2 flex items-end justify-between">
+                <div className="mt-1.5 flex items-end justify-between">
                   <div>
-                    <div className="text-2xl font-semibold tabular-nums leading-none">{fmtInt(m.remaining_pieces)}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">u restantes</div>
+                    <div className="text-lg font-semibold tabular-nums leading-none">{fmtInt(m.remaining_pieces)}</div>
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground mt-0.5">u restantes</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-semibold tabular-nums">{m.estimated_days || 0} d</div>
-                    <div className="text-[10px] text-muted-foreground">{m.order_count} orden(es)</div>
+                    <div className="text-xs font-semibold tabular-nums">{m.estimated_days || 0} d</div>
+                    <div className="text-[9px] text-muted-foreground">{m.order_count} ord.</div>
                   </div>
                 </div>
-                <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div className="mt-1.5 h-1 rounded-full bg-muted overflow-hidden">
                   <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct}%` }} />
                 </div>
-                <div className="mt-1 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 text-[9px] text-muted-foreground truncate">
                   Prom. {m.avg_daily_production || 0} u/día · máx {fmtInt(m.max_daily_production)}
                 </div>
               </div>
@@ -454,21 +488,21 @@ function EmpaqueTab({ a, boards }) {
   const rows = statuses.map(s => ({ label: s.status, value: s.quantity }));
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+    <div className="h-full min-h-[480px] flex flex-col gap-3">
+      <div className="flex-none rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-300">
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
         <span>El sistema aún no captura piezas empacadas por hora; el empaque se mide por <b>estado de la orden</b> y por el WIP de cada etapa. Si más adelante se registran conteos de empaque, aquí entra la serie por hora.</span>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={Package} label="En empaque" value={fmtInt(totalEmpaqueU)} sub={`${fmtInt(totalEmpaqueO)} órdenes`} accent="text-blue-500" />
         <Kpi icon={CheckCircle2} label="Completos" value={fmtInt(completos)} sub="órdenes en COMPLETOS" accent="text-emerald-500" />
         <Kpi icon={ClipboardList} label="En control de calidad" value={fmtInt(qc)} sub="órdenes en QC" accent="text-violet-500" />
         <Kpi icon={Boxes} label="Etapas con WIP" value={fmtInt(Object.values(boards).filter(v => v > 0).length)} sub="boards con órdenes" accent="text-amber-500" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <Panel title="Órdenes por etapa de empaque / salida" icon={Package}>
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <Panel title="Órdenes por etapa de empaque / salida" icon={Package} bodyClassName="overflow-auto">
           <div className="space-y-2">
             {empaque.length === 0 && <div className="text-sm text-muted-foreground">Sin órdenes en etapas de empaque.</div>}
             {empaque.map((s, i) => (
@@ -483,7 +517,7 @@ function EmpaqueTab({ a, boards }) {
           </div>
         </Panel>
 
-        <Panel title="Distribución por estado de producción (unidades)" icon={Activity}>
+        <Panel title="Distribución por estado de producción (unidades)" icon={Activity} bodyClassName="overflow-auto">
           <RankBars rows={rows.slice(0, 8)} />
         </Panel>
       </div>
@@ -494,17 +528,19 @@ function EmpaqueTab({ a, boards }) {
 function OrdenesTab({ a }) {
   const pos = (a?.by_po || []).slice().sort((x, y) => (y.produced) - (x.produced)).slice(0, 20);
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="h-full min-h-[440px] flex flex-col gap-3">
+      <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={ClipboardList} label="Órdenes con avance" value={fmtInt((a?.by_po || []).length)} sub="en el periodo" accent="text-blue-500" />
         <Kpi icon={TrendingUp} label="Producido" value={fmtInt(a?.total_produced)} accent="text-emerald-500" />
         <Kpi icon={Target} label="Meta" value={fmtInt(a?.total_target)} accent="text-violet-500" />
         <Kpi icon={Zap} label="Eficiencia" value={`${a?.efficiency ?? 0}%`} accent="text-amber-500" />
       </div>
 
-      <Panel title="Avance por orden (top 20 del periodo)" icon={ClipboardList}>
-        <div className="space-y-3">
-          {pos.length === 0 && <div className="text-sm text-muted-foreground">Sin producción registrada en el periodo.</div>}
+      {/* Top 20 en dos columnas (≥lg): 10 renglones por lado caben completos
+          en pantalla; el overflow-auto queda de respaldo. */}
+      <Panel className="flex-1" title="Avance por orden (top 20 del periodo)" icon={ClipboardList} bodyClassName="overflow-auto">
+        {pos.length === 0 && <div className="text-sm text-muted-foreground">Sin producción registrada en el periodo.</div>}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-2.5">
           {pos.map((p, i) => (
             <ProgressRow key={(p.order_number || "?") + i} label={`#${p.order_number || "?"}`} produced={p.produced} target={p.target} />
           ))}
@@ -560,8 +596,8 @@ function HoraPorHoraTab({ a, period, chart }) {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="h-full min-h-[540px] flex flex-col gap-3">
+      <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={TrendingUp} label="Producido" value={fmtInt(grandTotal)} sub="en el periodo" accent="text-emerald-500" />
         <Kpi icon={Clock} label="Turno 1 · 7am–7pm" value={fmtInt(t1Grand)} sub={grandTotal ? `${Math.round(t1Grand / grandTotal * 100)}% del total` : ""} accent="text-blue-500" />
         <Kpi icon={Clock} label="Turno 2 · 7pm–7am" value={fmtInt(t2Grand)} sub={grandTotal ? `${Math.round(t2Grand / grandTotal * 100)}% del total` : ""} accent="text-violet-500" />
@@ -570,7 +606,7 @@ function HoraPorHoraTab({ a, period, chart }) {
 
       {/* Switch Gráfica / Tabla — la tabla detallada no se pierde, solo deja
           de ser la cara principal. */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex-none flex items-center justify-between flex-wrap gap-2">
         <span className="text-xs text-muted-foreground">
           {multiDay ? "Suma por hora del día en el periodo · hora local Tijuana" : "Hora local Tijuana · 00–06h = madrugada del T2"}
         </span>
@@ -588,14 +624,14 @@ function HoraPorHoraTab({ a, period, chart }) {
 
       {modo === "grafica" && (
         <>
-          <Panel title="Ritmo del día — todas las máquinas" icon={Activity}
+          <Panel className="flex-1" title="Ritmo del día — todas las máquinas" icon={Activity}
             right={
               <span className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500 mr-1 align-middle" />T1 · 7am–7pm</span>
                 <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500 mr-1 align-middle" />T2 · 7pm–7am</span>
               </span>
             }>
-            <div className="h-64">
+            <div className="h-full min-h-[150px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourSeries} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
@@ -612,21 +648,22 @@ function HoraPorHoraTab({ a, period, chart }) {
 
           {/* Tarjetas por máquina: total, split T1/T2 y las 24 horas como
               mini-barras (altura relativa al pico de ESA máquina — muestra su
-              patrón; el volumen lo dice el número). */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+              patrón; el volumen lo dice el número). Más columnas y sparkline
+              más bajo para que las ~14 quepan sin scroll. */}
+          <div className="flex-none max-h-[36%] overflow-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 gap-2">
             {machines.map(m => {
               const mMax = Math.max(1, ...allHours.map(h => cells[`${m}|${h}`] || 0));
               return (
-                <div key={m} className="rounded-lg border border-border bg-card p-3">
+                <div key={m} className="rounded-lg border border-border bg-card p-2">
                   <div className="flex items-baseline justify-between">
                     <span className="text-xs font-semibold">{m.replace("MAQUINA", "M")}</span>
-                    <span className="text-lg font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
+                    <span className="text-base font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
                   </div>
-                  <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
+                  <div className="mt-0.5 flex items-center gap-2.5 text-[9px] text-muted-foreground">
                     <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-1 align-middle" />T1 {fmtInt(t1Totals[m] || 0)}</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm bg-violet-500 mr-1 align-middle" />T2 {fmtInt(t2Totals[m] || 0)}</span>
                   </div>
-                  <div className="mt-2 flex items-end gap-[2px] h-16">
+                  <div className="mt-1.5 flex items-end gap-[2px] h-10">
                     {allHours.map(h => {
                       const v = cells[`${m}|${h}`] || 0;
                       return (
@@ -636,7 +673,7 @@ function HoraPorHoraTab({ a, period, chart }) {
                       );
                     })}
                   </div>
-                  <div className="mt-1 flex justify-between text-[9px] text-muted-foreground font-mono">
+                  <div className="mt-0.5 flex justify-between text-[9px] text-muted-foreground font-mono">
                     <span>07h</span><span>19h</span><span>06h</span>
                   </div>
                 </div>
@@ -647,9 +684,10 @@ function HoraPorHoraTab({ a, period, chart }) {
       )}
 
       {modo === "tabla" && (
-      <Panel title="Hora por hora por máquina" icon={Clock}
-        right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}>
-        <div className="overflow-x-auto">
+      <Panel className="flex-1" title="Hora por hora por máquina" icon={Clock}
+        right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}
+        bodyClassName="overflow-auto p-0">
+        <div className="min-w-max">
           {/* text-xs + etiquetas M1..M14: las 27 columnas caben en el TV sin
               scroll horizontal (con zoom 1.3 del modo TV incluido). */}
           <table className="w-full text-xs border-collapse">
@@ -732,11 +770,11 @@ function OperadoresTab({ a }) {
     .slice(0, 12);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-      <Panel title="Producción por operador (top 15)" icon={Users}>
+    <div className="h-full min-h-[440px] grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <Panel title="Producción por operador (top 15)" icon={Users} bodyClassName="overflow-auto">
         <RankBars rows={ops} colorAt={() => "#3b82f6"} />
       </Panel>
-      <Panel title="Producción por cliente (top 12)" icon={Boxes}>
+      <Panel title="Producción por cliente (top 12)" icon={Boxes} bodyClassName="overflow-auto">
         <RankBars rows={clients} colorAt={(i) => PALETTE[i % PALETTE.length]} />
       </Panel>
     </div>
