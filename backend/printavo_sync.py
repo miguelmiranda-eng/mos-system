@@ -5,8 +5,12 @@ SAME creation path as the manual "New Order" engine (internal_create_order),
 so automations, notifications and WebSocket broadcasts all fire identically.
 
 Design decisions (see NewOrderForm / import_router for the manual analogue):
-  * order_number  <- invoice visualId. If an invoice has multiple line items,
-                     extra items get a "-2", "-3" suffix to keep numbers unique.
+  * order_number  <- invoice visualId. Garment lines are CONSOLIDATED BY COLOR
+                     (2026-08-13): un invoice trae varios estilos (tipo de prenda:
+                     tee / long sleeve / hoodie) del MISMO color y la nave lo opera
+                     como UNA orden con cantidad y tallas sumadas — así lo venía
+                     corrigiendo a mano el equipo (2501, 2500, 2450...). Cada color
+                     adicional sí es una orden hermana con sufijo "-2", "-3".
   * client        <- contact.customer.companyName (fallback contact.fullName),
                      uppercased per the system-wide identity convention.
   * due_date + cancel_date <- customerDueAt (matches manual import convention).
@@ -79,14 +83,37 @@ def _strip_company_suffix(name: str) -> str:
     return s
 
 
+# Renglón de talla ("M - 15", "2XL: 8") que en algunos invoices ocupa la 4ª
+# línea de la descripción; NO es un estilo de prenda (produjo órdenes con
+# style "M - 15" — ver 2450/2500/2501/2829/2832).
+_SIZE_ROW_RE = re.compile(
+    r"^(X{0,5}S|X{0,5}L|M|[2-5]\s?XL?|[2-5]X|Y(XS|S|M|L|XL)|[2-5]T)\s*[-–:]\s*\d+$", re.I
+)
+
+
 def _blank_style(description: str) -> str:
     """The garment/blank style code lives on the 4th line of the Printavo
     description (product name / design# / status / BLANK STYLE / ...).
-    Falls back to the first line if the description is shorter."""
+    Falls back to the first line if the description is shorter. Returns ""
+    when the candidate is a size row ("M - 15") so the caller can fall back
+    to itemNumber / the product name instead of saving junk."""
     lines = [l.strip() for l in str(description or "").replace("\r", "").split("\n") if l.strip()]
-    if len(lines) >= 4:
-        return lines[3]
-    return lines[0] if lines else ""
+    candidate = lines[3] if len(lines) >= 4 else (lines[0] if lines else "")
+    return "" if _SIZE_ROW_RE.match(candidate) else candidate
+
+
+def _line_style(li: dict) -> str:
+    """Best usable style for one garment line: blank-style code, then
+    itemNumber, then the product name (1st description line — donde vive el
+    tipo de prenda: tee / long sleeve / hoodie). "" si no hay nada usable."""
+    style = _blank_style(li.get("description"))
+    if style:
+        return style
+    item = (li.get("itemNumber") or "").strip()
+    if item:
+        return item
+    lines = [l.strip() for l in str(li.get("description") or "").replace("\r", "").split("\n") if l.strip()]
+    return lines[0][:60] if lines else ""
 
 
 def _extract_note_link(customer_note: str):
@@ -133,17 +160,39 @@ def _flatten_line_items(invoice: dict) -> list:
     return items
 
 
+# Líneas de SERVICIO/acabado que heredan el desglose de tallas del garment y
+# por eso pasaban el filtro de abajo, creando órdenes basura e inflando el
+# Final Bill (2148: SETUP FEE + NECK LABEL; 2328: instrucciones de empaque).
+# Solo se descartan cuando la línea NO tiene color: una prenda real siempre
+# trae color, un fee/instrucción no.
+_SERVICE_LINE_RE = re.compile(
+    r"SETUP\s+FEE|NECK\s+LABEL|POLY(ETHYLENE)?\s*BAG|UPC\s+LABEL|FOLDED\s+\d|^\s*\d+\s*\)",
+    re.I,
+)
+
+
+def _is_service_line(li: dict) -> bool:
+    if (li.get("color") or "").strip():
+        return False
+    text = str(li.get("description") or "")
+    return bool(_SERVICE_LINE_RE.search(text))
+
+
 def _real_line_items(invoice: dict) -> list:
     """Return only the GARMENT line items as (line_item, sizes, qty) tuples.
 
     A Printavo work order carries many non-garment lines (department headers,
     notes, approval method, allowed shortage, sample specs, ...). The real
     garment lines are the ones with a positive quantity AND either a size
-    breakdown or a color. Shared by order creation (invoice_to_orders) and the
-    Final Bill total-quantity calc so both agree on what counts as a garment.
+    breakdown or a color, excluding known service/finishing lines (which copy
+    the garment's size breakdown but aren't pieces). Shared by order creation
+    (invoice_to_orders) and the Final Bill total-quantity calc so both agree
+    on what counts as a garment.
     """
     real = []
     for li in _flatten_line_items(invoice):
+        if _is_service_line(li):
+            continue
         sizes, qty = _map_sizes(li)
         if qty > 0 and (bool(sizes) or bool((li.get("color") or "").strip())):
             real.append((li, sizes, qty))
@@ -234,29 +283,70 @@ def invoice_to_orders(invoice: dict) -> list:
     # orders from department headers / notes / sample specs.
     real = _real_line_items(invoice)
 
+    # Consolidación POR COLOR: un invoice trae varios estilos (tipo de prenda:
+    # tee / long sleeve / hoodie) del MISMO color y la nave lo opera como UNA
+    # orden con cantidad y tallas sumadas (antes cada línea era una orden
+    # hermana "-2"/"-3" que el equipo tiraba a papelera y consolidaba a mano,
+    # dejando la principal con las tallas de un solo estilo — ver 2501).
+    # Los grupos conservan el orden de aparición en el invoice.
+    groups = []          # [{color, lines: [(li, sizes, qty)]}] en orden
+    by_color = {}
+    for li, sizes, qty in real:
+        color = _up(li.get("color") or "") or ""
+        g = by_color.get(color)
+        if g is None:
+            g = {"color": color, "lines": []}
+            by_color[color] = g
+            groups.append(g)
+        g["lines"].append((li, sizes, qty))
+
     orders = []
-    for idx, (li, sizes, qty) in enumerate(real):
+    for idx, g in enumerate(groups):
         order_number = visual_id if idx == 0 else f"{visual_id}-{idx + 1}"
-        # STYLE = blank style code (4th line of the description, e.g. "GI5000").
-        style = _up(_blank_style(li.get("description")) or li.get("itemNumber") or "IMPORTADO PRINTAVO")
+        # Suma de tallas y unidades de TODOS los estilos del color.
+        merged_sizes, total_qty = {}, 0
+        for _, sizes, qty in g["lines"]:
+            for s, q in (sizes or {}).items():
+                merged_sizes[s] = merged_sizes.get(s, 0) + q
+            total_qty += qty
+        # STYLE = estilos únicos del grupo unidos con " / " (blank style, luego
+        # itemNumber, luego nombre de la prenda — ver _line_style).
+        styles = []
+        for li, _, _ in g["lines"]:
+            st = _up(_line_style(li))
+            if st and st not in styles:
+                styles.append(st)
+        style = " / ".join(styles)[:80] or "IMPORTADO PRINTAVO"
+
+        notes = f"Auto-importado de Printavo Invoice #{visual_id}"
+        if len(g["lines"]) > 1:
+            # Desglose por línea para auditoría: la consolidación nunca debe
+            # esconder qué estilos y cuántas piezas de cada uno trae la orden.
+            partes = []
+            for li, sizes, qty in g["lines"]:
+                st = _up(_line_style(li)) or "(sin estilo)"
+                det = " ".join(f"{s}{q}" for s, q in sizes.items()) if sizes else "sin tallas"
+                partes.append(f"• {st}: {qty}u [{det}]")
+            notes += f"\n{len(g['lines'])} estilos consolidados (mismo color):\n" + "\n".join(partes)
+
         order = {
             "order_number": order_number,
             "client": client,
             "branding": branding,
             "style": style,
-            "color": _up(li.get("color") or ""),
+            "color": g["color"],
             "customer_po": customer_po,
             "store_po": store_po,
             "store_po#": store_po,
             "design_#": _up(design_num),
             "due_date": due,
             "cancel_date": due,
-            "quantity": qty,
-            "sizes": sizes or None,
+            "quantity": total_qty,
+            "sizes": merged_sizes or None,
             "board": "SCHEDULING",
             "source": "printavo_auto",
             "printavo_invoice_id": invoice.get("id"),
-            "notes": f"Auto-importado de Printavo Invoice #{visual_id}",
+            "notes": notes,
         }
         # JOB TITLE A = work order link + its title (the nickname).
         if workorder_url:
