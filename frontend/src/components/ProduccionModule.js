@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, cloneElement } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -6,8 +6,7 @@ import {
   TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X,
 } from "lucide-react";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell,
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
 import { API } from "../lib/constants";
 import { useTheme } from "../contexts/ThemeContext";
@@ -65,20 +64,36 @@ export default function ProduccionModule() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tvMode, setTvMode] = useState(false);
-  const [tvViewportH, setTvViewportH] = useState(null);
+  const [tvViewport, setTvViewport] = useState(null); // {w, h} en px físicos
 
-  // Altura real del viewport en modo TV: se mide en px (innerHeight) y se
-  // divide entre el zoom para que el layout fit-to-screen siga midiendo
-  // exactamente una pantalla ya escalado. Se usa px y no 100vh porque el
-  // trato de las unidades vh dentro de un elemento con zoom cambió entre
-  // versiones de Chrome; los px se comportan igual en ambas.
+  // Viewport real en modo TV: se mide en px (innerWidth/innerHeight) y se
+  // divide entre la escala para que el layout fit-to-screen siga midiendo
+  // exactamente una pantalla ya escalado.
   useEffect(() => {
     if (!tvMode) return;
-    const measure = () => setTvViewportH(window.innerHeight);
+    const measure = () => setTvViewport({ w: window.innerWidth, h: window.innerHeight });
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [tvMode]);
+
+  // Escala del modo TV con fit GARANTIZADO (pedido 2026-08-14): son pantallas
+  // informativas sin teclado ni mouse — el scroll no es opción. La escala fija
+  // de 1.3 asumía ~1080px de alto real, pero una TV 1080p con Windows al 150%
+  // reporta 720px CSS y el contenido ya no cabía. Ahora se calcula para que la
+  // pestaña más alta (min-h 540 + padding del main) siempre quepa: en
+  // pantallas grandes topa en 1.3 (igual que antes, para leerse a distancia)
+  // y en pantallas cortas baja lo justo — la altura lógica nunca queda por
+  // debajo de TV_DESIGN_H, así que los min-h jamás disparan scroll.
+  //
+  // Se usa transform:scale y NO zoom: con zoom, el Chrome actual reporta
+  // getBoundingClientRect/ResizeObserver en px ya escalados y el
+  // ResponsiveContainer de recharts dibuja el SVG un 30% más ancho que su
+  // contenedor (verificado: contenedor 974px de layout, gBCR 1209). El
+  // transform no toca el layout, así que recharts mide px reales.
+  const TV_DESIGN_H = 580;
+  const TV_MAX_ZOOM = 1.3;
+  const tvZoom = tvViewport ? Math.min(TV_MAX_ZOOM, tvViewport.h / TV_DESIGN_H) : TV_MAX_ZOOM;
 
   // ── Modo TV: fullscreen + escala grande + rotación automática de pestañas.
   const enterTv = async () => {
@@ -146,12 +161,19 @@ export default function ProduccionModule() {
   const chartProps = { axis, grid, tooltipStyle };
 
   return (
-    // zoom 1.3 en modo TV: escala TODO el módulo para leerse a distancia. La
-    // altura se compensa (innerHeight/1.3) para que el layout fit-to-screen
-    // siga midiendo exactamente una pantalla ya escalado — sin scroll en el TV.
+    // Modo TV: el wrapper exterior recorta al viewport; el interior se
+    // dimensiona en px lógicos (viewport/escala) y se escala con transform
+    // para leerse a distancia — visualmente llena la pantalla EXACTA, sin
+    // scroll. En modo normal el interior simplemente llena el wrapper.
+    <div className="h-screen w-full overflow-hidden bg-background text-foreground">
     <div
-      className="h-screen flex flex-col overflow-hidden bg-background text-foreground"
-      style={tvMode && tvViewportH ? { zoom: 1.3, height: Math.round(tvViewportH / 1.3) } : undefined}
+      className="h-full flex flex-col overflow-hidden bg-background text-foreground"
+      style={tvMode && tvViewport ? {
+        width: Math.round(tvViewport.w / tvZoom),
+        height: Math.round(tvViewport.h / tvZoom),
+        transform: `scale(${tvZoom})`,
+        transformOrigin: "top left",
+      } : undefined}
     >
       {/* Header — se oculta COMPLETO en modo TV: en el televisor solo vive el
           dashboard; la orientación y la salida las da el overlay flotante. */}
@@ -230,10 +252,17 @@ export default function ProduccionModule() {
         </div>
       )}
 
-      {/* overflow-auto = salvavidas: en pantallas grandes el contenido cabe
-          exacto y no hay scroll; en laptops chicas los min-h de cada pestaña
-          activan scroll en vez de aplastar las gráficas. */}
-      <main className="flex-1 min-h-0 overflow-auto w-full max-w-7xl mx-auto p-3 md:p-4">
+      {/* overflow-auto = salvavidas en modo normal: en laptops chicas los
+          min-h de cada pestaña activan scroll en vez de aplastar las gráficas.
+          En modo TV el fit es garantizado por el zoom calculado y se recorta
+          (overflow-hidden): una pantalla informativa jamás debe scrollear.
+          El key con el zoom re-monta el contenido al entrar/salir del modo TV:
+          el ResponsiveContainer de recharts no se re-mide bajo zoom (se queda
+          con el ancho previo y desbordaba en pantallas cortas); al re-montar
+          mide ya con la escala final. */}
+      <main
+        key={tvMode ? `tv-${tvZoom.toFixed(3)}` : "normal"}
+        className={`flex-1 min-h-0 w-full max-w-7xl mx-auto p-3 md:p-4 ${tvMode ? "overflow-hidden" : "overflow-auto"}`}>
         {loading && !analytics ? (
           <div className="h-full flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
@@ -248,10 +277,38 @@ export default function ProduccionModule() {
         )}
       </main>
     </div>
+    </div>
   );
 }
 
 /* ── Primitivas visuales ─────────────────────────────────────────────────── */
+
+// Reemplazo de ResponsiveContainer: recharts mide con getBoundingClientRect,
+// que devuelve px VISUALES — bajo el transform:scale del modo TV dibujaba el
+// SVG ~30% más grande que su contenedor y desbordaba la pantalla. offsetWidth/
+// offsetHeight son px de LAYOUT (inmunes a zoom y transform), así que aquí se
+// mide el hueco real y se le pasa el tamaño exacto a la gráfica.
+function FitChart({ children }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const update = () => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      setSize(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className="w-full h-full overflow-hidden">
+      {size.w > 0 && size.h > 0 ? cloneElement(children, { width: size.w, height: size.h }) : null}
+    </div>
+  );
+}
 
 function Kpi({ icon: Icon, label, value, sub, accent = "text-primary" }) {
   return (
@@ -360,7 +417,7 @@ function GeneralTab({ a, trend, period, chart }) {
           {/* Trend — la gráfica absorbe el alto sobrante de la pantalla */}
           <Panel className="flex-1" title={period === "today" ? "Producción por hora" : "Producción por día"} icon={Activity}>
             <div className="h-full min-h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <FitChart>
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <defs>
                     <linearGradient id="prodFill" x1="0" y1="0" x2="0" y2="1">
@@ -374,7 +431,7 @@ function GeneralTab({ a, trend, period, chart }) {
                   <Tooltip contentStyle={chart.tooltipStyle} cursor={{ stroke: chart.axis, strokeWidth: 1 }} />
                   <Area type="monotone" dataKey="produced" name="Producido" stroke="#3b82f6" strokeWidth={2} fill="url(#prodFill)" />
                 </AreaChart>
-              </ResponsiveContainer>
+              </FitChart>
             </div>
           </Panel>
 
@@ -424,7 +481,7 @@ function MaquinasTab({ a, cap, chart }) {
 
       <Panel className="flex-1" title="Producción por máquina (periodo)" icon={Activity}>
         <div className="h-full min-h-[160px]">
-          <ResponsiveContainer width="100%" height="100%">
+          <FitChart>
             <BarChart data={byMachine} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} />
@@ -434,7 +491,7 @@ function MaquinasTab({ a, cap, chart }) {
                 {byMachine.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
               </Bar>
             </BarChart>
-          </ResponsiveContainer>
+          </FitChart>
         </div>
       </Panel>
 
@@ -632,7 +689,7 @@ function HoraPorHoraTab({ a, period, chart }) {
               </span>
             }>
             <div className="h-full min-h-[150px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <FitChart>
                 <BarChart data={hourSeries} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: chart.axis }} axisLine={false} tickLine={false} />
@@ -642,7 +699,7 @@ function HoraPorHoraTab({ a, period, chart }) {
                     {hourSeries.map((e, i) => <Cell key={i} fill={e.t1 ? "#3b82f6" : "#8b5cf6"} />)}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </FitChart>
             </div>
           </Panel>
 
