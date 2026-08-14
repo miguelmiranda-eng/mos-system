@@ -18,7 +18,7 @@ import {
   Loader2
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { toast } from "sonner";
+import { Toaster, toast } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -85,19 +85,37 @@ const ShippingModule = () => {
   };
 
   // ── Envíos por semana (grupos Envío 1, Envío 2, …) ──────────────────────────
-  const configuredEnvios = (m, w) => {
-    const c = weekCfg(calYear, m, w);
-    return c ? (c.envios || 0) : 0;
-  };
-  // Nº de grupos a mostrar = máx(configurado, mayor shipment_no presente, 1).
-  const enviosForWeek = (m, w) => {
+  // Nº de grupos = máx(configurado, mayor shipment_no presente, 1). Year-aware
+  // para que los exports de otros años no calculen con el año visible.
+  const enviosOfWeekYear = (year, m, w) => {
     let present = 0;
     for (const r of scheduled) {
-      if (r.scheduled_year === calYear && r.scheduled_month === m && r.scheduled_week === w) {
+      if (r.scheduled_year === year && r.scheduled_month === m && r.scheduled_week === w) {
         present = Math.max(present, r.shipment_no || 1);
       }
     }
-    return Math.max(1, configuredEnvios(m, w), present);
+    const c = weekCfg(year, m, w);
+    return Math.max(1, c ? (c.envios || 0) : 0, present);
+  };
+  const enviosForWeek = (m, w) => enviosOfWeekYear(calYear, m, w);
+
+  // Numeración VISIBLE por día (pedido 2026-08-14): el usuario piensa
+  // "semana 1 → lunes → envío 1, martes → envío 1" — cada día arranca su
+  // propia cuenta. Internamente shipment_no sigue siendo por semana (es la
+  // llave de persistencia y de los datos ya programados); aquí solo se
+  // traduce a la posición del envío dentro de su día para TODO lo visible
+  // (headers, toasts, selects y Excel).
+  const envioDayNum = (year, m, w, env) => {
+    const day = envioDayFor(year, m, w, env);
+    const same = Array.from({ length: enviosOfWeekYear(year, m, w) }, (_, i) => i + 1)
+      .filter((e) => envioDayFor(year, m, w, e) === day);
+    const i = same.indexOf(env);
+    return { day, num: i >= 0 ? i + 1 : env };
+  };
+  // Etiqueta corta "Lun · Envío 2" (o "Sin día · Envío 1") de un envío interno.
+  const envioLabel = (year, m, w, env, full = false) => {
+    const { day, num } = envioDayNum(year, m, w, env);
+    return `${dayLabel(day, full)} · Envío ${num}`;
   };
 
   // ── Navegación de la cascada semana → día ───────────────────────────────────
@@ -136,7 +154,7 @@ const ShippingModule = () => {
           ...prev.filter((x) => !(x.scheduled_year === d.scheduled_year && x.scheduled_month === d.scheduled_month && x.scheduled_week === d.scheduled_week)),
           d,
         ]);
-        toast.success(`Envío ${env} → ${dayLabel(day, true)}`);
+        toast.success(`Envío movido a ${dayLabel(day, true)} (la numeración del día se reacomoda)`);
       } else toast.error('No se pudo mover el envío de día');
     } catch { toast.error('Error de conexión'); }
   };
@@ -145,6 +163,8 @@ const ShippingModule = () => {
   // nacía en "Sin día" y parecía que el botón no hacía nada.
   const addEnvio = async (m, w) => {
     const next = enviosForWeek(m, w) + 1;
+    // Número VISIBLE que tendrá: siguiente posición dentro del día abierto.
+    const visibleNum = dayEnvsOf(m, w, selDay).length + 1;
     try {
       const res = await fetch(`${API}/scheduled-shipments/week-config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
@@ -164,7 +184,7 @@ const ShippingModule = () => {
         doc,
       ]);
       setTargetEnvio(next);
-      toast.success(`Envío ${next} agregado a ${dayLabel(selDay, true)} · Semana ${w}`);
+      toast.success(`Envío ${visibleNum} agregado a ${dayLabel(selDay, true)} · Semana ${w}`);
     } catch { toast.error('Error de conexión'); }
   };
   const toggleEnvio = (key) => setCollapsedEnvios((prev) => {
@@ -335,8 +355,7 @@ const ShippingModule = () => {
         }),
       });
       if (res.ok) {
-        const d = envioDayFor(calYear, calMonth, selWeek, targetEnvio);
-        toast.success(`#${orderNumber} → ${MONTHS[calMonth - 1]} S${selWeek} · Envío ${targetEnvio}${d ? ` (${DAYS[d - 1]})` : ''}`);
+        toast.success(`#${orderNumber} → ${MONTHS[calMonth - 1]} S${selWeek} · ${envioLabel(calYear, calMonth, selWeek, targetEnvio)}`);
         loadScheduled();
         if (availableSearch.trim()) loadAvailable(true);
       } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'No se pudo programar'); }
@@ -363,37 +382,59 @@ const ShippingModule = () => {
     } catch { toast.error('Error de conexión'); }
   };
 
+  // Fila de Excel de una programación — compartida por el export global y el
+  // export POR ENVÍO. 'Día'/'Envío' usan la numeración visible por día.
+  const schedExcelRow = (r) => {
+    const { day, num } = envioDayNum(r.scheduled_year, r.scheduled_month, r.scheduled_week, r.shipment_no || 1);
+    return {
+      'Orden': r.order_number || '',
+      'Cust. PO': r.customer_po || '',
+      'Design #': r.design_num || '',
+      'Cancel Date': r.cancel_date || '',
+      'Cliente': r.client || '',
+      'Branding': r.branding || '',
+      'Qty': r.quantity ?? '',
+      'Status': r.production_status || '',
+      'Año': r.scheduled_year ?? '',
+      'Mes': r.scheduled_month ? MONTHS_FULL[r.scheduled_month - 1] : '',
+      'Semana': r.scheduled_week ? `Semana ${r.scheduled_week}` : '',
+      'Día': day ? DAYS_FULL[day - 1] : 'Sin día',
+      'Envío': `Envío ${num}`,
+      'PL - Export': r.pl_number || '',
+      'Export date': r.scheduled_export_date || '',
+      'Delivery to': r.delivery_to || '',
+      'Days Com.': r.days_com ?? '',
+      'NOTES': r.notes || '',
+    };
+  };
+
   const exportScheduled = () => {
     if (!scheduled.length) { toast.error('No hay envíos programados'); return; }
     setSchedExporting(true);
     try {
-      const rows = scheduled.map(r => ({
-        'Orden': r.order_number || '',
-        'Cust. PO': r.customer_po || '',
-        'Design #': r.design_num || '',
-        'Cancel Date': r.cancel_date || '',
-        'Cliente': r.client || '',
-        'Branding': r.branding || '',
-        'Qty': r.quantity ?? '',
-        'Status': r.production_status || '',
-        'Año': r.scheduled_year ?? '',
-        'Mes': r.scheduled_month ? MONTHS_FULL[r.scheduled_month - 1] : '',
-        'Semana': r.scheduled_week ? `Semana ${r.scheduled_week}` : '',
-        'Día': (() => { const d = envioDayFor(r.scheduled_year, r.scheduled_month, r.scheduled_week, r.shipment_no || 1); return d ? DAYS_FULL[d - 1] : ''; })(),
-        'Envío': `Envío ${r.shipment_no || 1}`,
-        'PL - Export': r.pl_number || '',
-        'Export date': r.scheduled_export_date || '',
-        'Delivery to': r.delivery_to || '',
-        'Days Com.': r.days_com ?? '',
-        'NOTES': r.notes || '',
-      }));
-      const ws = XLSX.utils.json_to_sheet(rows);
+      const ws = XLSX.utils.json_to_sheet(scheduled.map(schedExcelRow));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Envios_programados');
       XLSX.writeFile(wb, `envios_programados_${new Date().toISOString().split('T')[0]}.xlsx`);
       toast.success(`${scheduled.length} programado(s) exportado(s)`);
     } catch { toast.error('No se pudo exportar'); }
     finally { setSchedExporting(false); }
+  };
+
+  // Excel de UN envío (pedido 2026-08-14): exporta solo las órdenes del envío
+  // con nombre de archivo que dice exactamente qué es (mes, semana, día y
+  // número visible del envío en su día).
+  const exportEnvio = (m, w, env, glist) => {
+    if (!glist.length) { toast.error('Este envío no tiene órdenes'); return; }
+    try {
+      const { day, num } = envioDayNum(calYear, m, w, env);
+      const ws = XLSX.utils.json_to_sheet(glist.map(schedExcelRow));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Envio ${num}`);
+      const dia = day ? DAYS_FULL[day - 1] : 'SinDia';
+      XLSX.writeFile(wb, `envio_${calYear}_${MONTHS[m - 1]}_S${w}_${dia}_E${num}.xlsx`);
+      toast.success(`Envío ${num} (${dayLabel(day, true)}) exportado · ${glist.length} orden(es)`);
+    } catch { toast.error('No se pudo exportar el envío'); }
   };
 
   // Tabla de órdenes de un grupo (envío). `w` = semana, para las opciones de reprogramar.
@@ -469,13 +510,17 @@ const ShippingModule = () => {
                     className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
                     {WEEKS.map((wk) => <option key={wk} value={wk}>S{wk}</option>)}
                   </select>
+                  {/* Mover a otro envío de la semana: las opciones se nombran
+                      por su día + número visible (Lun·E1, Mar·E2…), no por el
+                      número interno de semana. */}
                   <select value={r.shipment_no || 1}
                     onChange={(e) => updateScheduled(r.shipment_id, { shipment_no: Number(e.target.value) })}
-                    title="Mover a envío"
+                    title="Mover a otro envío (día · número)"
                     className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
-                    {Array.from({ length: Math.max(enviosForWeek(calMonth, w), r.shipment_no || 1) }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={n}>E{n}</option>
-                    ))}
+                    {Array.from({ length: Math.max(enviosForWeek(calMonth, w), r.shipment_no || 1) }, (_, i) => i + 1).map((n) => {
+                      const { day, num } = envioDayNum(calYear, calMonth, w, n);
+                      return <option key={n} value={n}>{dayLabel(day)} · E{num}</option>;
+                    })}
                   </select>
                 </div>
               </td>
@@ -546,7 +591,11 @@ const ShippingModule = () => {
 
   return (
     <div className="min-h-screen bg-[#f1f5f9] p-4 md:p-8 space-y-8 font-barlow animate-in fade-in duration-700">
-      
+      {/* Esta página nunca montó un <Toaster>: TODOS sus toasts (programar,
+          mover, exportar…) se disparaban al vacío. El resto de páginas montan
+          el suyo (Dashboard, BackupCenter, App). */}
+      <Toaster position="bottom-right" richColors />
+
       {/* Header Container */}
       <header className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
         <div className="flex items-center gap-5">
@@ -949,7 +998,7 @@ const ShippingModule = () => {
                   />
                 </div>
                 {calMonth ? (
-                  <p className="text-[10px] font-bold text-slate-400 mb-3">Caen en <span className="text-blue-600 font-black">{MONTHS[calMonth - 1]} · Semana {selWeek} · Envío {targetEnvio}{(() => { const d = envioDayFor(calYear, calMonth, selWeek, targetEnvio); return d ? ` (${DAYS[d - 1]})` : ''; })()} · {calYear}</span></p>
+                  <p className="text-[10px] font-bold text-slate-400 mb-3">Caen en <span className="text-blue-600 font-black">{MONTHS[calMonth - 1]} · Semana {selWeek} · {envioLabel(calYear, calMonth, selWeek, targetEnvio)} · {calYear}</span></p>
                 ) : (
                   <p className="text-[10px] font-bold text-slate-400 mb-3">Abre un mes del calendario para elegir dónde caen.</p>
                 )}
@@ -1074,20 +1123,28 @@ const ShippingModule = () => {
                           Sin envíos en {dayLabel(selDay, true)} — mueve uno aquí con su selector de día, o créalo con "+ Envío".
                         </p>
                       )}
-                      {dayEnvs.map((env) => {
+                      {dayEnvs.map((env, envIdx) => {
                         const gkey = `${calYear}-${calMonth}-${selWeek}-${env}`;
                         const glist = weekList.filter((r) => (r.shipment_no || 1) === env);
                         const collapsed = collapsedEnvios.has(gkey);
                         const isEnvTarget = targetEnvio === env;
+                        // envIdx + 1 = número VISIBLE del envío dentro de su día
                         return (
                           <div key={env} className={`rounded-xl border overflow-hidden ${isEnvTarget ? 'border-blue-300' : 'border-slate-200'}`}>
                             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50/70 border-b border-slate-200">
                               <button onClick={() => toggleEnvio(gkey)} className="flex items-center gap-2 flex-1 text-left">
                                 <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
-                                <span className="text-xs font-black uppercase tracking-widest text-slate-600">Envío {env}</span>
+                                <span className="text-xs font-black uppercase tracking-widest text-slate-600">Envío {envIdx + 1}</span>
                                 <span className="text-[10px] font-bold text-slate-400">({glist.length} órdenes)</span>
                               </button>
                               <div className="flex items-center gap-1.5">
+                                {/* Excel de SOLO este envío */}
+                                <button onClick={() => exportEnvio(calMonth, selWeek, env, glist)}
+                                  disabled={!glist.length}
+                                  title={glist.length ? `Descargar Excel del Envío ${envIdx + 1} (${glist.length} órdenes)` : 'Sin órdenes que exportar'}
+                                  className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                                  <FileSpreadsheet className="w-3 h-3" /> Excel
+                                </button>
                                 {/* Mover el envío COMPLETO (con sus órdenes) a otro día */}
                                 <select value={selDay} onChange={(e) => moveEnvioDay(calMonth, selWeek, env, Number(e.target.value))}
                                   title="Mover envío a otro día"
