@@ -310,6 +310,46 @@ function FitChart({ children }) {
   );
 }
 
+// Hermano de FitChart para contenido arbitrario (la matriz hora×máquina, las
+// cuadrículas de tarjetas): mide el tamaño NATURAL del contenido con
+// offsetWidth/offsetHeight (px de layout, inmunes a transforms) y el hueco del
+// panel, y lo escala para que quepa COMPLETO, centrado. En pantalla informativa
+// el scroll interno tampoco es opción: lo que no cabe se encoge, no se corta.
+function FitBox({ children, maxScale = 1.25 }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [fit, setFit] = useState({ scale: 1, dx: 0, dy: 0 });
+  useEffect(() => {
+    const outer = outerRef.current, inner = innerRef.current;
+    if (!outer || !inner) return undefined;
+    const update = () => {
+      const aw = outer.clientWidth, ah = outer.clientHeight;
+      const nw = inner.offsetWidth, nh = inner.offsetHeight;
+      if (!aw || !ah || !nw || !nh) return;
+      const scale = Math.min(maxScale, aw / nw, ah / nh);
+      const dx = Math.max(0, Math.round((aw - nw * scale) / 2));
+      const dy = Math.max(0, Math.round((ah - nh * scale) / 2));
+      setFit(prev => (prev.scale === scale && prev.dx === dx && prev.dy === dy ? prev : { scale, dx, dy }));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [maxScale]);
+  return (
+    <div ref={outerRef} className="relative w-full h-full overflow-hidden">
+      <div
+        ref={innerRef}
+        className="absolute top-0 left-0 w-max"
+        style={{ transform: `translate(${fit.dx}px, ${fit.dy}px) scale(${fit.scale})`, transformOrigin: "top left" }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function Kpi({ icon: Icon, label, value, sub, accent = "text-primary" }) {
   return (
     <div className="bg-card border border-border rounded-lg px-3 py-2.5">
@@ -470,6 +510,37 @@ function MaquinasTab({ a, cap, chart }) {
     .sort((x, y) => y.produced - x.produced);
   const machines = cap?.machines || [];
 
+  // Tarjeta de carga de una máquina — se renderiza igual en la variante
+  // FitBox (≥lg, cuadrícula 7×N escalada a caber) y en la scrolleable (<lg).
+  const cargaCard = (m) => {
+    const tone = LOAD_TONE[m.load_status] || LOAD_TONE.idle;
+    const pct = Math.min(100, Math.round((m.estimated_days / 10) * 100));
+    return (
+      <div key={m.machine} className="rounded-lg border border-border p-2 bg-card">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-semibold truncate">{m.machine.replace("MAQUINA", "M")}</span>
+          <span className={`px-1.5 py-0.5 rounded border text-[9px] font-medium whitespace-nowrap ${tone.chip}`}>{tone.label}</span>
+        </div>
+        <div className="mt-1.5 flex items-end justify-between">
+          <div>
+            <div className="text-lg font-semibold tabular-nums leading-none">{fmtInt(m.remaining_pieces)}</div>
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground mt-0.5">u restantes</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-semibold tabular-nums">{m.estimated_days || 0} d</div>
+            <div className="text-[9px] text-muted-foreground">{m.order_count} ord.</div>
+          </div>
+        </div>
+        <div className="mt-1.5 h-1 rounded-full bg-muted overflow-hidden">
+          <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct}%` }} />
+        </div>
+        <div className="mt-0.5 text-[9px] text-muted-foreground truncate">
+          Prom. {m.avg_daily_production || 0} u/día · máx {fmtInt(m.max_daily_production)}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-full min-h-[540px] flex flex-col gap-3">
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -480,7 +551,7 @@ function MaquinasTab({ a, cap, chart }) {
       </div>
 
       <Panel className="flex-1" title="Producción por máquina (periodo)" icon={Activity}>
-        <div className="h-full min-h-[160px]">
+        <div className="h-full min-h-[120px]">
           <FitChart>
             <BarChart data={byMachine} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
@@ -495,40 +566,25 @@ function MaquinasTab({ a, cap, chart }) {
         </div>
       </Panel>
 
-      {/* Tarjetas compactas y en más columnas para que las ~14 máquinas quepan
-          en 2 renglones; si no caben, el cuerpo del panel scrollea interno. */}
-      <Panel className="flex-none max-h-[38%]" title="Carga por máquina" icon={Cog}
+      {/* Tarjetas de carga: en ≥lg la cuadrícula fija de 7 columnas vive en un
+          FitBox que la escala a caber COMPLETA (en pantalla informativa el
+          scroll interno tampoco es opción — con Windows al 150% el breakpoint
+          2xl nunca aplicaba y el panel recortaba una fila entera). En <lg se
+          conserva la cuadrícula scrolleable de siempre. */}
+      <Panel className="flex-none h-[38%] min-h-[150px]" title="Carga por máquina" icon={Cog}
         right={<span className="text-xs text-muted-foreground">restante · días estimados</span>}
-        bodyClassName="overflow-auto">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 gap-2">
-          {machines.map(m => {
-            const tone = LOAD_TONE[m.load_status] || LOAD_TONE.idle;
-            const pct = Math.min(100, Math.round((m.estimated_days / 10) * 100));
-            return (
-              <div key={m.machine} className="rounded-lg border border-border p-2">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-semibold truncate">{m.machine.replace("MAQUINA", "M")}</span>
-                  <span className={`px-1.5 py-0.5 rounded border text-[9px] font-medium whitespace-nowrap ${tone.chip}`}>{tone.label}</span>
-                </div>
-                <div className="mt-1.5 flex items-end justify-between">
-                  <div>
-                    <div className="text-lg font-semibold tabular-nums leading-none">{fmtInt(m.remaining_pieces)}</div>
-                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground mt-0.5">u restantes</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs font-semibold tabular-nums">{m.estimated_days || 0} d</div>
-                    <div className="text-[9px] text-muted-foreground">{m.order_count} ord.</div>
-                  </div>
-                </div>
-                <div className="mt-1.5 h-1 rounded-full bg-muted overflow-hidden">
-                  <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct}%` }} />
-                </div>
-                <div className="mt-0.5 text-[9px] text-muted-foreground truncate">
-                  Prom. {m.avg_daily_production || 0} u/día · máx {fmtInt(m.max_daily_production)}
-                </div>
-              </div>
-            );
-          })}
+        bodyClassName="p-2">
+        <div className="hidden lg:block h-full">
+          <FitBox>
+            <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(7, 150px)" }}>
+              {machines.map(cargaCard)}
+            </div>
+          </FitBox>
+        </div>
+        <div className="lg:hidden h-full overflow-auto">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {machines.map(cargaCard)}
+          </div>
         </div>
       </Panel>
     </div>
@@ -652,6 +708,37 @@ function HoraPorHoraTab({ a, period, chart }) {
     return <div className="text-sm text-muted-foreground py-16 text-center">Sin capturas de producción en el periodo.</div>;
   }
 
+  // Tarjeta por máquina (total, split T1/T2 y sparkline de 24h) — misma en la
+  // variante FitBox (≥lg) y en la scrolleable (<lg).
+  const horaCard = (m) => {
+    const mMax = Math.max(1, ...allHours.map(h => cells[`${m}|${h}`] || 0));
+    return (
+      <div key={m} className="rounded-lg border border-border bg-card p-2">
+        <div className="flex items-baseline justify-between">
+          <span className="text-xs font-semibold">{m.replace("MAQUINA", "M")}</span>
+          <span className="text-base font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-2.5 text-[9px] text-muted-foreground">
+          <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-1 align-middle" />T1 {fmtInt(t1Totals[m] || 0)}</span>
+          <span><span className="inline-block w-2 h-2 rounded-sm bg-violet-500 mr-1 align-middle" />T2 {fmtInt(t2Totals[m] || 0)}</span>
+        </div>
+        <div className="mt-1.5 flex items-end gap-[2px] h-10">
+          {allHours.map(h => {
+            const v = cells[`${m}|${h}`] || 0;
+            return (
+              <div key={h} title={`${hh(h)} · ${fmtInt(v)} pz`}
+                className={`flex-1 rounded-sm ${v ? (isT1(h) ? "bg-blue-500" : "bg-violet-500") : "bg-muted"}`}
+                style={{ height: v ? `${Math.max(8, Math.round((v / mMax) * 100))}%` : "3px" }} />
+            );
+          })}
+        </div>
+        <div className="mt-0.5 flex justify-between text-[9px] text-muted-foreground font-mono">
+          <span>07h</span><span>19h</span><span>06h</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-full min-h-[540px] flex flex-col gap-3">
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -688,7 +775,7 @@ function HoraPorHoraTab({ a, period, chart }) {
                 <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500 mr-1 align-middle" />T2 · 7pm–7am</span>
               </span>
             }>
-            <div className="h-full min-h-[150px]">
+            <div className="h-full min-h-[120px]">
               <FitChart>
                 <BarChart data={hourSeries} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
@@ -705,37 +792,21 @@ function HoraPorHoraTab({ a, period, chart }) {
 
           {/* Tarjetas por máquina: total, split T1/T2 y las 24 horas como
               mini-barras (altura relativa al pico de ESA máquina — muestra su
-              patrón; el volumen lo dice el número). Más columnas y sparkline
-              más bajo para que las ~14 quepan sin scroll. */}
-          <div className="flex-none max-h-[36%] overflow-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 gap-2">
-            {machines.map(m => {
-              const mMax = Math.max(1, ...allHours.map(h => cells[`${m}|${h}`] || 0));
-              return (
-                <div key={m} className="rounded-lg border border-border bg-card p-2">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-xs font-semibold">{m.replace("MAQUINA", "M")}</span>
-                    <span className="text-base font-semibold tabular-nums">{fmtInt(rowTotals[m])}</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-2.5 text-[9px] text-muted-foreground">
-                    <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-1 align-middle" />T1 {fmtInt(t1Totals[m] || 0)}</span>
-                    <span><span className="inline-block w-2 h-2 rounded-sm bg-violet-500 mr-1 align-middle" />T2 {fmtInt(t2Totals[m] || 0)}</span>
-                  </div>
-                  <div className="mt-1.5 flex items-end gap-[2px] h-10">
-                    {allHours.map(h => {
-                      const v = cells[`${m}|${h}`] || 0;
-                      return (
-                        <div key={h} title={`${hh(h)} · ${fmtInt(v)} pz`}
-                          className={`flex-1 rounded-sm ${v ? (isT1(h) ? "bg-blue-500" : "bg-violet-500") : "bg-muted"}`}
-                          style={{ height: v ? `${Math.max(8, Math.round((v / mMax) * 100))}%` : "3px" }} />
-                      );
-                    })}
-                  </div>
-                  <div className="mt-0.5 flex justify-between text-[9px] text-muted-foreground font-mono">
-                    <span>07h</span><span>19h</span><span>06h</span>
-                  </div>
+              patrón; el volumen lo dice el número). En ≥lg la cuadrícula 7×N
+              va en FitBox y se escala a caber completa; en <lg scrollea. */}
+          <div className="flex-none h-[36%] min-h-[140px]">
+            <div className="hidden lg:block h-full">
+              <FitBox>
+                <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(7, 150px)" }}>
+                  {machines.map(horaCard)}
                 </div>
-              );
-            })}
+              </FitBox>
+            </div>
+            <div className="lg:hidden h-full overflow-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {machines.map(horaCard)}
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -743,11 +814,13 @@ function HoraPorHoraTab({ a, period, chart }) {
       {modo === "tabla" && (
       <Panel className="flex-1" title="Hora por hora por máquina" icon={Clock}
         right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}
-        bodyClassName="overflow-auto p-0">
-        <div className="min-w-max">
-          {/* text-xs + etiquetas M1..M14: las 27 columnas caben en el TV sin
-              scroll horizontal (con zoom 1.3 del modo TV incluido). */}
-          <table className="w-full text-xs border-collapse">
+        bodyClassName="p-1">
+        {/* La matriz completa (28 columnas × ~14 máquinas) va en FitBox: se
+            escala para caber ENTERA en el hueco del panel — era la vista que
+            seguía scrolleando en las TVs. El volumen manda: en pantallas muy
+            angostas se ve chica pero completa (la cara móvil es "Gráfica"). */}
+        <FitBox>
+          <table className="text-xs border-collapse">
             <thead>
               <tr>
                 <th rowSpan={2} className="sticky left-0 bg-card text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border whitespace-nowrap align-bottom">Máquina</th>
@@ -809,7 +882,7 @@ function HoraPorHoraTab({ a, period, chart }) {
               </tr>
             </tfoot>
           </table>
-        </div>
+        </FitBox>
       </Panel>
       )}
     </div>
