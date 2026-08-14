@@ -1,6 +1,6 @@
 """Config routes: options, colors, columns, boards, saved views."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_auth, require_admin, log_activity, OptionUpdate, DEFAULT_OPTIONS, BOARDS, get_dynamic_boards, save_boards
+from deps import db, require_auth, require_admin, require_supersu, log_activity, OptionUpdate, DEFAULT_OPTIONS, BOARDS, get_dynamic_boards, save_boards
 from datetime import datetime, timezone
 import uuid
 
@@ -68,7 +68,8 @@ async def get_column_config(request: Request):
 
 @router.put("/columns")
 async def update_column_config(request: Request):
-    await require_admin(request)
+    # El set de columnas es estructura GLOBAL del sistema: solo supersu lo toca.
+    await require_supersu(request)
     body = await request.json()
     update_data = {"config_id": "columns", "custom_columns": body.get("custom_columns", [])}
     if "removed_default_columns" in body:
@@ -202,23 +203,22 @@ async def save_home_layout(request: Request):
 
 @router.get("/board-layout/{board_name}")
 async def get_board_layout(board_name: str, request: Request):
-    user = await require_auth(request)
-    user_id = user.get("user_id", user.get("email"))
-    # Try user-specific layout first, fallback to global
-    layout = await db.user_board_layouts.find_one({"user_id": user_id, "board": board_name}, {"_id": 0})
-    if not layout:
-        layout = await db.board_layouts.find_one({"board": board_name}, {"_id": 0})
+    # El layout de columnas es UNO para todo el sistema. Antes se leía primero
+    # un layout por usuario (user_board_layouts), lo que hacía que cada quien
+    # viera un orden distinto y el "global" nunca aplicara; esa colección quedó
+    # retirada (respaldada por scripts/migrate_board_columns_v2.py).
+    await require_auth(request)
+    layout = await db.board_layouts.find_one({"board": board_name}, {"_id": 0})
     return layout or {}
 
 @router.put("/board-layout/{board_name}")
 async def save_board_layout(board_name: str, request: Request):
-    user = await require_auth(request)
-    user_id = user.get("user_id", user.get("email"))
+    # Mover/ocultar columnas cambia el layout de TODOS: solo supersu.
+    user = await require_supersu(request)
     body = await request.json()
-    await db.user_board_layouts.update_one(
-        {"user_id": user_id, "board": board_name},
+    await db.board_layouts.update_one(
+        {"board": board_name},
         {"$set": {
-            "user_id": user_id,
             "board": board_name,
             "column_order": body.get("column_order", []),
             "hidden_columns": body.get("hidden_columns", []),
@@ -226,6 +226,7 @@ async def save_board_layout(board_name: str, request: Request):
         }},
         upsert=True
     )
+    await log_activity(user, "update_board_layout", {"board": board_name, "columns": len(body.get("column_order", []))})
     return {"message": "Board layout saved"}
 
 @router.get("/saved-views")
@@ -361,109 +362,8 @@ async def import_images(request: Request):
         imported += 1
     return {"imported": imported, "skipped": skipped, "total_received": len(images)}
 
-# ==================== SAVED VIEWS & UI CONFIG ====================
-
-@router.get("/saved-views")
-async def get_saved_views(request: Request, board: str = None):
-    await require_auth(request)
-    query = {}
-    if board:
-        query["board"] = board
-    views = await db.saved_views.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return views
-
-@router.post("/saved-views")
-async def create_saved_view(request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    view_doc = {
-        "view_id": f"view_{uuid.uuid4().hex[:12]}",
-        "name": body.get("name", "Unnamed View"),
-        "board": body.get("board", "MASTER"),
-        "filters": body.get("filters", {}),
-        "hidden_columns": body.get("hidden_columns", []),
-        "column_order": body.get("column_order", []),
-        "user_id": user.get("user_id"),
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.saved_views.insert_one(view_doc)
-    return {k: v for k, v in view_doc.items() if k != "_id"}
-
-@router.delete("/saved-views/{view_id}")
-async def delete_saved_view(view_id: str, request: Request):
-    await require_auth(request)
-    await db.saved_views.delete_one({"view_id": view_id})
-    return {"message": "View deleted"}
-
-@router.get("/hidden-boards")
-async def get_hidden_boards(request: Request):
-    user = await require_auth(request)
-    config = await db.user_config.find_one({"user_id": user.get("user_id"), "config_id": "hidden_boards"}, {"_id": 0})
-    return config.get("boards", []) if config else []
-
-@router.put("/hidden-boards")
-async def update_hidden_boards(request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    boards = body.get("boards", [])
-    await db.user_config.update_one(
-        {"user_id": user.get("user_id"), "config_id": "hidden_boards"},
-        {"$set": {
-            "boards": boards,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }},
-        upsert=True
-    )
-    return {"message": "Hidden boards updated"}
-
-@router.get("/groups")
-async def get_groups(request: Request):
-    await require_auth(request)
-    groups = await db.groups.find({}, {"_id": 0}).to_list(100)
-    return groups
-
-@router.put("/user-view-config/{board}")
-async def update_user_view_config(board: str, request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    await db.user_view_config.update_one(
-        {"user_id": user.get("user_id"), "board": board},
-        {"$set": {
-            "filters": body.get("filters", {}),
-            "group_by_date": body.get("group_by_date", False),
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }},
-        upsert=True
-    )
-    return {"message": "Config updated"}
-
-@router.get("/user-view-config/{board}")
-async def get_user_view_config(board: str, request: Request):
-    user = await require_auth(request)
-    config = await db.user_view_config.find_one({"user_id": user.get("user_id"), "board": board}, {"_id": 0})
-    if not config:
-        return {"user_id": user.get("user_id"), "board": board, "filters": {}, "group_by_date": False}
-    return config
-
-@router.get("/board-layout/{board_name}")
-async def get_board_layout(board_name: str, request: Request):
-    user = await require_auth(request)
-    layout = await db.user_board_layouts.find_one({"user_id": user.get("user_id"), "board": board_name}, {"_id": 0})
-    if not layout:
-        return {"user_id": user.get("user_id"), "board": board_name, "column_order": [], "hidden_columns": []}
-    return layout
-
-@router.put("/board-layout/{board_name}")
-async def update_board_layout(board_name: str, request: Request):
-    user = await require_auth(request)
-    body = await request.json()
-    await db.user_board_layouts.update_one(
-        {"user_id": user.get("user_id"), "board": board_name},
-        {"$set": {
-            "column_order": body.get("column_order", []),
-            "hidden_columns": body.get("hidden_columns", []),
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }},
-        upsert=True
-    )
-    return {"message": "Layout updated"}
+# NOTA: aquí vivía un segundo bloque de rutas duplicadas (saved-views,
+# hidden-boards, groups, user-view-config, board-layout). FastAPI resuelve por
+# la PRIMERA ruta registrada, así que ese bloque era código muerto que solo
+# confundía — en particular un board-layout por usuario que contradecía el
+# layout global. Eliminado en la migración de columnas 2026-08.

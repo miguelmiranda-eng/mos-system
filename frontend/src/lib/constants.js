@@ -131,32 +131,34 @@ export const FILTER_COLUMNS = [
   { key: 'trim_status', label: 'Trim Status' },
   { key: 'sample', label: 'Sample' },
   { key: 'artwork_status', label: 'Artwork Status' },
-  { key: 'client', label: 'Cliente' },
+  { key: 'client', label: 'Client' },
   { key: 'priority', label: 'Priority' },
   { key: 'screens', label: 'Screens' }
 ];
 
+// Estructura 2026-08: blank_source, job_title_b y notes se eliminaron del set
+// (MOS COLUMNS STRUCTURE.xlsx); los datos siguen en Mongo pero ya no son
+// columnas. Las etiquetas quedaron en inglés según la misma hoja.
 export const DEFAULT_COLUMNS = [
-  { key: 'order_number', label: 'Orden', type: 'text', width: 100 },
+  { key: 'order_number', label: 'Order #', type: 'text', width: 100 },
   { key: 'customer_po', label: 'Customer PO', type: 'text', width: 160 },
-  { key: 'style', label: 'Style', type: 'text', width: 140 },
+  { key: 'style', label: 'Blank Style', type: 'text', width: 140 },
   { key: 'design_#', label: 'Design #', type: 'text', width: 140 },
-  { key: 'color', label: 'Color', type: 'text', width: 140 },
+  { key: 'color', label: 'Blank Color', type: 'text', width: 140 },
   { key: 'cancel_date', label: 'Cancel Date', type: 'date', width: 150 },
-  { key: 'final_bill', label: 'Final Bill', type: 'date', width: 150 },
-  { key: 'client', label: 'Cliente', type: 'select', optionKey: 'clients', width: 190 },
+  { key: 'final_bill', label: 'Final Bill Date', type: 'date', width: 150 },
+  { key: 'client', label: 'Client', type: 'select', optionKey: 'clients', width: 190 },
   { key: 'branding', label: 'Branding', type: 'select', optionKey: 'brandings', width: 190 },
   { key: 'priority', label: 'Priority', type: 'select', optionKey: 'priorities', width: 160 },
-  { key: 'quantity', label: 'Qty', type: 'number', width: 110 },
-  // Va justo después de Qty a propósito: la mini-tabla compara su suma contra
-  // esa columna y marca el descuadre, así que se leen de un vistazo juntas.
-  { key: 'sizes', label: 'Tallas', type: 'sizes', width: 260 },
+  { key: 'quantity', label: 'Units Total', type: 'number', width: 110 },
+  // Va justo después de Units Total a propósito: la mini-tabla compara su suma
+  // contra esa columna y marca el descuadre, así que se leen de un vistazo juntas.
+  { key: 'sizes', label: 'Size Run', type: 'sizes', width: 260 },
   // Sin esta columna el avance por talla no se puede calcular: 216 frentes de
   // 216 pedidas es "listo" si la orden solo lleva frente, y "a la mitad" si
-  // lleva frente y espalda. Va junto a Tallas porque es la que la habilita.
-  { key: 'print_positions', label: 'Posiciones', type: 'positions', width: 120 },
+  // lleva frente y espalda. Va junto a Size Run porque es la que la habilita.
+  { key: 'print_positions', label: 'Print Locations', type: 'positions', width: 120 },
   { key: 'due_date', label: 'Entrega', type: 'date', width: 150 },
-  { key: 'blank_source', label: 'Blank Source', type: 'select', optionKey: 'blank_sources', width: 180 },
   { key: 'blank_status', label: 'Blank Status', type: 'select', optionKey: 'blank_statuses', width: 210 },
   { key: 'production_status', label: 'Production Status', type: 'select', optionKey: 'production_statuses', width: 240 },
   { key: 'trim_status', label: 'Trim Status', type: 'select', optionKey: 'trim_statuses', width: 180 },
@@ -164,10 +166,8 @@ export const DEFAULT_COLUMNS = [
   { key: 'sample', label: 'Sample', type: 'select', optionKey: 'samples', width: 200 },
   { key: 'artwork_status', label: 'Artwork Status', type: 'select', optionKey: 'artwork_statuses', width: 190 },
   { key: 'betty_column', label: 'Betty Column', type: 'select', optionKey: 'betty_columns', width: 240 },
-  { key: 'job_title_a', label: 'Job Title A', type: 'link_desc', width: 240 },
-  { key: 'job_title_b', label: 'Job Title B', type: 'link_desc', width: 240 },
-  { key: 'shipping', label: 'Shipping', type: 'select', optionKey: 'shippings', width: 250 },
-  { key: 'notes', label: 'Notas', type: 'text', width: 280 }
+  { key: 'job_title_a', label: 'Work Order Link', type: 'link_desc', width: 240 },
+  { key: 'shipping', label: 'Shipping', type: 'select', optionKey: 'shippings', width: 250 }
 ];
 
 export const BOARD_COLORS = {

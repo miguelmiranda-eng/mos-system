@@ -132,17 +132,13 @@ const Dashboard = () => {
   const isDark = theme === 'dark';
 
   // Column visibility & ordering.
-  // - boardColumnOrders / globalHidden come from "Columnas Globales" (MASTER)
-  //   and govern the whole system: which columns exist, their order, and which
-  //   are hidden for everyone.
-  // - hiddenColumns is each USER's personal "what do I want to see" choice,
-  //   stored locally. It only narrows the view; it never edits the global config.
-  const [hiddenColumns, setHiddenColumns] = useState({});
+  // boardColumnOrders / globalHidden come from "Columnas Globales" (MASTER) and
+  // govern the whole system: which columns exist, their order, and which are
+  // hidden for everyone. Ya no existe la vista personal por usuario: el layout
+  // es uno solo y únicamente supersu puede moverlo.
   const [globalHidden, setGlobalHidden] = useState([]);
   const [boardColumnOrders, setBoardColumnOrders] = useState({});
   const [draggedCol, setDraggedCol] = useState(null);
-  const [showColumnPicker, setShowColumnPicker] = useState(false);
-  const colPrefsKey = `mos_col_vis_${user?.user_id || user?.email || 'anon'}`;
 
   // Modal visibility
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -314,6 +310,8 @@ const Dashboard = () => {
   const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
 
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
+  // Mover columnas cambia el layout GLOBAL: privilegio exclusivo del supersu.
+  const isSuperAdmin = user?.role === 'supersu';
   // Nivel de admin (1..5): supersu = 5; admin = su admin_level; cualquier otro = 0.
   // Mismo cálculo que el backend get_admin_level() y que los módulos WMS del front.
   const adminLevel = user?.role === 'supersu' ? 5 : (user?.role === 'admin' ? (parseInt(user?.admin_level, 10) || 1) : 0);
@@ -477,22 +475,6 @@ const Dashboard = () => {
     loadLayout();
   }, [currentBoard]);
 
-  // Personal column visibility: load this user's choice from localStorage and
-  // persist it there on change. Never touches the global layout.
-  const colPrefsLoaded = useRef(false);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(colPrefsKey);
-      setHiddenColumns(raw ? JSON.parse(raw) : {});
-    } catch { setHiddenColumns({}); }
-    colPrefsLoaded.current = true;
-  }, [colPrefsKey]);
-  useEffect(() => {
-    if (!colPrefsLoaded.current) return;
-    try { localStorage.setItem(colPrefsKey, JSON.stringify(hiddenColumns)); } catch { /* ignore */ }
-  }, [hiddenColumns, colPrefsKey]);
-
-
   useEffect(() => {
     setSelectedOrders([]);
   }, [currentBoard]);
@@ -531,14 +513,14 @@ const Dashboard = () => {
   }, [apiFetch, API]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Visible columns = global config (existence + order + system-hidden from
-  // Columnas Globales) minus this user's personal hidden choice.
+  // Columnas Globales). No hay recorte personal: todos ven el mismo layout.
   const visibleColumns = useMemo(() => {
-    const hidden = [...globalHidden, ...(hiddenColumns[currentBoard] || [])];
+    const hidden = globalHidden;
     const order = boardColumnOrders[currentBoard];
     let cols = columns.filter(c => !hidden.includes(c.key));
     if (order) { cols = order.map(key => cols.find(c => c.key === key)).filter(Boolean); const ordered = new Set(order); cols = [...cols, ...columns.filter(c => !ordered.has(c.key) && !hidden.includes(c.key))]; }
     return cols;
-  }, [globalHidden, hiddenColumns, currentBoard, boardColumnOrders, columns]);
+  }, [globalHidden, currentBoard, boardColumnOrders, columns]);
 
   // Saved views
   const fetchSavedViews = useCallback(async () => {
@@ -551,7 +533,9 @@ const Dashboard = () => {
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
     try {
-      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, hidden_columns: hiddenColumns[currentBoard] || [], column_order: boardColumnOrders[currentBoard] || [], group_by_date: groupByDate }) });
+      // Las vistas guardan solo filtros y agrupación: el layout de columnas es
+      // global (supersu) y ya no viaja con la vista.
+      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, group_by_date: groupByDate }) });
       if (res.ok) {
         const newView = await res.json();
         toast.success(`${t('save_view')}: "${newViewName}"`);
@@ -579,10 +563,8 @@ const Dashboard = () => {
       setFilters(view.filters || {});
       setActiveViewName(view.name);
       activeViewIdRef.current = view.view_id;
-      if (view.hidden_columns !== undefined)
-        setHiddenColumns(prev => ({ ...prev, [currentBoard]: view.hidden_columns || [] }));
-      if (view.column_order?.length)
-        setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: view.column_order }));
+      // hidden_columns/column_order de vistas viejas se ignoran a propósito:
+      // el layout de columnas es global y solo lo mueve supersu.
       if (view.group_by_date !== undefined)
         setGroupByDate(view.group_by_date || null);
     }
@@ -602,14 +584,12 @@ const Dashboard = () => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({
           filters,
-          hidden_columns: hiddenColumns[currentBoard] || [],
-          column_order: boardColumnOrders[currentBoard] || [],
           group_by_date: groupByDate,
         })
       }).then(() => fetchSavedViews()).catch(() => { });
     }, 1200);
     return () => { if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current); };
-  }, [filters, hiddenColumns, boardColumnOrders, groupByDate, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, groupByDate, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset active view when board changes to prevent overwriting
   useEffect(() => {
@@ -622,8 +602,8 @@ const Dashboard = () => {
   const pinnedViews = currentBoardViews.filter(v => v.pinned);
   const unpinnedViews = currentBoardViews.filter(v => !v.pinned);
 
-  // Column drag — reordering changes the GLOBAL order, so only admins can do it.
-  const handleColumnDragStart = (colKey) => { if (isAdmin) setDraggedCol(colKey); };
+  // Column drag — reordering changes the GLOBAL order, so only supersu can do it.
+  const handleColumnDragStart = (colKey) => { if (isSuperAdmin) setDraggedCol(colKey); };
   const handleColumnDragOver = (e, targetKey) => {
     e.preventDefault();
     if (!draggedCol || draggedCol === targetKey) return;
@@ -638,27 +618,15 @@ const Dashboard = () => {
   };
   const handleColumnDragEnd = () => {
     setDraggedCol(null);
-    if (isAdmin) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
-  };
-
-  // Personal visibility toggle — narrows this user's own view only (localStorage).
-  const handleTogglePersonalColumn = (colKey) => {
-    if (['order_number', 'style'].includes(colKey)) {
-      toast.error('Esta columna es obligatoria para la navegación.');
-      return;
-    }
-    setHiddenColumns(prev => {
-      const cur = prev[currentBoard] || [];
-      const next = cur.includes(colKey) ? cur.filter(k => k !== colKey) : [...cur, colKey];
-      return { ...prev, [currentBoard]: next };
-    });
+    if (isSuperAdmin) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
   };
 
   const handleUpdateColumnOrder = (newOrder) => {
     setBoardColumnOrders(prev => {
       const updated = { ...prev, [currentBoard]: newOrder };
 
-      // Persist the new GLOBAL order (admins only reach here).
+      // Persist the new GLOBAL order (only supersu reaches here; the backend
+      // also enforces it with require_supersu).
       fetch(`${API}/config/board-layout/MASTER`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -765,9 +733,9 @@ const Dashboard = () => {
         const produced = Number(prodData.total_produced) || 0;
         const remaining = Math.max(0, total - produced);
         const progressPct = total > 0 ? Math.min(100, Math.round((produced / total) * 100)) : 0;
-        row['Producido'] = produced;
-        row[t('restante')] = remaining;
-        row['Avance %'] = progressPct;
+        row['Produced'] = produced;
+        row['Remaining'] = remaining;
+        row['Progress %'] = progressPct;
         return row;
       });
 
@@ -1849,14 +1817,6 @@ const Dashboard = () => {
               <GanttChart size={18} />
               <span className="sr-only">Gantt</span>
             </button>
-            <button
-              onClick={() => setShowColumnPicker(v => !v)}
-              title="Elegir columnas visibles (solo tu vista)"
-              className="p-2.5 rounded-lg hover:bg-royal/10 text-muted-foreground hover:text-royal transition-all"
-            >
-              <Table2 size={18} />
-              <span className="sr-only">Columnas visibles</span>
-            </button>
           </div>
 
           <div className="h-8 w-px bg-border/40 mx-2" />
@@ -1865,7 +1825,8 @@ const Dashboard = () => {
           {isAdmin && (
             <div className="flex items-center gap-1.5 p-1 bg-muted/20 rounded-lg border border-border/20">
               <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
-              <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>
+              {/* Agregar columna toca el set GLOBAL: solo supersu (el backend lo exige). */}
+              {isSuperAdmin && <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>}
 
               <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
                 <PopoverTrigger asChild>
@@ -1909,42 +1870,6 @@ const Dashboard = () => {
 
         </div>
       </div>
-
-      {/* Column Manager Panel */}
-      {/* Personal column visibility — narrows only THIS user's view; the
-          available columns and order come from Columnas Globales. */}
-      {showColumnPicker && (
-        <div className={`border-b px-6 py-4 transition-all animate-in slide-in-from-top-2 duration-300 ${isDark ? 'bg-navy/40 border-white/5' : 'bg-muted/30 border-gray-100'}`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Eye className="w-4 h-4 text-royal" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Mis columnas visibles</span>
-              <span className="text-[10px] text-muted-foreground/60 italic normal-case tracking-normal">— solo afecta tu vista, no cambia la configuración global</span>
-            </div>
-            <button onClick={() => setShowColumnPicker(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {columns.filter(c => !globalHidden.includes(c.key)).map(col => {
-              const isHidden = (hiddenColumns[currentBoard] || []).includes(col.key);
-              return (
-                <button
-                  key={col.key}
-                  onClick={() => handleTogglePersonalColumn(col.key)}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
-                    isHidden
-                      ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60"
-                      : "bg-background border-border text-foreground hover:border-royal/50"
-                  )}
-                >
-                  {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
-                  {col.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Floating Bulk Actions Bar */}
       {selectedOrders.length > 0 && (
@@ -2196,7 +2121,7 @@ const Dashboard = () => {
                   {/* Column 3: Permanent Identifier (Sticky) */}
                   <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
                     <div className="flex items-center justify-between gap-1">
-                      <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Orden'}</span>
+                      <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Order #'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
                         <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
                           <ListFilter className="w-3.5 h-3.5" />
@@ -2301,9 +2226,9 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={isAdmin} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={isSuperAdmin} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none overflow-hidden">
+                          <div className={`flex items-center gap-1.5 select-none overflow-hidden ${isSuperAdmin ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
                             <span className="truncate">{col.label}</span>
                             {/* Filter Trigger Icon */}
@@ -2446,7 +2371,7 @@ const Dashboard = () => {
                       </div>
                     );
                   })}
-                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">{t('restante')}</div>
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">Remaining</div>
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
                   {!debouncedSearchQuery && !(isDaySupportedBoard(currentBoard) && !groupByDate) && orders.length > displayLimit && (

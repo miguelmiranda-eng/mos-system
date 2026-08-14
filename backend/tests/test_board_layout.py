@@ -1,9 +1,9 @@
 """
-Test cases for Board Layout Persistence feature (iteration 34)
+Test cases for Board Layout Persistence feature (iteration 34, endurecido 2026-08)
 Tests GET/PUT /api/config/board-layout/{board_name} endpoints
-- Admin can save column_order and hidden_columns
-- Non-admin cannot modify layout (403)
-- Layout is stored globally (not per-user)
+- SOLO supersu puede guardar column_order / hidden_columns (admin normal: 403)
+- Cualquier usuario autenticado puede leer el layout
+- El layout es global (db.board_layouts); los layouts por usuario se retiraron
 """
 import pytest
 import requests
@@ -41,14 +41,28 @@ class TestBoardLayoutEndpoints:
         db.users.insertOne({{
             user_id: '{admin_user_id}',
             email: 'admin.layout.{timestamp}@example.com',
-            name: 'Test Layout Admin',
-            role: 'admin',
+            name: 'Test Layout Supersu',
+            role: 'supersu',
             picture: 'https://via.placeholder.com/150',
             created_at: new Date()
         }});
         db.user_sessions.insertOne({{
             user_id: '{admin_user_id}',
             session_token: '{admin_session_token}',
+            expires_at: new Date(Date.now() + 24*60*60*1000),
+            created_at: new Date()
+        }});
+        db.users.insertOne({{
+            user_id: 'test-plainadmin-layout-{timestamp}',
+            email: 'plainadmin.layout.{timestamp}@example.com',
+            name: 'Test Layout Plain Admin',
+            role: 'admin',
+            picture: 'https://via.placeholder.com/150',
+            created_at: new Date()
+        }});
+        db.user_sessions.insertOne({{
+            user_id: 'test-plainadmin-layout-{timestamp}',
+            session_token: 'test_session_plainadmin_layout_{timestamp}',
             expires_at: new Date(Date.now() + 24*60*60*1000),
             created_at: new Date()
         }});
@@ -86,25 +100,30 @@ class TestBoardLayoutEndpoints:
         
         request.cls.admin_session = admin_session_token
         request.cls.user_session = user_session_token
+        request.cls.plainadmin_session = f"test_session_plainadmin_layout_{timestamp}"
         request.cls.timestamp = timestamp
-        
+
         yield
-        
+
         # Cleanup after tests
         cleanup_script = f"""
         use('test_database');
-        db.users.deleteMany({{ user_id: /^test-(admin|user)-layout-/ }});
-        db.user_sessions.deleteMany({{ session_token: /^test_session_(admin|user)_layout_/ }});
+        db.users.deleteMany({{ user_id: /^test-(admin|user|plainadmin)-layout-/ }});
+        db.user_sessions.deleteMany({{ session_token: /^test_session_(admin|user|plainadmin)_layout_/ }});
         db.board_layouts.deleteMany({{ board: 'TEST_LAYOUT_BOARD' }});
         print('CLEANED');
         """
         subprocess.run(['mongosh', '--quiet', '--eval', cleanup_script], capture_output=True, text=True)
-    
+
     def get_admin_cookies(self):
+        # "admin" histórico del test: hoy es el supersu (único que puede escribir).
         return {"session_token": self.admin_session}
-    
+
     def get_user_cookies(self):
         return {"session_token": self.user_session}
+
+    def get_plainadmin_cookies(self):
+        return {"session_token": self.plainadmin_session}
     
     # ==================== GET BOARD LAYOUT TESTS ====================
     
@@ -157,9 +176,20 @@ class TestBoardLayoutEndpoints:
         )
         assert response.status_code == 403, f"Expected 403, got {response.status_code}"
         print("PASS: PUT board-layout returns 403 for non-admin")
-    
+
+    def test_put_board_layout_forbidden_for_plain_admin(self):
+        """Un admin normal tampoco puede mover columnas: el layout es de supersu"""
+        response = requests.put(
+            f"{BASE_URL}/api/config/board-layout/TEST_LAYOUT_BOARD",
+            json={"column_order": ["client", "priority"], "hidden_columns": []},
+            headers={"Content-Type": "application/json"},
+            cookies=self.get_plainadmin_cookies()
+        )
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        print("PASS: PUT board-layout returns 403 for plain admin")
+
     def test_put_board_layout_admin_can_save(self):
-        """Admin can save board layout via PUT"""
+        """Supersu can save board layout via PUT"""
         test_column_order = ["order_number", "client", "priority", "quantity"]
         test_hidden_columns = ["sample", "notes"]
         
@@ -318,7 +348,7 @@ class TestBoardLayoutRealBoard:
             user_id: '{admin_user_id}',
             email: 'admin.real.{timestamp}@example.com',
             name: 'Test Real Admin',
-            role: 'admin',
+            role: 'supersu',
             picture: 'https://via.placeholder.com/150',
             created_at: new Date()
         }});

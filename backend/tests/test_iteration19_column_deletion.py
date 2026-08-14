@@ -15,7 +15,11 @@ class TestColumnDeletionFeature:
     
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Setup test credentials"""
+        """Setup test credentials.
+
+        OJO 2026-08: PUT /api/config/columns ahora exige role 'supersu' (el set
+        de columnas es estructura global). La sesión pre-sembrada debe
+        pertenecer a un usuario supersu o los PUT de esta clase darán 403."""
         self.session_token = "test_admin_cols_1772726752013"
         self.headers = {
             "Content-Type": "application/json",
