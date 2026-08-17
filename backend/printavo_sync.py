@@ -87,8 +87,57 @@ def _strip_company_suffix(name: str) -> str:
 # línea de la descripción; NO es un estilo de prenda (produjo órdenes con
 # style "M - 15" — ver 2450/2500/2501/2829/2832).
 _SIZE_ROW_RE = re.compile(
-    r"^(X{0,5}S|X{0,5}L|M|[2-5]\s?XL?|[2-5]X|Y(XS|S|M|L|XL)|[2-5]T)\s*[-–:]\s*\d+$", re.I
+    r"^(X{0,5}S|X{0,5}L|SM|MD|LG|M|[2-5]\s?XL?|[2-5]X|Y(XS|S|M|L|XL)|[2-5]T)\s*[-–:]\s*\d+$", re.I
 )
+
+# Renglón de talla dentro de la descripción del line item, en cualquiera de los
+# formatos que teclea el equipo de Printavo: "SM - 61", "MD- 62", "LG-61",
+# "3X : 15", "2XL 20". Se usa para RECUPERAR las tallas que la grilla del
+# invoice no puede expresar (ver _map_sizes / size_other).
+_DESC_SIZE_ROW_RE = re.compile(
+    r"^[\s*•\-]*"
+    r"(YXS|YXL|YS|YM|YL|X{2,5}L|XS|XL|SM|MD|LG|[2-5]\s?XL|[2-5]\s?X|[2-5]T|S|M|L)"
+    r"[\s:.\-–—]+(\d{1,5})\s*$",
+    re.I | re.M,
+)
+
+
+def _norm_size(raw) -> str:
+    """Normaliza una etiqueta de talla (de la API o de la descripción) a la talla
+    MOS. Acepta lo que ya vive en SIZES_MAP y además cualquier variante NX / NXL
+    y XX…L, para que una talla nueva no se pierda por no estar en el diccionario."""
+    s = re.sub(r"[^A-Z0-9]", "", str(raw or "").upper())
+    # Acepta también el enum crudo de la API ("size_3xl") sin pasar por _size_label.
+    if s.startswith("SIZE") and len(s) > 4:
+        s = s[4:]
+    if not s:
+        return ""
+    if s in SIZES_MAP:
+        return SIZES_MAP[s]
+    m = re.fullmatch(r"([2-9])XL?", s)        # 3X, 3XL, 7XL...
+    if m:
+        return f"{m.group(1)}X"
+    m = re.fullmatch(r"(X{2,6})L", s)          # XXL, XXXL, XXXXL...
+    if m:
+        return f"{len(m.group(1))}X"
+    return ""
+
+
+def _sizes_from_description(description) -> dict:
+    """Desglose {talla_mos: qty} leído de los renglones de talla de la descripción."""
+    out = {}
+    text = str(description or "").replace("\r\n", "\n").replace("\r", "\n")
+    for m in _DESC_SIZE_ROW_RE.finditer(text):
+        mos = _norm_size(m.group(1))
+        if not mos:
+            continue
+        try:
+            qty = int(m.group(2))
+        except (TypeError, ValueError):
+            continue
+        if qty > 0:
+            out[mos] = out.get(mos, 0) + qty
+    return out
 
 
 def _blank_style(description: str) -> str:
@@ -220,21 +269,55 @@ def _map_sizes(line_item: dict):
 
     Printavo's LineItemSizeCount is {count: Int, size: LineItemSize}, where
     `size` is an enum-like scalar (e.g. "S", "2XL") and `count` is the quantity.
+
+    OJO con `size_other`: la grilla de tallas del invoice NO tiene una columna
+    por talla. En esta cuenta son XS/S/M/L/XL/2XL + `size_other`, así que una
+    prenda con 3X (o 4X/5X, o tallas raras) llega toda amontonada en
+    `size_other` — el work order impreso sí la rotula "3XL", la API no. Antes
+    esas piezas se tiraban en silencio: la 2395 se creó con 285u y sin renglón
+    3X cuando el invoice traía 300 (15 de 3X), y alguien tuvo que corregir la
+    cantidad a mano. Ahora se intenta recuperar la talla real desde los
+    renglones de la descripción y, si no se puede, las piezas igual se cuentan
+    en la cantidad y queda un WARNING con el line item para poder rastrearlo.
     """
     sizes_out, total = {}, 0
+    unmapped, unmapped_labels = 0, []
     for sc in line_item.get("sizes") or []:
         label = _size_label(sc.get("size"))
-        mos_size = SIZES_MAP.get(label)
-        if not mos_size:
-            continue
         try:
             qty = int(sc.get("count") or 0)
         except (TypeError, ValueError):
             qty = 0
         if qty <= 0:
             continue
+        mos_size = _norm_size(label)
+        if not mos_size:
+            unmapped += qty
+            unmapped_labels.append(f"{label or '?'}={qty}")
+            continue
         sizes_out[mos_size] = sizes_out.get(mos_size, 0) + qty
         total += qty
+
+    if unmapped > 0:
+        ref = (line_item.get("itemNumber") or "").strip() or _line_style(line_item) or "(línea sin estilo)"
+        # Solo sirven las tallas de la descripción que la grilla NO trajo: las
+        # que ya vinieron de la API mandan (son el dato duro) y repetirlas
+        # duplicaría piezas. Se exige que cuadren exacto con el remanente.
+        recovered = {s: q for s, q in _sizes_from_description(line_item.get("description")).items()
+                     if s not in sizes_out}
+        if recovered and sum(recovered.values()) == unmapped:
+            sizes_out.update(recovered)
+            total += unmapped
+            logger.info(f"[printavo] {ref}: {unmapped}u en tallas no mapeables "
+                        f"({', '.join(unmapped_labels)}) recuperadas de la descripción como "
+                        f"{recovered}")
+        else:
+            total += unmapped
+            logger.warning(f"[printavo] {ref}: {unmapped}u en tallas no mapeables "
+                           f"({', '.join(unmapped_labels)}) que la descripción no permite "
+                           f"desglosar (candidatas: {recovered or '—'}); cuentan en la cantidad "
+                           f"pero la orden queda sin ese renglón de talla")
+
     # Fallback: no per-size breakdown -> use the line item's total `items`.
     if total == 0:
         try:

@@ -114,12 +114,14 @@ async def main():
     check("total quantity > 0", total > 0, f"got {total}")
     check("total facturado presente", inv.get("total") is not None)
 
-    # 1b. _billed_qty prefiere `items` (las tallas fuera de SIZES_MAP, p.ej.
-    # size_other, no se suman y subcontarían en silencio)
+    # 1b. `size_other` (talla que la grilla del invoice no sabe rotular) ya no se
+    # tira: sin descripción que la desglose las 20u no producen renglón de talla,
+    # pero SÍ cuentan en la cantidad, así que _map_sizes y `items` coinciden.
     li_other = {"items": 265, "color": "WHITE",
                 "sizes": [{"count": 245, "size": "size_s"}, {"count": 20, "size": "size_other"}]}
-    _, sz_qty = ps._map_sizes(li_other)
-    check("tallas ignoran size_other", sz_qty == 245, f"got {sz_qty}")
+    sz_other, sz_qty = ps._map_sizes(li_other)
+    check("size_other cuenta en la cantidad", sz_qty == 265, f"got {sz_qty}")
+    check("size_other no inventa renglón de talla", sz_other == {"S": 245}, f"got {sz_other}")
     check("_billed_qty usa items (265, no 245)", ps._billed_qty(li_other, sz_qty) == 265,
           f"got {ps._billed_qty(li_other, sz_qty)}")
     check("_billed_qty cae a tallas si items=0", ps._billed_qty({"items": 0}, 77) == 77)
