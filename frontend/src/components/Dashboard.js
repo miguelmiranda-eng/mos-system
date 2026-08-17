@@ -701,7 +701,21 @@ const Dashboard = () => {
   }, [trashOrders, trashSearch]);
   const handleRestoreFromTrash = async (orderIds, targetBoard = 'SCHEDULING') => {
     setOperationLoading(true);
-    try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) }); toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`); fetchTrashOrders(); fetchOrders(); } catch { toast.error(t('restore_err')); } finally { setOperationLoading(false); }
+    // apiFetch y NO fetch crudo: apiFetch es quien invalida el caché de GETs de
+    // /orders al mutar (http.js) y quien maneja el 401. Con fetch crudo, el
+    // refetch de abajo caía en el caché de 5s y devolvía la foto ANTERIOR: la
+    // orden seguía apareciendo en la papelera y el botón parecía no servir.
+    // Y sin revisar res.ok, un 401/403 pintaba igual el toast verde de éxito.
+    try {
+      const res = await apiFetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `El servidor respondió ${res.status}`);
+      }
+      toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
+      fetchTrashOrders();
+      fetchOrders();
+    } catch (err) { toast.error(`${t('restore_err')}: ${err.message}`); } finally { setOperationLoading(false); }
   };
   const handlePermanentDelete = async (orderIds) => {
     if (!window.confirm(`${t('permanent_delete')} ${orderIds.length} ${t('orders')}?`)) return;
