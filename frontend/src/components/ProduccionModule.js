@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeft, RefreshCw, Loader2, Gauge, Cog, Package, ClipboardList, Users,
-  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X,
+  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X, CalendarDays,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
@@ -31,7 +31,14 @@ const PERIODS = [
   { id: "yesterday", label: "Ayer" },
   { id: "week", label: "7 días" },
   { id: "month", label: "30 días" },
+  { id: "custom", label: "Rango" },
 ];
+
+// Fecha local en YYYY-MM-DD (la que entiende <input type="date"> y el backend,
+// que interpreta esos días en hora Tijuana). NO se usa toISOString(): eso pasa
+// a UTC y en la tarde de Tijuana ya devuelve el día siguiente.
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return isoDay(d); };
 
 const TABS = [
   { id: "general", label: "General", icon: Gauge },
@@ -57,6 +64,10 @@ export default function ProduccionModule() {
   const isDark = theme === "dark";
 
   const [period, setPeriod] = useState("today");
+  // Rango libre (periodo "custom"). Se ordena de menor a mayor al consultar,
+  // así que da igual si el usuario captura las fechas al revés.
+  const [rangeFrom, setRangeFrom] = useState(() => daysAgo(6));
+  const [rangeTo, setRangeTo] = useState(() => isoDay(new Date()));
   const [tab, setTab] = useState("general");
   const [analytics, setAnalytics] = useState(null);
   const [capacity, setCapacity] = useState(null);
@@ -124,11 +135,21 @@ export default function ProduccionModule() {
   // Sin rotación automática (pedido del usuario 2026-08-11): la pestaña se
   // cambia manualmente desde los iconos del overlay flotante del modo TV.
 
+  // Rango efectivo del periodo "custom": ordenado y solo válido si hay ambas
+  // fechas. Con rango incompleto no se consulta (el backend, sin fechas, caería
+  // al periodo completo y mostraría datos que nadie pidió).
+  const [from, to] = rangeFrom && rangeTo && rangeFrom > rangeTo ? [rangeTo, rangeFrom] : [rangeFrom, rangeTo];
+  const rangeReady = period !== "custom" || Boolean(from && to);
+  const query = period === "custom"
+    ? `preset=custom&date_from=${from}&date_to=${to}`
+    : `preset=${period}`;
+
   const load = useCallback(async (silent) => {
+    if (!rangeReady) return;
     silent ? setRefreshing(true) : setLoading(true);
     try {
       const [a, c, b] = await Promise.all([
-        fetch(`${API}/production-analytics?preset=${period}`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+        fetch(`${API}/production-analytics?${query}`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
         fetch(`${API}/capacity-plan`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
         fetch(`${API}/orders/board-counts`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       ]);
@@ -137,19 +158,24 @@ export default function ProduccionModule() {
       if (b) setBoards(b.counts || b || {});
     } catch { toast.error("Error al cargar producción"); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [period]);
+  }, [query, rangeReady]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const id = setInterval(() => load(true), 60000); return () => clearInterval(id); }, [load]);
 
-  // Serie de tendencia: por hora en "Hoy", por día en el resto.
+  // ¿El periodo es un solo día? Entonces la tendencia va por hora: por día
+  // dibujaría un único punto (una gráfica de área con un punto se ve vacía —
+  // por eso "Ayer" parecía roto aun teniendo capturas).
+  const singleDay = period === "today" || period === "yesterday" || (period === "custom" && from === to);
+
+  // Serie de tendencia: por hora en periodos de un día, por día en el resto.
   const trend = useMemo(() => {
     if (!analytics) return [];
-    if (period === "today") {
+    if (singleDay) {
       return (analytics.hourly_trend || []).map(h => ({ label: String(h.hour).slice(11, 16), produced: h.produced }));
     }
     return (analytics.by_day || []).map(d => ({ label: String(d.date).slice(5), produced: d.produced }));
-  }, [analytics, period]);
+  }, [analytics, singleDay]);
 
   const axis = isDark ? "#64748b" : "#94a3b8";
   const grid = isDark ? "#1f2937" : "#e5e7eb";
@@ -192,7 +218,7 @@ export default function ProduccionModule() {
             <p className="text-xs text-muted-foreground mt-0.5">Tablero de la nave en tiempo casi real</p>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
             <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/60 border border-border">
               {PERIODS.map(p => (
                 <button key={p.id} onClick={() => setPeriod(p.id)}
@@ -201,6 +227,20 @@ export default function ProduccionModule() {
                 </button>
               ))}
             </div>
+            {period === "custom" && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-muted/60 border border-border">
+                <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                <input type="date" value={rangeFrom} max={isoDay(new Date())}
+                  onChange={e => setRangeFrom(e.target.value)}
+                  data-testid="produccion-range-from"
+                  className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
+                <span className="text-xs text-muted-foreground">a</span>
+                <input type="date" value={rangeTo} max={isoDay(new Date())}
+                  onChange={e => setRangeTo(e.target.value)}
+                  data-testid="produccion-range-to"
+                  className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
+              </div>
+            )}
             <button onClick={() => load(true)} title="Actualizar"
               className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
@@ -267,9 +307,9 @@ export default function ProduccionModule() {
           <div className="h-full flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
           <>
-            {tab === "general" && <GeneralTab a={analytics} trend={trend} period={period} chart={chartProps} />}
+            {tab === "general" && <GeneralTab a={analytics} trend={trend} singleDay={singleDay} chart={chartProps} />}
             {tab === "maquinas" && <MaquinasTab a={analytics} cap={capacity} chart={chartProps} />}
-            {tab === "horas" && <HoraPorHoraTab a={analytics} period={period} chart={chartProps} />}
+            {tab === "horas" && <HoraPorHoraTab a={analytics} multiDay={!singleDay} chart={chartProps} />}
             {tab === "empaque" && <EmpaqueTab a={analytics} boards={boards} />}
             {tab === "ordenes" && <OrdenesTab a={analytics} />}
             {tab === "operadores" && <OperadoresTab a={analytics} />}
@@ -439,7 +479,7 @@ function ProgressRow({ label, produced, target }) {
 
 /* ── Pestañas ────────────────────────────────────────────────────────────── */
 
-function GeneralTab({ a, trend, period, chart }) {
+function GeneralTab({ a, trend, singleDay, chart }) {
   if (!a) return null;
   const shifts = (a.by_shift || []).map(s => ({ label: s._id || s.shift || "?", value: s.produced }));
   return (
@@ -455,7 +495,7 @@ function GeneralTab({ a, trend, period, chart }) {
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-3 gap-3">
         <div className="xl:col-span-2 min-h-0 flex flex-col gap-3">
           {/* Trend — la gráfica absorbe el alto sobrante de la pantalla */}
-          <Panel className="flex-1" title={period === "today" ? "Producción por hora" : "Producción por día"} icon={Activity}>
+          <Panel className="flex-1" title={singleDay ? "Producción por hora" : "Producción por día"} icon={Activity}>
             <div className="h-full min-h-[180px]">
               <FitChart>
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
@@ -673,7 +713,7 @@ const T1_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
 const T2_HOURS = [19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6];
 const isT1 = (h) => h >= 7 && h <= 18;
 
-function HoraPorHoraTab({ a, period, chart }) {
+function HoraPorHoraTab({ a, multiDay, chart }) {
   const [modo, setModo] = useState("grafica");
   const matrix = useMemo(() => {
     const rows = (a?.by_machine_hour || []).filter(r => r.machine && r.machine !== "?");
@@ -697,7 +737,6 @@ function HoraPorHoraTab({ a, period, chart }) {
   }, [a]);
 
   const { machines, cells, rowTotals, colTotals, t1Totals, t2Totals, t1Grand, t2Grand, grandTotal, maxCell } = matrix;
-  const multiDay = period === "week" || period === "month";
   const hh = (h) => `${String(h).padStart(2, "0")}h`;
   const allHours = [...T1_HOURS, ...T2_HOURS];
   const bestHour = allHours.reduce((best, h) => (colTotals[h] || 0) > (colTotals[best] || 0) ? h : best, allHours[0]);
