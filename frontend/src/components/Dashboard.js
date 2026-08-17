@@ -172,6 +172,7 @@ const Dashboard = () => {
   const activeViewIdRef = useRef(null);
   const viewApplyingRef = useRef(false);
   const [trashOrders, setTrashOrders] = useState([]);
+  const [trashSearch, setTrashSearch] = useState('');
   const [trashLoading, setTrashLoading] = useState(false);
   const [groupByDate, setGroupByDate] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({});
@@ -649,7 +650,7 @@ const Dashboard = () => {
   };
 
   // Trash
-  const fetchTrashOrders = async () => {
+  const fetchTrashOrders = useCallback(async () => {
     setTrashLoading(true);
     try {
       const res = await apiFetch(`${API}/orders?board=PAPELERA DE RECICLAJE`, { credentials: 'include' });
@@ -659,7 +660,7 @@ const Dashboard = () => {
         setTrashCount(data.length);
       }
     } catch { toast.error(t('trash_load_err')); } finally { setTrashLoading(false); }
-  };
+  }, [t]);
 
   const fetchTrashCount = useCallback(async () => {
     try {
@@ -674,6 +675,27 @@ const Dashboard = () => {
   useEffect(() => {
     fetchTrashCount();
   }, [fetchTrashCount, orders]); // Refresh trash count when orders change (e.g. after deletion)
+
+  // La papelera se carga al ABRIRLA. El contador del sidebar salía de
+  // /orders/board-counts, pero la LISTA solo se pedía después de restaurar o
+  // vaciar: al abrir el modal por primera vez siempre se veía vacío aunque el
+  // tablero PAPELERA DE RECICLAJE tuviera órdenes.
+  useEffect(() => {
+    if (showTrash) { setTrashSearch(''); fetchTrashOrders(); }
+  }, [showTrash, fetchTrashOrders]);
+
+  // Vista filtrada de la papelera. TODO lo que se muestra y TODO lo que hacen
+  // los botones del pie opera sobre esta lista, no sobre la completa: con el
+  // buscador activo, "restaurar/vaciar" debe tocar exactamente lo que el
+  // usuario está viendo.
+  const visibleTrashOrders = useMemo(() => {
+    const q = trashSearch.trim().toLowerCase();
+    if (!q) return trashOrders;
+    return trashOrders.filter(o =>
+      String(o.order_number || '').toLowerCase().includes(q) ||
+      String(o.client || '').toLowerCase().includes(q)
+    );
+  }, [trashOrders, trashSearch]);
   const handleRestoreFromTrash = async (orderIds, targetBoard = 'SCHEDULING') => {
     setOperationLoading(true);
     try { await fetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) }); toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`); fetchTrashOrders(); fetchOrders(); } catch { toast.error(t('restore_err')); } finally { setOperationLoading(false); }
@@ -2408,10 +2430,21 @@ const Dashboard = () => {
       {/* Trash Modal */}
       <Dialog open={showTrash} onOpenChange={setShowTrash}>
         <DialogContent className="max-w-4xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col" data-testid="trash-modal">
-          <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashOrders.length})</span></DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashSearch.trim() ? `${visibleTrashOrders.length} de ${trashOrders.length}` : trashOrders.length})</span></DialogTitle></DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              value={trashSearch}
+              onChange={(e) => setTrashSearch(e.target.value)}
+              placeholder="Buscar por orden o cliente..."
+              className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
+              data-testid="trash-search"
+            />
+          </div>
           <div className="flex-1 overflow-y-auto py-4">
             {trashLoading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> :
-              trashOrders.length > 0 ? (
+              visibleTrashOrders.length > 0 ? (
                 <div role="table" className="w-full text-sm">
                   <div className="sticky top-0 bg-card z-30">
                     <div role="row" className="flex items-center border-b border-border bg-card px-3 py-2">
@@ -2422,7 +2455,7 @@ const Dashboard = () => {
                       <div role="cell" className="w-[180px] text-right font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('actions')}</div>
                     </div>
                   </div>
-                  <div>{trashOrders.map(order => (
+                  <div>{visibleTrashOrders.map(order => (
                     <div role="row" className="flex items-center border-b border-border/50 hover:bg-secondary/30 px-3 py-2" key={order.order_id} data-testid={`trash-order-${order.order_id}`}>
                       <div role="cell" className="w-[120px] font-mono text-foreground font-bold text-xs">{order.order_number}</div>
                       <div role="cell" className="flex-1 text-foreground text-xs truncate pr-4">{order.client || '-'}</div>
@@ -2451,12 +2484,16 @@ const Dashboard = () => {
                     </div>
                   ))}</div>
                 </div>
-              ) : <p className="text-center text-muted-foreground py-8">{t('no_trash')}</p>}
+              ) : <p className="text-center text-muted-foreground py-8">{trashSearch.trim() ? `Sin coincidencias para "${trashSearch.trim()}"` : t('no_trash')}</p>}
           </div>
-          {trashOrders.length > 0 && (
+          {visibleTrashOrders.length > 0 && (
             <div className="flex justify-between items-center pt-4 border-t border-border">
-              <button onClick={() => handleRestoreFromTrash(trashOrders.map(o => o.order_id), 'SCHEDULING')} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} → SCHEDULING</button>
-              <button onClick={() => handlePermanentDelete(trashOrders.map(o => o.order_id))} className="px-4 py-2 bg-destructive/20 text-destructive rounded text-sm hover:bg-destructive/30 flex items-center gap-2" data-testid="empty-trash-btn"><Trash2 className="w-4 h-4" /> {t('empty_trash')}</button>
+              {/* Confirmación obligatoria: restaurar en bloque vacía la papelera
+                  sobre SCHEDULING (hoy son cientos de órdenes) y no hay deshacer.
+                  El borrado permanente ya pedía confirmación. Ambos operan sobre
+                  lo FILTRADO, y el conteo del texto lo deja explícito. */}
+              <button onClick={() => { if (window.confirm(`¿Restaurar ${visibleTrashOrders.length} órdenes de la papelera a SCHEDULING?`)) handleRestoreFromTrash(visibleTrashOrders.map(o => o.order_id), 'SCHEDULING'); }} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} ({visibleTrashOrders.length}) → SCHEDULING</button>
+              <button onClick={() => handlePermanentDelete(visibleTrashOrders.map(o => o.order_id))} className="px-4 py-2 bg-destructive/20 text-destructive rounded text-sm hover:bg-destructive/30 flex items-center gap-2" data-testid="empty-trash-btn"><Trash2 className="w-4 h-4" /> {t('empty_trash')} ({visibleTrashOrders.length})</button>
             </div>
           )}
         </DialogContent>
