@@ -609,7 +609,13 @@ async def get_capacity_plan(request: Request):
     api_key = request.query_params.get("api_key")
     if api_key != MASTER_API_KEY:
         await require_auth(request)
-    cache_key = "capacity_plan"
+    # Prefijo "prod_" A PROPÓSITO: invalidate_cache("prod_") corre en cada
+    # captura de producción, así que la carga por máquina se recalcula junto con
+    # el resto de la analítica. Con la llave anterior ("capacity_plan") esta
+    # caché solo moría por TTL (5 min) y la pestaña Máquinas se quedaba hasta
+    # 5 minutos atrás mientras el "Producido" de la misma pantalla ya estaba al
+    # día — dos tarjetas del mismo tablero contándose distinto.
+    cache_key = "prod_capacity_plan"
     
     cached = get_cached(cache_key)
     if cached is not None: return cached
