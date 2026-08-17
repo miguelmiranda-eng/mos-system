@@ -45,6 +45,12 @@ def invalidate_cache(prefix: str = None):
 
 # ==================== OPERATORS CRUD ====================
 
+# Roles funcionales de un operador. Una sola fuente de verdad: create y update
+# validan contra este set, y el front pide la lista por rol con ?role=.
+# "neck" se sumó para poder separar a los de etiqueta de cuello de los de
+# máquina, que hasta ahora vivían revueltos en la misma lista.
+VALID_OPERATOR_ROLES = {"machine", "sample", "paint", "neck"}
+
 @router.get("/operators")
 async def list_operators(request: Request, role: str = ""):
     """Lista operadores. `role` (opcional) filtra por rol funcional
@@ -82,7 +88,7 @@ async def create_operator(request: Request):
     if not isinstance(raw_roles, list):
         raw_roles = [raw_roles]
     roles = sorted({str(r).strip().lower() for r in raw_roles if str(r).strip()})
-    roles = [r for r in roles if r in {"machine", "sample", "paint"}] or ["machine"]
+    roles = [r for r in roles if r in VALID_OPERATOR_ROLES] or ["machine"]
     doc = {
         "operator_id": f"op_{uuid.uuid4().hex[:12]}",
         "name": name,
@@ -117,7 +123,7 @@ async def update_operator(operator_id: str, request: Request):
         if not isinstance(raw, list):
             raw = [raw]
         cleaned = sorted({str(r).strip().lower() for r in raw if str(r).strip()})
-        cleaned = [r for r in cleaned if r in {"machine", "sample", "paint"}]
+        cleaned = [r for r in cleaned if r in VALID_OPERATOR_ROLES]
         update_data["roles"] = cleaned or ["machine"]
     if update_data:
         await db.operators.update_one({"operator_id": operator_id}, {"$set": update_data})

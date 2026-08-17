@@ -4,13 +4,17 @@ import { useLang } from "../contexts/LanguageContext";
 import { API } from "../lib/constants";
 import {
   ArrowLeft, Users, Plus, Loader2, Pencil, Check, X,
-  Trash2, UserCheck, UserMinus, ShieldAlert, Factory, Beaker, Brush,
+  Trash2, UserCheck, UserMinus, ShieldAlert, Factory, Beaker, Brush, Tag,
 } from "lucide-react";
 
+// Las clases van COMPLETAS, no armadas con `bg-${color}-500`: Tailwind escanea
+// el código como texto plano y nunca genera una clase interpolada, así que los
+// chips salían sin color (no hay safelist en tailwind.config.js).
 const ROLE_META = [
-  { id: 'machine', label: 'Máquinas',  icon: Factory, color: 'blue' },
-  { id: 'sample',  label: 'Ejemplos',  icon: Beaker,  color: 'indigo' },
-  { id: 'paint',   label: 'Pinturas',  icon: Brush,   color: 'amber' },
+  { id: 'machine', label: 'Máquinas', icon: Factory, on: 'bg-blue-500/20 text-blue-500 border-blue-500/50' },
+  { id: 'sample',  label: 'Ejemplos', icon: Beaker,  on: 'bg-indigo-500/20 text-indigo-500 border-indigo-500/50' },
+  { id: 'paint',   label: 'Pinturas', icon: Brush,   on: 'bg-amber-500/20 text-amber-500 border-amber-500/50' },
+  { id: 'neck',    label: 'Neck',     icon: Tag,     on: 'bg-violet-500/20 text-violet-500 border-violet-500/50' },
 ];
 
 function RoleChips({ selected, onToggle, size = 'sm' }) {
@@ -23,9 +27,7 @@ function RoleChips({ selected, onToggle, size = 'sm' }) {
         return (
           <button key={r.id} type="button" onClick={() => onToggle(r.id)}
             className={`${pad} font-black uppercase tracking-wider rounded-full border flex items-center gap-1 transition-all
-              ${on
-                ? `bg-${r.color}-500/20 text-${r.color}-500 border-${r.color}-500/50`
-                : 'bg-secondary/40 text-muted-foreground border-border hover:border-muted-foreground/40'}`}>
+              ${on ? r.on : 'bg-secondary/40 text-muted-foreground border-border hover:border-muted-foreground/40'}`}>
             <Icon className="w-3 h-3" /> {r.label}
           </button>
         );
@@ -222,9 +224,15 @@ export default function OperatorsCenter() {
             ) : displayed.length === 0 ? (
               <div className="text-center py-16 border border-dashed border-border rounded-xl bg-secondary/10">
                 <p className="text-muted-foreground font-mono">
-                  {filterRole === 'all' ? 'No hay operadores registrados' : `Ningún operador con rol "${filterRole}"`}
+                  {filterRole === 'all'
+                    ? 'No hay operadores registrados'
+                    : `Ningún operador con el rol ${ROLE_META.find(r => r.id === filterRole)?.label || filterRole}`}
                 </p>
-                <p className="text-xs text-muted-foreground/60 mt-2">Crea uno usando el panel de la derecha.</p>
+                <p className="text-xs text-muted-foreground/60 mt-2">
+                  {filterRole === 'all'
+                    ? 'Crea uno usando el panel de la derecha.'
+                    : 'Créalo en el panel de la derecha, o edita a un operador existente y agrégale el rol.'}
+                </p>
               </div>
             ) : (
               displayed.map(op => {
