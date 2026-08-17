@@ -54,7 +54,11 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
 
   useEffect(() => {
     if (isOpen) {
-      fetch(`${API}/operators`, { credentials: 'include' })
+      // Solo la lista de MÁQUINAS, en espejo del modal de Neck. Hoy no cambia
+      // nada visible (todos los operadores del catálogo traen ese rol, sea
+      // explícito o por el backfill del backend), pero en cuanto se registre a
+      // alguien exclusivo de otra área deja de colarse en este desplegable.
+      fetch(`${API}/operators?role=machine`, { credentials: 'include' })
         .then(r => r.ok ? r.json() : [])
         .then(data => setOperatorsList(data.filter(op => op.active)))
         .catch(() => {});

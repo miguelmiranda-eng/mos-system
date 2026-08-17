@@ -38,7 +38,11 @@ const NeckCaptureModal = ({ isOpen, onClose, orders, onNeckUpdate, isAdmin }) =>
 
   useEffect(() => {
     if (isOpen) {
-      fetch(`${API}/operators`, { credentials: 'include' })
+      // Solo la lista de NECK. Sin el filtro salían los 30 operadores del
+      // catálogo — máquinas, ejemplos y pinturas incluidos. Si la lista queda
+      // vacía, el campo de abajo cae solo al input de texto libre, así que la
+      // captura nunca se traba.
+      fetch(`${API}/operators?role=neck`, { credentials: 'include' })
         .then(r => r.ok ? r.json() : [])
         .then(data => setOperatorsList(data.filter(op => op.active)))
         .catch(() => {});
