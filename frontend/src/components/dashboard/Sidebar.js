@@ -72,6 +72,7 @@ const Sidebar = ({
   showAnalytics = false
 }) => {
   const isPicker = userRole === 'picker';
+  const isSupersu = userRole === 'supersu';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
   const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
   const isAnyMachineActive = machineBoards.includes(currentBoard);
@@ -299,6 +300,11 @@ const Sidebar = ({
                       <ClipboardList size={15} className={iconCls(false)} />
                       <span>Registros</span>
                     </button>
+                    {/* Papelera: SOLO supersu. Son cientos de órdenes muertas y
+                        acciones sin deshacer (restaurar en bloque / borrado
+                        permanente); abrirla desde cualquier cuenta cargaba el
+                        tablero completo sin necesidad. */}
+                    {isSupersu && (
                     <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(showTrash)} title="Papelera">
                       <div className="relative flex-shrink-0">
                         <Trash2 size={15} className={iconCls(showTrash)} />
@@ -311,6 +317,7 @@ const Sidebar = ({
                         </span>
                       )}
                     </button>
+                    )}
                   </CollapsibleContent>
                 </Collapsible>
               </nav>

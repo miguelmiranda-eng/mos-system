@@ -492,7 +492,7 @@ const Dashboard = () => {
       if (actionParam === 'showAutomations') setShowAutomations(true);
       if (actionParam === 'showProduction') setShowProduction(true);
       if (actionParam === 'showAnalytics') setShowAnalytics(true);
-      if (actionParam === 'showTrash') setShowTrash(true);
+      if (actionParam === 'showTrash' && isSuperAdmin) setShowTrash(true);
       if (actionParam === 'showGantt') setShowGantt(true);
       if (actionParam === 'showCapacityPlan') setShowCapacityPlan(true);
       if (actionParam === 'showProductionScreen') setShowProductionScreen(true);
@@ -662,7 +662,10 @@ const Dashboard = () => {
     } catch { toast.error(t('trash_load_err')); } finally { setTrashLoading(false); }
   }, [t]);
 
+  // El contador solo le sirve al supersu, que es el único que ve la papelera:
+  // en las demás cuentas ni se pide.
   const fetchTrashCount = useCallback(async () => {
+    if (!isSuperAdmin) return;
     try {
       const res = await apiFetch(`${API}/orders/board-counts`, { credentials: 'include' });
       if (res.ok) {
@@ -670,7 +673,7 @@ const Dashboard = () => {
         setTrashCount(counts["PAPELERA DE RECICLAJE"] || 0);
       }
     } catch { /* silent */ }
-  }, []);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     fetchTrashCount();
@@ -681,8 +684,8 @@ const Dashboard = () => {
   // vaciar: al abrir el modal por primera vez siempre se veía vacío aunque el
   // tablero PAPELERA DE RECICLAJE tuviera órdenes.
   useEffect(() => {
-    if (showTrash) { setTrashSearch(''); fetchTrashOrders(); }
-  }, [showTrash, fetchTrashOrders]);
+    if (showTrash && isSuperAdmin) { setTrashSearch(''); fetchTrashOrders(); }
+  }, [showTrash, isSuperAdmin, fetchTrashOrders]);
 
   // Vista filtrada de la papelera. TODO lo que se muestra y TODO lo que hacen
   // los botones del pie opera sobre esta lista, no sobre la completa: con el
@@ -2427,8 +2430,8 @@ const Dashboard = () => {
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
       <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
 
-      {/* Trash Modal */}
-      <Dialog open={showTrash} onOpenChange={setShowTrash}>
+      {/* Trash Modal — exclusivo del supersu (ver Sidebar). */}
+      <Dialog open={showTrash && isSuperAdmin} onOpenChange={setShowTrash}>
         <DialogContent className="max-w-4xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col" data-testid="trash-modal">
           <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashSearch.trim() ? `${visibleTrashOrders.length} de ${trashOrders.length}` : trashOrders.length})</span></DialogTitle></DialogHeader>
           <div className="relative">
