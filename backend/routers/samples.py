@@ -28,6 +28,52 @@ HOT_PRIORITIES = {"RUSH", "SPECIAL RUSH", "OVERSOLD", "EVENT"}
 # los mismos strings que production_statuses para no crear un vocabulario paralelo.
 TERMINAL_STATUSES = {"EJEMPLO APROBADO", "CANCELLED"}
 
+# ── AVANCE DEL EJEMPLO ──────────────────────────────────────────────────────
+# Cuatro palomeos independientes. Son PROPIOS del ejemplo y NO escriben en los
+# campos homónimos de la orden (art_sep_status, art_neck_status, trim_status,
+# screens): el arte de un EJEMPLO no es el de la orden de producción, y
+# mezclarlos ensuciaría los contadores del módulo de Arte, que miden
+# separaciones hechas por día para producción.
+SAMPLE_FLAGS = ("arte", "neck", "trim", "screens")
+
+# Aprobación del cliente. Nace en RECIBIDO y sólo tiene un paso adelante.
+APPROVAL_RECEIVED = "RECIBIDO"
+APPROVAL_APPROVED = "APROBADO"
+APPROVAL_VALUES = (APPROVAL_RECEIVED, APPROVAL_APPROVED)
+
+# ── LAS TRES PESTAÑAS ───────────────────────────────────────────────────────
+# Son EXCLUYENTES y se derivan, no se guardan: un estado guardado se
+# desincroniza en cuanto alguien promueve una orden o cambia la aprobación por
+# otra vía. La precedencia:
+#
+#   1. aprobado por el cliente      → APROBADOS     (gana, TENGA O NO PO)
+#   2. tiene número de orden (PO)   → READY TO MOS
+#   3. lo demás                     → EJEMPLOS      (donde se crean y programan)
+#
+# POR QUÉ LA APROBACIÓN GANA
+# Primero se hizo al revés (PO sobre aprobación) y la orden 2722 —que ya tenía
+# número real— se quedó en Ready to MOS al aprobarla, cuando quien la aprobó
+# esperaba verla en Aprobados. Las dos reglas del negocio se cumplen igual con
+# esta precedencia: un ejemplo recién creado CON número de orden todavía no está
+# aprobado, así que sigue entrando directo a Ready to MOS.
+STAGE_EJEMPLOS = "ejemplos"
+STAGE_APROBADOS = "aprobados"
+STAGE_READY = "ready_to_mos"
+STAGES = (STAGE_EJEMPLOS, STAGE_APROBADOS, STAGE_READY)
+
+
+def _default_flags():
+    return {f: False for f in SAMPLE_FLAGS}
+
+
+def _stage_of(task) -> str:
+    """Pestaña a la que pertenece el ejemplo. Ver la precedencia arriba."""
+    if (task.get("approval") or APPROVAL_RECEIVED) == APPROVAL_APPROVED:
+        return STAGE_APROBADOS
+    if not task.get("is_provisional"):
+        return STAGE_READY
+    return STAGE_EJEMPLOS
+
 # Campos de la orden que se muestran en la tarjeta (se unen en vivo).
 _ORDER_FIELDS = {
     "_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1,
@@ -142,6 +188,11 @@ async def _enrich(tasks):
         t["order"] = o
         t["resources"] = await _resources(o) if o else {}
         t["overdue"] = _overdue(o, t) if o else False
+        # Defaults de lectura para los ejemplos creados antes de esta versión.
+        flags = t.get("flags") or {}
+        t["flags"] = {f: bool(flags.get(f)) for f in SAMPLE_FLAGS}
+        t["approval"] = t.get("approval") or APPROVAL_RECEIVED
+        t["stage"] = _stage_of(t)
     return tasks
 
 
@@ -312,6 +363,12 @@ async def add_task(request: Request):
         "priority_rank": 0,
         "is_hot": _is_hot(order),
         "status": body.get("status") or order.get("sample") or "EJEMPLO PRIMERO",
+        # Avance propio del ejemplo (ver SAMPLE_FLAGS).
+        "flags": {f: bool((body.get("flags") or {}).get(f)) for f in SAMPLE_FLAGS},
+        "flags_meta": {},
+        "approval": (body.get("approval") or APPROVAL_RECEIVED).strip().upper()
+                    if (body.get("approval") or APPROVAL_RECEIVED).strip().upper() in APPROVAL_VALUES
+                    else APPROVAL_RECEIVED,
         "operator_id": body.get("operator_id") or None,
         "operator": body.get("operator") or None,
         "color_tag": body.get("color_tag") or None,   # hex opcional
@@ -813,6 +870,9 @@ async def promote(task_id: str, request: Request):
         raise HTTPException(400, "La orden destino también es PROV-, no se puede fusionar")
 
     prov_id = task["order_id"]
+    # Se lee ANTES de archivarla: de la PROV- sale lo que se capturó durante la
+    # vida del ejemplo y que la orden real puede no traer.
+    prov_order = await db.orders.find_one({"order_id": prov_id}, _ORDER_FIELDS) or {}
 
     # 1) Repunta el task
     await db.sample_tasks.update_one(
@@ -824,11 +884,25 @@ async def promote(task_id: str, request: Request):
             "updated_at": now_iso(),
         }})
 
-    # 2) Refleja el sample en la orden real si estaba vacío
+    # 2) Lo trabajado mientras el ejemplo vivió SIN número de orden se vuelca a
+    #    la orden real — pero sólo donde el CRM viene en blanco. Nunca pisa un
+    #    dato que alguien ya capturó del lado del CRM: el ejemplo llena huecos,
+    #    no corrige la orden.
+    #    Los palomeos (arte/neck/trim/screens) NO se copian a
+    #    art_sep_status/art_neck_status/trim_status/screens: son avance del
+    #    EJEMPLO y contaminarían los KPIs del módulo de Arte, que miden trabajo
+    #    de producción.
+    llenar = {}
     if not (real.get("sample") or "").strip():
-        await db.orders.update_one(
-            {"order_id": real["order_id"]},
-            {"$set": {"sample": task.get("status") or "EJEMPLO PRIMERO"}})
+        aprobado = (task.get("approval") or APPROVAL_RECEIVED) == APPROVAL_APPROVED
+        llenar["sample"] = "EJEMPLO APROBADO" if aprobado else (task.get("status") or "EJEMPLO PRIMERO")
+    for campo in ("color", "client", "style"):
+        if not (real.get(campo) or "").strip():
+            valor = (prov_order or {}).get(campo)
+            if valor:
+                llenar[campo] = valor
+    if llenar:
+        await db.orders.update_one({"order_id": real["order_id"]}, {"$set": llenar})
 
     # 3) Manda la PROV- a la papelera (no borrar duro; deja rastro por auditoría)
     await db.orders.update_one(
@@ -842,11 +916,224 @@ async def promote(task_id: str, request: Request):
         "from_prov": prov_id,
         "to_order_id": real["order_id"],
         "to_order_number": real["order_number"],
+        "campos_llenados": list(llenar.keys()),
+        "flags": task.get("flags") or {},
+        "approval": task.get("approval") or APPROVAL_RECEIVED,
     })
     await _broadcast(real["order_id"])
     task = await db.sample_tasks.find_one({"sample_task_id": task_id}, {"_id": 0})
     await _enrich([task])
     return task
+
+
+# ═══════════════ AVANCE (palomeos) Y APROBACIÓN ═════════════════════════════
+@router.put("/tasks/{task_id}/flags")
+async def set_flags(task_id: str, request: Request):
+    """Palomea/despalomea arte, neck, trim o screens del ejemplo.
+
+    Body: {"flags": {"arte": true, "neck": false}}  — parcial, se fusiona.
+
+    Guarda además quién y cuándo palomeó cada uno: en el piso la pregunta que
+    sigue a "¿ya está el arte?" siempre es "¿quién lo marcó?".
+    """
+    user = await require_sample_write(request)
+    body = await request.json()
+    entrantes = body.get("flags")
+    if not isinstance(entrantes, dict) or not entrantes:
+        raise HTTPException(400, "Body: {\"flags\": {\"arte\": true, ...}}")
+    desconocidos = [k for k in entrantes if k not in SAMPLE_FLAGS]
+    if desconocidos:
+        raise HTTPException(400, f"Palomeo desconocido: {', '.join(desconocidos)}")
+
+    task = await db.sample_tasks.find_one({"sample_task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(404, "Ejemplo no encontrado")
+
+    flags = {f: bool((task.get("flags") or {}).get(f)) for f in SAMPLE_FLAGS}
+    meta = dict(task.get("flags_meta") or {})
+    ahora = now_iso()
+    for k, v in entrantes.items():
+        nuevo = bool(v)
+        if flags[k] == nuevo:
+            continue
+        flags[k] = nuevo
+        # Al despalomear se BORRA la firma: dejar el nombre de quien lo marcó en
+        # un palomeo apagado haría creer que esa persona lo deshizo.
+        meta[k] = {"by": user.get("user_id"), "by_name": user.get("name", ""), "at": ahora} if nuevo else None
+
+    await db.sample_tasks.update_one(
+        {"sample_task_id": task_id},
+        {"$set": {"flags": flags, "flags_meta": meta, "updated_at": ahora}})
+    await log_activity(user, "sample_flags", {
+        "order_number": task.get("order_number"), "flags": entrantes})
+    await _broadcast(task["order_id"])
+    task.update({"flags": flags, "flags_meta": meta})
+    await _enrich([task])
+    return task
+
+
+@router.put("/tasks/{task_id}/approval")
+async def set_approval(task_id: str, request: Request):
+    """Cambia la aprobación del ejemplo entre RECIBIDO y APROBADO.
+
+    APROBADO lo manda a la pestaña Aprobados, tenga o no número de orden.
+    """
+    user = await require_sample_write(request)
+    body = await request.json()
+    valor = (body.get("approval") or "").strip().upper()
+    if valor not in APPROVAL_VALUES:
+        raise HTTPException(400, f"Aprobación inválida. Válidas: {', '.join(APPROVAL_VALUES)}")
+
+    task = await db.sample_tasks.find_one({"sample_task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(404, "Ejemplo no encontrado")
+
+    ahora = now_iso()
+    upd = {"approval": valor, "updated_at": ahora}
+    if valor == APPROVAL_APPROVED:
+        upd.update({"approved_by": user.get("user_id"),
+                    "approved_by_name": user.get("name", ""),
+                    "approved_at": ahora})
+        unset = {}
+    else:
+        # Regresar a RECIBIDO limpia la firma de aprobación, por lo mismo que
+        # los palomeos: una firma vieja sobre un ejemplo no aprobado miente.
+        unset = {"approved_by": "", "approved_by_name": "", "approved_at": ""}
+
+    ops = {"$set": upd}
+    if unset:
+        ops["$unset"] = unset
+    await db.sample_tasks.update_one({"sample_task_id": task_id}, ops)
+
+    # Espeja al vocabulario legacy que lee el CRM en su columna `sample`.
+    if valor == APPROVAL_APPROVED:
+        await db.sample_tasks.update_one(
+            {"sample_task_id": task_id}, {"$set": {"status": "EJEMPLO APROBADO"}})
+        await db.orders.update_one(
+            {"order_id": task["order_id"]}, {"$set": {"sample": "EJEMPLO APROBADO"}})
+
+    await log_activity(user, "sample_approval", {
+        "order_number": task.get("order_number"), "approval": valor})
+    await _broadcast(task["order_id"])
+    task = await db.sample_tasks.find_one({"sample_task_id": task_id}, {"_id": 0})
+    await _enrich([task])
+    return task
+
+
+# ═══════════════ PESTAÑAS ═══════════════════════════════════════════════════
+@router.get("/by-stage")
+async def by_stage(request: Request, stage: str = STAGE_EJEMPLOS, limit: int = 500):
+    """Ejemplos de una pestaña + el conteo de las tres.
+
+    Los conteos van SIEMPRE los tres, no sólo el de la pestaña pedida: las
+    cifras de las otras dos se ven en sus botones y quedarían rancias si sólo
+    se refrescara la activa.
+    """
+    await require_auth(request)
+    if stage not in STAGES:
+        raise HTTPException(400, f"Pestaña inválida. Válidas: {', '.join(STAGES)}")
+    limit = max(1, min(limit, 2000))
+
+    # La etapa se deriva en Python (ver _stage_of): expresarla como query de
+    # Mongo obligaría a repetir la misma regla en dos lenguajes y a que las dos
+    # copias se mantuvieran iguales para siempre.
+    todos = await db.sample_tasks.find({}, {"_id": 0}).sort("updated_at", -1).to_list(5000)
+    for t in todos:
+        t["approval"] = t.get("approval") or APPROVAL_RECEIVED
+        t["stage"] = _stage_of(t)
+    counts = {st: sum(1 for t in todos if t["stage"] == st) for st in STAGES}
+    elegidos = [t for t in todos if t["stage"] == stage][:limit]
+    await _enrich(elegidos)
+    return {"stage": stage, "counts": counts, "total": counts[stage], "items": elegidos}
+
+
+# ═══════════════ CAZA DE LA ORDEN REAL POR STYLE ════════════════════════════
+@router.get("/tasks/{task_id}/order-matches")
+async def order_matches(request: Request, task_id: str, limit: int = 20):
+    """Órdenes reales que podrían ser este ejemplo, cazadas por STYLE.
+
+    Es el camino inverso de /prov-suggestions (que parte de la orden y busca
+    ejemplos): aquí se parte del ejemplo sin PO y se buscan sus órdenes, que es
+    como se trabaja en el piso — el ejemplo existe primero y el número llega
+    después.
+
+    LA LLAVE ES EL NÚMERO DE DISEÑO, NO EL CAMPO `style`
+    ────────────────────────────────────────────────────
+    Medido sobre la base real (2026-08-18): los ejemplos guardan el número de
+    diseño DENTRO de su campo `style` (WCC0023M5000), mientras que en las
+    órdenes reales `style` viene basura (' ', '-') y el diseño vive en
+    `design_#`, además con espacios al final. Cazar style contra style
+    encontraba CERO de 36; cazar contra `design_#` encuentra 19.
+
+    Por eso la comparación es contra `design_#` (y su typo heredado `desing_#`),
+    insensible a mayúsculas y tolerante a los espacios sobrantes.
+
+    El cliente y la cercanía de fechas sólo SUMAN puntos, no filtran: exigir que
+    el cliente coincida deja fuera la orden buena cuando el ejemplo se capturó
+    con el nombre corto del cliente.
+    """
+    await require_auth(request)
+    task = await db.sample_tasks.find_one({"sample_task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(404, "Ejemplo no encontrado")
+
+    prov = await db.orders.find_one(
+        {"order_id": task["order_id"]},
+        {**_ORDER_FIELDS, "design_#": 1, "desing_#": 1},
+    ) or {}
+    clave = (prov.get("design_#") or prov.get("desing_#") or prov.get("style") or "").strip().upper()
+    if not clave:
+        return {"design": "", "matches": [],
+                "hint": "El ejemplo no tiene número de diseño; sin él no hay con qué cazar la orden."}
+
+    # Los valores guardados traen espacios al final ('TS01340U1039 '), así que
+    # la igualdad exacta falla; se compara con los espacios tolerados.
+    rx = {"$regex": rf"^\s*{re.escape(clave)}\s*$", "$options": "i"}
+    cliente = (prov.get("client") or "").strip().upper()
+    reales = await db.orders.find(
+        {"$or": [{"design_#": rx}, {"desing_#": rx}, {"style": rx}],
+         "is_provisional": {"$ne": True},
+         "order_id": {"$ne": task["order_id"]},
+         "board": {"$nin": ["PAPELERA DE RECICLAJE", "EJEMPLOS"]}},
+        {**_ORDER_FIELDS, "design_#": 1, "desing_#": 1},
+    ).sort("created_at", -1).to_list(200)
+
+    # Una orden que ya es el ejemplo de alguien más no se vuelve a ofrecer.
+    tomadas = set()
+    async for t in db.sample_tasks.find(
+        {"order_id": {"$in": [o["order_id"] for o in reales]}}, {"_id": 0, "order_id": 1}
+    ):
+        tomadas.add(t["order_id"])
+
+    prov_due = (prov.get("due_date") or prov.get("cancel_date") or "")[:10]
+    out = []
+    for o in reales:
+        if o["order_id"] in tomadas:
+            continue
+        score = 50
+        razones = ["mismo número de diseño"]
+        if cliente and (o.get("client") or "").strip().upper() == cliente:
+            score += 30
+            razones.append("mismo cliente")
+        if (prov.get("color") or "").strip().upper() and \
+           (o.get("color") or "").strip().upper() == (prov.get("color") or "").strip().upper():
+            score += 10
+            razones.append("mismo color")
+        o_due = (o.get("due_date") or o.get("cancel_date") or "")[:10]
+        if prov_due and o_due:
+            try:
+                d1 = datetime.strptime(prov_due, "%Y-%m-%d").date()
+                d2 = datetime.strptime(o_due, "%Y-%m-%d").date()
+                dias = abs((d1 - d2).days)
+                if dias <= 30:
+                    score += max(0, 20 - dias // 2)
+                    razones.append(f"fechas a {dias} día(s)")
+            except ValueError:
+                pass
+        out.append({**o, "match_score": score, "match_reasons": razones})
+
+    out.sort(key=lambda x: -x["match_score"])
+    return {"design": clave, "matches": out[:limit]}
 
 
 # ═══════════════ EXPORT EXCEL ═══════════════════════════════════════════════

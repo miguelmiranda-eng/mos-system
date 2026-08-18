@@ -10,17 +10,34 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css';
 
 const DnDCalendar = withDragAndDrop(Calendar);
+
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Beaker, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame,
-  RefreshCw, CalendarDays, Package, ExternalLink, AlertTriangle, CheckCircle2,
+  RefreshCw, CalendarDays, Package, ExternalLink, AlertTriangle, CheckCircle2, Search, Link2,
   UserPlus, Shirt, Palette, Layers, Droplet, Scissors, Sparkles, Wand2, Zap,
   Download, ChevronDown,
 } from 'lucide-react';
 import { API } from '../lib/constants';
 import { useTheme } from '../contexts/ThemeContext';
 import { Toaster } from './ui/sonner';
+
+// Espejo de routers/samples.py. La ETAPA la calcula el backend (`task.stage`);
+// aquí sólo se pintan. Duplicar la regla de precedencia en el cliente sería
+// pedir que las dos copias se mantuvieran iguales para siempre.
+const STAGE_TABS = [
+  { key: 'ejemplos',     label: 'Ejemplos',     hint: 'Se crean y se programan aquí' },
+  { key: 'aprobados',    label: 'Aprobados',    hint: 'Aprobados por el cliente (tengan o no número de orden)' },
+  { key: 'ready_to_mos', label: 'Ready to MOS', hint: 'Ya tienen número de orden (PO)' },
+];
+
+const SAMPLE_FLAGS = [
+  { key: 'arte',    label: 'Arte',    Icon: Palette },
+  { key: 'neck',    label: 'Neck',    Icon: Scissors },
+  { key: 'trim',    label: 'Trim',    Icon: Package },
+  { key: 'screens', label: 'Screens', Icon: Layers },
+];
 
 // ─── localizer ──────────────────────────────────────────────────────────────
 const locales = { es };
@@ -111,6 +128,20 @@ export default function SamplesModule() {
   const [draggedTaskId, setDraggedTaskId] = useState(null);
   const [dragFromCalendar, setDragFromCalendar] = useState(false);
   const [backlogTab, setBacklogTab] = useState('with_style');   // with_style | no_style
+  const [stage, setStage] = useState('ejemplos');               // ejemplos | aprobados | ready_to_mos
+  const [stageData, setStageData] = useState({ items: [], counts: {} });
+  const [stageLoading, setStageLoading] = useState(false);
+  // Dentro de Ejemplos hay dos vistas. Arranca en LISTA porque el contador de
+  // la pestaña cuenta TODOS los ejemplos de la etapa, mientras que el
+  // calendario sólo enseña los de la semana visible: con 79 ejemplos repartidos
+  // en tres meses, el calendario mostraba 2 y parecía que la lista no existía.
+  // La elección se recuerda por usuario.
+  const [ejemplosView, setEjemplosView] = useState(
+    () => localStorage.getItem('samples_ejemplos_view') || 'lista');
+  const setEjemplosViewSaved = useCallback((v) => {
+    setEjemplosView(v);
+    localStorage.setItem('samples_ejemplos_view', v);
+  }, []);
   const [showAuto, setShowAuto] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -152,6 +183,47 @@ export default function SamplesModule() {
     if (view === Views.MONTH) return setAnchor(dir > 0 ? addMonths(anchor, 1): subMonths(anchor, 1));
     return setAnchor(dir > 0 ? addWeeks(anchor, 1) : subWeeks(anchor, 1));
   };
+
+  // Las tablas de Aprobados / Ready to MOS vienen del backend ya clasificadas;
+  // los conteos llegan SIEMPRE los tres, para que los números de las pestañas
+  // que no estás viendo no queden rancios.
+  const loadStage = useCallback(async (which) => {
+    setStageLoading(true);
+    try {
+      const d = await api('GET', `/samples/by-stage?stage=${which}`);
+      setStageData({ items: d?.items || [], counts: d?.counts || {} });
+    } catch { toast.error('No se pudieron cargar los ejemplos de esta pestaña'); }
+    finally { setStageLoading(false); }
+  }, []);
+
+  const toggleFlag = useCallback(async (task, key, value) => {
+    try {
+      const upd = await api('PUT', `/samples/tasks/${task.sample_task_id}/flags`,
+                            { flags: { [key]: value } });
+      setDetail(d => (d && d.sample_task_id === task.sample_task_id ? upd : d));
+      setStageData(sd => ({ ...sd, items: sd.items.map(t => t.sample_task_id === upd.sample_task_id ? upd : t) }));
+      setTasks(ts => ts.map(t => t.sample_task_id === upd.sample_task_id ? upd : t));
+      setBacklog(bs => bs.map(t => t.sample_task_id === upd.sample_task_id ? upd : t));
+    } catch { toast.error('No se pudo guardar el palomeo'); }
+  }, []);
+
+  const changeApproval = useCallback(async (task, value) => {
+    try {
+      const upd = await api('PUT', `/samples/tasks/${task.sample_task_id}/approval`,
+                            { approval: value });
+      toast.success(value === 'APROBADO'
+        ? `${task.order_number} aprobado`
+        : `${task.order_number} regresó a recibido`);
+      setDetail(d => (d && d.sample_task_id === task.sample_task_id ? upd : d));
+      // Cambiar la aprobación puede MOVER el ejemplo de pestaña, así que se
+      // recarga la lista en vez de parchear el renglón en su lugar.
+      return upd;
+    } catch { toast.error('No se pudo cambiar la aprobación'); return null; }
+  }, []);
+
+  // Los conteos de las tres pestañas se piden siempre, aunque estés en el
+  // calendario: son los números que se ven en los botones.
+  useEffect(() => { loadStage(stage); }, [stage, loadStage]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -415,6 +487,64 @@ export default function SamplesModule() {
           </div>
         </div>
 
+        {/* ── PESTAÑAS ────────────────────────────────────────────────────
+            El ciclo de vida del ejemplo. La etapa la decide el backend y es
+            EXCLUYENTE: la aprobación gana, así que un ejemplo aprobado vive en
+            Aprobados aunque ya tenga número de orden. Uno recién creado CON
+            número (todavía sin aprobar) entra directo a Ready to MOS. */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {STAGE_TABS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setStage(t.key)}
+              title={t.hint}
+              className={`px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest border transition-colors flex items-center gap-2 ${
+                stage === t.key
+                  ? 'bg-indigo-500 text-white border-indigo-500'
+                  : 'border-border text-muted-foreground hover:text-foreground hover:border-indigo-400/50'
+              }`}
+              data-testid={`sample-tab-${t.key}`}
+            >
+              {t.label}
+              <span className={`px-1.5 py-0.5 rounded text-[10px] ${stage === t.key ? 'bg-white/20' : 'bg-secondary/60'}`}>
+                {stageData.counts?.[t.key] ?? '—'}
+              </span>
+            </button>
+          ))}
+          {stageLoading && <Loader2 size={14} className="animate-spin text-indigo-400" />}
+        </div>
+
+        {stage === 'ejemplos' && (
+          <div className="flex items-center gap-1.5 mb-3">
+            {[['lista', 'Lista'], ['calendario', 'Calendario']].map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setEjemplosViewSaved(v)}
+                className={`px-2.5 py-1.5 rounded-md text-[11px] font-black uppercase tracking-widest transition-colors ${
+                  ejemplosView === v ? 'bg-indigo-500 text-white' : 'border border-border text-muted-foreground hover:text-foreground'
+                }`}
+                data-testid={`ejemplos-view-${v}`}
+              >{label}</button>
+            ))}
+            <span className="text-[11px] text-muted-foreground ml-1">
+              {ejemplosView === 'calendario'
+                ? 'El calendario sólo muestra los del rango visible'
+                : `Los ${stageData.counts?.ejemplos ?? 0} ejemplos de la etapa, sin importar su fecha`}
+            </span>
+          </div>
+        )}
+
+        {stage === 'ejemplos' && ejemplosView === 'lista' ? (
+          <StageTable
+            items={stageData.items}
+            loading={stageLoading}
+            stage={stage}
+            onOpen={setDetail}
+            onToggleFlag={toggleFlag}
+            onApproval={async (task, v) => { await changeApproval(task, v); loadStage(stage); }}
+          />
+        ) : stage === 'ejemplos' ? (
+          <>
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Ejemplos en rango</div><div className="text-2xl font-black">{metrics.total}</div></div>
@@ -570,6 +700,18 @@ export default function SamplesModule() {
           <span className="ml-auto">Verde = listo · Rojo = falta · Gris = no aplica</span>
         </div>
 
+          </>
+        ) : (
+          <StageTable
+            items={stageData.items}
+            loading={stageLoading}
+            stage={stage}
+            onOpen={setDetail}
+            onToggleFlag={toggleFlag}
+            onApproval={async (task, v) => { await changeApproval(task, v); loadStage(stage); }}
+          />
+        )}
+
         {/* Modal detalle */}
         {detail && (
           <DetailModal
@@ -580,6 +722,8 @@ export default function SamplesModule() {
             onStatus={(s) => changeStatus(detail.sample_task_id, s)}
             onDelete={() => removeTask(detail)}
             onPromote={(num) => promoteProv(detail, num)}
+            onToggleFlag={toggleFlag}
+            onApproval={async (t, v) => { await changeApproval(t, v); loadStage(stage); }}
           />
         )}
 
@@ -611,10 +755,112 @@ export default function SamplesModule() {
 }
 
 // ═════════════ DetailModal ══════════════════════════════════════════════════
-function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, onStatus, onDelete, onPromote }) {
+// Tabla de las pestañas que NO son el calendario. Los palomeos se editan aquí
+// mismo: en el piso se palomea de corrido sobre la lista, y obligar a abrir el
+// detalle de cada ejemplo para marcar una casilla vuelve inservible la pantalla.
+function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval }) {
+  if (loading && !items.length) {
+    return <div className="py-16 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-indigo-400" /></div>;
+  }
+  if (!items.length) {
+    return (
+      <div className="py-16 text-center text-sm text-muted-foreground">
+        {stage === 'aprobados'
+          ? 'Ningún ejemplo aprobado sin número de orden.'
+          : 'Ningún ejemplo con número de orden todavía.'}
+      </div>
+    );
+  }
+  return (
+    <div className="border border-border rounded-2xl overflow-hidden bg-card/40">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-secondary/40 border-b border-border">
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Orden</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color</th>
+              {SAMPLE_FLAGS.map(f => (
+                <th key={f.key} className="px-2 py-2.5 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">{f.label}</th>
+              ))}
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Aprobado</th>
+              <th className="px-3 py-2.5 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Detalle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(t => {
+              const o = t.order || {};
+              return (
+                <tr key={t.sample_task_id} className="border-b border-border/60 last:border-0 hover:bg-secondary/20">
+                  <td className="px-3 py-2.5 font-mono font-black">
+                    {t.order_number}
+                    {t.is_provisional && <span className="ml-1.5 text-[9px] font-black uppercase bg-amber-500/20 text-amber-500 px-1 py-0.5 rounded">PROV</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-muted-foreground">{o.client || '—'}</td>
+                  <td className="px-3 py-2.5">{o.style || '—'}</td>
+                  <td className="px-3 py-2.5 text-muted-foreground">{o.color || '—'}</td>
+                  {SAMPLE_FLAGS.map(f => (
+                    <td key={f.key} className="px-2 py-2.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={!!t.flags?.[f.key]}
+                        onChange={(e) => onToggleFlag(t, f.key, e.target.checked)}
+                        title={t.flags_meta?.[f.key]?.by_name
+                          ? `${t.flags_meta[f.key].by_name} · ${new Date(t.flags_meta[f.key].at).toLocaleString()}`
+                          : f.label}
+                        className="w-4 h-4 rounded border-border accent-indigo-500"
+                        data-testid={`flag-${f.key}-${t.order_number}`}
+                      />
+                    </td>
+                  ))}
+                  <td className="px-3 py-2.5">
+                    <select
+                      value={t.approval || 'RECIBIDO'}
+                      onChange={(e) => onApproval(t, e.target.value)}
+                      className="px-2 py-1 rounded-lg bg-background border border-border text-xs font-bold"
+                      data-testid={`approval-${t.order_number}`}
+                    >
+                      <option value="RECIBIDO">Recibido</option>
+                      <option value="APROBADO">Aprobado</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <button onClick={() => onOpen(t)} className="px-2 py-1 rounded-lg border border-border text-xs font-bold hover:bg-secondary/40">
+                      Abrir
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, onStatus, onDelete, onPromote, onToggleFlag, onApproval }) {
   const o = task.order || {};
   const r = task.resources || {};
   const [promoteNum, setPromoteNum] = useState('');
+  // Órdenes reales que podrían ser este ejemplo. Se piden al abrir el detalle
+  // de un PROV: teclear el número a mano es justo el paso donde se equivocan y
+  // se fusiona el ejemplo con la orden de otro cliente.
+  const [matches, setMatches] = useState(null);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  useEffect(() => {
+    if (!task.is_provisional) { setMatches(null); return; }
+    let vivo = true;
+    setMatchesLoading(true);
+    fetch(`${API}/samples/tasks/${task.sample_task_id}/order-matches`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (vivo) setMatches(d); })
+      .catch(() => {})
+      .finally(() => { if (vivo) setMatchesLoading(false); });
+    return () => { vivo = false; };
+  }, [task.sample_task_id, task.is_provisional]);
+
   const jUrl = jobUrl(o.job_title_a);
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
@@ -631,6 +877,51 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
             <div className="text-xs text-muted-foreground mt-1">{o.client || '—'}{o.branding ? ` · ${o.branding}` : ''}{o.style ? ` · ${o.style}` : ''}</div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-secondary/40"><X size={18} /></button>
+        </div>
+
+        {/* Avance del ejemplo — propio del ejemplo, NO son los campos de arte
+            de la orden de producción (ver samples.py::SAMPLE_FLAGS). */}
+        <div className="bg-secondary/30 rounded-xl p-3 mb-3">
+          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Avance del ejemplo</div>
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            {SAMPLE_FLAGS.map(({ key, label, Icon }) => {
+              const on = !!task.flags?.[key];
+              const meta = task.flags_meta?.[key];
+              return (
+                <button
+                  key={key}
+                  onClick={() => onToggleFlag && onToggleFlag(task, key, !on)}
+                  title={meta?.by_name ? `${meta.by_name} · ${new Date(meta.at).toLocaleString()}` : `Marcar ${label}`}
+                  className={`p-2 rounded-lg border text-center transition-colors ${
+                    on ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-500'
+                       : 'bg-background border-border text-muted-foreground hover:border-indigo-400/50'
+                  }`}
+                  data-testid={`detail-flag-${key}`}
+                >
+                  <Icon size={15} className="mx-auto" />
+                  <div className="text-[10px] font-black uppercase tracking-wider mt-1">{label}</div>
+                  {on && <CheckCircle2 size={11} className="mx-auto mt-0.5" />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Aprobado</span>
+            <select
+              value={task.approval || 'RECIBIDO'}
+              onChange={(e) => onApproval && onApproval(task, e.target.value)}
+              className="px-2 py-1 rounded-lg bg-background border border-border text-xs font-bold"
+              data-testid="detail-approval"
+            >
+              <option value="RECIBIDO">Recibido</option>
+              <option value="APROBADO">Aprobado</option>
+            </select>
+            {task.approved_by_name && (
+              <span className="text-[11px] text-muted-foreground">
+                por {task.approved_by_name}{task.approved_at ? ` · ${new Date(task.approved_at).toLocaleDateString()}` : ''}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Recursos */}
@@ -709,7 +1000,45 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
         {task.is_provisional && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
             <div className="text-[11px] font-black uppercase text-amber-400 mb-1 flex items-center gap-1"><Sparkles size={12} />Fusionar con orden real</div>
-            <div className="text-[10px] text-muted-foreground mb-2">Cuando Printavo traiga el número real, escríbelo aquí y ambas se fusionarán en una sola orden.</div>
+            <div className="text-[10px] text-muted-foreground mb-2">Cuando Printavo traiga el número real, escríbelo aquí y ambas se fusionarán en una sola orden. Lo trabajado en el ejemplo se conserva y llena los huecos del CRM.</div>
+
+            {/* Candidatas cazadas por número de diseño. Al fusionar, el ejemplo
+                pasa a apuntar a la orden real y su info del CRM (cliente,
+                cantidad, fechas, prioridad) se une en vivo. */}
+            {matchesLoading && (
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-2">
+                <Loader2 size={12} className="animate-spin" /> Buscando órdenes con el mismo diseño…
+              </div>
+            )}
+            {matches && !matchesLoading && (
+              matches.matches?.length ? (
+                <div className="mb-2 space-y-1.5">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1">
+                    <Search size={11} /> Diseño {matches.design} — {matches.matches.length} candidata(s)
+                  </div>
+                  {matches.matches.slice(0, 5).map(m => (
+                    <div key={m.order_id} className="flex items-center gap-2 bg-background/60 border border-border rounded-lg px-2 py-1.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono font-black text-xs">{m.order_number}</div>
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {m.client || '—'}{m.color ? ` · ${m.color}` : ''} · {(m.match_reasons || []).join(' · ')}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => onPromote(m.order_number)}
+                        className="px-2 py-1 rounded-lg bg-amber-500 text-black font-black text-[10px] uppercase flex items-center gap-1 shrink-0"
+                        data-testid={`match-${m.order_number}`}
+                      ><Link2 size={11} /> Fusionar</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[10px] text-muted-foreground mb-2">
+                  {matches.hint || `Sin órdenes con el diseño ${matches.design || '—'}. Escribe el número a mano.`}
+                </div>
+              )
+            )}
+
             <div className="flex gap-2">
               <input value={promoteNum} onChange={e => setPromoteNum(e.target.value)} placeholder="# de orden real"
                 className="flex-1 bg-background border border-border rounded-lg px-2 py-1.5 text-sm" />
