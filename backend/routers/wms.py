@@ -11313,6 +11313,12 @@ async def create_cycle_count(request: Request):
     # encontrado en ubicaciones sin inventario registrado.
     include_empty = bool(body.get("include_empty", False))
 
+    # Modo de conteo: "box_scan" (default) escanea el LPN de cada caja por
+    # ubicacion; "pieces" es la captura de unidades renglon por renglon. Se
+    # resuelve aqui arriba porque el muestreo aleatorio depende de el: por pieza
+    # una ubicacion vacia no tiene renglon que contar.
+    mode = "pieces" if (body.get("mode") or "").strip() == "pieces" else "box_scan"
+
     # ── Conteo ALEATORIO por zona ──────────────────────────────────────────────
     # El supervisor elige N zonas y el sistema muestrea `random_per_zone`
     # ubicaciones AL AZAR de cada una (5 por default). Es una auditoria por
@@ -11357,8 +11363,12 @@ async def create_cycle_count(request: Request):
         loc_docs = await db.wms_locations.find(
             {"active": {"$ne": False}}, {"_id": 0, "name": 1, "zone": 1},
         ).to_list(30000)
+        # Por pieza el sorteo se acota a ubicaciones con caja viva aunque pidan
+        # incluir vacias: una ubicacion sin stock no tiene renglon de inventario
+        # que capturar, solo dejaria al contador parado enfrente de un hueco.
+        sample_empty = include_empty and mode == "box_scan"
         stocked = set()
-        if not include_empty:
+        if not sample_empty:
             stocked = set(await db.wms_boxes.distinct("location", {"units": {"$gt": 0}}))
         wanted = set(random_zones)
         by_zone: dict[str, set] = {}
@@ -11369,7 +11379,7 @@ async def create_cycle_count(request: Request):
             z = (d.get("zone") or "").strip().upper() or "SIN ZONA"
             if z not in wanted:
                 continue
-            if not include_empty and nm not in stocked:
+            if not sample_empty and nm not in stocked:
                 continue
             by_zone.setdefault(z, set()).add(nm)
         for z in random_zones:
@@ -11382,7 +11392,7 @@ async def create_cycle_count(request: Request):
             raise HTTPException(
                 400,
                 "Las zonas seleccionadas no tienen ubicaciones "
-                + ("activas" if include_empty else "con stock")
+                + ("activas" if sample_empty else "con stock")
                 + " para muestrear",
             )
 
@@ -11403,7 +11413,7 @@ async def create_cycle_count(request: Request):
 
     # Get inventory items matching filters - Increase limit to 50,000 for general counts
     items = await db.wms_inventory.find(query, {"_id": 0}).to_list(50000)
-    if not items and not is_random:
+    if not items and not (is_random and mode == "box_scan"):
         raise HTTPException(400, "No se encontraron items con los filtros proporcionados")
 
     # Build count lines. We snapshot the descriptive fields at creation time
@@ -11435,7 +11445,6 @@ async def create_cycle_count(request: Request):
     # tiene en esa ubicación. 3 pases escalonados: la ubicación que no cuadra sube
     # de pase; tras el pase 3 queda para revisión de supervisor. No ajusta unidades.
     # Los conteos viejos (sin `mode`) siguen usando `lines[]` por piezas.
-    mode = (body.get("mode") or "box_scan").strip()
     scan_locations = []
     if mode == "box_scan":
         box_query = {"units": {"$gt": 0}}

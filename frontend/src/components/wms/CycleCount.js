@@ -65,7 +65,7 @@ export const CycleCountModule = () => {
   const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
   // Zonas del almacen para el conteo ALEATORIO: [{zone,total,with_stock}].
   const [zones, setZones] = useState([]);
-  const [form, setForm] = useState({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
+  const [form, setForm] = useState({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, random_mode: 'box_scan', location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
   // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
   const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
@@ -178,6 +178,7 @@ export const CycleCountModule = () => {
                                ? `Aleatorio (${reportDetail.random_per_zone} ubicaciones por zona)`
                                : reportDetail.is_general ? 'General (Inventario Completo)' : 'Filtrado'],
       ["Zonas Muestreadas",  (reportDetail.random_zones || []).join(', ') || '—'],
+      ["Modo de Conteo",     reportDetail.mode === 'pieces' ? 'Por pieza (unidades)' : 'Por caja (escaneo LPN)'],
       ["Filtro Ubicación",   reportDetail.location_filter || '—'],
       ["Filtro Style",       reportDetail.style_filter    || '—'],
       ["Filtro Color",       reportDetail.color_filter    || '—'],
@@ -461,6 +462,7 @@ export const CycleCountModule = () => {
         // En aleatorio manda la casilla del panel; el include_empty suelto es
         // para los conteos por filtro.
         include_empty: form.is_random ? !form.random_only_stocked : form.include_empty,
+        mode: form.is_random ? form.random_mode : 'box_scan',
       });
       if (res.ok) {
         const data = await res.json();
@@ -468,12 +470,14 @@ export const CycleCountModule = () => {
         // cuantas ubicaciones salieron sorteadas: eso es lo que va a caminar el
         // contador.
         if (data.is_random) {
-          toast.success(`Conteo aleatorio creado: ${data.total_scan_locations} ubicaciones de ${(data.random_zones || []).length} zona(s)`);
+          toast.success(data.mode === 'pieces'
+            ? `Conteo aleatorio por pieza creado: ${data.total_lines} renglones de ${(data.random_zones || []).length} zona(s)`
+            : `Conteo aleatorio creado: ${data.total_scan_locations} ubicaciones de ${(data.random_zones || []).length} zona(s)`);
         } else {
           toast.success(t('wms_cc_created', { count: data.total_lines }));
         }
         setShowForm(false);
-        setForm({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
+        setForm({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, random_mode: 'box_scan', location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error('Error de conexion'); }
@@ -1345,6 +1349,48 @@ export const CycleCountModule = () => {
 
             {form.is_random && (
               <div className="px-3 pb-3 space-y-3 animate-in fade-in duration-200">
+                {/* Por caja = escaneo de LPN por ubicacion (3 pases). Por pieza
+                    = captura de unidades renglon por renglon. Solo se ofrece en
+                    aleatorio; el resto de los conteos siguen siendo por caja. */}
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Modo de conteo</div>
+                  <div className="flex gap-2">
+                    {[
+                      { k: 'box_scan', label: 'Por caja', hint: 'Escanea el LPN de cada caja de la ubicacion. 3 pases + supervisor.' },
+                      { k: 'pieces', label: 'Por pieza', hint: 'Captura las unidades contadas renglon por renglon.' },
+                    ].map(m => (
+                      <button
+                        key={m.k}
+                        type="button"
+                        title={m.hint}
+                        onClick={() => setForm(p => ({
+                          ...p,
+                          random_mode: m.k,
+                          // Por pieza una ubicacion vacia no tiene renglon que
+                          // capturar: el pool se acota solo a las que traen caja.
+                          ...(m.k === 'pieces'
+                            ? {
+                                random_only_stocked: true,
+                                random_zones: p.random_zones.filter(zn => (zones.find(z => z.zone === zn)?.with_stock || 0) > 0),
+                              }
+                            : {}),
+                        }))}
+                        className={`px-3 py-1.5 rounded border text-xs font-medium transition-colors ${
+                          form.random_mode === m.k
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background text-muted-foreground border-border hover:border-primary/40'
+                        }`}
+                        data-testid={`cc-random-mode-${m.k}`}
+                      >{m.label}</button>
+                    ))}
+                  </div>
+                  <div className="text-xs text-muted-foreground/70 mt-1">
+                    {form.random_mode === 'pieces'
+                      ? 'El contador captura unidades por renglon (estilo/color/talla). Solo entran ubicaciones con stock.'
+                      : 'El contador escanea el LPN de cada caja de la ubicacion; escalan a 2do y 3er pase y luego a supervisor.'}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-3 flex-wrap">
                   <label className="text-xs text-muted-foreground" htmlFor="cc_random_per_zone">Ubicaciones por zona</label>
                   <input
@@ -1366,10 +1412,11 @@ export const CycleCountModule = () => {
                   </span>
                 </div>
 
-                <label className="flex items-start gap-3 cursor-pointer select-none">
+                <label className={`flex items-start gap-3 select-none ${form.random_mode === 'pieces' ? 'opacity-50' : 'cursor-pointer'}`}>
                   <input
                     type="checkbox"
                     checked={form.random_only_stocked}
+                    disabled={form.random_mode === 'pieces'}
                     onChange={e => setForm(p => ({
                       ...p,
                       random_only_stocked: e.target.checked,
@@ -1385,8 +1432,9 @@ export const CycleCountModule = () => {
                   <span className="text-xs font-medium text-foreground">
                     Solo ubicaciones con stock
                     <span className="block text-muted-foreground/70 font-normal mt-0.5">
-                      Apagado (default): el sorteo entra a TODA la zona, vacias incluidas — asi se caza stock
-                      encontrado donde el sistema no ve nada. Prendido: solo ubicaciones con caja viva.
+                      {form.random_mode === 'pieces'
+                        ? 'Obligatorio en conteo por pieza: una ubicacion vacia no tiene renglon que capturar.'
+                        : 'Apagado (default): el sorteo entra a TODA la zona, vacias incluidas — asi se caza stock encontrado donde el sistema no ve nada. Prendido: solo ubicaciones con caja viva.'}
                     </span>
                   </span>
                 </label>
@@ -1631,7 +1679,7 @@ export const CycleCountModule = () => {
                   {c.is_random ? (
                     <span className="flex items-center gap-1 opacity-80" title={(c.random_zones || []).join(', ')}>
                       <Shuffle className="w-3 h-3" />
-                      Aleatorio - {(c.random_zones || []).length} zona(s) x {c.random_per_zone}
+                      Aleatorio {c.mode === 'pieces' ? 'por pieza' : 'por caja'} - {(c.random_zones || []).length} zona(s) x {c.random_per_zone}
                     </span>
                   ) : c.is_general ? (
                     <span className="px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 flex items-center gap-1">Conteo General</span>
