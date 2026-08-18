@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Droplets, RefreshCw, Calculator, PackageSearch,
-  AlertTriangle, CheckCircle2, Settings2,
+  AlertTriangle, CheckCircle2, Settings2, CalendarDays, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -12,6 +12,36 @@ const ML_PER_BUCKET = 5 * 3785.41; // cubeta de 5 galones
 const fmt = (n, d = 0) => (n === null || n === undefined || isNaN(n))
   ? '—'
   : Number(n).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: 0 });
+
+// ── Bitácora diaria ─────────────────────────────────────────────────────────
+// El estado de un día se decide por severidad, no por promedio: quedarse en
+// CERO manda sobre estar bajo mínimo, y estar bajo mínimo manda sobre no
+// alcanzar para el backlog. Un día sin foto NO es un día bueno — se pinta
+// aparte, porque antes de que existiera esta bitácora el sistema no guardaba
+// absolutamente nada y sería mentira pintarlo en verde.
+const DAY_STATES = {
+  empty:    { label: 'Se quedó en cero',    dot: 'bg-red-600',     cell: 'bg-red-600 text-white border-red-700' },
+  below:    { label: 'Bajo el mínimo',      dot: 'bg-red-400',     cell: 'bg-red-100 text-red-700 border-red-200' },
+  short:    { label: 'No cubre el backlog', dot: 'bg-amber-400',   cell: 'bg-amber-100 text-amber-700 border-amber-200' },
+  ok:       { label: 'Con inventario sano', dot: 'bg-emerald-500', cell: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  nodata:   { label: 'Sin registro',        dot: 'bg-slate-300',   cell: 'bg-white text-slate-300 border-dashed border-slate-200' },
+};
+
+const dayState = (snap) => {
+  if (!snap) return 'nodata';
+  const low = snap.stock_low !== null && snap.stock_low !== undefined ? snap.stock_low : snap.stock_buckets;
+  if (low === null || low === undefined) return 'nodata';
+  if (low <= 0) return 'empty';
+  if (snap.stock_min !== null && snap.stock_min !== undefined && low < snap.stock_min) return 'below';
+  if (snap.coverage_pct !== null && snap.coverage_pct !== undefined && snap.coverage_pct < 100) return 'short';
+  return 'ok';
+};
+
+// YYYY-MM-DD armado con los getters LOCALES: toISOString() convierte a UTC y en
+// Tijuana (UTC-7) recorre el día un día hacia atrás toda la tarde.
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+  'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}>{children}</div>
@@ -42,6 +72,7 @@ const BlockerTool = () => {
   const [error, setError] = useState(null);
 
   const fetchForecast = useCallback(async () => {
+    // Devuelve promesa (el .then de arriba encadena la bitácora).
     try {
       setLoading(true);
       setError(null);
@@ -55,12 +86,53 @@ const BlockerTool = () => {
     }
   }, [mlPerHit]);
 
-  useEffect(() => { fetchForecast(); }, [fetchForecast]);
+  // ----- bitácora diaria
+  const [history, setHistory] = useState(null);
+  const [histMonth, setHistMonth] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [pickedDay, setPickedDay] = useState(null);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/tools/blocker-history?days=365`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setHistory(await res.json());
+    } catch { /* la bitácora es complementaria: si falla, la calculadora sigue */ }
+  }, []);
+
+  // El historial se recarga DESPUÉS del pronóstico: abrir la pantalla archiva la
+  // foto del día, así que pedirlo antes lo traería sin el registro de hoy.
+  useEffect(() => { fetchForecast().then(fetchHistory); }, [fetchForecast, fetchHistory]);
 
   // proyección: hits proyectados x % con blocker x factor
   const hitsNum = parseFloat(projHits) || 0;
   const projMl = hitsNum * (blockerShare / 100) * mlPerHit;
   const projBuckets = projMl / ML_PER_BUCKET;
+
+  const snapByDate = {};
+  for (const sn of (history?.snapshots || [])) snapByDate[sn.date] = sn;
+  const firstDate = history?.first_date || null;
+
+  // Celdas del mes visible: lunes primero, con los huecos del arranque de mes.
+  const monthCells = (() => {
+    const y = histMonth.getFullYear();
+    const m = histMonth.getMonth();
+    const first = new Date(y, m, 1);
+    const lead = (first.getDay() + 6) % 7; // getDay: 0=domingo → 0=lunes
+    const total = new Date(y, m + 1, 0).getDate();
+    const cells = Array.from({ length: lead }, () => null);
+    for (let d = 1; d <= total; d++) cells.push(new Date(y, m, d));
+    return cells;
+  })();
+
+  const monthSnaps = monthCells.filter(Boolean).map(d => snapByDate[ymd(d)]).filter(Boolean);
+  const diasEnCero = monthSnaps.filter(sn => dayState(sn) === 'empty').length;
+  const diasBajoMin = monthSnaps.filter(sn => dayState(sn) === 'below').length;
+
+  // Aviso que faltaba: MaintOps SÍ trae el mínimo y la pantalla nunca lo miraba.
+  const stockNow = forecast?.stock?.buckets;
+  const minNow = forecast?.stock?.min;
+  const belowMinNow = stockNow !== null && stockNow !== undefined
+    && minNow !== null && minNow !== undefined && stockNow < minNow;
 
   const cov = forecast?.stock?.coverage_pct;
   const covTone = cov === null || cov === undefined ? 'text-slate-400'
@@ -94,6 +166,29 @@ const BlockerTool = () => {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 md:px-8 pt-8 space-y-8">
+
+        {/* AVISO DE MÍNIMO — MaintOps define un stock mínimo por artículo y esta
+            pantalla lo ignoraba: mostraba "4 cubetas" sin decir que el mínimo
+            son 6. */}
+        {belowMinNow && (
+          <div
+            className={`flex items-start gap-3 p-4 rounded-2xl border ${stockNow <= 0
+              ? 'bg-red-600 border-red-700 text-white'
+              : 'bg-red-50 border-red-200 text-red-800'}`}
+            data-testid="blocker-below-min"
+          >
+            <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0" />
+            <div className="text-sm leading-relaxed">
+              <b className="uppercase tracking-wide">
+                {stockNow <= 0 ? 'Sin blocker en almacén' : 'Stock por debajo del mínimo'}
+              </b>
+              <div className="mt-0.5">
+                Hay <b>{fmt(stockNow)} cubetas</b> y el mínimo de MaintOps es <b>{fmt(minNow)}</b>.
+                El backlog pendiente pide <b>{fmt(forecast?.totals?.buckets, 1)}</b> cubetas.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* PARÁMETROS */}
         <Card className="p-4 flex flex-wrap items-end gap-5">
@@ -273,6 +368,126 @@ const BlockerTool = () => {
               </p>
             </div>
           )}
+        </section>
+
+        {/* ── BITÁCORA DIARIA ──────────────────────────────────────────────
+            Antes de esto la pantalla no guardaba nada: no había forma de saber
+            si el stock ya venía bajo desde días antes de quedarse en cero. */}
+        <section className="space-y-3 pb-8">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-900">Bitácora de blocker</h2>
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                Una foto por día · stock vs mínimo vs backlog
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setHistMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+                className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300"
+                title="Mes anterior"
+                data-testid="blocker-hist-prev"
+              ><ChevronLeft className="w-4 h-4" /></button>
+              <span className="px-3 text-xs font-bold uppercase tracking-widest text-slate-600 min-w-[150px] text-center">
+                {MONTHS[histMonth.getMonth()]} {histMonth.getFullYear()}
+              </span>
+              <button
+                onClick={() => setHistMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+                className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300"
+                title="Mes siguiente"
+                data-testid="blocker-hist-next"
+              ><ChevronRight className="w-4 h-4" /></button>
+            </div>
+          </div>
+
+          <Card className="p-5">
+            <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+              {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+                <div key={i} className="text-center text-[9px] font-bold uppercase tracking-widest text-slate-400 py-1">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1.5" data-testid="blocker-calendar">
+              {monthCells.map((d, i) => {
+                if (!d) return <div key={`x${i}`} />;
+                const key = ymd(d);
+                const snap = snapByDate[key];
+                const st = DAY_STATES[dayState(snap)];
+                const isToday = key === (history?.today || ymd(new Date()));
+                const isFuture = key > (history?.today || ymd(new Date()));
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={!snap}
+                    onClick={() => setPickedDay(snap ? { ...snap, key } : null)}
+                    title={snap ? `${key} · ${st.label}` : `${key} · sin registro`}
+                    className={`relative aspect-square rounded-lg border text-xs font-bold flex flex-col items-center justify-center transition-transform
+                      ${isFuture ? 'bg-slate-50 text-slate-200 border-slate-100' : st.cell}
+                      ${snap ? 'hover:scale-105 cursor-pointer' : 'cursor-default'}
+                      ${pickedDay?.key === key ? 'ring-2 ring-blue-500 ring-offset-1' : ''}
+                      ${isToday ? 'outline outline-2 outline-blue-400' : ''}`}
+                    data-testid={`blocker-day-${key}`}
+                  >
+                    {d.getDate()}
+                    {snap && (
+                      <span className="text-[8px] font-black opacity-80">
+                        {fmt(snap.stock_low !== null && snap.stock_low !== undefined ? snap.stock_low : snap.stock_buckets)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Leyenda */}
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5">
+              {Object.entries(DAY_STATES).map(([k, v]) => (
+                <span key={k} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                  <span className={`w-2.5 h-2.5 rounded-full ${v.dot}`} /> {v.label}
+                </span>
+              ))}
+            </div>
+
+            {(diasEnCero > 0 || diasBajoMin > 0) && (
+              <div className="mt-3 text-[11px] text-slate-600 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                En {MONTHS[histMonth.getMonth()]}: <b>{diasEnCero}</b> día(s) en cero y <b>{diasBajoMin}</b> bajo el mínimo.
+              </div>
+            )}
+
+            {/* Detalle del día elegido */}
+            {pickedDay && (
+              <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200" data-testid="blocker-day-detail">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{pickedDay.key}</p>
+                  <button onClick={() => setPickedDay(null)} className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-700">Cerrar</button>
+                </div>
+                <div className="flex flex-wrap divide-x divide-slate-200 rounded-lg bg-white border border-slate-200">
+                  <Metric label="Stock al cierre" value={fmt(pickedDay.stock_buckets)} unit="cubetas" />
+                  <Metric label="Mínimo del día" value={fmt(pickedDay.stock_low)} unit="cubetas"
+                    tone={dayState(pickedDay) === 'ok' ? 'text-slate-900' : 'text-red-600'} />
+                  <Metric label="Mínimo MaintOps" value={fmt(pickedDay.stock_min)} unit="cubetas" />
+                  <Metric label="Backlog pedía" value={fmt(pickedDay.required_buckets, 1)} unit="cubetas" tone="text-blue-600" />
+                  <Metric label="Cobertura" value={pickedDay.coverage_pct === null || pickedDay.coverage_pct === undefined ? '—' : fmt(pickedDay.coverage_pct)} unit="%" />
+                </div>
+                <p className="mt-2 text-[10px] text-slate-400">
+                  {fmt(pickedDay.orders)} órdenes · {fmt(pickedDay.pending_hits)} hits pendientes ·
+                  {' '}{fmt(pickedDay.samples)} lectura(s) ese día · última {pickedDay.captured_at ? new Date(pickedDay.captured_at).toLocaleString() : '—'}
+                </p>
+              </div>
+            )}
+
+            <p className="mt-4 text-[10px] text-slate-400 leading-relaxed">
+              {firstDate
+                ? <>La bitácora arranca el <b>{firstDate}</b>: antes de esa fecha el sistema no guardaba
+                    ningún registro de blocker, así que esos días salen como “sin registro” — no como días buenos.</>
+                : <>Todavía no hay ningún día archivado. Se guarda una foto automática cada mañana y otra
+                    cada vez que alguien abre esta pantalla.</>}
+              {' '}El “mínimo del día” es el valor más bajo que se vio: si el almacén cae a cero a media jornada
+              y en la tarde entra una compra, el día igual queda marcado en rojo.
+            </p>
+          </Card>
         </section>
       </main>
     </div>

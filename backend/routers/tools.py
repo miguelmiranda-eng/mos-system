@@ -12,6 +12,7 @@ La tela de cada orden se resuelve vía pick tickets del WMS
 (orden → estilo → fabric_content del inventario).
 """
 import re
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request
 import httpx
 import os
@@ -130,15 +131,13 @@ def _positions_count(order) -> float:
     return 0.0
 
 
-@router.get("/tools/blocker-forecast")
-async def blocker_forecast(
-    request: Request,
+async def _compute_blocker_forecast(
     ml_per_hit: float = DEFAULT_ML_PER_HIT,
     light_factor: float = DEFAULT_LIGHT_FACTOR,
     positions_fallback: float = DEFAULT_POSITIONS_FALLBACK,
 ):
-    await require_auth(request)
-
+    """Calculo del pronostico, sin HTTP. Lo llama la ruta y tambien el job que
+    guarda la foto diaria (que no tiene Request de donde colgarse)."""
     orders = await db.orders.find(
         {"board": {"$in": PENDING_BOARDS}},
         {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "color": 1,
@@ -244,3 +243,164 @@ async def blocker_forecast(
         "by_board": sorted(by_board.values(), key=lambda x: -x["ml"]),
         "top_orders": detail[:15],
     }
+
+
+# ══════════════════ HISTORIAL DE BLOCKER (foto diaria) ══════════════════
+#
+# POR QUE EXISTE
+# ──────────────
+# Esta pantalla nacio como una foto instantanea: leia el stock vivo de MaintOps
+# y calculaba el backlog al vuelo, sin guardar nada. Cuando el 2026-08-18 se
+# pregunto "nos quedamos sin blocker ayer, ¿el sistema lo advirtio?", no habia
+# NADA con que contestar: ni registro propio, ni acceso al historial de MaintOps
+# (inventory_logs esta cerrada por RLS para el anon key). Desde aqui se archiva
+# una foto por dia para que esa pregunta tenga respuesta la proxima vez.
+#
+# Se escribe por dos vias, a proposito:
+#   · cada vez que alguien abre la pantalla (upsert idempotente del dia), y
+#   · un job que despierta cada hora y reclama la foto del dia en la BASE.
+# La segunda es la que sostiene el historial los dias que nadie entra; la
+# primera es la que capta las bajadas de stock a media jornada.
+BLOCKER_SNAP_HORA_UTC = 14      # ~07:00 en el almacen (America/Tijuana)
+BLOCKER_SNAP_PERIODO_H = 20     # no repetir la foto programada del dia
+BLOCKER_SNAP_ATRASO_H = 30      # catch-up si un reinicio se comio el dia
+
+
+def _almacen_hoy() -> str:
+    """Fecha local del almacen (YYYY-MM-DD). El dia contable es el del piso, no
+    el UTC: a las 17:00 de Tijuana el UTC ya cambio de dia y la foto de la tarde
+    se archivaria como del dia siguiente."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Tijuana")).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def _snapshot_blocker(source: str = "ui"):
+    """Archiva (upsert) la foto de HOY en `blocker_snapshots`.
+
+    Guarda el ultimo valor visto del dia y ADEMAS `stock_low`, el minimo que se
+    vio: si el almacen se queda en cero a medio dia y en la tarde entra una
+    compra, un simple "ultimo valor" borraria justo el evento que importa.
+    """
+    try:
+        fc = await _compute_blocker_forecast()
+    except Exception as e:
+        logger.warning(f"[blocker-snapshot] no se pudo calcular el pronostico: {e}")
+        return None
+
+    stock = fc.get("stock") or {}
+    buckets = stock.get("buckets")
+    stock_min = stock.get("min")
+    hoy = _almacen_hoy()
+    ahora = datetime.now(timezone.utc).isoformat()
+
+    doc = {
+        "date": hoy,
+        "captured_at": ahora,
+        "source": source,
+        "stock_buckets": buckets,
+        "stock_min": stock_min,
+        "below_min": (None if (buckets is None or stock_min is None) else buckets < stock_min),
+        "empty": (None if buckets is None else buckets <= 0),
+        "required_buckets": fc["totals"]["buckets"],
+        "pending_hits": fc["totals"]["pending_hits"],
+        "orders": fc["totals"]["orders"],
+        "coverage_pct": (stock.get("coverage_pct") if stock else None),
+    }
+
+    prev = await db.blocker_snapshots.find_one({"date": hoy}, {"_id": 0, "stock_low": 1})
+    low = prev.get("stock_low") if prev else None
+    if buckets is not None:
+        low = buckets if low is None else min(low, buckets)
+    doc["stock_low"] = low
+
+    await db.blocker_snapshots.update_one(
+        {"date": hoy},
+        {"$set": doc, "$setOnInsert": {"first_seen_at": ahora}, "$inc": {"samples": 1}},
+        upsert=True,
+    )
+    return doc
+
+
+@router.get("/tools/blocker-history")
+async def blocker_history(request: Request, days: int = 120):
+    """Serie de fotos diarias para el calendario de la calculadora.
+
+    Devuelve tambien `first_date`: antes de esa fecha NO hay registro (la
+    bitacora arranco el dia que se desplego esto), y el calendario tiene que
+    pintar esos dias como 'sin dato' en vez de como 'todo bien'.
+    """
+    await require_auth(request)
+    days = max(1, min(days, 730))
+    desde = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = await db.blocker_snapshots.find(
+        {"date": {"$gte": desde}}, {"_id": 0}
+    ).sort("date", 1).to_list(1000)
+    primera = await db.blocker_snapshots.find_one({}, {"_id": 0, "date": 1}, sort=[("date", 1)])
+    return {
+        "days": days,
+        "first_date": (primera or {}).get("date"),
+        "today": _almacen_hoy(),
+        "snapshots": rows,
+    }
+
+
+async def _claim_blocker_snapshot(ventana_h: int) -> bool:
+    """Reclama la foto del dia en la BASE (no en memoria).
+
+    Mismo patron que el job nocturno de stock fantasma: un temporizador en
+    memoria se reinicia con cada deploy y el job termina no corriendo NUNCA.
+    El claim es atomico, asi que dos instancias no duplican la foto.
+    """
+    corte = (datetime.now(timezone.utc) - timedelta(hours=ventana_h)).isoformat()
+    res = await db.wms_counters.update_one(
+        {"_id": "blocker_snapshot", "$or": [
+            {"last_run": {"$lt": corte}}, {"last_run": {"$exists": False}},
+        ]},
+        {"$set": {"last_run": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return bool(res.modified_count or res.upserted_id)
+
+
+async def blocker_snapshot_loop():
+    """Despierta cada hora y archiva la foto del dia cuando toca."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(240)   # gracia de arranque
+    while True:
+        try:
+            ahora = datetime.now(timezone.utc)
+            en_horario = ahora.hour == BLOCKER_SNAP_HORA_UTC
+            ventana = BLOCKER_SNAP_PERIODO_H if en_horario else BLOCKER_SNAP_ATRASO_H
+            if await _claim_blocker_snapshot(ventana):
+                doc = await _snapshot_blocker("job")
+                if doc:
+                    logger.info(
+                        "[blocker-snapshot] %s: stock=%s min=%s requerido=%s cub",
+                        doc["date"], doc["stock_buckets"], doc["stock_min"],
+                        doc["required_buckets"],
+                    )
+        except Exception as e:
+            logger.error(f"[blocker-snapshot] el job fallo: {e}")
+        await _asyncio.sleep(3600)
+
+
+@router.get("/tools/blocker-forecast")
+async def blocker_forecast(
+    request: Request,
+    ml_per_hit: float = DEFAULT_ML_PER_HIT,
+    light_factor: float = DEFAULT_LIGHT_FACTOR,
+    positions_fallback: float = DEFAULT_POSITIONS_FALLBACK,
+):
+    await require_auth(request)
+    fc = await _compute_blocker_forecast(ml_per_hit, light_factor, positions_fallback)
+    # Abrir la pantalla deja registro: es lo que capta las bajadas de stock a
+    # media jornada, que la foto programada de la manana no ve. Nunca debe
+    # tumbar la respuesta, por eso va blindado.
+    try:
+        await _snapshot_blocker("ui")
+    except Exception as e:
+        logger.warning(f"[blocker-snapshot] no se archivo la foto: {e}")
+    return fc

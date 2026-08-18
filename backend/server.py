@@ -270,6 +270,16 @@ async def startup_event():
         logging.info("Job nocturno de stock fantasma programado (08:00 UTC).")
     except Exception as e:
         logging.error(f"No se pudo programar el job nocturno de stock fantasma: {e}")
+    # Foto diaria del blocker (stock MaintOps + backlog) a las 14:00 UTC (~07:00
+    # del almacen). Sostiene el calendario de la calculadora los dias que nadie
+    # abre la pantalla. Ver routers/tools.py::blocker_snapshot_loop.
+    try:
+        import asyncio as _asyncio
+        from routers.tools import blocker_snapshot_loop
+        _asyncio.create_task(blocker_snapshot_loop())
+        logging.info("Foto diaria de blocker programada (14:00 UTC).")
+    except Exception as e:
+        logging.error(f"No se pudo programar la foto diaria de blocker: {e}")
 
 @app.get("/ping")
 async def ping():
