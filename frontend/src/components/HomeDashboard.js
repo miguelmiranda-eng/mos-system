@@ -40,6 +40,7 @@ const SECTIONS_DEFS = [
       { name: 'Calendario de Ejemplos', path: '/samples', desc: 'Programa muestras por día con recursos y operadores.', icon: 'Beaker' },
       { name: 'Depto. de Pinturas', path: '/paint', desc: 'Calendarización de mezcla de tinta.', icon: 'Brush' },
       { name: 'Calculadora de Blocker', path: '/blocker-tool', desc: 'Proyecta consumo por impresiones y cobertura del backlog.', icon: 'Droplets' },
+      { name: 'Módulo de Final Bill', path: '/final-bill', desc: 'Órdenes listas para envío e inventario, y su revisión.', icon: 'ClipboardList' },
     ]
   },
   {
