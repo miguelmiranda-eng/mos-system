@@ -27,6 +27,7 @@ const COLUMNS = [
   { key: 'customer_po', label: 'Customer PO', sortable: true },
   { key: 'cancel_date', label: 'Cancel Date', sortable: true },
   { key: 'final_bill', label: 'Final Bill', sortable: true },
+  { key: 'status_at', label: 'Fecha de estatus', sortable: true },
   { key: 'design', label: 'Design', sortable: true },
   { key: 'client', label: 'Client', sortable: true },
   { key: 'branding', label: 'Branding', sortable: true },
@@ -52,6 +53,12 @@ const fmtDate = (s) => {
 const todayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const fmtStamp = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-MX');
 };
 
 const Card = ({ children, className = '' }) => (
@@ -211,6 +218,7 @@ const FinalBillModule = () => {
         'Customer PO': r.customer_po,
         'Cancel Date': r.cancel_date,
         'Final Bill': r.final_bill,
+        'Fecha de estatus': r.status_at ? new Date(r.status_at).toLocaleString() : '',
         'Design': r.design,
         'Client': r.client,
         'Branding': r.branding,
@@ -222,7 +230,7 @@ const FinalBillModule = () => {
       }));
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(sheet);
-      ws['!cols'] = [12, 16, 13, 13, 12, 26, 18, 15, 14, 22, 20, 20].map(wch => ({ wch }));
+      ws['!cols'] = [12, 16, 13, 13, 18, 12, 26, 18, 15, 14, 22, 20, 20].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, ws, 'Final Bill');
       XLSX.writeFile(wb, `Final_Bill_${tab}_${todayStr()}.xlsx`);
       toast.success(`${sheet.length} renglones exportados`);
@@ -445,7 +453,7 @@ const FinalBillModule = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/60">
+                  <tr className="border-b border-slate-200 bg-slate-50">
                     {canReview && (
                       <th className="w-10 px-4 py-3">
                         <input
@@ -473,7 +481,9 @@ const FinalBillModule = () => {
                         </span>
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-xs font-bold text-slate-500 text-right">Acciones</th>
+                    <th className="sticky right-0 z-20 bg-slate-50 border-l border-slate-200 px-4 py-3 text-xs font-bold text-slate-500 text-right">
+                      Acciones
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -490,7 +500,7 @@ const FinalBillModule = () => {
                   {rows.map(r => {
                     const vencida = r.cancel_date && r.cancel_date < todayStr();
                     return (
-                      <tr key={r.order_id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+                      <tr key={r.order_id} className="group border-b border-slate-100 last:border-0 hover:bg-slate-50">
                         {canReview && (
                           <td className="px-4 py-3">
                             <input
@@ -509,6 +519,14 @@ const FinalBillModule = () => {
                             <span className={vencida ? 'text-red-600 font-semibold' : 'text-slate-600'}>{fmtDate(r.cancel_date)}</span>
                           );
                           else if (c.key === 'final_bill') content = <span className="text-slate-600">{fmtDate(r.final_bill)}</span>;
+                          else if (c.key === 'status_at') content = (
+                            <span
+                              className={r.status_at ? 'text-slate-600' : 'text-slate-300'}
+                              title={r.status_at
+                                ? `Pasó a ${r.production_status} el ${new Date(r.status_at).toLocaleString()}`
+                                : 'Sin evento registrado del cambio de estatus'}
+                            >{fmtStamp(r.status_at)}</span>
+                          );
                           else if (c.key === 'qty') content = <span className="font-semibold text-slate-800">{fmt(r.qty)}</span>;
                           else if (c.key === 'total_amount') content = <span className="text-slate-300">—</span>;
                           else content = <span className="text-slate-600">{r[c.key] || '—'}</span>;
@@ -518,7 +536,7 @@ const FinalBillModule = () => {
                             </td>
                           );
                         })}
-                        <td className="px-4 py-3 text-right">
+                        <td className="sticky right-0 z-10 bg-white group-hover:bg-slate-50 border-l border-slate-200 px-4 py-3 text-right">
                           {canReview ? (
                             r.reviewed ? (
                               <button

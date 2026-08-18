@@ -32,6 +32,7 @@ PROJECTION = {
     "cancel_date": 1, "final_bill": 1, "design_#": 1, "desing_#": 1,
     "client": 1, "branding": 1, "quantity": 1, "total_quantity": 1,
     "production_status": 1, "board": 1, "final_bill_review": 1,
+    "production_status_at": 1,
 }
 
 # El orden de la tabla se pide por la LLAVE DE LA COLUMNA, no por el campo de
@@ -46,6 +47,7 @@ SORTABLE = {
     "client": "client",
     "branding": "branding",
     "qty": "quantity",
+    "status_at": "production_status_at",
 }
 
 
@@ -71,6 +73,12 @@ def _row(o: dict) -> dict:
         "branding": o.get("branding") or "",
         "qty": o.get("quantity") or o.get("total_quantity") or 0,
         "total_amount": None,
+        # Cuándo entró la orden a su estado actual. Se sella en orders.py al
+        # cambiar el status y se rellenó hacia atrás desde activity_logs
+        # (scripts/backfill_production_status_at.py). Vacío = no hay evento
+        # registrado; no se sustituye por updated_at, que cualquier edición
+        # posterior pisa.
+        "status_at": o.get("production_status_at") or "",
         "production_status": o.get("production_status") or "",
         "reviewed": bool(rev.get("reviewed")),
         "reviewed_by_name": rev.get("by_name") or "",

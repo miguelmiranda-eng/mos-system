@@ -543,6 +543,17 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
             )
 
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Sello de CUÁNDO entró la orden a su estado actual de producción. El módulo
+    # de Final Bill necesita saber desde cuándo lleva parada una orden en LISTO
+    # PARA ENVIO / LISTO PARA INVENTARIO, y `updated_at` no sirve: cualquier
+    # edición posterior (una nota, una talla) lo pisa y borra el dato.
+    # Solo se escribe cuando el estado CAMBIA de verdad; reguardar el mismo
+    # estado no reinicia el reloj.
+    if "production_status" in update_data:
+        if (update_data.get("production_status") or "") != (existing.get("production_status") or ""):
+            update_data["production_status_at"] = update_data["updated_at"]
+
     # Board QC Lock: block moving OUT of CONTROL DE CALIDAD
     old_board = existing.get("board")
     new_board = update_data.get("board")
@@ -1454,7 +1465,8 @@ async def export_orders_pdf(request: Request):
             ('PADDING', (0, 0), (-1, -1), 6),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 0.3 * inch))        # Comments
+        elements.append(Spacer(1, 0.3 * inch))
+        # Comments
         comments = await db.comments.find({"order_id": oid}, {"_id": 0}).sort("created_at", 1).to_list(100)
         if comments:
             elements.append(Paragraph("Comentarios", h2_style))
