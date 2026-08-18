@@ -13,7 +13,7 @@ from services import inventory_ledger as ledger
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata
+import uuid, io, json, logging, re, asyncio, difflib, time, unicodedata, random
 from contextvars import ContextVar
 
 router = APIRouter(prefix="/api/wms")
@@ -1755,6 +1755,32 @@ async def list_location_names(request: Request):
     _LOC_NAMES_CACHE["data"] = rows
     _LOC_NAMES_CACHE["ts"] = now
     return rows
+
+
+@router.get("/locations/zones")
+async def list_location_zones(request: Request):
+    """Zonas del almacen con su conteo de ubicaciones — alimenta el selector de
+    zonas del conteo ciclico ALEATORIO. Devuelve
+    [{zone, total, with_stock}] ordenado por zona; `with_stock` es cuantas de
+    esas ubicaciones tienen al menos una caja viva (units > 0), que es el pool
+    real del que sale el muestreo cuando no se incluyen vacias.
+    Bajar /locations/names completo (~8.8k filas) solo para sacar la lista de
+    zonas es tirar RAM en las PC del almacen; esto son ~30 filas."""
+    await require_auth(request)
+    stocked = set(await db.wms_boxes.distinct("location", {"units": {"$gt": 0}}))
+    by_zone: dict[str, dict] = {}
+    async for d in db.wms_locations.find(
+        {"active": {"$ne": False}}, {"_id": 0, "name": 1, "zone": 1}
+    ):
+        nm = (d.get("name") or "").strip()
+        if not nm:
+            continue
+        z = (d.get("zone") or "").strip().upper() or "SIN ZONA"
+        row = by_zone.setdefault(z, {"zone": z, "total": 0, "with_stock": 0})
+        row["total"] += 1
+        if nm in stocked:
+            row["with_stock"] += 1
+    return sorted(by_zone.values(), key=lambda r: r["zone"])
 
 
 @router.post("/move-location")
@@ -11286,16 +11312,85 @@ async def create_cycle_count(request: Request):
     # cliente/estilo/color con qué casar esos filtros). Permite detectar stock
     # encontrado en ubicaciones sin inventario registrado.
     include_empty = bool(body.get("include_empty", False))
-    is_general = body.get("is_general", False) or (
-        not location_filter and not customer_filter and not style_filter and not color_filter
+
+    # ── Conteo ALEATORIO por zona ──────────────────────────────────────────────
+    # El supervisor elige N zonas y el sistema muestrea `random_per_zone`
+    # ubicaciones AL AZAR de cada una (5 por default). Es una auditoria por
+    # muestreo, no dirigida: manda sobre el resto de filtros (cliente/estilo/
+    # color no aplican a "damelo al azar") y nunca es general.
+    random_zones = []
+    seen_zone = set()
+    for z in (body.get("random_zones") or []):
+        zz = str(z).strip().upper()
+        if zz and zz not in seen_zone:
+            seen_zone.add(zz)
+            random_zones.append(zz)
+    is_random = bool(body.get("is_random")) and bool(random_zones)
+    if bool(body.get("is_random")) and not random_zones:
+        raise HTTPException(400, "Selecciona al menos una zona para el conteo aleatorio")
+    try:
+        random_per_zone = int(body.get("random_per_zone") or 5)
+    except (TypeError, ValueError):
+        random_per_zone = 5
+    random_per_zone = max(1, min(random_per_zone, 50))
+
+    is_general = (not is_random) and bool(
+        body.get("is_general", False) or (
+            not location_filter and not customer_filter and not style_filter and not color_filter
+        )
     )
 
     if not name:
         raise HTTPException(400, "Nombre del conteo requerido")
 
+    # Muestreo: se sortean SOLO ubicaciones con stock, salvo que el supervisor
+    # pida incluir vacias (ahi entra cualquier ubicacion activa de la zona, para
+    # cazar stock encontrado). Si una zona tiene menos candidatas que el cupo,
+    # se toman todas las que haya.
+    sampled_locations: list[str] = []
+    random_sample: list[dict] = []
+    if is_random:
+        # El catalogo de zonas se normaliza en Python (upper + vacio → SIN ZONA)
+        # en vez de filtrar por $in en Mongo: hay docs viejos con la zona en
+        # minusculas o sin campo, y un $in exacto los dejaria fuera del sorteo
+        # sin que nadie se entere.
+        loc_docs = await db.wms_locations.find(
+            {"active": {"$ne": False}}, {"_id": 0, "name": 1, "zone": 1},
+        ).to_list(30000)
+        stocked = set()
+        if not include_empty:
+            stocked = set(await db.wms_boxes.distinct("location", {"units": {"$gt": 0}}))
+        wanted = set(random_zones)
+        by_zone: dict[str, set] = {}
+        for d in loc_docs:
+            nm = (d.get("name") or "").strip()
+            if not nm:
+                continue
+            z = (d.get("zone") or "").strip().upper() or "SIN ZONA"
+            if z not in wanted:
+                continue
+            if not include_empty and nm not in stocked:
+                continue
+            by_zone.setdefault(z, set()).add(nm)
+        for z in random_zones:
+            pool = sorted(by_zone.get(z, set()))
+            take = random.sample(pool, min(random_per_zone, len(pool))) if pool else []
+            sampled_locations.extend(take)
+            random_sample.append({"zone": z, "candidates": len(pool), "sampled": len(take)})
+        sampled_locations = sorted(set(sampled_locations))
+        if not sampled_locations:
+            raise HTTPException(
+                400,
+                "Las zonas seleccionadas no tienen ubicaciones "
+                + ("activas" if include_empty else "con stock")
+                + " para muestrear",
+            )
+
     # Build query to get inventory items for this count
     query = {}
-    if not is_general:
+    if is_random:
+        query["location"] = {"$in": sampled_locations}
+    elif not is_general:
         if location_filter:
             # Prefix search for locations sharing the prefix
             query["location"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
@@ -11308,7 +11403,7 @@ async def create_cycle_count(request: Request):
 
     # Get inventory items matching filters - Increase limit to 50,000 for general counts
     items = await db.wms_inventory.find(query, {"_id": 0}).to_list(50000)
-    if not items:
+    if not items and not is_random:
         raise HTTPException(400, "No se encontraron items con los filtros proporcionados")
 
     # Build count lines. We snapshot the descriptive fields at creation time
@@ -11344,7 +11439,9 @@ async def create_cycle_count(request: Request):
     scan_locations = []
     if mode == "box_scan":
         box_query = {"units": {"$gt": 0}}
-        if not is_general:
+        if is_random:
+            box_query["location"] = {"$in": sampled_locations}
+        elif not is_general:
             if location_filter:
                 box_query["location"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
             if customer_filter:
@@ -11370,7 +11467,12 @@ async def create_cycle_count(request: Request):
         # stock, con expected_boxes:[]. Si el contador escanea algo ahí, sale como
         # 'extra' → escala → supervisor (stock encontrado). No aplica con filtro de
         # cliente/estilo/color (una locación vacía no casa esos filtros).
-        if include_empty and not (customer_filter or style_filter or color_filter):
+        if is_random:
+            # Una muestreada sin cajas (solo pasa con include_empty) igual se
+            # visita: con expected_boxes:[] cualquier escaneo sale como 'extra'.
+            for loc in sampled_locations:
+                by_loc.setdefault(loc, [])
+        elif include_empty and not (customer_filter or style_filter or color_filter):
             loc_query = {"active": True}
             if not is_general and location_filter:
                 loc_query["name"] = {"$regex": f"^{re.escape(location_filter)}", "$options": "i"}
@@ -11404,11 +11506,15 @@ async def create_cycle_count(request: Request):
         "status": "pending",
         "mode": mode,
         "is_general": is_general,
-        "location_filter": location_filter if not is_general else "",
-        "customer_filter": customer_filter if not is_general else "",
-        "style_filter": style_filter if not is_general else "",
-        "color_filter": color_filter if not is_general else "",
+        "location_filter": "" if (is_general or is_random) else location_filter,
+        "customer_filter": "" if (is_general or is_random) else customer_filter,
+        "style_filter": "" if (is_general or is_random) else style_filter,
+        "color_filter": "" if (is_general or is_random) else color_filter,
         "include_empty": include_empty,
+        "is_random": is_random,
+        "random_zones": random_zones if is_random else [],
+        "random_per_zone": random_per_zone if is_random else 0,
+        "random_sample": random_sample,
         "assigned_to": assigned_to or None,
         "assigned_to_name": assigned_to_name or None,
         "total_lines": len(count_lines),
@@ -11423,7 +11529,12 @@ async def create_cycle_count(request: Request):
     }
     await db.wms_cycle_counts.insert_one(count_doc)
     count_doc.pop("_id", None)
-    await log_movement(user, "cycle_count_created", {"count_id": count_id, "total_lines": len(count_lines), "is_general": is_general})
+    await log_movement(user, "cycle_count_created", {
+        "count_id": count_id, "total_lines": len(count_lines), "is_general": is_general,
+        "is_random": is_random, "random_zones": random_zones if is_random else [],
+        "random_per_zone": random_per_zone if is_random else 0,
+        "sampled_locations": sampled_locations if is_random else [],
+    })
 
     if assigned_to:
         await ws_manager.broadcast("cycle_count_assigned", {
@@ -13050,6 +13161,10 @@ async def get_cycle_count_report(count_id: str, request: Request):
         "name": count.get("name", ""),
         "status": count.get("status"),
         "is_general": count.get("is_general", False),
+        "is_random": count.get("is_random", False),
+        "random_zones": count.get("random_zones") or [],
+        "random_per_zone": count.get("random_per_zone", 0),
+        "random_sample": count.get("random_sample") or [],
         "location_filter": count.get("location_filter", ""),
         "style_filter": count.get("style_filter", ""),
         "color_filter": count.get("color_filter", ""),

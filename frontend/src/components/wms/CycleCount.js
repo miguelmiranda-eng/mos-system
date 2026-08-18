@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet, AlertTriangle, Shuffle } from "lucide-react";
 import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
@@ -63,7 +63,9 @@ export const CycleCountModule = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [options, setOptions] = useState({ customers: [], styles: [], colors: [], locations: [] });
-  const [form, setForm] = useState({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
+  // Zonas del almacen para el conteo ALEATORIO: [{zone,total,with_stock}].
+  const [zones, setZones] = useState([]);
+  const [form, setForm] = useState({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
   const [expandedLocations, setExpandedLocations] = useState({});
   // Box-scan mode: pestaña de pase activa y borrador de escaneo por ubicación.
   const [scanPass, setScanPass] = useState('1'); // '1'|'2'|'3'|'supervisor'|'ok'
@@ -172,7 +174,10 @@ export const CycleCountModule = () => {
       ["ID Conteo",          reportDetail.count_id],
       ["Nombre",             reportDetail.name],
       ["Estado",             reportDetail.status === 'approved' ? 'APROBADO' : reportDetail.status.toUpperCase()],
-      ["Tipo",               reportDetail.is_general ? 'General (Inventario Completo)' : 'Filtrado'],
+      ["Tipo",               reportDetail.is_random
+                               ? `Aleatorio (${reportDetail.random_per_zone} ubicaciones por zona)`
+                               : reportDetail.is_general ? 'General (Inventario Completo)' : 'Filtrado'],
+      ["Zonas Muestreadas",  (reportDetail.random_zones || []).join(', ') || '—'],
       ["Filtro Ubicación",   reportDetail.location_filter || '—'],
       ["Filtro Style",       reportDetail.style_filter    || '—'],
       ["Filtro Color",       reportDetail.color_filter    || '—'],
@@ -433,18 +438,42 @@ export const CycleCountModule = () => {
     })).catch(logLoadError('data'));
   }, [load]);
 
+  // Las zonas solo hacen falta al abrir el formulario de creacion; se cargan
+  // una vez (el catalogo casi no cambia) y no en cada montada del modulo.
+  useEffect(() => {
+    if (!showForm || zones.length) return;
+    fetcher('/locations/zones').then(d => setZones(Array.isArray(d) ? d : [])).catch(logLoadError('zonas'));
+  }, [showForm, zones.length]);
+
   const toggleNewForm = () => setShowForm(!showForm);
 
   const handleCreate = async () => {
     if (!form.name) { toast.error(t('wms_name_req')); return; }
+    if (form.is_random && form.random_zones.length === 0) {
+      toast.error('Selecciona al menos una zona para el conteo aleatorio');
+      return;
+    }
     setLoading(true);
     try {
-      const res = await poster('/cycle-counts', form);
+      const res = await poster('/cycle-counts', {
+        ...form,
+        random_per_zone: Number(form.random_per_zone) || 5,
+        // En aleatorio manda la casilla del panel; el include_empty suelto es
+        // para los conteos por filtro.
+        include_empty: form.is_random ? !form.random_only_stocked : form.include_empty,
+      });
       if (res.ok) {
         const data = await res.json();
-        toast.success(t('wms_cc_created', { count: data.total_lines }));
+        // En aleatorio lo que importa NO son los renglones de inventario sino
+        // cuantas ubicaciones salieron sorteadas: eso es lo que va a caminar el
+        // contador.
+        if (data.is_random) {
+          toast.success(`Conteo aleatorio creado: ${data.total_scan_locations} ubicaciones de ${(data.random_zones || []).length} zona(s)`);
+        } else {
+          toast.success(t('wms_cc_created', { count: data.total_lines }));
+        }
         setShowForm(false);
-        setForm({ name: '', is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
+        setForm({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
         load();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
     } catch { toast.error('Error de conexion'); }
@@ -1278,7 +1307,7 @@ export const CycleCountModule = () => {
               type="checkbox"
               id="cc_is_general"
               checked={form.is_general}
-              onChange={e => setForm(p => ({ ...p, is_general: e.target.checked, location_filter: '', customer_filter: '', style_filter: '', color_filter: '' }))}
+              onChange={e => setForm(p => ({ ...p, is_general: e.target.checked, ...(e.target.checked ? { is_random: false, random_zones: [] } : {}), location_filter: '', customer_filter: '', style_filter: '', color_filter: '' }))}
               className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 bg-background"
               data-testid="cc-is-general"
             />
@@ -1287,7 +1316,155 @@ export const CycleCountModule = () => {
             </label>
           </div>
 
-          <div className={`space-y-2 transition-all duration-300 ${form.is_general ? 'opacity-40 pointer-events-none scale-[0.98]' : ''}`}>
+          {/* Conteo ALEATORIO: muestreo por zona. El supervisor marca varias
+              zonas y el sistema sortea N ubicaciones de cada una (5 por default).
+              Excluyente con el conteo general y con los filtros dirigidos. */}
+          <div className="border border-border rounded-lg bg-card">
+            <div className="flex items-start gap-3 p-3">
+              <input
+                type="checkbox"
+                id="cc_is_random"
+                checked={form.is_random}
+                onChange={e => setForm(p => ({
+                  ...p,
+                  is_random: e.target.checked,
+                  ...(e.target.checked
+                    ? { is_general: false, location_filter: '', customer_filter: '', style_filter: '', color_filter: '' }
+                    : { random_zones: [] }),
+                }))}
+                className="w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary/20 bg-background"
+                data-testid="cc-is-random"
+              />
+              <label htmlFor="cc_is_random" className="text-xs font-medium text-foreground cursor-pointer select-none">
+                Conteo Aleatorio (muestreo por zona)
+                <span className="block text-muted-foreground/70 font-normal mt-0.5">
+                  Elige las zonas y el sistema toma ubicaciones al azar de cada una.
+                </span>
+              </label>
+            </div>
+
+            {form.is_random && (
+              <div className="px-3 pb-3 space-y-3 animate-in fade-in duration-200">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="text-xs text-muted-foreground" htmlFor="cc_random_per_zone">Ubicaciones por zona</label>
+                  <input
+                    id="cc_random_per_zone"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={form.random_per_zone}
+                    onChange={e => setForm(p => ({
+                      ...p,
+                      random_per_zone: e.target.value === '' ? '' : Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1)),
+                    }))}
+                    onBlur={() => setForm(p => ({ ...p, random_per_zone: p.random_per_zone || 5 }))}
+                    className="w-20 px-2 py-1 bg-background border border-border rounded text-sm text-foreground"
+                    data-testid="cc-random-per-zone"
+                  />
+                  <span className="text-xs text-muted-foreground/70">
+                    Si una zona tiene menos, se toman todas las que haya.
+                  </span>
+                </div>
+
+                <label className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.random_only_stocked}
+                    onChange={e => setForm(p => ({
+                      ...p,
+                      random_only_stocked: e.target.checked,
+                      // Al acotar a con-stock hay zonas que se quedan sin pool:
+                      // se sueltan solas para no mandar una seleccion invalida.
+                      random_zones: e.target.checked
+                        ? p.random_zones.filter(zn => (zones.find(z => z.zone === zn)?.with_stock || 0) > 0)
+                        : p.random_zones,
+                    }))}
+                    className="w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary/20 bg-background"
+                    data-testid="cc-random-only-stocked"
+                  />
+                  <span className="text-xs font-medium text-foreground">
+                    Solo ubicaciones con stock
+                    <span className="block text-muted-foreground/70 font-normal mt-0.5">
+                      Apagado (default): el sorteo entra a TODA la zona, vacias incluidas — asi se caza stock
+                      encontrado donde el sistema no ve nada. Prendido: solo ubicaciones con caja viva.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    Zonas ({form.random_zones.length} seleccionada{form.random_zones.length === 1 ? '' : 's'})
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => setForm(p => ({
+                        ...p,
+                        random_zones: zones.filter(z => (p.random_only_stocked ? z.with_stock : z.total) > 0).map(z => z.zone),
+                      }))}
+                    >Todas</button>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground hover:underline"
+                      onClick={() => setForm(p => ({ ...p, random_zones: [] }))}
+                    >Ninguna</button>
+                  </div>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto border border-border rounded bg-background divide-y divide-border" data-testid="cc-random-zones">
+                  {zones.length === 0 && (
+                    <div className="px-3 py-4 text-xs text-muted-foreground">Cargando zonas...</div>
+                  )}
+                  {zones.map(z => {
+                    const checked = form.random_zones.includes(z.zone);
+                    // Pool real del sorteo: toda la zona (vacias incluidas) o
+                    // solo las ubicaciones con caja viva si asi se pidio.
+                    const pool = form.random_only_stocked ? z.with_stock : z.total;
+                    const take = Math.min(pool, Number(form.random_per_zone) || 5);
+                    return (
+                      <label
+                        key={z.zone}
+                        className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-secondary/40 ${pool === 0 ? 'opacity-50' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={pool === 0}
+                          onChange={e => setForm(p => ({
+                            ...p,
+                            random_zones: e.target.checked
+                              ? [...p.random_zones, z.zone]
+                              : p.random_zones.filter(x => x !== z.zone),
+                          }))}
+                          className="w-4 h-4 rounded border-border text-primary focus:ring-primary/20 bg-background"
+                          data-testid={`cc-zone-${z.zone}`}
+                        />
+                        <span className="text-xs font-medium text-foreground flex-1">{z.zone}</span>
+                        <span className="text-xs text-muted-foreground/70">
+                          {pool === 0
+                            ? 'sin ubicaciones para muestrear'
+                            : `${take} de ${pool} ubicacion${pool === 1 ? '' : 'es'}${form.random_only_stocked ? '' : ` · ${z.with_stock} con stock`}`}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {form.random_zones.length > 0 && (
+                  <div className="text-xs text-muted-foreground/80" data-testid="cc-random-preview">
+                    Se generaran hasta{' '}
+                    <b>{zones
+                      .filter(z => form.random_zones.includes(z.zone))
+                      .reduce((n, z) => n + Math.min(form.random_only_stocked ? z.with_stock : z.total, Number(form.random_per_zone) || 5), 0)}</b>
+                    {' '}ubicaciones a contar.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className={`space-y-2 transition-all duration-300 ${(form.is_general || form.is_random) ? 'opacity-40 pointer-events-none scale-[0.98]' : ''}`}>
             <div className="text-xs font-medium text-muted-foreground">{t('wms_cc_filters')}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
@@ -1322,7 +1499,7 @@ export const CycleCountModule = () => {
           {/* Incluir locaciones vacías: solo tiene sentido en conteo por ubicación
               o general. Con filtro de cliente/estilo/color se deshabilita porque una
               locación vacía no casa esos filtros. */}
-          {(() => {
+          {!form.is_random && (() => {
             const emptyApplicable = !(form.customer_filter || form.style_filter || form.color_filter);
             return (
               <div className={`flex items-start gap-3 p-3 bg-card border border-border rounded-lg ${emptyApplicable ? '' : 'opacity-40'}`}>
@@ -1331,7 +1508,13 @@ export const CycleCountModule = () => {
                   id="cc_include_empty"
                   checked={emptyApplicable && form.include_empty}
                   disabled={!emptyApplicable}
-                  onChange={e => setForm(p => ({ ...p, include_empty: e.target.checked }))}
+                  onChange={e => setForm(p => ({
+                    ...p,
+                    include_empty: e.target.checked,
+                    random_zones: e.target.checked
+                      ? p.random_zones
+                      : p.random_zones.filter(zn => (zones.find(z => z.zone === zn)?.with_stock || 0) > 0),
+                  }))}
                   className="w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary/20 bg-background"
                   data-testid="cc-include-empty"
                 />
@@ -1445,7 +1628,12 @@ export const CycleCountModule = () => {
 
                 <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border/60 pt-3 gap-2 flex-wrap">
                   <span className="flex items-center gap-1"><History className="w-3 h-3" /> {new Date(c.created_at).toLocaleDateString()}</span>
-                  {c.is_general ? (
+                  {c.is_random ? (
+                    <span className="flex items-center gap-1 opacity-80" title={(c.random_zones || []).join(', ')}>
+                      <Shuffle className="w-3 h-3" />
+                      Aleatorio - {(c.random_zones || []).length} zona(s) x {c.random_per_zone}
+                    </span>
+                  ) : c.is_general ? (
                     <span className="px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 flex items-center gap-1">Conteo General</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1 justify-end">
