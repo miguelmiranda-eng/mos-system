@@ -15,7 +15,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Undo2, Plus, Loader2, MapPin, Printer, X, PackageCheck } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
-import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
+import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API } from "./lib";
 import { Card, Btn, Chip, EmptyState, SoftAlert, cls } from "./ui";
 
 const EMPTY = {
@@ -80,6 +80,16 @@ export default function ReturnReceiving() {
   const completo = form.customer && form.style && form.color && form.size &&
                    units > 0 && form.country_of_origin && form.fabric_content;
 
+  const abrirEtiquetas = (ids) => {
+    const limpios = (ids || []).filter(Boolean);
+    if (!limpios.length) return;
+    const url = limpios.length === 1
+      ? `${API}/labels/box/${encodeURIComponent(limpios[0])}`
+      : `${API}/labels/boxes?box_ids=${limpios.map(encodeURIComponent).join(",")}`;
+    const w = window.open(url, "_blank");
+    if (!w) toast.error("El navegador bloqueó la ventana de impresión");
+  };
+
   const guardar = async () => {
     if (!completo) { toast.error("Completa todos los campos"); return; }
     setSaving(true);
@@ -88,6 +98,7 @@ export default function ReturnReceiving() {
       if (res.ok) {
         const box = await res.json();
         toast.success(`Caja ${box.box_id} generada · ${units} u`);
+        abrirEtiquetas([box.box_id]);
         // El cliente se conserva: casi siempre se capturan varios renglones del
         // mismo cliente seguidos.
         setForm(p => ({ ...EMPTY, customer: p.customer }));
@@ -131,27 +142,11 @@ export default function ReturnReceiving() {
     finally { setMoving(false); }
   };
 
-  const imprimir = (box) => {
-    const w = window.open("", "_blank", "width=420,height=640");
-    if (!w) return;
-    w.document.write(
-      `<html><head><title>${box.box_id}</title><style>@page{size:4in 6in;margin:6mm}` +
-      `body{font-family:Arial,sans-serif;padding:12px;width:3.6in}</style></head><body>` +
-      `<div style="text-align:center;font-size:13px;font-weight:bold;letter-spacing:2px;` +
-      `border:2px solid #000;padding:4px;margin-bottom:10px">MATERIAL DE RETORNO</div>` +
-      `<div style="text-align:center;font-size:22px;font-weight:900;font-family:monospace">${box.box_id}</div>` +
-      `<div style="text-align:center;font-size:13px;margin:8px 0">${box.customer || ""}</div>` +
-      `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:10px">` +
-      `<tr><td style="border:1px solid #000;padding:4px">Estilo</td><td style="border:1px solid #000;padding:4px;font-weight:bold">${box.style || ""}</td></tr>` +
-      `<tr><td style="border:1px solid #000;padding:4px">Color</td><td style="border:1px solid #000;padding:4px;font-weight:bold">${box.color || ""}</td></tr>` +
-      `<tr><td style="border:1px solid #000;padding:4px">Talla</td><td style="border:1px solid #000;padding:4px;font-weight:bold">${box.size || ""}</td></tr>` +
-      `<tr><td style="border:1px solid #000;padding:4px">Unidades</td><td style="border:1px solid #000;padding:4px;font-size:18px;font-weight:900">${box.units ?? ""}</td></tr>` +
-      `<tr><td style="border:1px solid #000;padding:4px">Origen</td><td style="border:1px solid #000;padding:4px">${box.country_of_origin || ""}</td></tr>` +
-      `<tr><td style="border:1px solid #000;padding:4px">Composición</td><td style="border:1px solid #000;padding:4px;font-size:10px">${box.fabric_content || ""}</td></tr>` +
-      `</table><script>setTimeout(function(){window.print()},300);<\/script></body></html>`
-    );
-    w.document.close();
-  };
+  // Etiqueta OFICIAL del WMS (misma que Mover / Locations / BoxSearch): trae el
+  // código de barras del LPN, la ubicación en grande y los datos de recibo. La
+  // que vivía aquí se armaba a mano y salía sin barras, sin ubicación y sin
+  // quién recibió — una caja que no se podía escanear ni ubicar.
+  const imprimir = (box) => abrirEtiquetas([box.box_id]);
 
   return (
     <div className="space-y-5" data-testid="return-receiving">
@@ -245,9 +240,17 @@ export default function ReturnReceiving() {
             </Chip>
           </div>
           {selected.length > 0 && (
-            <Btn variant="primary" onClick={() => setMoveOpen(true)} data-testid="ret-move-open">
-              <MapPin className="w-4 h-4" /> Enviar a ubicación ({selected.length})
-            </Btn>
+            <div className="flex items-center gap-2">
+              {/* Reimprimir en lote: la selección ya existía para mover, pero si
+                  se atoró la impresora o se despegó la etiqueta había que sacar
+                  las cajas una por una. */}
+              <Btn onClick={() => abrirEtiquetas(selected)} data-testid="ret-print-many">
+                <Printer className="w-4 h-4" /> Etiquetas ({selected.length})
+              </Btn>
+              <Btn variant="primary" onClick={() => setMoveOpen(true)} data-testid="ret-move-open">
+                <MapPin className="w-4 h-4" /> Enviar a ubicación ({selected.length})
+              </Btn>
+            </div>
           )}
         </div>
 

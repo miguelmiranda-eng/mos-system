@@ -8967,6 +8967,26 @@ async def _enrich_box_for_label(box):
                       "manufacturer", "customer"):
                 if not r.get(f):
                     r[f] = rcv.get(f, "")
+    # Material de RETORNO: no viene de un recibo de proveedor, así que los
+    # campos que la etiqueta espera del doc de recepción hay que sacarlos de la
+    # propia caja. Sin esto la etiqueta salía sin quién la recibió y sin
+    # descripción, además del banner que la distingue en el piso.
+    if box.get("is_return") or box.get("source") == "production_return":
+        r["is_return"] = True
+        if not r.get("received_by_name"):
+            r["received_by_name"] = box.get("returned_by_name", "")
+        if not r.get("created_at"):
+            r["created_at"] = box.get("returned_at", "")
+        if not r.get("description") and box.get("inventory_id"):
+            inv = await db.wms_inventory.find_one(
+                {"inventory_id": box["inventory_id"]},
+                {"_id": 0, "description": 1, "manufacturer": 1},
+            )
+            if inv:
+                r["description"] = inv.get("description", "")
+                if not r.get("manufacturer"):
+                    r["manufacturer"] = inv.get("manufacturer", "")
+
     r["location"] = box.get("location") or box.get("inv_location") or ""
     return r
 
@@ -9001,8 +9021,17 @@ def _build_box_labels_html(items):
         carro_m = re.match(r"(?i)^CARRO\s*(\S+)$", raw_loc)
         loc_disp = f"C.{carro_m.group(1)}" if carro_m else raw_loc
         loc_size = "52px" if carro_m else "40px"
+        # El banner NO es decorativo: el material que vuelve de producción puede
+        # venir mermado o sucio y no debe confundirse en el rack con material
+        # que nunca salió.
+        banner = (
+            '<div style="text-align:center;font-size:12px;font-weight:bold;'
+            'letter-spacing:2px;border:2px solid #000;padding:3px;margin-bottom:6px">'
+            'MATERIAL DE RETORNO</div>'
+        ) if r.get("is_return") else ""
         pages.append(f'''
       <div class="label-page">
+        {banner}
         <div style="text-align:center;margin-bottom:6px"><svg id="bc-{idx}"></svg></div>
         <table class="table">
           <tr class="row">
