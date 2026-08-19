@@ -21,6 +21,7 @@ import requests
 import json
 import sys
 from datetime import datetime
+import os
 
 # ============================================================
 #  CONFIG — cambia estos valores antes de ejecutar
@@ -34,7 +35,10 @@ EMERGENT_TOKEN     = "sk-emergent-0F497D624B72bDcAe8"          # Token proporcio
 EASYPANEL_BASE_URL = "https://mosdatabase-backend.k9pirj.easypanel.host"
 EASYPANEL_EMAIL    = ""                                       # No usado si hay token
 EASYPANEL_PASSWORD = ""                                       # No usado si hay token
-EASYPANEL_TOKEN    = "mos_sync_2026_A7B9C4D2E5F8G1"           # Token de sincronización interna
+# El token iba escrito aquí, en un repo público, y daba acceso de admin. Se
+# rotó el 19-ago-2026; ahora se lee del entorno. Migración de abril, ya cumplida:
+# se conserva como referencia de cómo se hizo, no para volver a correrla a ciegas.
+EASYPANEL_TOKEN    = os.environ.get("INTERNAL_SYNC_TOKEN", "")
 
 BACKUP_FILE        = f"backup_emergent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 

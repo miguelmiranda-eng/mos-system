@@ -41,8 +41,29 @@ if not mongo_url:
     print("WARNING: No MongoDB URL found. Falling back to localhost (solo dev).")
 
 client = AsyncIOMotorClient(mongo_url)
-MASTER_API_KEY = os.environ.get("MASTER_API_KEY", "cw_0x689RpI-jtRR7oE8h_eQsKImvJapA8QfGEyS2wA=")
-INTERNAL_SYNC_TOKEN = os.environ.get("INTERNAL_SYNC_TOKEN", "mos_sync_2026_A7B9C4D2E5F8G1")
+# Las dos llaves que dan acceso de ADMINISTRADOR sin usuario ni contraseña.
+# Tenían su valor escrito aquí como respaldo, en un repo público: cualquiera que
+# leyera este archivo entraba como admin a producción (comprobado el 19-ago-2026
+# contra el servidor real; ambas devolvían 200). Ya se rotaron.
+#
+# Sin respaldo A PROPÓSITO: si la variable falta, el servidor NO ARRANCA. Un
+# default es cómodo justo hasta el día en que alguien lo lee en GitHub, y
+# entonces es una puerta abierta que nadie sabe que existe. Fallar al arrancar
+# se nota en el primer despliegue; una llave conocida no se nota nunca.
+def _llave_obligatoria(nombre: str) -> str:
+    valor = os.environ.get(nombre)
+    if not valor:
+        raise RuntimeError(
+            f"Falta la variable de entorno {nombre}. Da acceso de administrador, "
+            f"así que no tiene valor por defecto. Genera uno con "
+            f"`python -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
+            f"y ponlo en el entorno del servicio."
+        )
+    return valor
+
+
+MASTER_API_KEY = _llave_obligatoria("MASTER_API_KEY")
+INTERNAL_SYNC_TOKEN = _llave_obligatoria("INTERNAL_SYNC_TOKEN")
 
 # Get DB_NAME from env or extract from URI
 db_name = os.environ.get('DB_NAME')

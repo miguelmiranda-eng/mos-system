@@ -33,6 +33,8 @@ if SMOKE_DB == PROD_DB:
 os.environ["MONGODB_URL"] = MONGO
 os.environ["DB_NAME"] = SMOKE_DB
 os.environ.setdefault("JWT_SECRET", "smoke_secret")
+os.environ.setdefault("MASTER_API_KEY", "smoke_master_key")
+os.environ.setdefault("INTERNAL_SYNC_TOKEN", "smoke_sync_token")
 os.environ.setdefault("ENV", "local")
 sys.path.insert(0, BE)
 os.chdir(BE)

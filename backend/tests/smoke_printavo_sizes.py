@@ -17,6 +17,8 @@ BE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("MONGODB_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "mos-offline-test")
 os.environ.setdefault("JWT_SECRET", "offline_secret")
+os.environ.setdefault("MASTER_API_KEY", "smoke_master_key")
+os.environ.setdefault("INTERNAL_SYNC_TOKEN", "smoke_sync_token")
 os.environ.setdefault("ENV", "local")
 sys.path.insert(0, BE)
 
