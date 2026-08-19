@@ -86,17 +86,31 @@ def check(n, cond, det=""):
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
     for c in ["users", "orders", "connector_access", "connector_tokens",
-              "connector_calls", "oauth_clients", "oauth_codes", "oauth_tokens"]:
+              "connector_calls", "oauth_clients", "oauth_codes", "oauth_tokens",
+              "oauth_consents", "user_sessions"]:
         sdb[c].delete_many({})
     sdb.users.insert_many([
         {"user_id": "u1", "email": "jefe@prosper-mfg.com", "name": "El Jefe",
          "password_hash": bcrypt.hash("clave-del-jefe"), "role": "admin", "active": True},
         {"user_id": "u2", "email": "ajeno@prosper-mfg.com", "name": "Ajeno",
          "password_hash": bcrypt.hash("otra-clave"), "role": "admin", "active": True},
+        # Como los 88 usuarios reales que entran con Google: SIN contraseña local.
+        {"user_id": "u3", "email": "google@prosper-mfg.com", "name": "Con Google",
+         "role": "supersu", "active": True},
     ])
     # Solo el jefe esta autorizado. El "ajeno" tiene cuenta de MOS y hasta rol
     # admin: sirve para probar que tener cuenta NO alcanza.
-    sdb.connector_access.insert_one({"email": "jefe@prosper-mfg.com", "revoked": False})
+    sdb.connector_access.insert_many([
+        {"email": "jefe@prosper-mfg.com", "revoked": False},
+        {"email": "google@prosper-mfg.com", "revoked": False},
+    ])
+    # Sesión de MOS abierta en el navegador, como tras entrar con Google.
+    from datetime import datetime, timedelta, timezone
+    sdb.user_sessions.insert_one({
+        "session_token": "sesion-de-google",
+        "user_id": "u3",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+    })
     sdb.orders.insert_one({"order_id": "o1", "order_number": "2653", "board": "EMPAQUE",
                            "client": "GOODIE TWO SLEEVES", "quantity": 222, "invoice": 1500.5})
 
@@ -178,6 +192,36 @@ async def main():
         check("el codigo se guarda HASHEADO",
               sdb.oauth_codes.count_documents({"code_hash": hashlib.sha256(codigo.encode()).hexdigest()}) == 1
               and sdb.oauth_codes.count_documents({"code": codigo}) == 0)
+
+        print("\n== 4b. Cuenta de Google: sin contrasena, con sesion de MOS ==")
+        # 88 de 125 usuarios reales entran con Google y NO tienen password_hash.
+        # Pedirles contrasena era pedirles algo que no existe.
+        gal = {"Cookie": "session_token=sesion-de-google"}
+        r = await c.get("/api/mcp/oauth/authorize", params=q, headers=gal)
+        check("con sesion de MOS NO pide contrasena",
+              "Sesión de MOS activa" in r.text and "Contraseña de MOS" not in r.text,
+              r.text[:120])
+        check("dice de quien es la sesion", "google@prosper-mfg.com" in r.text)
+        nonce = r.text.split('name="consent_nonce" value="')[1].split('"')[0]
+
+        r = await c.post("/api/mcp/oauth/authorize", headers=gal,
+                         data={**form, "consent_nonce": nonce}, follow_redirects=False)
+        check("un clic en Autorizar entrega el codigo", r.status_code == 302, f"{r.status_code}")
+        cod_g = r.headers["location"].split("code=")[1].split("&")[0]
+
+        r2 = await c.post("/api/mcp/oauth/authorize", headers=gal,
+                          data={**form, "consent_nonce": nonce}, follow_redirects=False)
+        check("el nonce es de un solo uso", r2.status_code == 401, f"{r2.status_code}")
+
+        r = await c.post("/api/mcp/oauth/token",
+                         data={"grant_type": "authorization_code", "code": cod_g,
+                               "redirect_uri": REDIR, "client_id": cid,
+                               "code_verifier": VERIFIER})
+        check("y ese codigo canjea token", r.status_code == 200, f"{r.text[:90]}")
+
+        r = await c.get("/api/mcp/oauth/authorize", params=q)
+        check("sin sesion, sigue el formulario y explica lo de Google",
+              "Contraseña de MOS" in r.text and "Google" in r.text)
 
         print("\n== 5. Canje del codigo (PKCE de verdad) ==")
         base_form = {"grant_type": "authorization_code", "code": codigo,

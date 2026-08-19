@@ -28,7 +28,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from passlib.hash import bcrypt
 
-from deps import db, logger
+from deps import db, get_current_user, logger
 
 router = APIRouter()
 
@@ -42,6 +42,10 @@ RECURSO = f"{BASE}/api/mcp"
 VIDA_CODIGO = timedelta(minutes=5)
 VIDA_TOKEN = timedelta(hours=12)
 VIDA_REFRESH = timedelta(days=30)
+
+# A dónde mandar a quien no tiene sesión. Es el frontend de MOS, no el backend.
+MOS_URL = (os.environ.get("MOS_APP_URL")
+           or "https://mosdatabase-frontend.k9pirj.easypanel.host").rstrip("/")
 
 
 def _hash(v: str) -> str:
@@ -136,28 +140,57 @@ button{width:100%;margin-top:1.4rem;padding:.7rem;border:0;border-radius:6px;bac
 font-size:.95rem;font-weight:600;cursor:pointer}
 .e{background:#f7e3e6;color:#9e2b3f;padding:.6rem .7rem;border-radius:6px;font-size:.85rem;margin-bottom:1rem}
 .n{font-size:.74rem;color:#7c8b98;margin-top:1.2rem;line-height:1.5}
+.u{background:#e0edf0;color:#145f6e;padding:.7rem;border-radius:6px;font-size:.9rem;margin-bottom:.4rem;text-align:center}
+a{color:#145f6e}
 </style></head><body><div class="c">
 <h1>Conectar MOS con __APP__</h1>
-<p>Entra con tu cuenta de MOS. __APP__ podrá <b>consultar</b> órdenes, producción,
-inventario y facturación. No puede modificar nada.</p>
+<p>__APP__ podrá <b>consultar</b> órdenes, producción, inventario y facturación.
+No puede modificar nada.</p>
 __ERROR__
-<form method="post" action="/api/mcp/oauth/authorize">
-__CAMPOS__
-<label for="email">Correo</label>
-<input id="email" name="email" type="email" required autocomplete="username" autofocus>
-<label for="password">Contraseña</label>
-<input id="password" name="password" type="password" required autocomplete="current-password">
-<button type="submit">Autorizar</button>
-</form>
+__CUERPO__
 <p class="n">Solo pueden conectarse las cuentas autorizadas para el conector.
 Cada consulta queda registrada.</p>
 </div></body></html>"""
 
 
-def _pagina(params: dict, error: str = "", app: str = "Claude") -> HTMLResponse:
+_FORM_CLAVE = """<form method="post" action="/api/mcp/oauth/authorize">
+__CAMPOS__
+<label for="email">Correo de MOS</label>
+<input id="email" name="email" type="email" required autocomplete="username" autofocus>
+<label for="password">Contraseña de MOS</label>
+<input id="password" name="password" type="password" required autocomplete="current-password">
+<button type="submit">Autorizar</button>
+</form>
+<p class="n" style="margin-top:1rem">¿Entras a MOS con Google? Entonces no tienes
+contraseña aquí: <a href="__MOS__" target="_blank" rel="noopener">abre MOS e inicia
+sesión</a>, y vuelve a intentar la conexión.</p>"""
+
+_FORM_SESION = """<div class="u">Sesión de MOS activa: <b>__QUIEN__</b></div>
+<form method="post" action="/api/mcp/oauth/authorize">
+__CAMPOS__
+<input type="hidden" name="consent_nonce" value="__NONCE__">
+<button type="submit">Autorizar a __APP__</button>
+</form>"""
+
+
+def _pagina(params: dict, error: str = "", app: str = "Claude",
+            quien: str = "", nonce: str = "") -> HTMLResponse:
+    """Dos caminos, según cómo entra la persona a MOS.
+
+    88 de 125 usuarios —incluidos los dos que van a usar esto— entran con
+    Google y NO tienen contraseña local: pedirles uno era pedirles algo que no
+    existe. Si ya hay sesión de MOS en el navegador, basta un botón de
+    consentimiento; si no, queda el formulario para las cuentas que sí usan
+    contraseña, con la salida explicada para las de Google.
+    """
     campos = "".join(
         f'<input type="hidden" name="{k}" value="{_escapa(v)}">' for k, v in params.items() if v)
-    html = (_PAGINA.replace("__CAMPOS__", campos)
+    if quien:
+        cuerpo = (_FORM_SESION.replace("__QUIEN__", _escapa(quien))
+                  .replace("__NONCE__", _escapa(nonce)).replace("__APP__", _escapa(app)))
+    else:
+        cuerpo = _FORM_CLAVE.replace("__MOS__", _escapa(MOS_URL))
+    html = (_PAGINA.replace("__CUERPO__", cuerpo).replace("__CAMPOS__", campos)
             .replace("__APP__", _escapa(app))
             .replace("__ERROR__", f'<div class="e">{_escapa(error)}</div>' if error else ""))
     return HTMLResponse(html, status_code=200 if not error else 401)
@@ -180,14 +213,54 @@ async def autorizar_form(request: Request):
         return HTMLResponse("<p>redirect_uri no registrada para este cliente.</p>", status_code=400)
     if q.get("code_challenge_method") != "S256" or not q.get("code_challenge"):
         return HTMLResponse("<p>Se requiere PKCE con S256.</p>", status_code=400)
-    return _pagina(q, app=cliente.get("client_name") or "Claude")
+
+    app = cliente.get("client_name") or "Claude"
+    # Si ya inició sesión en MOS en este navegador (incluido el login con
+    # Google), no se le pide nada más: solo que confirme.
+    persona = await _sesion(request)
+    if persona:
+        nonce = secrets.token_urlsafe(24)
+        await db.oauth_consents.insert_one({
+            "nonce_hash": _hash(nonce),
+            "email": persona["email"],
+            "client_id": q.get("client_id"),
+            "redirect_uri": q.get("redirect_uri"),
+            "code_challenge": q.get("code_challenge"),
+            "expires_at": (_ahora() + VIDA_CODIGO).isoformat(),
+            "used": False,
+        })
+        return _pagina(q, app=app, quien=f"{persona['name']} <{persona['email']}>",
+                       nonce=nonce)
+    return _pagina(q, app=app)
+
+
+async def _sesion(request: Request):
+    """La persona logueada en MOS en este navegador, si la hay y está autorizada.
+
+    Se apoya en get_current_user, el mismo que usa el resto del backend, así
+    que funciona igual con login de Google que con contraseña. La cookie es de
+    este mismo host, así que llega como petición de primera parte.
+    """
+    try:
+        u = await get_current_user(request)
+    except Exception:
+        return None
+    if not u or not u.get("email"):
+        return None
+    correo = u["email"].strip().lower()
+    permitido = await db.connector_access.find_one(
+        {"email": correo, "revoked": {"$ne": True}}, {"_id": 0})
+    if not permitido:
+        return None
+    return {"email": correo, "name": u.get("name") or correo}
 
 
 @router.post("/api/mcp/oauth/authorize")
 async def autorizar(
     request: Request,
-    email: str = Form(...),
-    password: str = Form(...),
+    email: str = Form(""),
+    password: str = Form(""),
+    consent_nonce: str = Form(""),
     client_id: str = Form(...),
     redirect_uri: str = Form(...),
     code_challenge: str = Form(...),
@@ -206,12 +279,33 @@ async def autorizar(
     if code_challenge_method != "S256":
         return HTMLResponse("<p>Se requiere PKCE con S256.</p>", status_code=400)
 
+    # Camino A: consentimiento con la sesión de MOS ya abierta.
+    if consent_nonce:
+        c = await db.oauth_consents.find_one({"nonce_hash": _hash(consent_nonce)}, {"_id": 0})
+        # El nonce ata el consentimiento a ESTA pantalla, este cliente y este
+        # redirect. Sin él, una página ajena podría enviar el formulario con la
+        # sesión de la víctima y llevarse un código.
+        if (not c or c.get("used") or c["expires_at"] < _ahora().isoformat()
+                or c["client_id"] != client_id or c["redirect_uri"] != redirect_uri
+                or c["code_challenge"] != code_challenge):
+            return _pagina(q, "La pantalla caducó. Vuelve a intentar la conexión.",
+                           cliente.get("client_name") or "Claude")
+        persona = await _sesion(request)
+        if not persona or persona["email"] != c["email"]:
+            return _pagina(q, "La sesión de MOS cambió. Vuelve a intentar.",
+                           cliente.get("client_name") or "Claude")
+        await db.oauth_consents.update_one({"nonce_hash": c["nonce_hash"]},
+                                           {"$set": {"used": True}})
+        return await _entregar_codigo(persona["email"], persona["name"],
+                                      client_id, redirect_uri, code_challenge, state)
+
+    # Camino B: correo y contraseña, para las cuentas que sí tienen una.
     correo = (email or "").strip().lower()
     usuario = await db.users.find_one({"email": correo}, {"_id": 0})
     # Mismo mensaje para credencial mala y para cuenta sin permiso: distinguirlos
     # le diría a un extraño qué correos existen y cuáles están autorizados.
     generico = "Correo, contraseña o autorización inválidos."
-    if (not usuario or not usuario.get("password_hash")
+    if (not correo or not password or not usuario or not usuario.get("password_hash")
             or usuario.get("active") is False
             or not bcrypt.verify(password, usuario["password_hash"])):
         logger.warning("[mcp-oauth] intento fallido para %s", correo)
@@ -223,6 +317,11 @@ async def autorizar(
         logger.warning("[mcp-oauth] %s no está en la lista del conector", correo)
         return _pagina(q, generico, cliente.get("client_name") or "Claude")
 
+    return await _entregar_codigo(correo, usuario.get("name") or correo,
+                                  client_id, redirect_uri, code_challenge, state)
+
+
+async def _entregar_codigo(correo, nombre, client_id, redirect_uri, code_challenge, state):
     codigo = secrets.token_urlsafe(32)
     await db.oauth_codes.insert_one({
         "code_hash": _hash(codigo),
@@ -230,7 +329,7 @@ async def autorizar(
         "redirect_uri": redirect_uri,
         "code_challenge": code_challenge,
         "user_email": correo,
-        "user_name": usuario.get("name") or correo,
+        "user_name": nombre,
         "expires_at": (_ahora() + VIDA_CODIGO).isoformat(),
         "used": False,
     })
