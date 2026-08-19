@@ -8,8 +8,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGODB_URL=${MONGODB_URL:-mongodb://miranda:Mirandam2@187.124.232.150:27017/mos-system?authSource=admin}
-      - JWT_SECRET=${JWT_SECRET:-cambiame_por_un_secreto_seguro}
+      # Sin valor por defecto A PROPOSITO. Aqui vivia la cadena completa, con
+      # usuario root, en un repo publico: el default es exactamente como se
+      # filtro. Si la variable no esta, compose falla y se nota; un default
+      # silencioso no se nota hasta que alguien lo lee en GitHub.
+      - MONGODB_URL=${MONGODB_URL:?define MONGODB_URL en el entorno o en un .env local}
+      - JWT_SECRET=${JWT_SECRET:?define JWT_SECRET en el entorno o en un .env local}
 
   frontend:
     build: ./frontend

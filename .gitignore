@@ -167,3 +167,8 @@ backend/narro_*.json
 cloud_*.js
 cloud_*.css
 cloud_*.json
+
+# Scripts desechables de diagnostico. Se sacaron del repo: 24 archivos
+# sin tocar desde abril, sin que nadie los importe, y nueve de ellos con la
+# credencial de Mongo escrita.
+tmp/
