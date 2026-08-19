@@ -18,6 +18,11 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "3002", "--directory", "frontend/build"],
       "port": 3002
+    },
+    {
+      "name": "frontend-attach",
+      "url": "http://localhost:3000",
+      "port": 3000
     }
   ]
 }
