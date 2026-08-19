@@ -194,7 +194,6 @@ from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
 from routers.invoices import router as invoices_router
-from routers.work_orders import router as work_orders_router
 from routers.art import router as art_router
 from routers.final_bill import router as final_bill_router
 from routers.agenda import router as agenda_router
@@ -225,7 +224,6 @@ app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
 app.include_router(invoices_router)
-app.include_router(work_orders_router)
 app.include_router(art_router)
 app.include_router(final_bill_router)
 app.include_router(agenda_router)
