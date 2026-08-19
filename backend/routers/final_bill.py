@@ -32,7 +32,7 @@ PROJECTION = {
     "cancel_date": 1, "final_bill": 1, "design_#": 1, "desing_#": 1,
     "client": 1, "branding": 1, "quantity": 1, "total_quantity": 1,
     "production_status": 1, "board": 1, "final_bill_review": 1,
-    "production_status_at": 1,
+    "production_status_at": 1, "invoice": 1,
 }
 
 # El orden de la tabla se pide por la LLAVE DE LA COLUMNA, no por el campo de
@@ -48,7 +48,25 @@ SORTABLE = {
     "branding": "branding",
     "qty": "quantity",
     "status_at": "production_status_at",
+    "total_amount": "invoice",
 }
+
+
+def _amount(v):
+    """El total facturado como número, o None si la orden no lo tiene.
+
+    En la base hay órdenes con `invoice: null` (creadas antes de la pasada de
+    Printavo) y órdenes sin el campo. Las dos deben terminar en None para que
+    la columna diga "—" y no arrastren un 0 a la suma de la tarjeta.
+    """
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return round(float(v), 2)
+    try:
+        return round(float(str(v).replace("$", "").replace(",", "").strip()), 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _row(o: dict) -> dict:
@@ -57,9 +75,13 @@ def _row(o: dict) -> dict:
     · design: hay órdenes con la llave bien escrita (`design_#`) y otras con el
       typo heredado del Monday viejo (`desing_#`). Se leen las dos para no
       dejar el renglón vacío por una falta de ortografía de hace dos años.
-    · total_amount: NO existe fuente. La colección `invoices` tiene 4 documentos
-      en toda la base y ninguno cruza con estas órdenes. Se devuelve None a
-      propósito, para que la columna diga "—" en vez de inventar un número.
+    · total_amount: es el campo `invoice` de la orden — el total FACTURADO que
+      la pasada de Final Bill de Printavo copia sobre la orden que cruza por
+      `order_number == visualId` (printavo_sync.apply_final_bill). NO es la
+      colección `invoices`, que tiene 4 documentos sueltos y no cruza con nada.
+      Se lee sin convertir: los pocos valores que no son número están en None,
+      y un renglón sin facturar debe decir "—", no 0 — cero es una factura de
+      cero dólares y eso es un dato distinto de "todavía no se factura".
     """
     rev = o.get("final_bill_review") or {}
     return {
@@ -72,7 +94,7 @@ def _row(o: dict) -> dict:
         "client": o.get("client") or "",
         "branding": o.get("branding") or "",
         "qty": o.get("quantity") or o.get("total_quantity") or 0,
-        "total_amount": None,
+        "total_amount": _amount(o.get("invoice")),
         # Cuándo entró la orden a su estado actual. Se sella en orders.py al
         # cambiar el status y se rellenó hacia atrás desde activity_logs
         # (scripts/backfill_production_status_at.py). Vacío = no hay evento
@@ -156,12 +178,29 @@ async def list_final_bill(
 
     # Los totales de las tarjetas son de todo el filtro; se calculan en Mongo
     # para no depender de la página que se esté viendo.
+    #
+    # El monto suma SOLO las órdenes cuyo `invoice` es número. Las que no lo
+    # tienen no entran como 0: se cuentan aparte (`amount_orders`) para que la
+    # tarjeta pueda decir de cuántas órdenes de las filtradas es esa suma. Sin
+    # ese denominador, "$669,856" sobre 1,705 órdenes se lee como el total de
+    # todas cuando en realidad es el de 364.
     units = 0
+    amount = None
+    amount_orders = 0
     async for r in db.orders.aggregate([
         {"$match": query},
-        {"$group": {"_id": None, "u": {"$sum": {"$ifNull": ["$quantity", 0]}}}},
+        {"$group": {
+            "_id": None,
+            "u": {"$sum": {"$ifNull": ["$quantity", 0]}},
+            "a": {"$sum": {"$cond": [{"$isNumber": "$invoice"}, "$invoice", 0]}},
+            "n": {"$sum": {"$cond": [{"$isNumber": "$invoice"}, 1, 0]}},
+        }},
     ]):
         units = r.get("u") or 0
+        amount_orders = r.get("n") or 0
+        # Ninguna orden facturada → None, para que la tarjeta diga "—" en vez
+        # de un $0.00 que parecería una suma real de ceros.
+        amount = round(float(r.get("a") or 0), 2) if amount_orders else None
 
     counts = {}
     for key in ("envio", "inventario", "revisadas"):
@@ -174,7 +213,8 @@ async def list_final_bill(
         "total": total,
         "pages": max(1, -(-total // page_size)),
         "rows": [_row(o) for o in rows],
-        "totals": {"orders": total, "units": units, "amount": None},
+        "totals": {"orders": total, "units": units,
+                   "amount": amount, "amount_orders": amount_orders},
         "tab_counts": counts,
     }
 

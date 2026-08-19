@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ClipboardList, Package, DollarSign, Search, Filter, Download,
   Columns as ColumnsIcon, RefreshCw, ChevronsLeft, ChevronLeft, ChevronRight,
-  ChevronsRight, ChevronsUpDown, Check, Undo2, Loader2, ShieldCheck,
+  ChevronsRight, ChevronsUpDown, Check, Undo2, Loader2, ShieldCheck, CalendarDays,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
@@ -32,12 +32,19 @@ const COLUMNS = [
   { key: 'client', label: 'Client', sortable: true },
   { key: 'branding', label: 'Branding', sortable: true },
   { key: 'qty', label: 'Final Unido Qty', sortable: true, align: 'right' },
-  { key: 'total_amount', label: 'Total Amount', sortable: false, align: 'right' },
+  { key: 'total_amount', label: 'Total Amount', sortable: true, align: 'right' },
 ];
 
 const fmt = (n, d = 0) => (n === null || n === undefined || isNaN(n))
   ? '—'
   : Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
+
+// El total facturado. Sin fuente (null/undefined) es "—" y CERO es "$0.00":
+// una factura de cero dólares es un dato real y distinto de "aún no se factura",
+// así que no se colapsan en el mismo guión.
+const fmtMoney = (n) => (n === null || n === undefined || isNaN(n))
+  ? '—'
+  : Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
 // Las fechas llegan como texto YYYY-MM-DD. Se formatean a mano en vez de con
 // new Date(): el constructor las lee como UTC y en Tijuana las pinta un día
@@ -59,6 +66,62 @@ const fmtStamp = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-MX');
+};
+
+// Celda de fecha editable, con el MISMO comportamiento que la columna de
+// calendario del tablero (dashboard/EditableCell, type='date'): un clic abre el
+// <input type="date"> nativo y al salir (blur o Enter) guarda. Escape descarta.
+//
+// Guarda por PUT /api/orders/{id}, el mismo endpoint que usa el tablero, en vez
+// de abrir un endpoint propio: ese camino ya deja bitácora, corre las
+// automatizaciones y hace el broadcast que limpia la caché de /api/orders. Un
+// segundo escritor sobre la misma orden se saltaría las tres cosas y el tablero
+// seguiría mostrando la fecha vieja.
+const DateCell = ({ value, onSave, disabled }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || '');
+  const ref = useRef(null);
+
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  useEffect(() => { if (editing && ref.current) ref.current.focus(); }, [editing]);
+
+  if (disabled) return <span className="text-slate-600">{fmtDate(value)}</span>;
+
+  if (editing) {
+    const commit = () => {
+      setEditing(false);
+      if ((draft || '') !== (value || '')) onSave(draft || '');
+    };
+    return (
+      <input
+        ref={ref}
+        type="date"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') { setDraft(value || ''); setEditing(false); }
+        }}
+        className="h-8 w-[140px] px-2 rounded-lg border border-blue-400 bg-white text-sm text-slate-800 outline-none"
+        data-testid="fb-date-input"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Clic para editar la fecha de Final Bill"
+      className={`h-8 px-2 -mx-2 rounded-lg text-left inline-flex items-center gap-1.5 hover:bg-blue-50 hover:text-blue-700 transition-colors ${
+        value ? 'text-slate-600' : 'text-slate-300'
+      }`}
+    >
+      {fmtDate(value)}
+      <CalendarDays className="w-3.5 h-3.5 opacity-0 group-hover:opacity-60" />
+    </button>
+  );
 };
 
 const Card = ({ children, className = '' }) => (
@@ -202,6 +265,35 @@ const FinalBillModule = () => {
     }
   };
 
+  // Guarda la fecha de Final Bill de un renglón. Optimista: pinta el valor nuevo
+  // de inmediato y lo revierte si el PUT falla, porque volver a pedir la página
+  // completa por cambiar una fecha reordena la tabla debajo del cursor.
+  //
+  // La excepción es cuando el filtro de Final Bill está puesto: ahí la fecha
+  // nueva puede sacar al renglón del filtro, y dejarlo pintado sería mentir
+  // sobre lo que se está viendo. En ese caso sí se recarga.
+  const saveFinalBill = async (orderId, value) => {
+    const before = rows.find(r => r.order_id === orderId)?.final_bill ?? '';
+    const paint = (val) => setData(d => d && ({
+      ...d, rows: d.rows.map(r => (r.order_id === orderId ? { ...r, final_bill: val } : r)),
+    }));
+    paint(value);
+    try {
+      const res = await fetch(`${API}/orders/${orderId}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ final_bill: value || '' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success(value ? `Final Bill: ${fmtDate(value)}` : 'Final Bill vaciado');
+      if (filters.final_bill) fetchRows();
+    } catch {
+      paint(before);
+      toast.error('No se pudo guardar la fecha de Final Bill');
+    }
+  };
+
   // El Excel exporta LO QUE SE ESTÁ VIENDO (pestaña + filtros), pero todas las
   // páginas, no solo la actual: exportar 10 de 218 renglones sería una trampa.
   const exportExcel = async () => {
@@ -223,7 +315,8 @@ const FinalBillModule = () => {
         'Client': r.client,
         'Branding': r.branding,
         'Final Unido Qty': r.qty,
-        'Total Amount': r.total_amount === null ? '' : r.total_amount,
+        // Se exporta el número crudo, no "$1,234.00": en Excel el texto no suma.
+        'Total Amount': (r.total_amount === null || r.total_amount === undefined) ? '' : r.total_amount,
         'Production Status': r.production_status,
         'Revisada por': r.reviewed_by_name,
         'Revisada el': r.reviewed_at ? new Date(r.reviewed_at).toLocaleString() : '',
@@ -402,8 +495,10 @@ const FinalBillModule = () => {
           />
           <StatCard
             icon={DollarSign} chip="bg-violet-50 text-violet-600"
-            label="Total Amount" value="—"
-            sub="Sin fuente de facturación conectada"
+            label="Total Amount" value={fmtMoney(data?.totals?.amount)}
+            sub={data?.totals?.amount_orders
+              ? `De ${fmt(data.totals.amount_orders)} de ${fmt(data?.totals?.orders)} órdenes facturadas`
+              : 'Ninguna orden del filtro tiene factura aplicada'}
           />
         </div>
 
@@ -518,7 +613,12 @@ const FinalBillModule = () => {
                           else if (c.key === 'cancel_date') content = (
                             <span className={vencida ? 'text-red-600 font-semibold' : 'text-slate-600'}>{fmtDate(r.cancel_date)}</span>
                           );
-                          else if (c.key === 'final_bill') content = <span className="text-slate-600">{fmtDate(r.final_bill)}</span>;
+                          else if (c.key === 'final_bill') content = (
+                            <DateCell
+                              value={r.final_bill}
+                              onSave={(v) => saveFinalBill(r.order_id, v)}
+                            />
+                          );
                           else if (c.key === 'status_at') content = (
                             <span
                               className={r.status_at ? 'text-slate-600' : 'text-slate-300'}
@@ -528,7 +628,16 @@ const FinalBillModule = () => {
                             >{fmtStamp(r.status_at)}</span>
                           );
                           else if (c.key === 'qty') content = <span className="font-semibold text-slate-800">{fmt(r.qty)}</span>;
-                          else if (c.key === 'total_amount') content = <span className="text-slate-300">—</span>;
+                          else if (c.key === 'total_amount') content = (
+                            <span
+                              className={r.total_amount === null || r.total_amount === undefined
+                                ? 'text-slate-300'
+                                : 'font-semibold text-slate-800 tabular-nums'}
+                              title={r.total_amount === null || r.total_amount === undefined
+                                ? 'La orden todavía no tiene factura aplicada desde Printavo'
+                                : 'Total facturado (Printavo)'}
+                            >{fmtMoney(r.total_amount)}</span>
+                          );
                           else content = <span className="text-slate-600">{r[c.key] || '—'}</span>;
                           return (
                             <td key={c.key} className={`px-4 py-3 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''}`}>
@@ -626,7 +735,9 @@ const FinalBillModule = () => {
           Marcar una orden como revisada la mueve a la pestaña <b>Revisadas</b> y la saca de las otras dos,
           pero <b>no cambia su production status ni su tablero</b>: sigue igual para producción, envíos y WMS.
           Se puede devolver con el botón <b>Devolver</b>.
-          {' '}<b>Total Amount</b> sale vacía porque hoy no hay ninguna fuente de facturación conectada a estas órdenes.
+          {' '}La columna <b>Final Bill</b> se edita con un clic, igual que la columna de calendario del tablero,
+          y guarda sobre la misma orden. <b>Total Amount</b> es el total facturado que la sincronización de
+          Printavo copia sobre la orden; sale <b>—</b> en las que todavía no tienen factura aplicada.
         </p>
       </main>
     </div>
