@@ -56,6 +56,13 @@ async def get_order_history_consolidated(order_id: str, request: Request):
     if onum:
         activity_or_clauses.append({"details.order_number": onum})
         activity_or_clauses.append({"details.order": onum})
+    if oid:
+        # Movimientos EN LOTE. Es la única forma en que el tablero mueve una
+        # orden — /orders/{id}/move no lo usa nadie, todo pasa por bulk-move —
+        # y guarda los IDs en `previous_data.order_ids`, no en `details`. Sin
+        # esta cláusula NINGÚN cambio de tablero aparecía en el historial de
+        # ninguna orden: 5,934 movimientos de 1,933 órdenes, invisibles.
+        activity_or_clauses.append({"previous_data.order_ids": oid})
 
     events = []
 
@@ -75,14 +82,31 @@ async def get_order_history_consolidated(order_id: str, request: Request):
     for a in activities:
         if a.get("action") in _RICHER_ELSEWHERE:
             continue
+        detalles = a.get("details", {}) or {}
+        previos = a.get("previous_data") or {}
+        descripcion = _humanize(a.get("action"))
+
+        # Un lote se guarda entero ("38 órdenes → BLANKS"), pero en el historial
+        # de UNA orden lo único que importa es qué le pasó a ESA. El tablero de
+        # origen sale de `original_boards`, que el lote sí guarda por orden.
+        if a.get("action") == "bulk_move_orders":
+            desde = (previos.get("original_boards") or {}).get(oid)
+            hasta = detalles.get("target_board")
+            detalles = {**detalles, "from_board": desde, "to_board": hasta,
+                        "order_number": onum}
+            if desde and hasta:
+                descripcion = f"Cambio de tablero: {desde} → {hasta}"
+            elif hasta:
+                descripcion = f"Cambio de tablero: → {hasta}"
+
         events.append({
             "timestamp": a.get("timestamp"),
             "type": "activity",
             "action": a.get("action"),
             "user": a.get("user_name") or a.get("user_email") or "System",
-            "description": _humanize(a.get("action")),
-            "details": a.get("details", {}) or {},
-            "previous_data": a.get("previous_data") or {},
+            "description": descripcion,
+            "details": detalles,
+            "previous_data": previos,
         })
 
     # 3. Production Logs ───────────────────────────────────────────────────

@@ -244,7 +244,24 @@ export const formatDetails = (action, details, actionLabels) => {
     case 'update_order': return `#${details.order_number || ''} → ${(details.changed_fields || []).filter(f => f !== 'updated_at').join(', ')}`;
     case 'move_order': return `#${details.order_number || ''} ${details.from_board} → ${details.to_board}`;
     case 'delete_order': return `#${details.order_number || details.order_id}`;
-    case 'bulk_move_orders': return `${details.order_count} ordenes → ${details.target_board}`;
+    // El lote guarda de dónde salió CADA orden. "38 ordenes → BLANKS" no dice
+    // ni cuáles ni de dónde, que es justo lo que se pregunta cuando una orden
+    // aparece en un tablero que no le toca. `focus` viene lleno cuando la
+    // búsqueda apuntó a una orden concreta: entonces se muestra solo esa.
+    case 'bulk_move_orders': {
+      const foco = details.focus || [];
+      if (foco.length) {
+        return foco.map(m => `#${m.order_number}: ${m.from_board || '?'} → ${m.to_board}`).join(' · ');
+      }
+      const movs = details.moves || [];
+      if (movs.length) {
+        const origenes = [...new Set(movs.map(m => m.from_board).filter(Boolean))];
+        const nums = movs.slice(0, 4).map(m => `#${m.order_number}`).join(', ');
+        const resto = movs.length > 4 ? ` +${movs.length - 4}` : '';
+        return `${nums}${resto} · ${origenes.join(', ') || '?'} → ${details.target_board}`;
+      }
+      return `${details.order_count} ordenes → ${details.target_board}`;
+    }
     case 'add_comment': return `en #${details.order_number || details.order_id}`;
     case 'undo_action': return `${actionLabels[details.undone_action] || details.undone_action}`;
     default: return Object.values(details).filter(v => typeof v === 'string').join(', ').slice(0, 60);

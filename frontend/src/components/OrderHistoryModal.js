@@ -31,6 +31,20 @@ const ACTION_ES = {
   neck_cut: 'Corte de neck',
 };
 
+// La etiqueta fija de ACTION_ES le gana a `description`, y para un movimiento
+// en lote esa etiqueta ("Movió órdenes en lote") esconde lo único que importa
+// en el historial de UNA orden: de qué tablero salió y a cuál llegó. El backend
+// ya resuelve ese par por orden; aquí solo se prefiere cuando existe.
+const etiquetaEvento = (event) => {
+  if (event.action === 'bulk_move_orders') {
+    const de = event.details?.from_board;
+    const a = event.details?.to_board;
+    if (de && a) return `Movió de ${de} a ${a}`;
+    if (a) return `Movió a ${a}`;
+  }
+  return ACTION_ES[event.action] || event.description;
+};
+
 const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
   const { t } = useLang();
   const [history, setHistory] = useState([]);
@@ -265,7 +279,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
                       
                       <div className="text-sm font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-2">
                         {getEventIcon(event.type)}
-                        {ACTION_ES[event.action] || event.description}
+                        {etiquetaEvento(event)}
                       </div>
 
                       {/* Extra context specifically for comments or specific activities */}

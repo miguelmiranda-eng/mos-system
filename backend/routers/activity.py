@@ -39,17 +39,86 @@ async def mark_notification_read(notification_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Notification not found")
     return {"message": "Notification marked as read"}
 
+async def _ids_de_la_busqueda(search: str) -> list:
+    """order_id de las órdenes que casan con el término buscado.
+
+    Hace falta porque los movimientos EN LOTE no guardan el número de orden en
+    ningún lado: `bulk_move_orders` deja los IDs en `previous_data.order_ids` y
+    en `details` solo el conteo. Buscar "2653" no encontraba nada aunque la
+    orden se hubiera movido tres veces. Se traduce número → id para poder
+    buscar dentro del lote.
+    """
+    rx = {"$regex": search, "$options": "i"}
+    docs = await db.orders.find(
+        {"$or": [{"order_number": rx}, {"order_id": search}]}, {"_id": 0, "order_id": 1}
+    ).limit(50).to_list(50)
+    return [d["order_id"] for d in docs if d.get("order_id")]
+
+
+async def _detallar_lotes(logs: list, resaltar: list = None) -> None:
+    """Rellena los movimientos en lote con datos legibles, EN SITIO.
+
+    Un `bulk_move_orders` guardado solo dice "38 órdenes → BLANKS": ni qué
+    órdenes, ni de dónde salieron. Los dos datos que faltan sí están en el
+    registro (`previous_data.original_boards` es {order_id: tablero_origen}),
+    pero en IDs que nadie reconoce.
+
+    Aquí se resuelven a números de orden y se arma `details.moves` con el
+    origen y el destino de CADA orden. No se toca lo guardado: `previous_data`
+    es de lo que vive el undo, y reescribir el histórico para una mejora de
+    lectura sería cambiar la evidencia. Se calcula al leer.
+
+    Una sola consulta para toda la página, no una por evento: son hasta 200
+    registros y varios miles de órdenes entre todos.
+    """
+    lotes = [l for l in logs if l.get("action") == "bulk_move_orders"]
+    if not lotes:
+        return
+
+    ids = {oid for l in lotes
+           for oid in ((l.get("previous_data") or {}).get("order_ids") or [])}
+    if not ids:
+        return
+
+    numeros = {}
+    for d in await db.orders.find({"order_id": {"$in": list(ids)}},
+                                  {"_id": 0, "order_id": 1, "order_number": 1}).to_list(len(ids)):
+        numeros[d["order_id"]] = d.get("order_number") or d["order_id"]
+
+    foco = set(resaltar or [])
+    for l in lotes:
+        prev = l.get("previous_data") or {}
+        origenes = prev.get("original_boards") or {}
+        destino = (l.get("details") or {}).get("target_board")
+        movs = []
+        for oid in (prev.get("order_ids") or []):
+            movs.append({
+                "order_id": oid,
+                # Una orden borrada de verdad ya no tiene número: se deja el id
+                # para no perder el renglón del historial.
+                "order_number": numeros.get(oid, oid),
+                "from_board": origenes.get(oid),
+                "to_board": destino,
+            })
+        l.setdefault("details", {})["moves"] = movs
+        # Cuando se buscó una orden concreta, se marca cuál es: sin esto el
+        # renglón de un lote de 38 no dice qué le pasó a la que se preguntó.
+        if foco:
+            l["details"]["focus"] = [m for m in movs if m["order_id"] in foco]
+
+
 @router.get("/activity")
 async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0, action_filter: str = None, search: str = None):
     await require_admin(request)
     query = {}
     if action_filter:
         query["action"] = action_filter
-        
+
+    ids_buscados = []
     if search:
         search_regex = {"$regex": search, "$options": "i"}
         # Some details might be stored as order_id or just deep within details
-        query["$or"] = [
+        clauses = [
             {"details.order_id": search_regex},
             {"details.order_number": search_regex},
             {"details.order": search_regex},
@@ -58,9 +127,20 @@ async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0,
             {"user_name": search_regex},
             {"action": search_regex}
         ]
-        
+        # Movimientos en lote: el ID va dentro de un arreglo, y el número de
+        # orden no está en el registro. Se traduce antes de consultar.
+        ids_buscados = await _ids_de_la_busqueda(search)
+        if ids_buscados:
+            clauses.append({"previous_data.order_ids": {"$in": ids_buscados}})
+        # Los lotes NUEVOS guardan los números directo; así una orden que ya se
+        # borró de `orders` — y que por eso no resuelve arriba — se sigue
+        # encontrando en los movimientos donde estuvo.
+        clauses.append({"details.order_numbers": search_regex})
+        query["$or"] = clauses
+
     total = await db.activity_logs.count_documents(query)
     logs = await db.activity_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
+    await _detallar_lotes(logs, ids_buscados)
     return {"total": total, "logs": logs, "limit": limit, "offset": offset}
 
 @router.post("/undo/{activity_id}")

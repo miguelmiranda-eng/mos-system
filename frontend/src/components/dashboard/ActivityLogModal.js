@@ -103,7 +103,9 @@ export const ActivityLogModal = ({ isOpen, onClose, onUndoSuccess, t }) => {
                   <td className="py-2 px-3 text-muted-foreground text-[10px] font-mono">{new Date(log.timestamp).toLocaleString()}</td>
                   <td className="py-2 px-3 text-foreground text-xs">{log.user_name || log.user_email}</td>
                   <td className="py-2 px-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${ACTION_COLORS[log.action] || 'bg-secondary text-muted-foreground'}`}>{actionLabels[log.action] || log.action}</span></td>
-                  <td className="py-2 px-3 text-muted-foreground text-xs max-w-sm truncate">{log.undone ? <span className="text-purple-400 italic mr-1">[{t('undone')}]</span> : null}{formatDetails(log.action, log.details, actionLabels)}</td>
+                  {/* title = el detalle COMPLETO: la celda trunca, y en un lote
+                      de 38 órdenes lo truncado es justo lo que se anda buscando. */}
+                  <td className="py-2 px-3 text-muted-foreground text-xs max-w-sm truncate" title={formatDetails(log.action, log.details, actionLabels)}>{log.undone ? <span className="text-purple-400 italic mr-1">[{t('undone')}]</span> : null}{formatDetails(log.action, log.details, actionLabels)}</td>
                   <td className="py-2 px-3 text-right">{log.undoable && !log.undone && log.action !== 'undo_action' && (
                     <button onClick={() => handleUndo(log.activity_id)} disabled={undoingId === log.activity_id} className="p-1 rounded hover:bg-primary/20 text-primary transition-colors disabled:opacity-50" title={t('undo_this')} data-testid={`undo-btn-${log.activity_id}`}>
                       {undoingId === log.activity_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Undo2 className="w-4 h-4" />}

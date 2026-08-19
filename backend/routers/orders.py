@@ -849,6 +849,23 @@ async def bulk_move_orders(request: Request):
     result = _R()
     result.modified_count = modified_count
 
+    # El renglón del lote se guarda ya legible: qué orden, de dónde, a dónde.
+    # Antes solo quedaba "38 órdenes → BLANKS", con los IDs escondidos en
+    # `previous_data`, así que ningún movimiento de tablero aparecía en el
+    # historial de su orden ni se podía buscar por número. Se ESCRIBE en
+    # `details` (lectura); `previous_data` no se toca porque de ahí vive el
+    # undo y cambiarlo rompería el deshacer de todo lo ya registrado.
+    numeros = {o["order_id"]: o.get("order_number") for o in original_orders}
+    movimientos = [
+        {
+            "order_id": oid,
+            "order_number": numeros.get(oid) or oid,
+            "from_board": original_boards.get(oid),
+            "to_board": target_board,
+        }
+        for oid in order_ids
+    ]
+
     await log_activity(
         user,
         "bulk_move_orders",
@@ -857,6 +874,8 @@ async def bulk_move_orders(request: Request):
             "target_board": target_board,
             "queue_status": log_queue_status,
             "scheduled_day": scheduled_day if scheduled_day_provided else None,
+            "order_numbers": [m["order_number"] for m in movimientos],
+            "moves": movimientos,
         },
         previous_data={"order_ids": order_ids, "original_boards": original_boards},
     )
