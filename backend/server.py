@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pathlib import Path
 import os
+import time
 import logging
 from datetime import datetime, timezone
 from ws_manager import ws_manager
@@ -54,7 +55,13 @@ app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shi
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    logging.info(f"PROXY_CHECK: Incoming {request.method} {request.url}")
+    # PROXY_CHECK baja a DEBUG: uvicorn ya loguea cada request en su access
+    # log, así que las líneas Incoming/Outgoing a INFO triplicaban el volumen
+    # (con ~55 clientes refetcheando tras cada deploy u order_change, el
+    # propio logging era carga). Para depurar un proxy, subir el nivel del
+    # logger raíz a DEBUG. El CRASH sigue en ERROR y los requests lentos
+    # (>1s) se delatan solos en WARNING con su duración.
+    logging.debug(f"PROXY_CHECK: Incoming {request.method} {request.url}")
     # Deja el endpoint disponible para las incidencias que se registren durante
     # esta petición, para saber QUÉ flujo la disparó sin pasarlo por parámetro
     # por toda la pila de llamadas.
@@ -63,9 +70,16 @@ async def log_requests(request: Request, call_next):
         _INCIDENT_CTX.set({"endpoint": f"{request.method} {request.url.path}"})
     except Exception:
         pass
+    inicio = time.perf_counter()
     try:
         response = await call_next(request)
-        logging.info(f"PROXY_CHECK: Outgoing {request.method} {request.url} status={response.status_code}")
+        transcurrido = time.perf_counter() - inicio
+        if transcurrido > 1.0:
+            logging.warning(
+                f"SLOW_REQUEST: {request.method} {request.url.path} "
+                f"tardó {transcurrido:.2f}s status={response.status_code}"
+            )
+        logging.debug(f"PROXY_CHECK: Outgoing {request.method} {request.url} status={response.status_code}")
         return response
     except Exception as e:
         logging.error(f"PROXY_CHECK: CRASH during {request.method} {request.url}: {str(e)}")
