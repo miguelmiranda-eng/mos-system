@@ -19,9 +19,11 @@ ninguno se teclea libre— y país de origen y composición son OBLIGATORIOS. Si
 se puede decir de dónde vino el material, no entra.
 
 EL FLUJO
-  1. Captura: cliente, estilo, color, talla, cantidad, país y composición.
-  2. Se mintea una caja nueva (etiqueta nueva) marcada como retorno y se acopia
-     en la ubicación de retorno.
+  1. Captura: cliente, estilo, color, talla, cantidad, país y composición. Si
+     vuelven varias cajas idénticas se captura el número de cajas y la cantidad
+     se entiende POR CAJA.
+  2. Se mintean N cajas nuevas (etiqueta nueva cada una) marcadas como retorno y
+     se acopian en la ubicación de retorno.
   3. Las cajas se acumulan en una lista; se seleccionan una o varias y se mandan
      a su ubicación definitiva con `/api/wms/putaway/bulk`, que ya reproyecta el
      inventario correctamente.
@@ -56,6 +58,10 @@ router = APIRouter(prefix="/api/wms/returns")
 # recepción externa) a propósito: lo que vuelve de producción puede venir
 # mermado o sucio y no debe confundirse con material que nunca salió.
 RETURN_STAGING = "RETORNO PRODUCCION"
+
+# Tope por captura. No es una regla de negocio: es un freno a la mano pesada en
+# el teclado — un "500" tecleado por error minteaba 500 folios irreversibles.
+MAX_BOXES_POR_CAPTURA = 100
 
 # La identidad completa. Ninguno es opcional — ver el encabezado del módulo.
 _REQUERIDOS = ("customer", "style", "color", "size", "country_of_origin", "fabric_content")
@@ -110,6 +116,24 @@ async def receive_return(request: Request):
     if units <= 0:
         raise HTTPException(400, "La cantidad debe ser mayor a 0")
 
+    # Cuántas cajas IDÉNTICAS se están recibiendo en este movimiento. Lo normal
+    # cuando vuelve una tarima es que sean varias cajas del mismo estilo/color/
+    # talla con la misma cantidad: capturarlas de una en una era el mismo
+    # formulario N veces y N impresiones sueltas. `units` es POR CAJA, no el
+    # total — así la etiqueta de cada caja dice lo que realmente trae adentro.
+    crudo = body.get("box_count")
+    try:
+        # `or 1` NO sirve aquí: un 0 explícito es falsy y se colaría como 1,
+        # que es justo el teclazo que hay que rechazar.
+        box_count = 1 if crudo in (None, "") else int(crudo)
+    except (TypeError, ValueError):
+        box_count = 0
+    if box_count < 1:
+        raise HTTPException(400, "El número de cajas debe ser mayor a 0")
+    if box_count > MAX_BOXES_POR_CAPTURA:
+        raise HTTPException(
+            400, f"Máximo {MAX_BOXES_POR_CAPTURA} cajas por captura")
+
     # Puerta de catálogo: los seis campos tienen que venir de Configuración WMS.
     # `styles` y `colors` se scopean por cliente; el resto son globales.
     await _assert_curated_identity(customer, {
@@ -123,56 +147,83 @@ async def receive_return(request: Request):
     location = await _ensure_staging()
     await _assert_not_on_hold(user, location)
 
-    seq = await _reserve_box_seqs(1)
-    box_id = f"BOX-{seq:06d}"
+    # Los sequences se reservan de un tirón: el contador es atómico, así que N
+    # cajas capturadas juntas salen con folios consecutivos y sin carreras
+    # contra otra recepción simultánea.
+    primer_seq = await _reserve_box_seqs(box_count)
     sku = _norm(body.get("sku")) or datos["style"]
+    total_units = units * box_count
 
+    # UN solo escritor de inventario para toda la captura: se suma el total y se
+    # declaran las N cajas de golpe. Llamarlo en bucle reproyectaría el renglón
+    # N veces por el mismo motivo.
     inv_id = await _update_inventory_enhanced(
-        datos["style"], datos["color"], datos["size"], units, "add",
+        datos["style"], datos["color"], datos["size"], total_units, "add",
         customer, location,
         country_of_origin=datos["country_of_origin"],
         fabric_content=datos["fabric_content"],
-        box_count=1,
+        box_count=box_count,
     )
 
-    box_doc = {
-        "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
-        "inventory_id": inv_id, "customer": customer,
-        "style": datos["style"], "sku": sku,
-        "color": datos["color"], "size": datos["size"],
-        "units": units, "qty": units, "seq_num": seq,
-        "location": location,
-        # putaway_pending = tiene ubicación de acopio pero no definitiva. Es el
-        # estado que ya usa el resto del WMS para "falta guardarlo".
-        "status": "putaway_pending",
-        # raw, NO "finished": es material crudo sobrante. `/boxes/generate` lo
-        # marcaba como producto terminado y ensuciaba los conteos.
-        "state": "raw",
-        "country_of_origin": datos["country_of_origin"],
-        "coo": datos["country_of_origin"],
-        "fabric_content": datos["fabric_content"],
-        "source": "production_return",
-        "is_return": True,
-        "returned_at": now_iso(),
-        "returned_by": user.get("user_id"),
-        "returned_by_name": user.get("name", user.get("email", "")),
-        "created_at": now_iso(),
-    }
-    await db.wms_boxes.insert_one(box_doc)
-    box_doc.pop("_id", None)
+    ts = now_iso()
+    box_docs, return_docs = [], []
+    for i in range(box_count):
+        seq = primer_seq + i
+        box_id = f"BOX-{seq:06d}"
+        box_docs.append({
+            "box_id": box_id, "barcode": box_id, "lpn_id": box_id,
+            "inventory_id": inv_id, "customer": customer,
+            "style": datos["style"], "sku": sku,
+            "color": datos["color"], "size": datos["size"],
+            "units": units, "qty": units, "seq_num": seq,
+            "location": location,
+            # putaway_pending = tiene ubicación de acopio pero no definitiva. Es el
+            # estado que ya usa el resto del WMS para "falta guardarlo".
+            "status": "putaway_pending",
+            # raw, NO "finished": es material crudo sobrante. `/boxes/generate` lo
+            # marcaba como producto terminado y ensuciaba los conteos.
+            "state": "raw",
+            "country_of_origin": datos["country_of_origin"],
+            "coo": datos["country_of_origin"],
+            "fabric_content": datos["fabric_content"],
+            "source": "production_return",
+            "is_return": True,
+            "returned_at": ts,
+            "returned_by": user.get("user_id"),
+            "returned_by_name": user.get("name", user.get("email", "")),
+            "created_at": ts,
+        })
+        return_docs.append({
+            "return_id": gen_id("ret"), "box_id": box_id, **datos, "units": units,
+            "location": location, "sku": sku,
+            "received_by": user.get("user_id"),
+            "received_by_name": user.get("name", user.get("email", "")),
+            "created_at": ts,
+        })
 
-    await db.wms_returns.insert_one({
-        "return_id": gen_id("ret"), "box_id": box_id, **datos, "units": units,
-        "location": location, "sku": sku,
-        "received_by": user.get("user_id"),
-        "received_by_name": user.get("name", user.get("email", "")),
-        "created_at": now_iso(),
-    })
-    await log_movement(user, "material_return", {
-        "box_id": box_id, "units": units, "location": location, **datos,
-    })
+    await db.wms_boxes.insert_many(box_docs)
+    for d in box_docs:
+        d.pop("_id", None)
+    await db.wms_returns.insert_many(return_docs)
+
+    # Un movimiento POR CAJA: el rastro del WMS se navega por LPN (Movements,
+    # BoxSearch), y un solo registro agregado dejaría N-1 cajas sin historia.
+    for d in box_docs:
+        await log_movement(user, "material_return", {
+            "box_id": d["box_id"], "units": units, "location": location, **datos,
+        })
     await notify_badge_change("putaway")
-    return box_doc
+
+    # Se responde con la PRIMERA caja en la raíz (lo que ya consumía el front y
+    # el smoke para imprimir una etiqueta) más la lista completa.
+    return {
+        **box_docs[0],
+        "boxes": box_docs,
+        "box_ids": [d["box_id"] for d in box_docs],
+        "box_count": box_count,
+        "units_per_box": units,
+        "total_units": total_units,
+    }
 
 
 @router.get("/pending")

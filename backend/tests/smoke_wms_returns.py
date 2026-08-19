@@ -176,6 +176,59 @@ async def main():
         check("pero la caja sigue siendo trazable como retorno",
               sdb.wms_boxes.count_documents({"source": "production_return"}) == 2)
 
+        # ── Varias cajas idénticas en un solo movimiento ──────────────────
+        # Lo que vuelve de producción rara vez es UNA caja: es una tarima con
+        # varias iguales. Capturarlas de una en una era el mismo formulario N
+        # veces. `units` es POR CAJA — si se interpretara como total, la
+        # etiqueta mentiría sobre lo que trae adentro cada cartón.
+        print("\n== recepción de varias cajas iguales ==")
+        r = await c.post("/api/wms/returns/receive", json={**base, "units": 10, "box_count": 3})
+        check("3 cajas -> 200", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
+        data = r.json() if r.status_code == 200 else {}
+        ids = data.get("box_ids", [])
+        check("devuelve los 3 box_id para imprimir", len(ids) == 3 and all(i.startswith("BOX-") for i in ids),
+              f"box_ids={ids}")
+        check("sigue devolviendo la primera caja en la raíz (compatibilidad)",
+              data.get("box_id") == (ids[0] if ids else None), f"box_id={data.get('box_id')!r}")
+        check("los folios son consecutivos", len(set(ids)) == 3, f"{ids}")
+
+        docs = list(sdb.wms_boxes.find({"box_id": {"$in": ids}}))
+        check("se minteó una caja por cada etiqueta", len(docs) == 3, f"{len(docs)}")
+        check("cada caja trae las unidades POR CAJA, no el total",
+              all(int(d.get("units") or 0) == 10 for d in docs),
+              f"{[d.get('units') for d in docs]}")
+        check("las 3 nacen marcadas como retorno y en acopio",
+              all(d.get("source") == "production_return" and d.get("status") == "putaway_pending"
+                  and d.get("state") == "raw" for d in docs))
+        check("comparten el mismo renglón de inventario",
+              len({d.get("inventory_id") for d in docs}) == 1,
+              f"{[d.get('inventory_id') for d in docs]}")
+
+        inv = sdb.wms_inventory.find_one({"color": COLOR, "size": SIZE,
+                                          "location": data.get("location")}) or {}
+        check("el inventario subió el TOTAL (3 x 10)", int(inv.get("units_on_hand") or 0) == 30,
+              f"units_on_hand={inv.get('units_on_hand')}")
+
+        check("queda rastro de las 3 en wms_returns",
+              sdb.wms_returns.count_documents({"box_id": {"$in": ids}}) == 3)
+        check("y un movimiento por caja (trazable por LPN)",
+              all(sdb.wms_movements.count_documents(
+                  {"type": "material_return", "details.box_id": i}) == 1 for i in ids))
+
+        r = await c.get("/api/wms/returns/pending")
+        d = r.json()
+        check("las 3 aparecen en acopio", d.get("total") == 3, f"{d.get('total')}")
+        check("y suman 30 unidades", d.get("total_units") == 30, f"{d.get('total_units')}")
+
+        print("\n== topes de la captura múltiple ==")
+        r = await c.post("/api/wms/returns/receive", json={**base, "box_count": 0})
+        check("0 cajas -> 400", r.status_code == 400, f"{r.status_code} {r.text[:140]}")
+        r = await c.post("/api/wms/returns/receive", json={**base, "box_count": 5000})
+        check("5000 cajas -> 400 (tope)", r.status_code == 400, f"{r.status_code} {r.text[:140]}")
+        r = await c.get("/api/wms/returns/pending")
+        check("los rechazos no minteraron nada", r.json().get("total") == 3,
+              f"{r.json().get('total')}")
+
 
 _err = None
 try:

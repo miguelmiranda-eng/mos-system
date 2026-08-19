@@ -811,9 +811,9 @@ export const ReceivingModule = () => {
           </tr>
         </table>
         ${r.upc ? `<div style="text-align:center;margin-top:4px"><span class="label">UPC</span><svg id="upcbar-${idx}"></svg></div>` : ''}
-        <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
+        <div style="margin-top:8px;border-top:2px solid #000;padding-top:6px">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
-            <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">${box.box_id}</span></div>
+            <div><span class="label">Caja</span><span style="font-size:30px;font-weight:bold;font-family:monospace;line-height:1;letter-spacing:-0.5px;display:block">${box.box_id}</span></div>
             <div style="text-align:right"><span class="label">Etiqueta</span><span style="font-size:16px;font-weight:bold">${idx + 1} de ${boxes.length}</span></div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
@@ -830,7 +830,7 @@ export const ReceivingModule = () => {
         try {
           ${boxes.map((box, idx) => `
             JsBarcode("#barcode-${idx}", "${box.box_id}", {
-              width: 1.5, height: 40, displayValue: true, fontSize: 10, margin: 0
+              width: 1.5, height: 32, displayValue: true, fontSize: 18, textMargin: 1, margin: 0
             });
             ${r.upc ? `JsBarcode("#upcbar-${idx}", "${r.upc}", { width: 1.6, height: 44, displayValue: true, fontSize: 14, margin: 0 });` : ''}
           `).join('\n')}

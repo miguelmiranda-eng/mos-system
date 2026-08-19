@@ -9059,9 +9059,9 @@ def _build_box_labels_html(items):
           <tr class="row"><td class="cell" colspan="2" style="text-align:center"><span class="label">UNITS IN BOX</span><span class="value" style="font-size:24px">{esc(r.get("units", 0))}</span></td></tr>
         </table>
         {f'<div style="text-align:center;margin-top:4px"><span class="label">UPC</span><svg id="upc-{idx}"></svg></div>' if upc else ''}
-        <div style="margin-top:12px;border-top:2px solid #000;padding-top:8px">
+        <div style="margin-top:8px;border-top:2px solid #000;padding-top:6px">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
-            <div><span class="label">Caja</span><span style="font-size:16px;font-weight:bold;font-family:monospace">{bid}</span></div>
+            <div><span class="label">Caja</span><span style="font-size:30px;font-weight:bold;font-family:monospace;line-height:1;letter-spacing:-0.5px;display:block">{bid}</span></div>
             <div style="text-align:right"><span class="label">Etiqueta</span><span style="font-size:16px;font-weight:bold">{idx + 1} de {n}</span></div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
@@ -9072,7 +9072,9 @@ def _build_box_labels_html(items):
       </div>''')
         # JS-context escape: json.dumps neutralizes quotes/backslashes/</script>
         # in scanned or imported box_id/upc values. esc() only covers HTML.
-        calls.append(f'JsBarcode("#bc-{idx}", {json.dumps(str(r.get("box_id") or ""))}, {{width:1.5,height:40,displayValue:true,fontSize:10,margin:0}});')
+        # El texto bajo el codigo de barras ES el numero de caja: en 10px no se leia
+        # de pie frente al rack, que es justo cuando se necesita.
+        calls.append(f'JsBarcode("#bc-{idx}", {json.dumps(str(r.get("box_id") or ""))}, {{width:1.5,height:32,displayValue:true,fontSize:18,textMargin:1,margin:0}});')
         if upc:
             calls.append(f'JsBarcode("#upc-{idx}", {json.dumps(str(r.get("upc") or ""))}, {{width:1.6,height:44,displayValue:true,fontSize:14,margin:0}});')
     return f'''<html><head><title>Etiqueta(s) de caja</title>

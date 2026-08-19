@@ -8,9 +8,14 @@
    78% del material retornado entró sin país de origen, que aquí es parte de la
    identidad del lote y requisito de etiquetado.
 
-   FLUJO: capturar → se mintea una caja (etiqueta nueva) marcada como retorno y
-   se acopia → las cajas se acumulan en la lista → se seleccionan con casilla y
-   se mandan a su ubicación definitiva, confirmando cuántas y a dónde. */
+   FLUJO: capturar → se mintean N cajas (etiqueta nueva cada una) marcadas como
+   retorno y se acopian → las cajas se acumulan en la lista → se seleccionan con
+   casilla y se mandan a su ubicación definitiva, confirmando cuántas y a dónde.
+
+   CANTIDAD ES POR CAJA: cuando vuelve una tarima con varias cajas iguales se
+   captura "Cajas" y el módulo mintea ese número de LPNs, cada uno con su propia
+   etiqueta. Capturar el total en una sola caja mentiría en la etiqueta y
+   obligaría a partirla después en Mover. */
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Undo2, Plus, Loader2, MapPin, Printer, X, PackageCheck } from "lucide-react";
@@ -20,8 +25,12 @@ import { Card, Btn, Chip, EmptyState, SoftAlert, cls } from "./ui";
 
 const EMPTY = {
   customer: "", style: "", color: "", size: "",
-  units: "", country_of_origin: "", fabric_content: "",
+  units: "", box_count: "1", country_of_origin: "", fabric_content: "",
 };
+
+// Tope por captura, espejo del backend (MAX_BOXES_POR_CAPTURA). Freno a la mano
+// pesada en el teclado: cada caja es un folio que ya no se puede deshacer.
+const MAX_CAJAS = 100;
 
 export default function ReturnReceiving() {
   const cat = useWmsCatalogs();
@@ -77,8 +86,10 @@ export default function ReturnReceiving() {
 
   const set = (k) => (v) => setForm(p => ({ ...p, [k]: v }));
   const units = parseInt(form.units, 10) || 0;
+  const cajas = parseInt(form.box_count, 10) || 0;
+  const cajasOk = cajas >= 1 && cajas <= MAX_CAJAS;
   const completo = form.customer && form.style && form.color && form.size &&
-                   units > 0 && form.country_of_origin && form.fabric_content;
+                   units > 0 && cajasOk && form.country_of_origin && form.fabric_content;
 
   const abrirEtiquetas = (ids) => {
     const limpios = (ids || []).filter(Boolean);
@@ -94,11 +105,16 @@ export default function ReturnReceiving() {
     if (!completo) { toast.error("Completa todos los campos"); return; }
     setSaving(true);
     try {
-      const res = await poster("/returns/receive", { ...form, units });
+      const res = await poster("/returns/receive", { ...form, units, box_count: cajas });
       if (res.ok) {
-        const box = await res.json();
-        toast.success(`Caja ${box.box_id} generada · ${units} u`);
-        abrirEtiquetas([box.box_id]);
+        const data = await res.json();
+        // El backend responde la primera caja en la raíz por compatibilidad;
+        // `box_ids` trae las N para imprimir de un solo tirón.
+        const ids = data.box_ids?.length ? data.box_ids : [data.box_id];
+        toast.success(ids.length === 1
+          ? `Caja ${ids[0]} generada · ${units} u`
+          : `${ids.length} cajas generadas · ${units} u c/u · ${(units * ids.length).toLocaleString()} u total`);
+        abrirEtiquetas(ids);
         // El cliente se conserva: casi siempre se capturan varios renglones del
         // mismo cliente seguidos.
         setForm(p => ({ ...EMPTY, customer: p.customer }));
@@ -196,10 +212,17 @@ export default function ReturnReceiving() {
               <SearchableSelect options={sizeOptions} value={form.size} onChange={set("size")}
                 placeholder="Talla…" testId="ret-size" allowCreate={false} />
             </Field>
-            <Field label="Cantidad">
+            <Field label="Cantidad por caja">
               <input type="number" min="1" inputMode="numeric" className={cls.input}
                 value={form.units} onChange={e => set("units")(e.target.value)}
                 placeholder="Piezas…" data-testid="ret-units" />
+            </Field>
+            {/* Varias cajas idénticas en un solo movimiento: se mintea un LPN
+                por caja, cada uno con su etiqueta. */}
+            <Field label="Cajas">
+              <input type="number" min="1" max={MAX_CAJAS} inputMode="numeric" className={cls.input}
+                value={form.box_count} onChange={e => set("box_count")(e.target.value)}
+                placeholder="1" data-testid="ret-box-count" />
             </Field>
             <Field label="País de origen">
               <SearchableSelect options={cat.countries} value={form.country_of_origin}
@@ -217,13 +240,22 @@ export default function ReturnReceiving() {
             <Btn variant="primary" onClick={guardar} disabled={!completo || saving}
               data-testid="ret-submit">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Generar caja
+              {cajas > 1 ? `Generar ${cajas} cajas` : "Generar caja"}
             </Btn>
-            {!completo && (
+            {!completo ? (
               <span className="text-xs text-muted-foreground">
-                Faltan datos — los siete campos son obligatorios
+                {cajas > MAX_CAJAS
+                  ? `Máximo ${MAX_CAJAS} cajas por captura`
+                  : "Faltan datos — todos los campos son obligatorios"}
               </span>
-            )}
+            ) : cajas > 1 ? (
+              <span className="text-xs text-muted-foreground" data-testid="ret-total-preview">
+                {cajas} cajas × {units.toLocaleString()} u ={" "}
+                <strong className="text-foreground tabular-nums">
+                  {(cajas * units).toLocaleString()}
+                </strong>{" "}u — se imprimen {cajas} etiquetas
+              </span>
+            ) : null}
           </div>
         </Card>
       )}
