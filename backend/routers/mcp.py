@@ -27,6 +27,7 @@ conector "no conecta" en la mitad de las plataformas y no se sabe por qué.
 """
 import base64
 import hashlib
+import os
 import re
 from datetime import datetime, timezone
 
@@ -36,6 +37,9 @@ from fastapi.responses import JSONResponse, Response
 from deps import db, logger
 
 router = APIRouter(prefix="/api/mcp")
+
+_BASE = (os.environ.get("MCP_PUBLIC_URL")
+         or "https://mosdatabase-backend.k9pirj.easypanel.host").rstrip("/")
 
 # La que implementamos. Las demás se aceptan por compatibilidad hacia atrás.
 VERSION_ACTUAL = "2026-07-28"
@@ -97,7 +101,16 @@ async def _token_valido(request: Request):
     doc = await db.connector_tokens.find_one(
         {"token_hash": huella, "revoked": {"$ne": True}}, {"_id": 0}
     )
-    return doc
+    if doc:
+        return doc
+    # Token emitido por el flujo OAuth. Es el camino normal desde Claude: los
+    # tokens fijos de `connector_tokens` quedan para pruebas y scripts, porque
+    # la interfaz de Claude no ofrece pegarlos.
+    from routers.mcp_oauth import usuario_de_token
+    persona = await usuario_de_token(crudo)
+    if persona:
+        return {"name": persona["email"], "token_hash": None, "oauth": True}
+    return None
 
 
 # ── herramientas ────────────────────────────────────────────────────────────
@@ -407,7 +420,12 @@ async def mcp(request: Request):
             {"jsonrpc": "2.0", "id": id_,
              "error": {"code": -32001, "message": "Token de conector inválido o revocado"}},
             status_code=401,
-            headers={"WWW-Authenticate": 'Bearer realm="MOS"'},
+            # `resource_metadata` no es decorativo: es como Claude descubre el
+            # servidor de autorizacion. Sin este puntero sondea /.well-known en
+            # el origen, y si tampoco lo halla falla con "Couldn't register with
+            # ... sign-in service" — el error exacto que salia antes.
+            headers={"WWW-Authenticate":
+                     f'Bearer resource_metadata="{_BASE}/.well-known/oauth-protected-resource"'},
         )
 
     # ── métodos ──
@@ -477,9 +495,10 @@ async def _registrar(token: dict, herramienta: str, args: dict) -> None:
             "arguments": args,
             "at": ahora,
         })
-        await db.connector_tokens.update_one(
-            {"token_hash": token.get("token_hash")},
-            {"$set": {"last_used_at": ahora}, "$inc": {"calls": 1}},
-        )
+        if token.get("token_hash"):
+            await db.connector_tokens.update_one(
+                {"token_hash": token["token_hash"]},
+                {"$set": {"last_used_at": ahora}, "$inc": {"calls": 1}},
+            )
     except Exception:
         logger.warning("[mcp] no se pudo registrar la llamada a %s", herramienta)

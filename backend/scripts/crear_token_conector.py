@@ -5,10 +5,20 @@ no se recupera — se revoca y se crea otro. Es a propósito; guardar el token e
 claro convertiría la colección en una lista de llaves usables, que es
 exactamente el problema que este sistema ya tuvo con la MASTER_API_KEY.
 
+ADEMAS: la lista de quien puede conectarse por OAuth
+Claude no deja pegar un token: la persona entra con su cuenta de MOS. Pero no
+basta con tener cuenta — el correo tiene que estar en esta lista. Se autorizo
+que el conector muestre montos facturados y hay 27 cuentas admin/supersu,
+demasiadas para ese dato.
+
 Uso:
-    python backend/scripts/crear_token_conector.py crear "Miguel - Claude"
+    python backend/scripts/crear_token_conector.py permitir miguel@prosper-mfg.com
+    python backend/scripts/crear_token_conector.py quitar   miguel@prosper-mfg.com
+    python backend/scripts/crear_token_conector.py acceso
+
+    python backend/scripts/crear_token_conector.py crear "Miguel - script"
     python backend/scripts/crear_token_conector.py listar
-    python backend/scripts/crear_token_conector.py revocar "Miguel - Claude"
+    python backend/scripts/crear_token_conector.py revocar "Miguel - script"
 """
 import asyncio
 import hashlib
@@ -82,12 +92,55 @@ async def revocar(nombre: str):
         print(f"No había un token activo llamado {nombre!r}.")
 
 
+async def permitir(correo: str):
+    correo = correo.strip().lower()
+    u = await db.users.find_one({"email": correo}, {"_id": 0, "name": 1, "role": 1})
+    if not u:
+        raise SystemExit(f"No existe un usuario de MOS con el correo {correo!r}. "
+                         f"Primero dale acceso a MOS.")
+    await db.connector_access.update_one(
+        {"email": correo},
+        {"$set": {"email": correo, "revoked": False,
+                  "added_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True)
+    print(f"Autorizado: {u.get('name')} <{correo}> (rol {u.get('role')})")
+    print("Ya puede agregar el conector en Claude y entrar con su cuenta de MOS.")
+
+
+async def quitar(correo: str):
+    correo = correo.strip().lower()
+    r = await db.connector_access.update_one(
+        {"email": correo}, {"$set": {"revoked": True,
+                                     "revoked_at": datetime.now(timezone.utc).isoformat()}})
+    # Tambien se matan sus tokens vivos: el acceso se revisa en cada peticion,
+    # pero revocarlos corta la sesion ya en vez de esperar a que caduque.
+    await db.oauth_tokens.update_many({"user_email": correo}, {"$set": {"revoked": True}})
+    print(f"Acceso retirado a {correo}." if r.modified_count else f"{correo} no estaba autorizado.")
+
+
+async def acceso():
+    docs = await db.connector_access.find({}, {"_id": 0}).to_list(100)
+    if not docs:
+        print("Nadie autorizado todavia. Usa: ...py permitir correo@prosper-mfg.com")
+        return
+    print(f"{'correo':38} estado")
+    print("-" * 52)
+    for d in docs:
+        print(f"{d['email']:38} {'RETIRADO' if d.get('revoked') else 'autorizado'}")
+
+
 async def main():
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
     accion = sys.argv[1]
     if accion == "listar":
         await listar()
+    elif accion == "acceso":
+        await acceso()
+    elif accion in ("permitir", "quitar"):
+        if len(sys.argv) < 3:
+            raise SystemExit(f"Falta el correo: ...py {accion} alguien@prosper-mfg.com")
+        await (permitir if accion == "permitir" else quitar)(sys.argv[2])
     elif accion in ("crear", "revocar"):
         if len(sys.argv) < 3:
             raise SystemExit(f"Falta el nombre: ...py {accion} \"Miguel - Claude\"")
