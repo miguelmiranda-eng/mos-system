@@ -193,7 +193,6 @@ from routers.wms_returns import router as wms_returns_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
-from routers.v1_insights import router as v1_insights_router
 from routers.invoices import router as invoices_router
 from routers.work_orders import router as work_orders_router
 from routers.art import router as art_router
@@ -225,7 +224,6 @@ app.include_router(wms_returns_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
-app.include_router(v1_insights_router)
 app.include_router(invoices_router)
 app.include_router(work_orders_router)
 app.include_router(art_router)
