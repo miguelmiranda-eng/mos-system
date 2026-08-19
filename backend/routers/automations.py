@@ -158,16 +158,6 @@ async def execute_action(action_type, params, target_obj, user=None):
             await collection.update_one({id_key: target_obj[id_key]}, {"$set": {field: value}})
     elif action_type == "notify_slack":
         await send_slack_notification(params, target_obj)
-    elif action_type == "create_work_order":
-        await trigger_create_work_order(target_obj, user)
-
-async def trigger_create_work_order(invoice, user):
-    """Action to create a work order from an invoice."""
-    try:
-        from routers.invoices import generate_work_order_from_invoice
-        await generate_work_order_from_invoice(invoice, user)
-    except Exception as e:
-        logger.error(f"Failed to execute create_work_order action: {e}")
 
 async def send_automation_email(params, order):
     if not resend.api_key:

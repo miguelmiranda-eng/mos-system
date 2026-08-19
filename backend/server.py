@@ -43,7 +43,10 @@ app.add_middleware(
 # gzip los deja en ~10%). minimum_size evita comprimir respuestas chicas.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-# Servir archivos estáticos de facturas
+# uploads/invoices ya NO es de facturas: el router de invoices se elimino por
+# no tener consumidor, pero la carpeta se queda porque el Inventario por Foto
+# del WMS guarda ahi sus imagenes (wms.py, _PHOTO_IMG_ROOT). Borrarla se lleva
+# las fotos del almacen.
 UPLOAD_DIR = "uploads/invoices"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/api/invoices/static", StaticFiles(directory=UPLOAD_DIR), name="invoices_static")
@@ -193,7 +196,6 @@ from routers.wms_returns import router as wms_returns_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
-from routers.invoices import router as invoices_router
 from routers.art import router as art_router
 from routers.final_bill import router as final_bill_router
 from routers.agenda import router as agenda_router
@@ -223,7 +225,6 @@ app.include_router(wms_returns_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
-app.include_router(invoices_router)
 app.include_router(art_router)
 app.include_router(final_bill_router)
 app.include_router(agenda_router)
