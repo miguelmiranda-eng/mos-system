@@ -8,34 +8,10 @@
    Nada de mecánica: los permisos ya vienen resueltos en `groups`, que llega
    filtrado por `filterModules`. Aquí no se decide quién ve qué. */
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, X } from "lucide-react";
 import { badgeOf, groupBadge } from "./modules";
-
-/* Marca de Prosper — aproximación en SVG del globo de ondas de
-   public/prosper_logo.jpg. Toma el acento del tema vía currentColor.
-
-   PENDIENTE: sustituir por el asset real en cuanto exista en SVG (o PNG con
-   transparencia). El archivo de hoy es un JPG con el fondo blanco cocido, así
-   que no se puede poner sobre la barra oscura sin que salga el recuadro. */
-export const ProsperMark = ({ className = "" }) => {
-  const uid = useId().replace(/:/g, "");
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <defs>
-        <clipPath id={`pm-c-${uid}`}><circle cx="32" cy="32" r="29" /></clipPath>
-        <path id={`pm-w-${uid}`}
-          d="M-8,13 C 6,1 22,1 34,9 C 44,16 55,17 72,9 L72,21
-             C 55,31 42,28 30,20 C 20,13 6,13 -8,25 Z" />
-      </defs>
-      <g clipPath={`url(#pm-c-${uid})`} fill="currentColor">
-        <use href={`#pm-w-${uid}`} />
-        <use href={`#pm-w-${uid}`} y="18" />
-        <use href={`#pm-w-${uid}`} y="36" />
-      </g>
-    </svg>
-  );
-};
+import { ProsperMark } from "../ProsperMark";
 
 /* Rótulo de la barra: la marca de Prosper + el nombre del sistema. Sin
    itálica ni Barlow — hereda Blinker, la tipografía del sitio. */
