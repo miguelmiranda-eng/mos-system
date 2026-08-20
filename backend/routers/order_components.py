@@ -100,6 +100,107 @@ async def _plantilla() -> list:
     return filas if isinstance(filas, list) and filas else DEFAULT_TEMPLATE
 
 
+# ══ Etapas del proceso ═════════════════════════════════════════════════════
+# La etapa NO se captura: MOS ya la sabe. El TABLERO dice dónde está parada la
+# orden (BLANKS, SCREENS, NECK, MAQUINA5, CONTROL DE CALIDAD…) y el
+# `production_status` dice en qué va (EN PRODUCCION, EN PROCESO DE EMPAQUE,
+# NECESITA QC). Este módulo sólo las ordena y las cuenta.
+#
+# REGLA: manda el TABLERO cuando corresponde a una etapa; el status sólo decide
+# cuando el tablero no es operativo (SCHEDULING, MASTER…). Medido en la base:
+# 20 de 57 órdenes abiertas NO tienen production_status, así que sin esta
+# precedencia un tercio del tablero se quedaría sin etapa.
+STAGES = [
+    ("SCHEDULING",  "Programación"),
+    ("BLANKS",      "Blancos"),
+    ("SCREENS",     "Mallas"),
+    ("LABEL",       "Neck"),
+    ("PRODUCTION",  "Producción"),
+    ("PACKING",     "Empaque"),
+    ("SHIPPED",     "Enviada"),
+]
+STAGE_RANK = {k: i for i, (k, _) in enumerate(STAGES)}
+STAGE_LABEL = dict(STAGES)
+
+# Tableros OPERATIVOS: la orden está físicamente ahí, así que el tablero manda
+# aunque el status diga otra cosa.
+BOARD_STAGE = {
+    "BLANKS": "BLANKS",
+    "SCREENS": "SCREENS",
+    "NECK": "LABEL",
+    # QC va fundido en Empaque: es la revisión previa al envío y la secuencia
+    # pedida no lo lleva como paso propio. Si hace falta separarlo, es agregarlo
+    # a STAGES entre PRODUCTION y PACKING y remapear estas dos entradas.
+    "CONTROL DE CALIDAD": "PACKING",
+    "COMPLETOS": "PACKING",
+    "FINAL BILL": "PACKING",
+}
+
+# Tableros de PLANEACIÓN: todavía no son una etapa de piso, así que si el status
+# dice algo concreto (EN PRODUCCION, LABEL LISTO…) gana el status. Sirven de
+# respaldo para que una orden recién capturada, sin status, no salga "sin
+# etapa": estar en el tablero de programación ya es estar en programación.
+FALLBACK_BOARD_STAGE = {
+    "SCHEDULING": "SCHEDULING",
+    "READY TO SCHEDULED": "SCHEDULING",
+    "MASTER": "SCHEDULING",
+    "EDI": "SCHEDULING",
+}
+
+STATUS_STAGE = {
+    "NECESITA LABEL": "LABEL", "PROCESO DE NECK LABEL": "LABEL",
+    "PROCESO DE LABEL": "LABEL", "LABEL LISTO": "LABEL",
+    "EN PRODUCCION": "PRODUCTION",
+    "NECESITA EMPACAR": "PACKING", "EN PROCESO DE EMPAQUE": "PACKING",
+    "NECESITA QC": "PACKING", "CORRECIÓN DE QC": "PACKING",
+    "LISTO PARA FULFILLMENT": "PACKING",
+    "EJEMPLO APROBADO": "SCHEDULING", "ESPERA DE APROBAC": "SCHEDULING",
+    "EN ESPERA": "SCHEDULING",
+}
+
+# Una orden con estos status está detenida por decisión, no por falta de algo.
+STALLED = {"EN ESPERA", "ESPERA DE APROBAC"}
+
+# Fuera del seguimiento: ya salió de producción o se canceló.
+CLOSED_STATUSES = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "CANCELLED"}
+
+
+def stage_of(order: dict) -> dict:
+    """Etapa de una orden a partir de lo que MOS ya sabe.
+
+    Devuelve también de dónde salió y si las dos señales discrepan: que el
+    tablero diga BLANKS y el status diga EN PRODUCCION es información, no ruido
+    — alguien avanzó una sin mover la otra."""
+    board = (order.get("board") or "").strip().upper()
+    status = (order.get("production_status") or "").strip().upper()
+
+    por_tablero = BOARD_STAGE.get(board)
+    if board.startswith("MAQUINA"):
+        por_tablero = "PRODUCTION"
+    por_status = STATUS_STAGE.get(status)
+
+    respaldo = FALLBACK_BOARD_STAGE.get(board)
+    key = por_tablero or por_status or respaldo
+    origen = "board" if por_tablero else ("status" if por_status else ("board" if respaldo else None))
+
+    # El status va más adelante que el tablero: la orden avanzó y nadie la movió.
+    adelantado = bool(
+        por_tablero and por_status
+        and STAGE_RANK[por_status] > STAGE_RANK[por_tablero]
+    )
+    return {
+        "key": key,
+        "label": STAGE_LABEL.get(key, "Sin etapa"),
+        "rank": STAGE_RANK.get(key, -1),
+        "from": origen,
+        "board": board or "",
+        "status": order.get("production_status") or "",
+        "ahead": adelantado,
+        "ahead_key": por_status if adelantado else None,
+        "ahead_stage": STAGE_LABEL.get(por_status) if adelantado else None,
+        "stalled": status in STALLED,
+    }
+
 def resumen(componentes: list) -> dict:
     """Las cuatro cifras que hacen útil el módulo. Se derivan al leer, no se
     guardan: un rollup guardado se desincroniza en cuanto alguien edita un
@@ -152,49 +253,76 @@ async def get_template(request: Request):
 
 
 @router.get("/tracking")
-async def tracking(request: Request, board: str = "", client: str = "",
-                   only_late: bool = False, limit: int = 500):
-    """Una fila por ORDEN con su resumen, para el tablero de seguimiento.
+async def tracking(request: Request, stage: str = "", client: str = "",
+                   only_late: bool = False, only_stalled: bool = False,
+                   limit: int = 2000):
+    """TODAS las órdenes abiertas con la etapa en la que están.
 
-    Se agrupan los componentes en memoria en vez de con $lookup: son pocos por
-    orden y así el resumen sale del mismo código que la vista de detalle, sin
-    dos implementaciones que se puedan separar."""
+    "Abierta" = todavía no sale de producción: su `production_status` no es
+    LISTO PARA ENVIO, LISTO PARA INVENTARIO ni CANCELLED. No hace falta que
+    alguien las dé de alta aquí — si la orden existe y sigue viva, se sigue.
+
+    Los componentes son una capa OPCIONAL encima: si alguien capturó el detalle
+    de qué le falta, se muestra su resumen; si no, la etapa sola ya dice dónde
+    está. Por eso el módulo sirve desde el primer día, sin capturar nada."""
     await require_auth(request)
 
-    q = {}
-    if board:
-        q["board"] = board
+    q = {
+        # La papelera nunca entra: ahí viven las gemelas de los números repetidos.
+        "board": {"$ne": "PAPELERA DE RECICLAJE"},
+        "production_status": {"$nin": list(CLOSED_STATUSES)},
+    }
     if client:
         q["client"] = client
-    # La papelera nunca entra: ahí viven las gemelas de los números repetidos.
-    q["board"] = q.get("board") or {"$ne": "PAPELERA DE RECICLAJE"}
 
     ordenes = await db.orders.find(q, {
         "_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1,
-        "quantity": 1, "cancel_date": 1, "board": 1, "production_status": 1,
+        "quantity": 1, "cancel_date": 1, "due_date": 1, "board": 1,
+        "production_status": 1, "priority": 1,
     }).to_list(limit)
-    ids = [o["order_id"] for o in ordenes if o.get("order_id")]
-    if not ids:
-        return {"rows": [], "total": 0}
+    if not ordenes:
+        return {"rows": [], "total": 0, "stages": [], "counts": {}}
 
+    # Los componentes son opcionales: una sola consulta para las que sí tienen.
     porc = {}
-    async for c in db.order_components.find({"order_id": {"$in": ids}}, {"_id": 0}):
+    async for c in db.order_components.find(
+            {"order_id": {"$in": [o["order_id"] for o in ordenes]}}, {"_id": 0}):
         porc.setdefault(c["order_id"], []).append(c)
 
     filas = []
     for o in ordenes:
         comps = porc.get(o["order_id"], [])
-        if not comps:
-            continue                      # sin componentes no hay nada que seguir
-        r = resumen(comps)
-        if only_late and not r["late"]:
-            continue
-        filas.append({**o, "summary": r, "components": len(comps)})
+        filas.append({
+            **o,
+            "stage": stage_of(o),
+            "summary": resumen(comps) if comps else None,
+            "components": len(comps),
+        })
 
-    # Primero lo que más urge: atrasados, luego menor avance, luego cancel_date.
-    filas.sort(key=lambda f: (-f["summary"]["late"], f["summary"]["pct"],
-                              f.get("cancel_date") or "9999-12-31"))
-    return {"rows": filas, "total": len(filas)}
+    cuenta = {}
+    for f in filas:
+        k = f["stage"]["key"] or "NONE"
+        cuenta[k] = cuenta.get(k, 0) + 1
+
+    if stage:
+        filas = [f for f in filas if (f["stage"]["key"] or "NONE") == stage.upper()]
+    if only_late:
+        filas = [f for f in filas if (f["summary"] or {}).get("late")]
+    if only_stalled:
+        filas = [f for f in filas if f["stage"]["stalled"]]
+
+    # Primero lo que va más atrás en el proceso y vence antes: es el orden en
+    # que hay que empujarlas. Las que no tienen etapa van al final.
+    filas.sort(key=lambda f: (
+        f["stage"]["rank"] if f["stage"]["rank"] >= 0 else 99,
+        f.get("cancel_date") or "9999-12-31",
+    ))
+    return {
+        "rows": filas,
+        "total": len(filas),
+        "stages": [{"key": k, "label": lbl, "count": cuenta.get(k, 0)} for k, lbl in STAGES],
+        "counts": cuenta,
+    }
 
 
 @router.get("/order/{order_id}")
