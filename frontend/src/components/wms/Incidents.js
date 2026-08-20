@@ -5,7 +5,7 @@ import {
   Scale, Copy, ShieldCheck, ChevronDown, ChevronRight, SearchX, ScanBarcode,
 } from "lucide-react";
 import { fetcher, poster, logLoadError } from "./lib";
-import { ModuleHeader, SoftAlert, Btn, Chip } from "./ui";
+import { SoftAlert, Btn, Chip, ModuleToolbar } from "./ui";
 
 // Módulo de Incidencias de inventario · SOLO supersu.
 //
@@ -171,12 +171,11 @@ export default function Incidents() {
   return (
     <div className="h-full overflow-y-auto bg-background text-foreground">
       <div className="max-w-5xl mx-auto p-4 sm:p-6 space-y-5">
-        <ModuleHeader
-          title="Incidencias de inventario"
-          subtitle="Integridad del WMS · visible sólo para Super Usuario"
-          right={
+        <ModuleToolbar
+        right={
             <Btn onClick={cargar} disabled={cargando}>
-              {cargando ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {cargando ? <Loader2 className="w-4 h-4 animate-spin"
+      /> : <RefreshCw className="w-4 h-4" />}
               Actualizar
             </Btn>
           }

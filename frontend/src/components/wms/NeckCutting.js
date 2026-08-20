@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { RefreshCw, Factory } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError } from "./lib";
-import { ModuleHeader, Btn, Chip, EmptyState } from "./ui";
+import { Btn, Chip, EmptyState, ModuleToolbar } from "./ui";
 
 export const NeckCuttingModule = () => {
   const { t } = useLang();
@@ -43,12 +43,11 @@ export const NeckCuttingModule = () => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title="Área de Corte (Neck)"
-        subtitle="Órdenes en proceso de corte y habilitado"
+      <ModuleToolbar
         right={
           <Btn variant="ghost" onClick={load}>
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+      />
           </Btn>
         }
       />

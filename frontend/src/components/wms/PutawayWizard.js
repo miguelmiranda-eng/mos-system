@@ -5,7 +5,7 @@ import {
   Package, Eye, EyeOff, CheckCircle2, X, Boxes, ArrowRight,
 } from "lucide-react";
 import { fetcher, poster, cleanScan, logLoadError } from "./lib";
-import { ModuleHeader } from "./ui";
+import { ModuleToolbar } from "./ui";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 const boxUnits = (b) => Number(b?.units ?? b?.qty ?? 0) || 0;
@@ -196,7 +196,7 @@ export function PutawayWizard() {
       {/* STEP 1 — choose origin cart */}
       {!origin ? (
         <div className="space-y-4">
-          <ModuleHeader title="Putaway 2.0" subtitle="Escanea el carro del que vas a tomar material" />
+          <ModuleToolbar hint="Escanea el carro del que vas a tomar material" />
 
           <form onSubmit={onCartScan} className="flex items-center gap-2">
             <div className="relative flex-1">

@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight, Lock, Unlock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, deleter, logLoadError } from "./lib";
-import { ModuleHeader, Btn, cls, EmptyState } from "./ui";
+import { Btn, cls, EmptyState, ModuleToolbar } from "./ui";
 
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
@@ -607,13 +607,12 @@ export const LocationsModule = ({ currentUser }) => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title="Gestión de Ubicaciones"
-        subtitle="Mapa lógico del almacén"
+      <ModuleToolbar
         right={
           <div className="flex gap-2">
             <Btn onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}>
-              <Printer className="w-4 h-4" />
+              <Printer className="w-4 h-4"
+      />
               Imprimir Etiquetas
             </Btn>
             <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)}>

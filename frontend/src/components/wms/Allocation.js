@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, Loader2, Link2 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError } from "./lib";
-import { ModuleHeader, Btn, Chip } from "./ui";
+import { Btn, Chip, ModuleToolbar } from "./ui";
 
 export const AllocationModule = () => {
   const { t } = useLang();
@@ -68,11 +68,11 @@ export const AllocationModule = () => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title={t('allocation')}
+      <ModuleToolbar
         right={
           <Btn variant="primary" onClick={() => setShowForm(!showForm)} data-testid="new-allocation-btn">
-            <Plus className="w-4 h-4" /> {t('wms_new_loc')}
+            <Plus className="w-4 h-4"
+      /> {t('wms_new_loc')}
           </Btn>
         }
       />

@@ -6,7 +6,7 @@ import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
-import { ModuleHeader, StatCard, Btn, EmptyState } from "./ui";
+import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
 
 const STATUS_STYLES = {
   [AsnStatus.PENDING]:  { label: "PENDIENTE",  cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25",             tabCls: "bg-card text-foreground shadow-sm",    dot: "bg-blue-500" },
@@ -359,13 +359,12 @@ export const AsnModule = ({ currentUser }) => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title="Gestion de ASN"
-        subtitle="Pre-recibo y reconciliacion de packing list"
+      <ModuleToolbar
         right={
           <>
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+      />
               <input
                 placeholder="Buscar ASN / PO / Vendor"
                 value={query}

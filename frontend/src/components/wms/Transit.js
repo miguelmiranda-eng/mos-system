@@ -7,7 +7,7 @@ import {
 import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
 import { useAuth } from "../../App";
 import { PutawayWizard } from "./PutawayWizard";
-import { ModuleHeader, SoftAlert, Btn } from "./ui";
+import { SoftAlert, Btn, ModuleToolbar } from "./ui";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 
@@ -328,9 +328,7 @@ export const TransitModule = () => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <ModuleHeader
-        title="Putaway 2.0"
-        subtitle="Carros de tránsito — selecciona un carro para asignar ubicación física a sus cajas"
+      <ModuleToolbar
         right={
           <div className="flex items-center gap-3">
             {isAdmin && (
@@ -338,7 +336,8 @@ export const TransitModule = () => {
                 onClick={() => { setCartQty(10); setShowCreateCarts(true); }}
                 data-testid="putaway2-create-carts"
               >
-                <Plus className="w-3.5 h-3.5" /> Crear carros
+                <Plus className="w-3.5 h-3.5"
+      /> Crear carros
               </Btn>
             )}
             <div className="text-xs font-mono text-muted-foreground tabular-nums">

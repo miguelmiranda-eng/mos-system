@@ -4,7 +4,7 @@ import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, Sc
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError, ALL_SIZES } from "./lib";
-import { EmptyState, ModuleHeader, StatCard, SoftAlert, Btn, cls, tableCls } from "./ui";
+import { EmptyState, StatCard, SoftAlert, Btn, cls, tableCls, ModuleToolbar } from "./ui";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
@@ -732,9 +732,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title="Inventory"
-        subtitle={t('wms_stock_monitor')}
+      <ModuleToolbar
         right={
         <div className="flex items-center gap-2">
           {/* RETIRADOS 2026-07-22 (pedido del usuario): "Agregar Manual" e
@@ -746,7 +744,8 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               Handlers y modales quedan por si se rehabilitan con candado
               supersu. */}
           <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
-            <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk" />
+            <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk"
+      />
             Excluir HOLD
           </label>
           <Btn onClick={exportExcel} data-testid="export-inv-btn">

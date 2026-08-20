@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
-import { ModuleHeader, Btn, Th, Chip, tableCls } from "./ui";
+import { Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — EXCLUSIVO super admin (el backend rechaza con 403 a
 // cualquier otro rol). Cuatro vistas: salud del sistema, trazabilidad por
@@ -427,7 +427,6 @@ export const AuditModule = () => {
   const [tab, setTab] = useState("health");
   return (
     <div className="space-y-5">
-      <ModuleHeader title="Auditoría" subtitle="Trazabilidad y consistencia de todo el flujo — exclusivo super admin" />
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {TABS.map(t => {
           const Icon = t.icon;

@@ -4,7 +4,7 @@ import { Printer, Search } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError } from "./lib";
 import { BoxStatus } from "./constants";
-import { ModuleHeader, Btn, Chip, cls } from "./ui";
+import { Btn, Chip, cls, ModuleToolbar } from "./ui";
 
 export const LabelingModule = () => {
   const { t } = useLang();
@@ -26,11 +26,11 @@ export const LabelingModule = () => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader
-        title={t('wms_labeling')}
+      <ModuleToolbar
         right={
           <Btn variant="primary" onClick={printLabels} disabled={selected.size === 0} data-testid="print-labels-btn">
-            <Printer className="w-4 h-4" /> {t('wms_print_labels')} ({selected.size})
+            <Printer className="w-4 h-4"
+      /> {t('wms_print_labels')} ({selected.size})
           </Btn>
         }
       />

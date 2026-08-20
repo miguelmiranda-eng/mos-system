@@ -31,15 +31,33 @@ export const Card = ({ className = "", children, ...rest }) => (
   </div>
 );
 
-export const ModuleHeader = ({ title, subtitle, right }) => (
-  <div className="flex items-start justify-between gap-4 flex-wrap">
-    <div>
-      <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
-      {subtitle && <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>}
+/* Barra de acciones del módulo. NO lleva título: el nombre y la descripción
+   los pinta el encabezado del shell (WMS.js), y tenerlos en los dos lados
+   costaba ~150px verticales en cada pantalla del almacén — el módulo se
+   presentaba dos veces antes de enseñar un solo dato.
+
+   `context` + `hint` son para lo que el shell NO puede saber: el sub-modo
+   activo dentro del módulo (Mover: "Ajuste Masivo") o la instrucción del paso
+   de un asistente. Eso no es duplicado, es estado, y se pinta subordinado al
+   título del shell, no compitiendo con él.
+
+   Sin nada que mostrar no pinta ningún nodo, para no dejar un hueco del
+   `space-y` del contenedor. */
+export const ModuleToolbar = ({ context, hint, right, children }) => {
+  const acciones = right ?? children;
+  if (!context && !hint && !acciones) return null;
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap">
+      {(context || hint) && (
+        <div className="min-w-0">
+          {context && <div className="text-sm font-semibold">{context}</div>}
+          {hint && <div className="text-sm text-muted-foreground mt-0.5">{hint}</div>}
+        </div>
+      )}
+      {acciones && <div className="flex items-center gap-2 ml-auto">{acciones}</div>}
     </div>
-    {right && <div className="flex items-center gap-2">{right}</div>}
-  </div>
-);
+  );
+};
 
 export const StatCard = ({ label, value, sub, className = "", ...rest }) => (
   <Card className={`px-5 py-4 ${className}`} {...rest}>

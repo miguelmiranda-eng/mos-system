@@ -7,7 +7,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
-import { ModuleHeader, Btn, Chip, Th } from "./ui";
+import { Btn, Chip, Th, ModuleToolbar } from "./ui";
 import PhotoInventoryTab from "./PhotoInventory";
 
 // Panel PC de conciliación (admin): cajas faltantes + creadas para resolver, y
@@ -293,14 +293,13 @@ export const ReconciliationModule = () => {
 
   return (
     <div className="space-y-5">
-      <ModuleHeader
-        title="Conciliación"
-        subtitle="Cajas por resolver y registro de ubicaciones conciliadas"
+      <ModuleToolbar
         right={tab === "photo" ? null : (
           <>
             {/* Buscador de locaciones */}
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none"
+      />
               <input
                 id="recon-location-search"
                 type="text"

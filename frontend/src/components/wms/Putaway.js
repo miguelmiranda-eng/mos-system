@@ -4,7 +4,7 @@ import { MapPin, ScanLine, Loader2, ClipboardCheck, Package, ChevronRight, X, Ke
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, logLoadError } from "./lib";
 import { BoxStatus } from "./constants";
-import { ModuleHeader, cls } from "./ui";
+import { cls } from "./ui";
 
 export const PutawayModule = () => {
   const { t } = useLang();
@@ -94,7 +94,6 @@ export const PutawayModule = () => {
 
   return (
     <div className="space-y-6">
-      <ModuleHeader title={t('wms_mod_putaway')} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-border rounded-lg p-4 bg-card space-y-3">
           <div className="text-sm font-semibold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-muted-foreground" /> {t('wms_scan_input')}</div>

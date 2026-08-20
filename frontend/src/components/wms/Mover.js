@@ -7,7 +7,7 @@ import {
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
-import { ModuleHeader, SoftAlert, Btn, Chip, EmptyState } from "./ui";
+import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
 // Handheld scanners type the code + Enter into the focused box. We also show up
@@ -386,9 +386,11 @@ export function MoverModule({ currentUser }) {
     <div className="h-full overflow-y-auto bg-background text-foreground">
       <div className="max-w-2xl mx-auto p-4 sm:p-6 space-y-5">
         {/* Title */}
-        <ModuleHeader
-          title={topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
-          subtitle={topMode === "bulk"
+        {/* El shell ya dice "MOVER"; esto dice en cuál de sus cuatro modos
+            estás parado, que es lo único que el encabezado no puede saber. */}
+        <ModuleToolbar
+          context={topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
+          hint={topMode === "bulk"
             ? "Sube el Excel para ajustar inventario en bloque"
             : topMode === "adjust"
               ? "Escanea una caja y captura su conteo real"
