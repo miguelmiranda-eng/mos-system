@@ -136,11 +136,17 @@ const Dashboard = () => {
   // Column visibility & ordering.
   // boardColumnOrders / globalHidden come from "Columnas Globales" (MASTER) and
   // govern the whole system: which columns exist, their order, and which are
-  // hidden for everyone. Ya no existe la vista personal por usuario: el layout
-  // es uno solo y únicamente supersu puede moverlo.
+  // hidden for everyone.
   const [globalHidden, setGlobalHidden] = useState([]);
   const [boardColumnOrders, setBoardColumnOrders] = useState({});
   const [draggedCol, setDraggedCol] = useState(null);
+
+  // Orden PERSONAL de columnas por tablero, sobrepuesto al global. Solo lo usa
+  // el tramo alto (ver canArrangeColumns). Vive en localStorage y NO en Mongo:
+  // la colección user_board_layouts se retiró en c60a516 con 1,049 documentos
+  // y no vale la pena resucitarla — lo que se quiere conservar entre sesiones
+  // cabe aquí, y lo que se quiere compartir se guarda como VISTA.
+  const [personalOrder, setPersonalOrder] = useState({});
 
   // Modal visibility
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -318,6 +324,46 @@ const Dashboard = () => {
   // Nivel de admin (1..5): supersu = 5; admin = su admin_level; cualquier otro = 0.
   // Mismo cálculo que el backend get_admin_level() y que los módulos WMS del front.
   const adminLevel = user?.role === 'supersu' ? 5 : (user?.role === 'admin' ? (parseInt(user?.admin_level, 10) || 1) : 0);
+  // Reacomodar columnas arrastrando el encabezado. Volvió para el tramo alto
+  // (admin_level 5 y supersu, que es el máximo). Es un orden PERSONAL: cambia
+  // lo que ve quien arrastra, no el layout de los demás. El orden global se
+  // sigue editando desde "Columnas Globales", que tiene su propio drag — así
+  // se recupera la comodidad sin repetir lo que resolvió c60a516, que era que
+  // cada quien viera un orden distinto sin saberlo.
+  //   · supersu  → arrastrar reescribe el layout GLOBAL: lo que mueve, lo ven
+  //                  todos. No necesita vistas para esto; él configura.
+  //   · nivel 5   → arrastrar reacomoda SOLO su pantalla, y ese orden viaja en
+  //                  sus vistas guardadas. Su orden personal le gana al global,
+  //                  así que es el único grupo al que no le llegan los cambios
+  //                  del supersu mientras tenga uno propio (para eso está el
+  //                  botón de restablecer).
+  //   · el resto  → no arrastran; ven el global siempre.
+  const canArrangeColumns = adminLevel >= 5;
+  const arrangesGlobally = isSuperAdmin;
+  const hasPersonalOrder = canArrangeColumns && !isSuperAdmin;
+  const colOrderKey = `mos_col_order_${user?.user_id || user?.email || 'anon'}`;
+  // El guardado se salta EXACTAMENTE la pasada en que se hidrata desde
+  // localStorage. Sin esto: al llegar el usuario cambia `colOrderKey`, y en ese
+  // mismo commit el efecto de guardado corre con el `personalOrder` todavía
+  // vacío del render anterior y pisa con {} lo que había guardado. El re-render
+  // que provoca la hidratación vuelve a disparar el guardado, ya con el valor
+  // bueno, así que no se pierde nada.
+  const skipNextColSave = useRef(false);
+  useEffect(() => {
+    skipNextColSave.current = true;
+    if (!hasPersonalOrder) { setPersonalOrder({}); return; }
+    try {
+      const raw = localStorage.getItem(colOrderKey);
+      setPersonalOrder(raw ? JSON.parse(raw) : {});
+    } catch { setPersonalOrder({}); }
+  }, [colOrderKey, hasPersonalOrder]);
+  useEffect(() => {
+    if (skipNextColSave.current) { skipNextColSave.current = false; return; }
+    if (!hasPersonalOrder) return;
+    try { localStorage.setItem(colOrderKey, JSON.stringify(personalOrder)); } catch { /* cupo lleno: no es crítico */ }
+  }, [personalOrder, colOrderKey, hasPersonalOrder]);
+
+
   // Automatización "Barrido a BLANKS": solo Admin nivel 5 + supersu la ven/controlan.
   const canSweepBlanks = adminLevel >= 5;
   const [blanksSweep, setBlanksSweep] = useState(null);
@@ -515,15 +561,18 @@ const Dashboard = () => {
     } catch { }
   }, [apiFetch, API]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Visible columns = global config (existence + order + system-hidden from
-  // Columnas Globales). No hay recorte personal: todos ven el mismo layout.
+  // Visible columns = configuración global (qué columnas existen, cuáles están
+  // ocultas para todos) con el orden PERSONAL sobrepuesto si quien mira tiene
+  // permiso y ya movió algo. Sin orden personal, se ve el global tal cual.
   const visibleColumns = useMemo(() => {
     const hidden = globalHidden;
-    const order = boardColumnOrders[currentBoard];
+    const order = (hasPersonalOrder && personalOrder[currentBoard]?.length)
+      ? personalOrder[currentBoard]
+      : boardColumnOrders[currentBoard];
     let cols = columns.filter(c => !hidden.includes(c.key));
     if (order) { cols = order.map(key => cols.find(c => c.key === key)).filter(Boolean); const ordered = new Set(order); cols = [...cols, ...columns.filter(c => !ordered.has(c.key) && !hidden.includes(c.key))]; }
     return cols;
-  }, [globalHidden, currentBoard, boardColumnOrders, columns]);
+  }, [globalHidden, currentBoard, boardColumnOrders, personalOrder, hasPersonalOrder, columns]);
 
   // Saved views
   const fetchSavedViews = useCallback(async () => {
@@ -536,9 +585,10 @@ const Dashboard = () => {
   const handleSaveView = async () => {
     if (!newViewName.trim()) return;
     try {
-      // Las vistas guardan solo filtros y agrupación: el layout de columnas es
-      // global (supersu) y ya no viaja con la vista.
-      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, group_by_date: groupByDate }) });
+      // La vista vuelve a llevar el orden de columnas, pero SOLO el personal:
+      // si quien guarda no movió nada, no se congela el global — así la vista
+      // sigue reflejando los cambios que el supersu haga después.
+      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, group_by_date: groupByDate, column_order: hasPersonalOrder ? (personalOrder[currentBoard] || []) : [] }) });
       if (res.ok) {
         const newView = await res.json();
         toast.success(`${t('save_view')}: "${newViewName}"`);
@@ -566,8 +616,11 @@ const Dashboard = () => {
       setFilters(view.filters || {});
       setActiveViewName(view.name);
       activeViewIdRef.current = view.view_id;
-      // hidden_columns/column_order de vistas viejas se ignoran a propósito:
-      // el layout de columnas es global y solo lo mueve supersu.
+      // El orden guardado se aplica solo a quien puede reacomodar; para el
+      // resto la vista sigue siendo filtros + agrupación sobre el layout
+      // global, que es como la ven hoy.
+      if (hasPersonalOrder && view.column_order?.length)
+        setPersonalOrder(prev => ({ ...prev, [currentBoard]: view.column_order }));
       if (view.group_by_date !== undefined)
         setGroupByDate(view.group_by_date || null);
     }
@@ -588,11 +641,12 @@ const Dashboard = () => {
         body: JSON.stringify({
           filters,
           group_by_date: groupByDate,
+          column_order: hasPersonalOrder ? (personalOrder[currentBoard] || []) : [],
         })
       }).then(() => fetchSavedViews()).catch(() => { });
     }, 1200);
     return () => { if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current); };
-  }, [filters, groupByDate, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, groupByDate, personalOrder, currentBoard, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset active view when board changes to prevent overwriting
   useEffect(() => {
@@ -605,40 +659,57 @@ const Dashboard = () => {
   const pinnedViews = currentBoardViews.filter(v => v.pinned);
   const unpinnedViews = currentBoardViews.filter(v => !v.pinned);
 
-  // Column drag — reordering changes the GLOBAL order, so only supersu can do it.
-  const handleColumnDragStart = (colKey) => { if (isSuperAdmin) setDraggedCol(colKey); };
+  // Escribe el layout GLOBAL. Solo lo alcanza el supersu; el backend además lo
+  // exige con require_supersu en PUT /config/board-layout.
+  const handleUpdateColumnOrder = (newOrder) => {
+    fetch(`${API}/config/board-layout/MASTER`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
+    }).catch(err => console.error('Error saving layout:', err));
+  };
+
+  // Arrastre de columnas. Quién arrastra decide a quién le cambia:
+  //   · supersu → reescribe el layout global y lo publica al soltar.
+  //   · nivel 5 → solo su pantalla; el orden queda en localStorage y en sus
+  //     vistas guardadas, sin tocar a nadie más.
+  const handleColumnDragStart = (colKey) => { if (canArrangeColumns) setDraggedCol(colKey); };
   const handleColumnDragOver = (e, targetKey) => {
     e.preventDefault();
     if (!draggedCol || draggedCol === targetKey) return;
     const allKeys = visibleColumns.map(c => c.key);
-    const savedOrder = boardColumnOrders[currentBoard];
-    let currentOrder = savedOrder ? [...savedOrder.filter(k => allKeys.includes(k)), ...allKeys.filter(k => !new Set(savedOrder).has(k))] : allKeys;
+    // Se parte del orden que se está viendo (personal si ya movió, global si no)
+    // y se completa con las columnas que ese orden no menciona.
+    const base = (hasPersonalOrder && personalOrder[currentBoard]?.length)
+      ? personalOrder[currentBoard]
+      : boardColumnOrders[currentBoard];
+    let currentOrder = base ? [...base.filter(k => allKeys.includes(k)), ...allKeys.filter(k => !new Set(base).has(k))] : allKeys;
     const dragIdx = currentOrder.indexOf(draggedCol);
     const targetIdx = currentOrder.indexOf(targetKey);
     if (dragIdx === -1 || targetIdx === -1) return;
     const newOrder = [...currentOrder]; newOrder.splice(dragIdx, 1); newOrder.splice(targetIdx, 0, draggedCol);
-    setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: newOrder }));
+    if (arrangesGlobally) setBoardColumnOrders(prev => ({ ...prev, [currentBoard]: newOrder }));
+    else setPersonalOrder(prev => ({ ...prev, [currentBoard]: newOrder }));
   };
   const handleColumnDragEnd = () => {
     setDraggedCol(null);
-    if (isSuperAdmin) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
+    // El supersu publica al soltar: su orden es el de todos. El nivel 5 no pega
+    // al backend — su orden vive en localStorage y en sus vistas.
+    if (arrangesGlobally) handleUpdateColumnOrder(boardColumnOrders[currentBoard] || []);
   };
 
-  const handleUpdateColumnOrder = (newOrder) => {
-    setBoardColumnOrders(prev => {
-      const updated = { ...prev, [currentBoard]: newOrder };
 
-      // Persist the new GLOBAL order (only supersu reaches here; the backend
-      // also enforces it with require_supersu).
-      fetch(`${API}/config/board-layout/MASTER`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
-      }).catch(err => console.error('Error saving layout:', err));
-
-      return updated;
+  // Vuelve al orden global de este tablero. Es la salida de emergencia: sin
+  // ella, quien movió una columna se queda con su orden para siempre y deja de
+  // ver los cambios que el supersu haga al layout de todos.
+  const handleResetColumnOrder = () => {
+    setPersonalOrder(prev => {
+      const next = { ...prev };
+      delete next[currentBoard];
+      return next;
     });
+    toast.success('Columnas de vuelta al orden global');
   };
 
   const handleCreateBoard = async () => {
@@ -1880,6 +1951,13 @@ const Dashboard = () => {
               <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
               {/* Agregar columna toca el set GLOBAL: solo supersu (el backend lo exige). */}
               {isSuperAdmin && <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>}
+              {/* Solo aparece cuando este usuario YA movió columnas en este
+                  tablero: es la forma de volver al orden que ven los demás. */}
+              {hasPersonalOrder && personalOrder[currentBoard]?.length > 0 && (
+                <button onClick={handleResetColumnOrder} title="Restablecer columnas al orden global" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all" data-testid="reset-column-order">
+                  <Undo2 size={18} />
+                </button>
+              )}
 
               <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
                 <PopoverTrigger asChild>
@@ -2279,9 +2357,9 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={isSuperAdmin} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={canArrangeColumns} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
-                          <div className={`flex items-center gap-1.5 select-none overflow-hidden ${isSuperAdmin ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                          <div className={`flex items-center gap-1.5 select-none overflow-hidden ${canArrangeColumns ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
                             <span className="truncate">{col.label}</span>
                             {/* Filter Trigger Icon */}
