@@ -31,6 +31,14 @@ export const WMS_GROUPS = [
    `badgeKey` sólo se pone cuando la llave que devuelve /badges NO coincide con
    el id del módulo: Putaway 2.0 tiene id 'transit' pero su contador sigue
    llegando como `putaway` (el lanzador del picker ya hacía ese mapeo a mano). */
+/* `t()` devuelve la propia llave cuando no hay traduccion, asi que un
+   `t('x') || 'Fallback'` NUNCA cae al fallback: la llave es truthy. Por eso
+   "Trabajo dirigido" se veia como `wms_mod_directed` en la barra. */
+const tr = (t, llave, respaldo) => {
+  const v = t(llave);
+  return !v || v === llave ? respaldo : v;
+};
+
 export const buildModules = (t) => [
   // ── Entradas ────────────────────────────────────────────────────────────
   { id: 'asn', group: 'in', label: 'ASN', icon: FileDown, color: 'text-orange-400',
@@ -62,8 +70,8 @@ export const buildModules = (t) => [
     desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
 
   // ── Salidas ─────────────────────────────────────────────────────────────
-  { id: 'directed', group: 'out', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400',
-    desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
+  { id: 'directed', group: 'out', label: tr(t, 'wms_mod_directed', 'Trabajo Dirigido'), icon: ScanLine, color: 'text-yellow-400',
+    desc: tr(t, 'wms_mod_directed_desc', 'Instrucciones inteligentes para el piso') },
   { id: 'picking', group: 'out', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400',
     desc: t('wms_mod_picking_desc') },
   { id: 'neck_cutting', group: 'out', label: 'Corte de Neck', icon: Scissors, color: 'text-pink-400',
