@@ -310,3 +310,136 @@ async def set_review_bulk(request: Request):
         {"order_ids": ids, "count": res.modified_count},
     )
     return {"ok": True, "modified": res.modified_count, "reviewed": reviewed}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# REPORTE DE ÓRDENES PINTADAS
+# ══════════════════════════════════════════════════════════════════════════
+# No existe un status "PINTADA" en la orden: lo pintado se deduce de
+# `production_logs`, donde cada captura del piso es un documento. Una orden
+# normalmente tiene VARIAS capturas (una por máquina, posición, talla o turno),
+# así que el reporte agrupa por `order_number` y suma — si no, la misma orden
+# saldría repetida.
+#
+# CUIDADO CON LA CIFRA: `quantity_produced` cuenta IMPRESIONES, no prendas. Una
+# orden de 500 piezas impresa por frente y espalda llega a 1000. Por eso el
+# reporte saca el desglose por posición además del total, y la columna se llama
+# "impresiones" — no "piezas".
+
+# Clientes de prueba que ensucian el piso (misma lista que
+# scripts/cleanup_test_data.py). No deben salir en un reporte de facturación.
+_CLIENTES_PRUEBA = ["FINAL CLIENT", "FINAL VERIFICATION", "TEST CLIENT"]
+_BOARD_BASURA = "PAPELERA DE RECICLAJE"
+
+
+def _a_tijuana(iso: str) -> str:
+    """ISO UTC guardado → texto local de Tijuana, para que las fechas del
+    reporte coincidan con lo que vio el piso."""
+    from routers.production import _iso_utc_to_tijuana
+    return _iso_utc_to_tijuana(iso)
+
+
+@router.get("/printed-report")
+async def printed_report(request: Request, date_from: str = "", date_to: str = ""):
+    """Órdenes con captura de producción en el rango, una fila por orden.
+
+    El rango se interpreta en hora de Tijuana y se traduce a UTC antes de
+    comparar, reusando el mismo helper que el resto de los reportes de
+    producción — así "20 de agosto" significa lo mismo en los dos módulos.
+    """
+    await require_auth(request)
+    if not date_from or not date_to:
+        raise HTTPException(400, "Elige el rango de fechas (desde y hasta)")
+    if date_from > date_to:
+        raise HTTPException(400, "La fecha inicial es posterior a la final")
+
+    from routers.production import _get_preset_query
+
+    match = _get_preset_query(None, date_from, date_to)
+    if not match.get("created_at"):
+        raise HTTPException(400, "Rango de fechas inválido")
+    match["client"] = {"$nin": _CLIENTES_PRUEBA}
+
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": "$order_number",
+            "impresiones": {"$sum": "$quantity_produced"},
+            "capturas": {"$sum": 1},
+            "primera": {"$min": "$created_at"},
+            "ultima": {"$max": "$created_at"},
+            "setup_min": {"$sum": "$setup"},
+            "maquinas": {"$addToSet": "$machine"},
+            "operadores": {"$addToSet": "$operator"},
+            "turnos": {"$addToSet": "$shift"},
+            "order_ids": {"$addToSet": "$order_id"},
+            # El desglose por posición es lo que permite leer la cifra: sin él,
+            # "1000" en una orden de 500 parece un error de captura.
+            "posiciones": {"$push": {"p": "$design_type", "q": "$quantity_produced"}},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    grupos = await db.production_logs.aggregate(pipeline).to_list(20000)
+    if not grupos:
+        return {"rows": [], "total": 0, "date_from": date_from, "date_to": date_to}
+
+    numeros = [g["_id"] for g in grupos if g["_id"]]
+    ordenes = {}
+    async for o in db.orders.find({"order_number": {"$in": numeros}}, PROJECTION | {"board": 1, "quantity": 1}):
+        # Una orden en la papelera no se factura; y si el mismo número existiera
+        # dos veces, gana la que NO está en la basura.
+        if o.get("board") == _BOARD_BASURA and o.get("order_number") in ordenes:
+            continue
+        ordenes[o.get("order_number")] = o
+
+    filas = []
+    for g in grupos:
+        num = g["_id"]
+        o = ordenes.get(num) or {}
+        if o.get("board") == _BOARD_BASURA:
+            continue
+
+        por_pos = {}
+        for it in g.get("posiciones") or []:
+            clave = (it.get("p") or "SIN POSICIÓN").upper()
+            por_pos[clave] = por_pos.get(clave, 0) + (it.get("q") or 0)
+
+        limpio = lambda xs: sorted(x for x in (xs or []) if x)  # noqa: E731
+        rev = o.get("final_bill_review") or {}
+        filas.append({
+            "order_number": num,
+            "customer_po": o.get("customer_po") or "",
+            "client": o.get("client") or "",
+            "design": o.get("design_#") or o.get("desing_#") or "",
+            "branding": o.get("branding") or "",
+            "board": o.get("board") or "",
+            "production_status": o.get("production_status") or "",
+            "cancel_date": o.get("cancel_date") or "",
+            "final_bill": o.get("final_bill") or "",
+            "qty_ordenada": o.get("quantity") or o.get("total_quantity") or 0,
+            "total_amount": _amount(o.get("invoice")),
+            "revisada": bool(rev.get("reviewed")),
+            # ── producción ──
+            "impresiones": g.get("impresiones") or 0,
+            "por_posicion": por_pos,
+            "capturas": g.get("capturas") or 0,
+            "primera_captura": _a_tijuana(g.get("primera") or ""),
+            "ultima_captura": _a_tijuana(g.get("ultima") or ""),
+            "setup_min": g.get("setup_min") or 0,
+            "maquinas": limpio(g.get("maquinas")),
+            "operadores": limpio(g.get("operadores")),
+            "turnos": limpio(g.get("turnos")),
+            # Si un número de orden trae más de un order_id, el dato es
+            # ambiguo y el reporte lo dice en vez de esconderlo.
+            "order_ids": len(g.get("order_ids") or []),
+            "en_mos": bool(o),
+        })
+
+    posiciones = sorted({p for f in filas for p in f["por_posicion"]})
+    return {
+        "rows": filas,
+        "total": len(filas),
+        "posiciones": posiciones,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
