@@ -4,7 +4,7 @@ import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, Sc
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, logLoadError, ALL_SIZES } from "./lib";
-import { ModuleHeader, StatCard, SoftAlert, Btn, cls, tableCls } from "./ui";
+import { EmptyState, ModuleHeader, StatCard, SoftAlert, Btn, cls, tableCls } from "./ui";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
 // short-circuit re-renders when there's no source data yet.
@@ -951,19 +951,15 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           {inventory.length === 0 && !loadingMore && (() => {
             if (!hasAnyFilter) {
               return (
-                <div className="flex flex-col items-center justify-center py-20">
-                  <p className="text-sm font-semibold text-foreground/80">Busca un producto para empezar</p>
-                  <p className="text-sm text-muted-foreground mt-1 max-w-md text-center">
-                    Escribe un Style o SKU para consultar el inventario.
-                  </p>
-                </div>
+                <EmptyState
+                  art="scan"
+                  title="Busca un producto para empezar"
+                  hint="Escribe un Style o SKU para consultar el inventario."
+                />
               );
             }
             return (
-              <div className="flex flex-col items-center justify-center py-20">
-                <p className="text-sm font-semibold text-foreground/80">{t('wms_no_inv')}</p>
-                <p className="text-sm text-muted-foreground mt-1">{t('wms_import_hint')}</p>
-              </div>
+              <EmptyState art="boxes" title={t('wms_no_inv')} hint={t('wms_import_hint')} />
             );
           })()}
         </div>

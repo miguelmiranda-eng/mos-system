@@ -291,7 +291,7 @@ export default function ReturnReceiving() {
             <Loader2 className="w-5 h-5 animate-spin" />
           </div>
         ) : pending.length === 0 ? (
-          <EmptyState title="Sin material en acopio"
+          <EmptyState art="rack" title="Sin material en acopio"
             hint="Lo que recibas de retorno aparece aquí hasta que lo mandes a su ubicación." />
         ) : (
           <div className="overflow-x-auto">

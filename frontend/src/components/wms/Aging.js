@@ -3,7 +3,7 @@ import { Clock, Loader2, Download, Search, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { fetcher, logLoadError } from "./lib";
-import { Btn, cls, tableCls } from "./ui";
+import { Btn, cls, tableCls, EmptyState } from "./ui";
 
 // Buckets de antigüedad — mismo orden y umbrales que el backend
 // (d0_30 = 0-30 días, d31_60 = 31-60, d61_90 = 61-90, d90_plus = 90+).
@@ -197,9 +197,9 @@ export const AgingModule = ({ initialCustomer = '' }) => {
                 </tr>
               ) : customers.length === 0 ? (
                 <tr>
-                  <td colSpan={colCount} className="py-20 text-center">
-                    <p className="text-sm font-semibold text-foreground/80">Sin inventario para mostrar</p>
-                    <p className="text-sm text-muted-foreground mt-1">No hay cajas en stock{debouncedCustomer ? ` para “${debouncedCustomer}”` : ''}.</p>
+                  <td colSpan={colCount}>
+                    <EmptyState art="boxes" title="Sin inventario para mostrar"
+                      hint={`No hay cajas en stock${debouncedCustomer ? ` para “${debouncedCustomer}”` : ''}.`} />
                   </td>
                 </tr>
               ) : (

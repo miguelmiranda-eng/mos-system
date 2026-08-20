@@ -6,7 +6,7 @@ import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
-import { Btn, StatCard, cls } from "./ui";
+import { Btn, StatCard, cls, EmptyState } from "./ui";
 
 const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -1114,10 +1114,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })()}
           {preTickets.length === 0 && (
-            <div className="py-16 text-center">
-              <p className="text-sm font-semibold text-foreground/80">NO HAY PRE-TICKETS PENDIENTES</p>
-              <p className="text-sm text-muted-foreground mt-1">Todas las órdenes en MOS ya tienen tickets generados.</p>
-            </div>
+            <EmptyState art="done" title="No hay pre-tickets pendientes"
+              hint="Todas las órdenes en MOS ya tienen tickets generados." />
           )}
         </div>
       )}
@@ -1149,10 +1147,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           )}
           {activeTickets.length === 0 && (
-            <div className="py-16 text-center">
-              <p className="text-sm font-semibold text-foreground/80">NO HAY TICKETS ACTIVOS</p>
-              <p className="text-sm text-muted-foreground mt-1">Inicia un Pre-Ticket para comenzar a trabajar.</p>
-            </div>
+            <EmptyState art="clipboard" title="No hay tickets activos"
+              hint="Inicia un pre-ticket para comenzar a trabajar." />
           )}
         </div>
       )}
@@ -1192,9 +1188,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                 {filteredCompleted.map(ticket => renderTicket(ticket, false))}
               </div>
               {filteredCompleted.length === 0 && (
-                <div className="py-16 text-center">
-                  <p className="text-sm font-semibold text-foreground/80">{t('wms_no_completed_tickets')}</p>
-                </div>
+                <EmptyState art="clipboard" title={t('wms_no_completed_tickets')} />
               )}
             </>
           )}
@@ -1296,9 +1290,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           ))}
           {workloadByOperator.length === 0 && (
-            <div className="py-16 text-center">
-              <p className="text-sm font-semibold text-foreground/80">Sin operadores ni tickets activos</p>
-            </div>
+            <EmptyState art="clipboard" title="Sin operadores ni tickets activos" />
           )}
         </div>
       )}

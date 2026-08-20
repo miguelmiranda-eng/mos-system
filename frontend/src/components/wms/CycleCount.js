@@ -1746,7 +1746,7 @@ export const CycleCountModule = () => {
               <p className="text-sm">Cargando KPIs...</p>
             </div>
           ) : !kpiReport ? (
-            <EmptyState title="Elige un conteo para ver sus KPIs."
+            <EmptyState art="clipboard" title="Elige un conteo para ver sus KPIs."
               hint="Se muestran los datos de ese conteo: líneas, unidades y cajas." />
           ) : (
             <>
@@ -1923,7 +1923,7 @@ export const CycleCountModule = () => {
               <Loader2 className="w-4 h-4 animate-spin" /> Cargando…
             </div>
           ) : !cuarentena?.length ? (
-            <EmptyState icon={CheckCircle} title="Nada por auditar"
+            <EmptyState art="done" title="Nada por auditar"
               subtitle="El piso no ha reportado cajas de la carga inicial. Aparecerán aquí conforme se las encuentren." />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
@@ -2000,7 +2000,7 @@ export const CycleCountModule = () => {
               <p className="text-sm">Cargando eficiencia...</p>
             </div>
           ) : effCounters.length === 0 ? (
-            <EmptyState title="Sin actividad de conteo en el rango."
+            <EmptyState art="clipboard" title="Sin actividad de conteo en el rango."
               hint="Ajusta las fechas y vuelve a aplicar." />
           ) : (
             <>

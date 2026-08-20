@@ -6,7 +6,7 @@ import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
-import { ModuleHeader, StatCard, Btn } from "./ui";
+import { ModuleHeader, StatCard, Btn, EmptyState } from "./ui";
 
 const STATUS_STYLES = {
   [AsnStatus.PENDING]:  { label: "PENDIENTE",  cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25",             tabCls: "bg-card text-foreground shadow-sm",    dot: "bg-blue-500" },
@@ -1035,7 +1035,8 @@ export const AsnModule = ({ currentUser }) => {
               {traceLoading ? (
                 <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-muted-foreground" /></div>
               ) : !traceResults ? (
-                <div className="text-center py-16 text-sm text-muted-foreground">Escribe un SKU y busca</div>
+                <EmptyState art="scan" title="Escribe un SKU y busca"
+                  hint="Rastrea en qué avisos de llegada viene ese material." />
               ) : traceResults.groups.length === 0 ? (
                 <div className="text-center py-16 text-sm text-muted-foreground">Sin coincidencias para “{traceResults.query}”</div>
               ) : (

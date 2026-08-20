@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight, Lock, Unlock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, deleter, logLoadError } from "./lib";
-import { ModuleHeader, Btn, cls } from "./ui";
+import { ModuleHeader, Btn, cls, EmptyState } from "./ui";
 
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
@@ -763,9 +763,8 @@ export const LocationsModule = ({ currentUser }) => {
           const hiddenZoneCount = sortedZones.length - zonesToRender.length;
 
           if (filtered.length === 0) return (
-            <div className="py-16 text-center">
-              <p className="text-sm font-semibold text-foreground/80">No se encontraron ubicaciones</p>
-            </div>
+            <EmptyState art="rack" title="No se encontraron ubicaciones"
+              hint="Prueba con otro texto de búsqueda o cambia de pestaña." />
           );
 
           return (<>

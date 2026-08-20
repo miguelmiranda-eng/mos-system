@@ -92,7 +92,7 @@ export const NeckCuttingModule = () => {
       </div>
 
       {orders.length === 0 && !loading && (
-        <EmptyState title="No hay órdenes en proceso de corte" />
+        <EmptyState art="done" title="No hay órdenes en proceso de corte" />
       )}
     </div>
   );

@@ -13,6 +13,8 @@
    · Color: neutro por default; el color solo comunica estado (éxito/alerta/
      error) en tonos suaves, nunca decora. */
 
+import { WmsArt } from "./Illustrations";
+
 export const cls = {
   // input de texto estándar
   input: "w-full px-3 py-2 text-sm bg-card border border-input rounded-md " +
@@ -102,8 +104,14 @@ export const Chip = ({ tone = "neutral", className = "", children }) => (
   </span>
 );
 
-export const EmptyState = ({ title, hint, children }) => (
-  <div className="py-16 text-center">
+/* `art` elige la escena de ./Illustrations.js. Con `art={false}` no se dibuja
+   nada — para estados vacíos que viven dentro de un panel chico, donde la
+   ilustración estorbaría. */
+export const EmptyState = ({ title, hint, art = "boxes", children }) => (
+  <div className="py-12 text-center">
+    {art !== false && (
+      <WmsArt name={art} className="w-56 sm:w-64 h-auto mx-auto mb-5" />
+    )}
     <div className="text-sm font-semibold text-foreground/80">{title}</div>
     {hint && <div className="text-sm text-muted-foreground mt-1">{hint}</div>}
     {children}

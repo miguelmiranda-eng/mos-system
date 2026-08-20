@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, Search, Edit2, Trash2, X, Barcode, CheckCircle2, AlertTriangle } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { fetcher, poster, putter, deleter, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
-import { Btn, cls } from "./ui";
+import { Btn, cls, EmptyState } from "./ui";
 
 // Validacion GTIN del lado del cliente — mismo criterio que _valid_gtin del
 // backend (POST /upc). Adelanta el feedback: el supervisor ve al instante si el
@@ -244,9 +244,13 @@ export const UpcCatalog = ({ isManager }) => {
         </div>
 
         {rows.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {search.trim() ? "Sin resultados." : "Escribe para buscar UPC en el catálogo."}
-          </div>
+          <EmptyState
+            art={search.trim() ? "boxes" : "scan"}
+            title={search.trim() ? "Sin resultados" : "Busca un UPC"}
+            hint={search.trim()
+              ? "Ningún UPC coincide con lo que escribiste."
+              : "Escribe el UPC, el estilo, el color o el cliente."}
+          />
         ) : (
           <>
           {filtersActive && (

@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, deleter, logLoadError, useWmsSizes } from "./lib";
-import { Btn, Chip, cls, tableCls } from "./ui";
+import { Btn, Chip, cls, tableCls, EmptyState } from "./ui";
 
 const TABS = [
   { id: 'movements', label: 'Movimientos',       icon: History },
@@ -247,9 +247,7 @@ const MovementsTab = () => {
           );
         })}
         {movements.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <p className="text-sm font-semibold text-foreground/80">{t('wms_no_movements')}</p>
-          </div>
+          <EmptyState art="clipboard" title={t('wms_no_movements')} />
         )}
         {movements.length >= MOVEMENTS_LIMIT && (
           <div className="pt-3 text-center text-xs text-amber-600 dark:text-amber-400">
@@ -419,8 +417,8 @@ const InOutTab = () => {
                 <tr><td colSpan={9} className="py-16 text-center text-muted-foreground"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></td></tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-20 text-center">
-                    <p className="text-sm font-semibold text-foreground/80">Sin entradas ni salidas manuales</p>
+                  <td colSpan={9}>
+                    <EmptyState art="clipboard" title="Sin entradas ni salidas manuales" />
                   </td>
                 </tr>
               ) : (
@@ -898,9 +896,7 @@ const BoxHistoryTab = () => {
       )}
 
       {!loading && searched && !data && (
-        <div className="flex flex-col items-center justify-center py-16">
-          <p className="text-sm font-semibold text-foreground/80">Sin resultados</p>
-        </div>
+        <EmptyState art="boxes" title="Sin resultados" />
       )}
     </div>
   );

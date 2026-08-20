@@ -239,7 +239,7 @@ export const ReportsModule = () => {
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">Las más viejas sin guardar</div>
             {!d.putaway?.mas_viejas?.length ? (
-              <EmptyState title="Nada pendiente" hint="Todas las cajas recibidas están guardadas." />
+              <EmptyState art="done" title="Nada pendiente" hint="Todas las cajas recibidas están guardadas." />
             ) : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
@@ -271,7 +271,7 @@ export const ReportsModule = () => {
               Tickets abiertos {d.picking?.sin_asignar ? `— ${d.picking.sin_asignar} sin asignar` : ""}
             </div>
             {!d.picking?.tickets?.length ? (
-              <EmptyState title="Sin tickets abiertos" hint="Todo lo pedido está surtido." />
+              <EmptyState art="done" title="Sin tickets abiertos" hint="Todo lo pedido está surtido." />
             ) : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
@@ -309,7 +309,7 @@ export const ReportsModule = () => {
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">Por operador</div>
             {!d.operadores?.length ? (
-              <EmptyState title="Sin actividad en el periodo" hint="Prueba con otro rango de fechas." />
+              <EmptyState art="clipboard" title="Sin actividad en el periodo" hint="Prueba con otro rango de fechas." />
             ) : (
               <TableShell maxH="max-h-[55vh]">
                 <thead className={tableCls.thead}>
@@ -372,7 +372,7 @@ export const ReportsModule = () => {
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">
               Entradas — recibos {d.recibos?.length ? `(${d.recibos.length})` : ""}
             </div>
-            {!d.recibos?.length ? <EmptyState title="Sin recibos en el periodo" /> : (
+            {!d.recibos?.length ? <EmptyState art={false} title="Sin recibos en el periodo" /> : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
                   <tr><Th>Fecha</Th><Th>Cliente</Th><Th>Material</Th><Th right>Unidades</Th><Th>ASN</Th><Th>Recibió</Th></tr>
@@ -397,7 +397,7 @@ export const ReportsModule = () => {
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">
               Salidas — pick tickets {d.tickets?.length ? `(${d.tickets.length})` : ""}
             </div>
-            {!d.tickets?.length ? <EmptyState title="Sin tickets en el periodo" /> : (
+            {!d.tickets?.length ? <EmptyState art={false} title="Sin tickets en el periodo" /> : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
                   <tr><Th>Creado</Th><Th>Ticket</Th><Th>Orden</Th><Th>Cliente</Th><Th right>Cantidad</Th><Th>Estado</Th><Th>Picker</Th></tr>
@@ -441,7 +441,7 @@ export const ReportsModule = () => {
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">Recibos forzados</div>
-            {!d.recibos_forzados?.length ? <EmptyState title="Ninguno en el periodo" /> : (
+            {!d.recibos_forzados?.length ? <EmptyState art={false} title="Ninguno en el periodo" /> : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
                   <tr><Th>Fecha</Th><Th>Excepción</Th><Th>Cliente</Th><Th>Material</Th><Th right>Unidades</Th><Th>Recibió</Th></tr>
@@ -464,7 +464,7 @@ export const ReportsModule = () => {
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">Tickets fuera de plazo</div>
-            {!d.tickets_fuera_sla?.length ? <EmptyState title="Ninguno en el periodo" /> : (
+            {!d.tickets_fuera_sla?.length ? <EmptyState art={false} title="Ninguno en el periodo" /> : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
                   <tr><Th>Ticket</Th><Th>Situación</Th><Th>Orden</Th><Th>Cliente</Th><Th right>Cantidad</Th><Th>Picker</Th><Th>Vencía</Th></tr>

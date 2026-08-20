@@ -74,7 +74,7 @@ export const PhotoInventoryTab = () => {
         {loading && !data ? (
           <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
         ) : !items.length ? (
-          <EmptyState title="Sin fotos" hint="El piso las toma desde Inventario por foto en la PDA." />
+          <EmptyState art="scan" title="Sin fotos" hint="El piso las toma desde Inventario por foto en la PDA." />
         ) : (
           <div className="p-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
             {items.map(ph => (

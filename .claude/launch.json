@@ -4,19 +4,47 @@
     {
       "name": "backend",
       "runtimeExecutable": "backend\\venv\\Scripts\\python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "server:app", "--reload", "--port", "8000", "--app-dir", "backend"],
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "server:app",
+        "--reload",
+        "--port",
+        "8000",
+        "--app-dir",
+        "backend"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "backend-local",
+      "runtimeExecutable": "backend/venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os,sys,secrets; os.environ['MONGO_URL']='mongodb://localhost:27017/mos-system'; os.environ['DB_NAME']='mos-system'; os.environ.setdefault('MASTER_API_KEY', secrets.token_urlsafe(32)); os.environ.setdefault('INTERNAL_SYNC_TOKEN', secrets.token_urlsafe(32)); sys.path.insert(0,'backend'); import uvicorn; uvicorn.run('server:app',host='127.0.0.1',port=8000)"
+      ],
       "port": 8000
     },
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start", "--prefix", "frontend"],
+      "runtimeArgs": [
+        "start",
+        "--prefix",
+        "frontend"
+      ],
       "port": 3000
     },
     {
       "name": "frontend-build-static",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "3002", "--directory", "frontend/build"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "3002",
+        "--directory",
+        "frontend/build"
+      ],
       "port": 3002
     },
     {

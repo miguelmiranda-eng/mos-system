@@ -2,10 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
-  Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
-  CheckCircle, History, ArrowLeft, Warehouse, FileDown,
-  ScanLine, X, ChevronRight, Settings, Loader2, Menu,
-  LayoutDashboard, LogOut, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Bell, BellOff,
+  ClipboardCheck, ArrowLeft, Warehouse,
+  X, ChevronRight, Menu,
+  LogOut, Bell, BellOff,
   Camera,
 } from "lucide-react";
 
@@ -37,6 +36,8 @@ import { AuditModule } from "./wms/Audit";
 import { ReconciliationModule } from "./wms/Reconciliation";
 import IncidentsModule from "./wms/Incidents";
 import ReportsModule from "./wms/Reports";
+import { TopNav } from "./wms/TopNav";
+import { buildModules, filterModules, groupModules, badgeOf } from "./wms/modules";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -99,11 +100,16 @@ export default function WMS() {
   // ThemeContext (cubre el reload directo a /wms), este efecto cubre la
   // navegación SPA — clava `dark` en <html> al montar (portales incluidos) y
   // al salir restaura la preferencia guardada del CRM.
+  // `wms-theme` va JUNTO a `dark` y en <html> por la misma razón: los portales
+  // de Radix (diálogos, dropdowns, toasts) cuelgan de <body>, fuera del árbol
+  // del WMS, y así heredan los tokens de Prosper igual que el resto. Al salir
+  // se quita, y el CRM recupera su tema sin enterarse.
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove('light');
-    root.classList.add('dark');
+    root.classList.add('dark', 'wms-theme');
     return () => {
+      root.classList.remove('wms-theme');
       const pref = localStorage.getItem('mos_theme') || localStorage.getItem('theme') || 'dark';
       root.classList.remove('light', 'dark');
       root.classList.add(pref === 'light' ? 'light' : 'dark');
@@ -220,37 +226,18 @@ export default function WMS() {
     return () => clearTimeout(t);
   }, [moduleSwitching, httpBusyRaw]);
 
-  const MODULES = [
-    { id: 'home', label: 'Configuración WMS', icon: Settings, color: 'text-primary', desc: 'Catálogos editables para los dropdowns de Receiving / Picking' },
-    { id: 'directed', label: t('wms_mod_directed') || 'Directed Work', icon: ScanLine, color: 'text-yellow-400', desc: t('wms_mod_directed_desc') || 'Instrucciones inteligentes para el piso' },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary', desc: 'Visión general del inventario en tiempo real' },
-    { id: 'receiving', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400', desc: t('wms_mod_receiving_desc') },
-    { id: 'transit', label: 'Putaway 2.0', icon: Truck, color: 'text-amber-400', desc: 'Carros de tránsito — cajas pendientes de ubicación física' },
-    { id: 'mover', label: 'MOVER', icon: Move, color: 'text-teal-400', desc: 'Mover material entre ubicaciones: toda la ubicación, una caja o unidades' },
-    // STANDBY — Putaway 1.0 oculto del sidebar. Reemplazado por Putaway 2.0 (id: 'transit').
-    // El import + el case 'putaway' del switch se quedan vivos por si hay que reactivarlo.
-    // { id: 'putaway', label: t('wms_mod_putaway'), icon: MapPin, color: 'text-purple-400', desc: t('wms_mod_putaway_desc') },
-    { id: 'inventory', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400', desc: t('wms_mod_inventory_desc') },
-    { id: 'aging', label: 'Antigüedad', icon: Clock, color: 'text-amber-400', desc: 'Días en almacén / almacenaje' },
-    { id: 'locations', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400', desc: 'Mapa lógico y gestión de ubicaciones' },
-    { id: 'picking', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400', desc: t('wms_mod_picking_desc') },
-    { id: 'neck_cutting', label: 'Corte de Neck', icon: Scissors, color: 'text-pink-400', desc: 'Material surtido en espera de corte' },
-    { id: 'finished', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400', desc: t('wms_mod_finished_desc') },
-    { id: 'movements', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400', desc: t('wms_mod_movements_desc') },
-    { id: 'asn', label: 'ASN', icon: FileDown, color: 'text-orange-400', desc: 'Avisos de Llegada' },
-    { id: 'cycle_count', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400', desc: t('wms_mod_cycle_count_desc') },
-    // Conciliación física: SOLO super usuario. Reconstruye el inventario de una
-    // ubicación completa desde lo escaneado, así que un error borra saldo real.
-    // El backend también rechaza (403) a cualquier otro rol.
-    { id: 'reconciliation', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400', desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
-    // Solo super admin: el backend tambien rechaza (403) a cualquier otro rol.
-    { id: 'audit', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400', desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
-    // Reportes: material de supervisión (nivel 1+). El backend valida el nivel.
-    { id: 'reports', label: 'Reportes', icon: BarChart3, color: 'text-sky-400', desc: 'Recibos, putaway y pick tickets: pendiente, productividad, historial y excepciones', adminOnly: true },
-    // Incidencias del sistema: material no encontrado, duplicados bloqueados,
-    // errores de recepción. SOLO super usuario (el backend responde 403 al resto).
-    { id: 'incidents', label: 'Incidencias', icon: ShieldAlert, color: 'text-orange-400', desc: 'Alertas del sistema: material no encontrado, duplicados bloqueados y errores de recepción', supersuOnly: true },
-  ];
+  // La lista y su reparto en grupos viven en wms/modules.js — la barra
+  // superior, el sidebar y (fase 2) la paleta ⌘K consumen la misma fuente.
+  const MODULES = useMemo(() => buildModules(t), [t]);
+  const visibleModules = useMemo(() => filterModules(MODULES, currentUser), [MODULES, currentUser]);
+  const navGroups = useMemo(() => groupModules(visibleModules), [visibleModules]);
+
+  // Bandera de la fase 1: la barra superior es el default; para volver al
+  // sidebar basta `localStorage.setItem('mos_wms_nav', 'side')` y recargar.
+  const topNav = useMemo(() => {
+    try { return localStorage.getItem('mos_wms_nav') !== 'side'; } catch { return true; }
+  }, []);
+
 
   const loadBadges = useCallback(async () => {
     try {
@@ -326,7 +313,7 @@ export default function WMS() {
   // 'home' launcher to a customer before switching them to their dashboard.
   if (!currentUser) {
     return (
-      <div className="dark h-screen bg-background flex items-center justify-center">
+      <div className="dark wms-theme h-screen bg-background flex items-center justify-center">
         <DropsLoader label="Cargando WMS…" />
       </div>
     );
@@ -338,7 +325,7 @@ export default function WMS() {
     const opts = MODULES.filter(m => ['picking', 'transit', 'mover'].includes(m.id));
     const firstName = (currentUser?.name || '').trim().split(' ')[0];
     return (
-      <div className="dark h-screen bg-background text-foreground flex flex-col overflow-hidden">
+      <div className="dark wms-theme h-screen bg-background text-foreground flex flex-col overflow-hidden">
         <Toaster position="bottom-right" theme="dark" />
         <header className="flex items-center justify-between p-4 border-b border-border/40">
           <span className="font-barlow font-black text-lg italic flex items-center gap-1.5">
@@ -359,7 +346,7 @@ export default function WMS() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6 w-full max-w-3xl">
               {opts.map(m => {
                 const Icon = m.icon;
-                const badgeCount = m.id === 'transit' ? (badges.putaway || 0) : (badges[m.id] || 0);
+                const badgeCount = badgeOf(m, badges);
                 return (
                   <button key={m.id} onClick={() => { if (m.id === 'picking') { navigate('/pda'); } else { setActiveModule(m.id); setPickerHome(false); } }}
                     data-testid={`picker-launch-${m.id}`}
@@ -404,7 +391,7 @@ export default function WMS() {
     const firstName = (currentUser?.name || '').trim().split(' ')[0];
     return (
       <WmsContext.Provider value={wmsCtx}>
-        <div className="dark wms-perf min-h-screen bg-background text-foreground flex flex-col">
+        <div className="dark wms-theme wms-perf min-h-screen bg-background text-foreground flex flex-col">
           <Toaster position="bottom-right" theme="dark" />
           <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 sm:px-8 py-4 border-b border-border/40 bg-background/95 backdrop-blur">
             <div className="flex items-center gap-3 min-w-0">
@@ -434,12 +421,45 @@ export default function WMS() {
 
   return (
     <WmsContext.Provider value={wmsCtx}>
-    <div className="dark wms-perf h-screen bg-background flex flex-col text-foreground overflow-hidden">
+    <div className="dark wms-theme wms-perf h-screen bg-background flex flex-col text-foreground overflow-hidden">
+      {/* FASE 1 del rediseno: barra de grupos arriba. El sidebar sigue vivo
+          debajo de la bandera `mos_wms_nav` por si hay que revertir. */}
+      {topNav && (
+        <TopNav
+          groups={navGroups}
+          activeId={activeModule}
+          badges={badges}
+          onSelect={(id) => {
+            // El "Picking" del picker es la ruta PDA dedicada, no un modulo.
+            if (currentUser?.role === 'picker' && id === 'picking') { navigate('/pda'); return; }
+            setActiveModule(id);
+          }}
+          onBack={() => currentUser?.role === 'picker' ? setPickerHome(true) : navigate('/dashboard')}
+          backTitle={currentUser?.role === 'picker' ? 'Inicio' : t('wms_back_main')}
+          mobileOpen={mobileNav}
+          onMobileClose={() => setMobileNav(false)}
+          right={canPush && pushOn !== null ? (
+            <button
+              onClick={togglePush}
+              disabled={pushBusy}
+              data-testid="wms-push-toggle"
+              title={pushOn ? "Alertas activas en este dispositivo — clic para desactivar"
+                            : "Recibir alertas de descuadre en este dispositivo"}
+              className={`w-8 h-8 rounded-md border flex items-center justify-center transition-colors disabled:opacity-50
+                ${pushOn ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
+                         : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
+            >
+              {pushOn ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            </button>
+          ) : null}
+        />
+      )}
       <div className="flex-1 flex overflow-hidden">
         <Toaster position="bottom-right" theme="dark" />
       {/* Mobile backdrop when the nav drawer is open */}
-      {mobileNav && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />}
+      {!topNav && mobileNav && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />}
       {/* Sidebar — off-canvas drawer on phones/PDAs, static column on md+ */}
+      {!topNav && (
       <aside
         className={`${sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-72 fixed md:static inset-y-0 left-0 z-40 md:z-20 transform transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 bg-card border-r border-border/50 flex flex-col shadow-lg`}
       >
@@ -470,31 +490,12 @@ export default function WMS() {
         </div>
 
         <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2 custom-scrollbar">
-          {MODULES.filter(m => {
-            // WMS inventory role: scoped to the inventory area by level. This is
-            // an explicit allowlist, so it runs BEFORE the adminOnly/supersuOnly
-            // gates — por eso NO puede incluir 'reconciliation'.
-            //   nivel 1 → locaciones, mover (sin ajustes), conteo cíclico,
-            //             inventario (sin "agregar manual") y movimientos
-            //   nivel 2 → además ajustes en Mover y "agregar manual" en
-            //             Inventario, gateados dentro de cada módulo
-            // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
-            // Conciliación quedó reservada al super usuario, ningún nivel la ve.
-            if (currentUser?.role === 'inventory') {
-              const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
-              if (lvl < 1) return false;
-              const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'aging', 'movements'];
-              return allowed.includes(m.id);
-            }
-            if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
-            if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
-            if (currentUser?.role === 'customer') return m.id === 'dashboard';
-            if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
-            return true;
-          }).map(m => {
+          {/* El filtro por rol/nivel vive en filterModules (wms/modules.js) para
+              que el sidebar y la barra superior no puedan discrepar. */}
+          {visibleModules.map(m => {
             const Icon = m.icon;
             const isActive = activeModule === m.id;
-            const badgeCount = badges[m.id] || 0;
+            const badgeCount = badgeOf(m, badges);
 
             return (
               <button
@@ -568,19 +569,25 @@ export default function WMS() {
           )}
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto custom-scrollbar relative">
         {/* Module Header Overlay */}
-        <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-background/95 backdrop-blur-sm border-b border-border/60">
+        <div className="sticky top-0 z-10 p-3 sm:p-6 pb-2 bg-background/95 backdrop-blur-sm border-b border-primary/30">
           {(() => {
             const m = MODULES.find(mod => mod.id === (currentUser.role === 'customer' ? 'dashboard' : activeModule));
             return (
               <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
-                  <button onClick={() => setMobileNav(true)} className="md:hidden p-2 rounded-md bg-card border border-border text-muted-foreground active:bg-muted shrink-0" title="Menú">
+                <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 py-0.5">
+                  {/* Con la barra de grupos, los menus se esconden bajo lg — el boton
+                      abre la hoja a partir de ese ancho, no del de md. */}
+                  <button onClick={() => setMobileNav(true)} className={`${topNav ? 'lg:hidden' : 'md:hidden'} p-2 rounded-md bg-card border border-border text-muted-foreground active:bg-muted shrink-0`} title="Menú">
                     <Menu className="w-6 h-6" />
                   </button>
+                  {/* Barra de acento: ancla el azul arriba a la izquierda, que
+                      es donde primero cae el ojo al cambiar de módulo. */}
+                  <span className="w-1 self-stretch min-h-[2.25rem] rounded-full bg-primary shrink-0" aria-hidden="true" />
                   <div className="min-w-0">
                     <h1 className="text-xl sm:text-2xl font-bold tracking-tight leading-none mb-1 truncate">
                       {m?.label}

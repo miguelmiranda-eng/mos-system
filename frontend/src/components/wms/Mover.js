@@ -7,7 +7,7 @@ import {
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
-import { ModuleHeader, SoftAlert, Btn, Chip } from "./ui";
+import { ModuleHeader, SoftAlert, Btn, Chip, EmptyState } from "./ui";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
 // Handheld scanners type the code + Enter into the focused box. We also show up
@@ -617,10 +617,8 @@ export function MoverModule({ currentUser }) {
             {loading ? (
               <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
             ) : contents.boxes.length === 0 && contents.lines.length === 0 ? (
-              <div className="py-16 text-center">
-                <p className="text-sm font-semibold text-foreground/80">Esta ubicación está vacía</p>
-                <p className="text-sm text-muted-foreground mt-1">No hay cajas ni inventario en {origin}.</p>
-              </div>
+              <EmptyState art="rack" title="Esta ubicación está vacía"
+                hint={`No hay cajas ni inventario en ${origin}.`} />
             ) : !mode ? (
               /* STEP 2 — choose mode */
               <div className="space-y-3">
