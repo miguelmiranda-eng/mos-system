@@ -148,6 +148,12 @@ const Dashboard = () => {
   // cabe aquí, y lo que se quiere compartir se guarda como VISTA.
   const [personalOrder, setPersonalOrder] = useState({});
 
+  // Columnas que ESTE usuario oculta, por tablero. Igual que el orden: solo
+  // recorta su pantalla, nunca el set global. Las que oculta el supersu viven
+  // en `globalHidden` y las ve (o no) todo el mundo.
+  const [hiddenColumns, setHiddenColumns] = useState({});
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+
   // Modal visibility
   const [showNewOrder, setShowNewOrder] = useState(false);
   const searchInputRef = useRef(null); // focused from the mobile bottom-nav "Buscar"
@@ -363,6 +369,24 @@ const Dashboard = () => {
     try { localStorage.setItem(colOrderKey, JSON.stringify(personalOrder)); } catch { /* cupo lleno: no es crítico */ }
   }, [personalOrder, colOrderKey, hasPersonalOrder]);
 
+  // Visibilidad personal: misma mecánica y misma guardia. Va en su propia
+  // llave para no mezclar dos cosas que se tocan por separado.
+  const colVisKey = `mos_col_vis_${user?.user_id || user?.email || 'anon'}`;
+  const skipNextVisSave = useRef(false);
+  useEffect(() => {
+    skipNextVisSave.current = true;
+    if (!hasPersonalOrder) { setHiddenColumns({}); return; }
+    try {
+      const raw = localStorage.getItem(colVisKey);
+      setHiddenColumns(raw ? JSON.parse(raw) : {});
+    } catch { setHiddenColumns({}); }
+  }, [colVisKey, hasPersonalOrder]);
+  useEffect(() => {
+    if (skipNextVisSave.current) { skipNextVisSave.current = false; return; }
+    if (!hasPersonalOrder) return;
+    try { localStorage.setItem(colVisKey, JSON.stringify(hiddenColumns)); } catch { /* cupo lleno: no es crítico */ }
+  }, [hiddenColumns, colVisKey, hasPersonalOrder]);
+
 
   // Automatización "Barrido a BLANKS": solo Admin nivel 5 + supersu la ven/controlan.
   const canSweepBlanks = adminLevel >= 5;
@@ -565,14 +589,16 @@ const Dashboard = () => {
   // ocultas para todos) con el orden PERSONAL sobrepuesto si quien mira tiene
   // permiso y ya movió algo. Sin orden personal, se ve el global tal cual.
   const visibleColumns = useMemo(() => {
-    const hidden = globalHidden;
+    const hidden = hasPersonalOrder
+      ? [...globalHidden, ...(hiddenColumns[currentBoard] || [])]
+      : globalHidden;
     const order = (hasPersonalOrder && personalOrder[currentBoard]?.length)
       ? personalOrder[currentBoard]
       : boardColumnOrders[currentBoard];
     let cols = columns.filter(c => !hidden.includes(c.key));
     if (order) { cols = order.map(key => cols.find(c => c.key === key)).filter(Boolean); const ordered = new Set(order); cols = [...cols, ...columns.filter(c => !ordered.has(c.key) && !hidden.includes(c.key))]; }
     return cols;
-  }, [globalHidden, currentBoard, boardColumnOrders, personalOrder, hasPersonalOrder, columns]);
+  }, [globalHidden, hiddenColumns, currentBoard, boardColumnOrders, personalOrder, hasPersonalOrder, columns]);
 
   // Saved views
   const fetchSavedViews = useCallback(async () => {
@@ -588,7 +614,7 @@ const Dashboard = () => {
       // La vista vuelve a llevar el orden de columnas, pero SOLO el personal:
       // si quien guarda no movió nada, no se congela el global — así la vista
       // sigue reflejando los cambios que el supersu haga después.
-      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, group_by_date: groupByDate, column_order: hasPersonalOrder ? (personalOrder[currentBoard] || []) : [] }) });
+      const res = await fetch(`${API}/config/saved-views`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ name: newViewName.trim(), board: currentBoard, filters, pinned: false, group_by_date: groupByDate, column_order: hasPersonalOrder ? (personalOrder[currentBoard] || []) : [], hidden_columns: hasPersonalOrder ? (hiddenColumns[currentBoard] || []) : [] }) });
       if (res.ok) {
         const newView = await res.json();
         toast.success(`${t('save_view')}: "${newViewName}"`);
@@ -621,6 +647,8 @@ const Dashboard = () => {
       // global, que es como la ven hoy.
       if (hasPersonalOrder && view.column_order?.length)
         setPersonalOrder(prev => ({ ...prev, [currentBoard]: view.column_order }));
+      if (hasPersonalOrder && view.hidden_columns !== undefined)
+        setHiddenColumns(prev => ({ ...prev, [currentBoard]: view.hidden_columns || [] }));
       if (view.group_by_date !== undefined)
         setGroupByDate(view.group_by_date || null);
     }
@@ -642,11 +670,12 @@ const Dashboard = () => {
           filters,
           group_by_date: groupByDate,
           column_order: hasPersonalOrder ? (personalOrder[currentBoard] || []) : [],
+          hidden_columns: hasPersonalOrder ? (hiddenColumns[currentBoard] || []) : [],
         })
       }).then(() => fetchSavedViews()).catch(() => { });
     }, 1200);
     return () => { if (viewAutoSaveRef.current) clearTimeout(viewAutoSaveRef.current); };
-  }, [filters, groupByDate, personalOrder, currentBoard, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, groupByDate, personalOrder, hiddenColumns, currentBoard, activeViewName, fetchSavedViews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset active view when board changes to prevent overwriting
   useEffect(() => {
@@ -661,13 +690,40 @@ const Dashboard = () => {
 
   // Escribe el layout GLOBAL. Solo lo alcanza el supersu; el backend además lo
   // exige con require_supersu en PUT /config/board-layout.
-  const handleUpdateColumnOrder = (newOrder) => {
+  const publicarLayoutGlobal = (orden, ocultas) => {
     fetch(`${API}/config/board-layout/MASTER`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ hidden_columns: globalHidden, column_order: newOrder })
+      body: JSON.stringify({ hidden_columns: ocultas, column_order: orden })
     }).catch(err => console.error('Error saving layout:', err));
+  };
+  const handleUpdateColumnOrder = (newOrder) => publicarLayoutGlobal(newOrder, globalHidden);
+
+  // Mostrar/ocultar una columna. Quién la toca decide a quién le desaparece:
+  //   · supersu → sale del layout global; deja de verla todo el mundo.
+  //   · nivel 5 → solo se recorta su pantalla.
+  // order_number y style se quedan siempre: son las llaves con las que se
+  // navega a la orden, y sin ellas la tabla no lleva a ningún lado.
+  const COLUMNAS_FIJAS = ['order_number', 'style'];
+  const handleToggleColumn = (colKey) => {
+    if (COLUMNAS_FIJAS.includes(colKey)) {
+      toast.error('Esta columna es obligatoria para la navegación.');
+      return;
+    }
+    if (arrangesGlobally) {
+      const next = globalHidden.includes(colKey)
+        ? globalHidden.filter(k => k !== colKey)
+        : [...globalHidden, colKey];
+      setGlobalHidden(next);
+      publicarLayoutGlobal(boardColumnOrders[currentBoard] || [], next);
+      return;
+    }
+    setHiddenColumns(prev => {
+      const cur = prev[currentBoard] || [];
+      const next = cur.includes(colKey) ? cur.filter(k => k !== colKey) : [...cur, colKey];
+      return { ...prev, [currentBoard]: next };
+    });
   };
 
   // Arrastre de columnas. Quién arrastra decide a quién le cambia:
@@ -1869,6 +1925,55 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {/* Selector de columnas. El rótulo cambia según a quién afecta lo que
+          hagas aquí, porque no es lo mismo recortar tu pantalla que quitarle
+          una columna a todo el mundo. */}
+      {showColumnPicker && canArrangeColumns && (
+        <div className={`border-b px-6 py-4 transition-all animate-in slide-in-from-top-2 duration-300 ${isDark ? 'bg-navy/40 border-white/5' : 'bg-muted/30 border-gray-100'}`} data-testid="column-picker">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Eye className="w-4 h-4 text-royal" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                {arrangesGlobally ? 'Columnas del sistema' : 'Mis columnas visibles'}
+              </span>
+              <span className="text-[10px] text-muted-foreground/60 italic normal-case tracking-normal">
+                {arrangesGlobally
+                  ? '— lo que ocultes aquí deja de verlo todo el mundo'
+                  : '— solo afecta tu vista, no cambia la configuración global'}
+              </span>
+            </div>
+            <button onClick={() => setShowColumnPicker(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {columns
+              .filter(c => arrangesGlobally || !globalHidden.includes(c.key))
+              .map(col => {
+                const isHidden = arrangesGlobally
+                  ? globalHidden.includes(col.key)
+                  : (hiddenColumns[currentBoard] || []).includes(col.key);
+                const fija = COLUMNAS_FIJAS.includes(col.key);
+                return (
+                  <button
+                    key={col.key}
+                    onClick={() => handleToggleColumn(col.key)}
+                    data-testid={`col-toggle-${col.key}`}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 rounded-sm border transition-all text-xs font-bold",
+                      fija && "opacity-50 cursor-not-allowed",
+                      isHidden
+                        ? "bg-transparent border-dashed border-border text-muted-foreground opacity-60"
+                        : "bg-background border-border text-foreground hover:border-royal/50"
+                    )}
+                  >
+                    {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="text-royal" />}
+                    {col.label}
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
       {/* BOTTOM ROW: Controls and Actions */}
       <div className="flex items-center justify-between w-full pt-2">
         {/* Left Controls */}
@@ -1951,6 +2056,18 @@ const Dashboard = () => {
               <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
               {/* Agregar columna toca el set GLOBAL: solo supersu (el backend lo exige). */}
               {isSuperAdmin && <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>}
+              {canArrangeColumns && (
+                <button
+                  onClick={() => setShowColumnPicker(v => !v)}
+                  title={arrangesGlobally ? 'Mostrar u ocultar columnas (para todos)' : 'Mostrar u ocultar columnas (solo tu vista)'}
+                  className="p-2.5 rounded-lg hover:bg-royal/10 text-muted-foreground hover:text-royal transition-all"
+                  data-testid="toggle-column-picker"
+                >
+                  <Table2 size={18} />
+                  <span className="sr-only">Columnas visibles</span>
+                </button>
+              )}
+
               {/* Solo aparece cuando este usuario YA movió columnas en este
                   tablero: es la forma de volver al orden que ven los demás. */}
               {hasPersonalOrder && personalOrder[currentBoard]?.length > 0 && (
