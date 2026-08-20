@@ -137,6 +137,14 @@ CORE_INDEXES = [
     # QC — /qc/stats ($facet) + record listing sorted by created_at.
     ("qc_records", [("result", 1), ("severity", 1)], {}),
     ("qc_records", [("created_at", -1)], {}),
+    # Componentes de orden. El unico evita capturar dos veces el mismo
+    # componente en una orden; el de (state, due_date) es el tablero de
+    # "que esta atrasado".
+    ("order_components", "order_id", {}),
+    ("order_components", "order_number", {}),
+    ("order_components", [("order_id", 1), ("type", 1), ("name", 1)],
+        {"unique": True, "name": "order_components_unicos"}),
+    ("order_components", [("state", 1), ("due_date", 1)], {}),
 ]
 
 
