@@ -52,6 +52,7 @@ import ProductionModal from "./ProductionModal";
 import NeckCaptureModal from "./NeckCaptureModal";
 import GanttView from "./GanttView";
 import CapacityPlanModal from "./CapacityPlanModal";
+import PrintedReportModal from "./PrintedReportModal";
 import ProductionScreen from "./ProductionScreen";
 import Sidebar from "./dashboard/Sidebar";
 import CommandPalette from "./dashboard/CommandPalette";
@@ -85,6 +86,7 @@ function orderMatchesQuery(order, sq) {
 const Dashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [showPrintedReport, setShowPrintedReport] = useState(false);
   const { t, lang, toggleLang } = useLang();
 
   // Helper functions for rendering detail values safely
@@ -1778,6 +1780,18 @@ const Dashboard = () => {
                   <TrendingUp className="w-3.5 h-3.5 mr-2 text-royal" />
                   Plan
                 </DropdownMenuItem>
+                {/* Reporte de lo pintado en un rango. Sale de production_logs
+                    y agrupa por número de orden, así que una orden con varias
+                    capturas es UN renglón. Abre modal porque necesita las dos
+                    fechas antes de generar. */}
+                <DropdownMenuItem
+                  onClick={() => setShowPrintedReport(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-pintadas"
+                >
+                  <FileDown className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                  Órdenes pintadas
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -2441,6 +2455,7 @@ const Dashboard = () => {
       <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
       <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
+      <PrintedReportModal isOpen={showPrintedReport} onClose={() => setShowPrintedReport(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
       <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
 
@@ -2696,6 +2711,7 @@ const Dashboard = () => {
       <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
       <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
+      <PrintedReportModal isOpen={showPrintedReport} onClose={() => setShowPrintedReport(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
       <OrderHistoryModal order={historyOrder} isOpen={!!historyOrder} onClose={() => setHistoryOrder(null)} />
 

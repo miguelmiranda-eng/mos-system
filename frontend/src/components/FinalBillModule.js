@@ -168,16 +168,6 @@ const FinalBillModule = () => {
   });
   const [showCols, setShowCols] = useState(false);
 
-  // Reporte de órdenes pintadas. El rango arranca en los últimos 30 días
-  // porque es el corte con el que se factura, pero se puede mover.
-  const hace30 = () => {
-    const d = new Date(); d.setDate(d.getDate() - 30);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
-  const [showPrinted, setShowPrinted] = useState(false);
-  const [printedFrom, setPrintedFrom] = useState(hace30);
-  const [printedTo, setPrintedTo] = useState(todayStr);
-  const [printedBusy, setPrintedBusy] = useState(false);
 
   const visibleColumns = useMemo(() => COLUMNS.filter(c => !hidden.has(c.key)), [hidden]);
 
@@ -343,78 +333,6 @@ const FinalBillModule = () => {
     }
   };
 
-  // Reporte de lo PINTADO en un rango. La fuente son los logs de producción,
-  // que es lo único que sabe qué se imprimió: la orden no tiene un status
-  // "pintada". El backend ya agrupa por número de orden y suma las capturas —
-  // una orden con 14 capturas sale en UN renglón, no en catorce.
-  const exportPrinted = async () => {
-    if (!printedFrom || !printedTo) { toast.error('Elige el rango de fechas'); return; }
-    if (printedFrom > printedTo) { toast.error('La fecha inicial es posterior a la final'); return; }
-    setPrintedBusy(true);
-    try {
-      const qs = new URLSearchParams({ date_from: printedFrom, date_to: printedTo });
-      const res = await fetch(`${API}/final-bill/printed-report?${qs}`, { credentials: 'include' });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        throw new Error(e.detail || 'error');
-      }
-      const out = await res.json();
-      const rows = out.rows || [];
-      if (!rows.length) {
-        toast.error('No hay capturas de producción en ese rango');
-        return;
-      }
-
-      // Una columna por posición impresa (FRENTE / ESPALDA / MANGA). Sin este
-      // desglose, "1000 impresiones" en una orden de 500 parece un error de
-      // captura, cuando es frente + espalda.
-      const posiciones = out.posiciones || [];
-      const sheet = rows.map(r => {
-        const fila = {
-          'Order#': r.order_number,
-          'Customer PO': r.customer_po,
-          'Client': r.client,
-          'Design': r.design,
-          'Branding': r.branding,
-          'Board': r.board,
-          'Production Status': r.production_status,
-          'Cancel Date': r.cancel_date,
-          'Final Bill': r.final_bill,
-          'Qty ordenada': r.qty_ordenada,
-          'Impresiones en el rango': r.impresiones,
-        };
-        posiciones.forEach(p => { fila[`Impresiones ${p}`] = r.por_posicion?.[p] ?? 0; });
-        fila['Capturas'] = r.capturas;
-        fila['Primera captura'] = r.primera_captura;
-        fila['Última captura'] = r.ultima_captura;
-        fila['Setup (min)'] = r.setup_min;
-        fila['Máquinas'] = (r.maquinas || []).join(', ');
-        fila['Operadores'] = (r.operadores || []).join(', ');
-        fila['Turnos'] = (r.turnos || []).join(', ');
-        fila['Total Amount'] = (r.total_amount === null || r.total_amount === undefined) ? '' : r.total_amount;
-        fila['Revisada'] = r.revisada ? 'Sí' : 'No';
-        // Banderas honestas: si la orden ya no está en MOS, o si el mismo
-        // número de orden trajo más de un order_id, el renglón lo dice en vez
-        // de aparentar un dato limpio.
-        fila['Orden en MOS'] = r.en_mos ? 'Sí' : 'NO ENCONTRADA';
-        fila['IDs de orden'] = r.order_ids;
-        return fila;
-      });
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(sheet);
-      ws['!cols'] = Object.keys(sheet[0]).map(k => ({ wch: Math.max(12, Math.min(28, k.length + 4)) }));
-      XLSX.utils.book_append_sheet(wb, ws, 'Pintadas');
-      XLSX.writeFile(wb, `Ordenes_pintadas_${printedFrom}_a_${printedTo}.xlsx`);
-      toast.success(`${rows.length} órdenes exportadas`);
-      setShowPrinted(false);
-    } catch (e) {
-      toast.error(e.message === 'error' ? 'No se pudo generar el reporte' : e.message);
-    } finally {
-      setPrintedBusy(false);
-    }
-  };
-
   const from = data ? (data.total === 0 ? 0 : (data.page - 1) * data.page_size + 1) : 0;
   const to = data ? Math.min(data.page * data.page_size, data.total) : 0;
   const pages = data?.pages || 1;
@@ -469,65 +387,6 @@ const FinalBillModule = () => {
           >
             <Download className="w-4 h-4" /> Exportar
           </button>
-
-          {/* Reporte de órdenes pintadas: pide el rango ANTES de generar,
-              porque sin rango serían todas las capturas de la historia. */}
-          <div className="relative">
-            <button
-              onClick={() => setShowPrinted(v => !v)}
-              className="h-10 px-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 flex items-center gap-2 hover:border-blue-300 hover:text-blue-600 transition-colors"
-              data-testid="fb-printed-toggle"
-            >
-              <CalendarDays className="w-4 h-4" /> Reporte de pintadas
-            </button>
-            {showPrinted && (
-              <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-50">
-                <div className="text-sm font-bold text-slate-800">Órdenes pintadas</div>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Todo lo que registró producción en el rango, agrupado por número de orden:
-                  una orden con varias capturas sale en un solo renglón con la suma.
-                </p>
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  <label className="text-xs font-semibold text-slate-600">
-                    Desde
-                    <input
-                      type="date"
-                      value={printedFrom}
-                      max={printedTo}
-                      onChange={e => setPrintedFrom(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm font-normal text-slate-700"
-                      data-testid="fb-printed-from"
-                    />
-                  </label>
-                  <label className="text-xs font-semibold text-slate-600">
-                    Hasta
-                    <input
-                      type="date"
-                      value={printedTo}
-                      min={printedFrom}
-                      onChange={e => setPrintedTo(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm font-normal text-slate-700"
-                      data-testid="fb-printed-to"
-                    />
-                  </label>
-                </div>
-                <button
-                  onClick={exportPrinted}
-                  disabled={printedBusy}
-                  className="mt-3 w-full h-10 rounded-xl bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-60 transition-colors"
-                  data-testid="fb-printed-run"
-                >
-                  {printedBusy
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Generando…</>
-                    : <><Download className="w-4 h-4" /> Generar Excel</>}
-                </button>
-                <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-                  Las cifras son <b>impresiones</b>, no prendas: una orden impresa por frente y
-                  espalda cuenta doble. El Excel trae el desglose por posición.
-                </p>
-              </div>
-            )}
-          </div>
 
           <div className="relative">
             <button
