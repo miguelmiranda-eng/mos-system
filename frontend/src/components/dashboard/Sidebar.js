@@ -31,6 +31,7 @@ import {
   Factory,
   Settings,
   SlidersHorizontal,
+  Table2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
@@ -375,6 +376,10 @@ const Sidebar = ({
                     <button onClick={() => { navigate('/registros'); if (isMobile) onClose(); }} className={navItem(false)} title="Registros (Producción / Neck)">
                       <ClipboardList size={15} className={iconCls(false)} />
                       <span>Registros</span>
+                    </button>
+                    <button onClick={() => { navigate('/sheets'); if (isMobile) onClose(); }} className={navItem(false)} title="Hojas de cálculo">
+                      <Table2 size={15} className={iconCls(false)} />
+                      <span>Hojas de cálculo</span>
                     </button>
                     {/* Papelera: SOLO supersu. Son cientos de órdenes muertas y
                         acciones sin deshacer (restaurar en bloque / borrado

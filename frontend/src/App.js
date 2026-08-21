@@ -697,6 +697,7 @@ const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
 const PrintavoSync = lazy(() => import("./components/PrintavoSync"));
 const PrintavoExport = lazy(() => import("./components/PrintavoExport"));
 const BlockerTool = lazy(() => import("./components/BlockerTool"));
+const SheetsPage = lazy(() => import("./sheets/SheetsPage"));
 
 // Reset Password Page
 const ResetPasswordPage = () => {
@@ -803,6 +804,11 @@ function AppRouter() {
       <Route path="/registros" element={
         <ProtectedRoute>
           <LogsCenter />
+        </ProtectedRoute>
+      } />
+      <Route path="/sheets" element={
+        <ProtectedRoute>
+          <SheetsPage />
         </ProtectedRoute>
       } />
       <Route path="/ceo-dashboard" element={

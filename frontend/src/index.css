@@ -96,6 +96,32 @@
   --ring: 213 92% 66%;
 }
 
+/* ─── Tema claro-suave de la hoja de calculo ────────────────────────────────
+   Se aplica poniendo la clase en <body> mientras se ve el modulo de hojas, asi
+   los menus en portal (paleta de color, filtros, asistente) tambien lo heredan.
+   Gris claro comodo, NO blanco puro: "mas claro pero no tan claro". */
+.hoja-tema-claro {
+  --background: 220 20% 96%;   /* fondo/celdas: gris muy claro, no blanco */
+  --foreground: 222 28% 20%;   /* texto oscuro, buen contraste */
+  --card: 220 24% 99%;         /* barras y menus: casi blanco, resaltan */
+  --card-foreground: 222 28% 20%;
+  --popover: 220 24% 99%;
+  --popover-foreground: 222 28% 20%;
+  --primary: 224 100% 56%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 16% 90%;
+  --secondary-foreground: 222 28% 20%;
+  --muted: 218 16% 90%;        /* encabezados de fila/columna */
+  --muted-foreground: 220 12% 40%;
+  --accent: 218 16% 88%;
+  --accent-foreground: 222 28% 20%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 218 15% 82%;
+  --input: 218 15% 80%;
+  --ring: 224 100% 56%;
+}
+
 @media (prefers-color-scheme: dark) {
   /* Antes de que ThemeContext ponga su clase, un SO en oscuro ve el azulado
      (evita el flash claro). Mismos valores que .dark. */
