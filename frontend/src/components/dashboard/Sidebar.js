@@ -29,11 +29,16 @@ import {
   Zap,
   Package,
   Factory,
+  Settings,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { BOARD_COLORS } from '../../lib/constants';
 import { BUILD_TAG } from '../../buildInfo';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { resolveSectors } from '../../lib/boardSectors';
+import { useBoardSectors } from '../../hooks/useBoardSectors';
+import { BoardSectorsModal } from './BoardSectorsModal';
 
 const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
@@ -76,8 +81,32 @@ const Sidebar = ({
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
   const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
   const isAnyMachineActive = machineBoards.includes(currentBoard);
+
+  // El reparto por sectores lo guarda supersu en la base; mientras carga (o si
+  // falla) se usa el de por defecto.
+  const { sectors, saveSectors } = useBoardSectors();
+  const { sectors: groups, ungrouped: ungroupedBoards } = resolveSectors(sectors, regularBoards);
+  const [isSectorsModalOpen, setIsSectorsModalOpen] = useState(false);
+
+  const activeGroupId = groups.find(g => g.items.includes(currentBoard))?.id;
+
   const [isMachinesOpen, setIsMachinesOpen] = useState(isAnyMachineActive);
   const [isToolsOpen, setIsToolsOpen] = useState(showTrash || showAnalytics);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  // Arranca abierto solo el grupo del tablero activo; los demás cerrados.
+  const [openGroups, setOpenGroups] = useState(() =>
+    activeGroupId ? { [activeGroupId]: true } : {}
+  );
+
+  const setGroupOpen = (id, open) => setOpenGroups(prev => ({ ...prev, [id]: open }));
+
+  // Si cambias de tablero desde fuera del menú (buscador, enlace directo), el
+  // grupo que lo contiene se abre para que se vea cuál está seleccionado.
+  useEffect(() => {
+    if (activeGroupId) {
+      setOpenGroups(prev => (prev[activeGroupId] ? prev : { ...prev, [activeGroupId]: true }));
+    }
+  }, [activeGroupId]);
 
   useEffect(() => {
     if (showTrash || showAnalytics) {
@@ -102,6 +131,31 @@ const Sidebar = ({
   const sectionLabel = cn(
     "text-[11px] font-bold uppercase tracking-[0.15em] px-3 pt-4 pb-1 text-muted-foreground/70"
   );
+
+  // El botón de tablero se pinta igual suelto, dentro de un grupo o en
+  // máquinas. Estaba duplicado tres veces; ahora sale de un solo sitio.
+  const renderBoardButton = (board) => {
+    const IconComponent = getBoardIcon(board);
+    const isActive = currentBoard === board;
+    return (
+      <button
+        key={board}
+        onClick={() => {
+          setCurrentBoard(board);
+          if (isMobile) onClose();
+        }}
+        className={navItem(isActive)}
+        title={isCollapsed && !isMobile ? board : ""}
+      >
+        <IconComponent
+          size={15}
+          className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
+          style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
+        />
+        {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
+      </button>
+    );
+  };
 
   const isTablet = typeof window !== 'undefined' && window.innerWidth < 1024;
 
@@ -170,29 +224,70 @@ const Sidebar = ({
         ) : (
           <>
             {/* Boards */}
-            {(isOpen || !isCollapsed) && <p className={sectionLabel}>General</p>}
+            {(isOpen || !isCollapsed) && (
+              <div className="flex items-center justify-between pr-2">
+                <p className={sectionLabel}>General</p>
+                {/* Mover tableros de sector: SOLO supersu. Cambia el menú de
+                    todos, así que no se ofrece ni a admin. */}
+                {isSupersu && (
+                  <button
+                    onClick={() => setIsSectorsModalOpen(true)}
+                    className={cn(
+                      "mt-3 p-1 rounded transition-colors",
+                      isDark ? "text-white/20 hover:text-white/60" : "text-neutral-400 hover:text-neutral-700"
+                    )}
+                    title="Organizar sectores del menú"
+                  >
+                    <SlidersHorizontal size={13} />
+                  </button>
+                )}
+              </div>
+            )}
             <nav className="px-2">
-              {regularBoards.map((board) => {
-                const IconComponent = getBoardIcon(board);
-                const isActive = currentBoard === board;
+              {/* Sueltos: Master y cualquier tablero que no esté agrupado. */}
+              {ungroupedBoards.map(renderBoardButton)}
+
+              {/* Grupos de tableros — mismo desplegable que máquinas. */}
+              {(isOpen || !isCollapsed) && groups.map((group) => {
+                const GroupIcon = group.icon;
+                const isGroupActive = group.id === activeGroupId;
+                const isGroupOpen = !!openGroups[group.id];
                 return (
-                <button
-                  key={board}
-                  onClick={() => {
-                    setCurrentBoard(board);
-                    if (isMobile) onClose();
-                  }}
-                  className={navItem(isActive)}
-                  title={isCollapsed && !isMobile ? board : ""}
-                >
-                  <IconComponent 
-                    size={15} 
-                    className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
-                    style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
-                  />
-                  {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
-                </button>
-              )})}
+                  <Collapsible
+                    key={group.id}
+                    open={isGroupOpen}
+                    onOpenChange={(open) => setGroupOpen(group.id, open)}
+                    className="w-full"
+                  >
+                    <CollapsibleTrigger asChild>
+                      <button className={navItem(isGroupActive)}>
+                        <GroupIcon size={15} className={iconCls(isGroupActive)} />
+                        <span className="flex-1 text-left">{group.label}</span>
+                        <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isGroupOpen && "rotate-180")} />
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
+                      {group.items.map(renderBoardButton)}
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })}
+
+              {/* Menú plegado: un icono por grupo. Al pulsarlo se despliega la
+                  barra y se abre ese grupo, igual que hace máquinas. */}
+              {isCollapsed && !isMobile && groups.map((group) => {
+                const GroupIcon = group.icon;
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => { setIsCollapsed(false); setGroupOpen(group.id, true); }}
+                    className={navItem(group.id === activeGroupId)}
+                    title={group.label}
+                  >
+                    <GroupIcon size={15} className={iconCls(group.id === activeGroupId)} />
+                  </button>
+                );
+              })}
 
               {/* Machines collapsible */}
               {(isOpen || !isCollapsed) && machineBoards.length > 0 && (
@@ -205,26 +300,7 @@ const Sidebar = ({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
-                    {machineBoards.map((board) => {
-                      const IconComponent = getBoardIcon(board);
-                      const isActive = currentBoard === board;
-                      return (
-                      <button
-                        key={board}
-                        onClick={() => {
-                          setCurrentBoard(board);
-                          if (isMobile) onClose();
-                        }}
-                        className={navItem(isActive)}
-                      >
-                        <IconComponent 
-                          size={15} 
-                          className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
-                          style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
-                        />
-                        <span className="truncate">{toTitle(board)}</span>
-                      </button>
-                    )})}
+                    {machineBoards.map(renderBoardButton)}
                   </CollapsibleContent>
                 </Collapsible>
               )}
@@ -323,37 +399,59 @@ const Sidebar = ({
               </nav>
             )}
 
-            {/* Admin */}
-            {isAdmin && (
-              <>
-                {(isOpen || !isCollapsed) && <p className={sectionLabel}>Admin</p>}
-                <nav className="px-2">
-                  <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Usuarios" : ""}>
-                    <Users size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>Usuarios</span>}
-                  </button>
-                  <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Log Actividad" : ""}>
-                    <History size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>Log Actividad</span>}
-                  </button>
-                  <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Catálogos" : ""}>
-                    <Box size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>Catálogos</span>}
-                  </button>
-                  <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Reportes Programados" : ""}>
-                    <CalendarClock size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>Reportes Programados</span>}
-                  </button>
-                  <button onClick={() => { navigate('/printavo-sync'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "Sync Printavo" : ""}>
-                    <Zap size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>Sync Printavo</span>}
-                  </button>
-                  <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title={isCollapsed && !isMobile ? "PO a Quote" : ""}>
-                    <Package size={15} className={iconCls(false)} />
-                    {(isOpen || !isCollapsed) && <span>PO → Quote</span>}
-                  </button>
-                </nav>
-              </>
+            {/* Admin — mismo desplegable que Herramientas. Antes eran seis
+                botones sueltos bajo un rótulo; ocupaban media barra para algo
+                que se toca de vez en cuando. */}
+            {isAdmin && isCollapsed && !isMobile && (
+              <nav className="px-2 mt-4 border-t border-neutral-200/50 dark:border-white/5 pt-4">
+                <button
+                  onClick={() => { setIsCollapsed(false); setIsAdminOpen(true); }}
+                  className={navItem(false)}
+                  title="Admin"
+                >
+                  <Settings size={15} className={iconCls(false)} />
+                </button>
+              </nav>
+            )}
+
+            {isAdmin && (isOpen || !isCollapsed) && (
+              <nav className="px-2 mt-4 border-t border-neutral-200/50 dark:border-white/5 pt-4">
+                <Collapsible open={isAdminOpen} onOpenChange={setIsAdminOpen} className="w-full">
+                  <CollapsibleTrigger asChild>
+                    <button className={navItem(false)}>
+                      <Settings size={15} className={iconCls(false)} />
+                      <span className="flex-1 text-left">Admin</span>
+                      <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isAdminOpen && "rotate-180")} />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
+                    <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title="Usuarios">
+                      <Users size={15} className={iconCls(false)} />
+                      <span>Usuarios</span>
+                    </button>
+                    <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title="Log Actividad">
+                      <History size={15} className={iconCls(false)} />
+                      <span>Log Actividad</span>
+                    </button>
+                    <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title="Catálogos">
+                      <Box size={15} className={iconCls(false)} />
+                      <span>Catálogos</span>
+                    </button>
+                    <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title="Reportes Programados">
+                      <CalendarClock size={15} className={iconCls(false)} />
+                      <span>Reportes Programados</span>
+                    </button>
+                    <button onClick={() => { navigate('/printavo-sync'); if (isMobile) onClose(); }} className={navItem(false)} title="Sync Printavo">
+                      <Zap size={15} className={iconCls(false)} />
+                      <span>Sync Printavo</span>
+                    </button>
+                    <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title="PO a Quote">
+                      <Package size={15} className={iconCls(false)} />
+                      <span>PO → Quote</span>
+                    </button>
+                  </CollapsibleContent>
+                </Collapsible>
+              </nav>
             )}
           </>
         )}
@@ -367,6 +465,17 @@ const Sidebar = ({
         </div>
       )}
     </aside>
+
+    {/* Fuera del <aside>: este tiene overflow-hidden y recortaría el modal. */}
+    {isSupersu && (
+      <BoardSectorsModal
+        isOpen={isSectorsModalOpen}
+        onClose={() => setIsSectorsModalOpen(false)}
+        boards={boards}
+        sectors={sectors}
+        onSave={saveSectors}
+      />
+    )}
     </>
   );
 };

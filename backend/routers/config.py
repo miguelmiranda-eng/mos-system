@@ -162,6 +162,60 @@ async def save_hidden_boards(request: Request):
     )
     return {"message": "Hidden boards saved"}
 
+@router.get("/board-sectors")
+async def get_board_sectors(request: Request):
+    """Sectores del menú lateral (Programación, Producción, ...).
+
+    Lo lee cualquiera que haya iniciado sesión: el menú se dibuja con esto.
+    Si nunca se guardó nada devuelve {} y el front usa su reparto por defecto.
+    """
+    await require_auth(request)
+    config = await db.board_config.find_one({"config_id": "board_sectors"}, {"_id": 0, "config_id": 0})
+    return config or {}
+
+@router.put("/board-sectors")
+async def save_board_sectors(request: Request):
+    """Mover tableros de sector. SOLO supersu.
+
+    Cambia el menú de TODOS los usuarios, no el de quien lo guarda: por eso no
+    basta con require_admin. Se guarda solo la pertenencia (sector -> tableros);
+    el nombre y el icono de cada sector viven en el front.
+    """
+    user = await require_supersu(request)
+    body = await request.json()
+    sectors = body.get("sectors")
+    if not isinstance(sectors, dict):
+        raise HTTPException(status_code=400, detail="Se esperaba 'sectors' como objeto {sector_id: [tableros]}")
+
+    # Un tablero en dos sectores saldría dos veces en el menú. Se corta aquí y
+    # no en el front, que es el que se puede saltar.
+    visto = set()
+    limpio = {}
+    for sector_id, tableros in sectors.items():
+        if not isinstance(tableros, list):
+            raise HTTPException(status_code=400, detail=f"El sector '{sector_id}' no trae una lista de tableros")
+        limpio[sector_id] = []
+        for tablero in tableros:
+            if not isinstance(tablero, str):
+                continue
+            if tablero in visto:
+                raise HTTPException(status_code=400, detail=f"El tablero '{tablero}' está en más de un sector")
+            visto.add(tablero)
+            limpio[sector_id].append(tablero)
+
+    await db.board_config.update_one(
+        {"config_id": "board_sectors"},
+        {"$set": {
+            "config_id": "board_sectors",
+            "sectors": limpio,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": user.get("email"),
+        }},
+        upsert=True
+    )
+    await log_activity(user, "update_board_sectors", {"sectors": {k: len(v) for k, v in limpio.items()}})
+    return {"message": "Sectores guardados", "sectors": limpio}
+
 @router.get("/form-fields")
 async def get_form_fields(request: Request):
     await require_auth(request)
