@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, History, Upload, Download, ChevronDown, Loader2,
-  Save, Printer, FolderOpen, Check, Sun, Moon,
+  Save, Printer, FolderOpen, Check, Sun, Moon, ExternalLink, FileSpreadsheet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toolbar } from './components/Toolbar';
@@ -14,6 +14,7 @@ import { useKeyboard } from './hooks/useKeyboard';
 import { useWorkbook } from './store/useWorkbook';
 import { imprimirHoja } from './engine/print';
 import { getActiveSheet } from './engine/model';
+import { conectarGoogle } from './engine/gsheets';
 import { cn } from '../lib/utils';
 
 /**
@@ -44,6 +45,74 @@ export default function SheetsPage() {
   const guardando = useWorkbook(s => s.guardando);
   const guardar = useWorkbook(s => s.guardar);
   const renombrarLibro = useWorkbook(s => s.renombrarLibro);
+  const abrirGoogleSheet = useWorkbook(s => s.abrirGoogleSheet);
+  const guardarEnGoogleAction = useWorkbook(s => s.guardarEnGoogle);
+  const guardandoGoogle = useWorkbook(s => s.guardandoGoogle);
+
+  const alGuardarGoogle = async () => {
+    const res = await guardarEnGoogleAction();
+    if (res.ok) {
+      toast.success(res.skipped?.length
+        ? `Guardado en Google. Pestañas nuevas no escritas: ${res.skipped.join(', ')}`
+        : 'Guardado en Google Sheets');
+    } else if (res.necesitaConectar) {
+      toast.error(res.error, {
+        action: { label: 'Conectar Google', onClick: () => conectarGoogle().catch(() => toast.error('No se pudo conectar')) },
+        duration: 10000,
+      });
+    } else {
+      toast.error(res.error);
+    }
+  };
+
+  // Abrir automaticamente un Google Sheet si se llego con ?gsheet=<url>
+  // (desde el boton "Abrir en MOS Sheet" de los comentarios).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [cargandoGoogle, setCargandoGoogle] = useState(false);
+  useEffect(() => {
+    const url = searchParams.get('gsheet');
+    if (!url) return;
+    setCargandoGoogle(true);
+    (async () => {
+      const res = await abrirGoogleSheet(url);
+      setCargandoGoogle(false);
+      if (res.ok) {
+        toast.success('Google Sheet abierto (vista de contenido)');
+      } else if (res.necesitaConectar) {
+        // Falta conectar Google: se ofrece el boton y se guarda la URL para
+        // reabrirla al volver del consentimiento.
+        sessionStorage.setItem('mos_gsheet_pendiente', url);
+        toast.error(res.error, {
+          action: { label: 'Conectar Google', onClick: () => conectarGoogle().catch(() => toast.error('No se pudo conectar')) },
+          duration: 10000,
+        });
+      } else {
+        toast.error(res.error);
+      }
+      searchParams.delete('gsheet');
+      setSearchParams(searchParams, { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Al volver del consentimiento de Google (?google_connected=true), reabrir la
+  // hoja que quedo pendiente.
+  useEffect(() => {
+    if (searchParams.get('google_connected') !== 'true') return;
+    const pendiente = sessionStorage.getItem('mos_gsheet_pendiente');
+    searchParams.delete('google_connected');
+    setSearchParams(searchParams, { replace: true });
+    if (!pendiente) { toast.success('Google conectado'); return; }
+    sessionStorage.removeItem('mos_gsheet_pendiente');
+    setCargandoGoogle(true);
+    (async () => {
+      const res = await abrirGoogleSheet(pendiente);
+      setCargandoGoogle(false);
+      if (res.ok) toast.success('Google Sheet abierto');
+      else toast.error(res.error);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const alGuardar = async () => {
     const res = await guardar();
@@ -149,6 +218,33 @@ export default function SheetsPage() {
 
       <Toolbar />
       <FormulaBar />
+
+      {/* Banner cuando el libro se abrio desde un Google Sheet (packing list).
+          Es EDITABLE: se escribe de vuelta con "Guardar en Google". */}
+      {workbook.googleUrl && (
+        <div className="h-8 flex items-center gap-3 px-3 border-b border-border bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 flex-shrink-0 text-[12px]">
+          <span className="flex items-center gap-1.5"><FileSpreadsheet size={13} /> Conectado a Google Sheets · edita aquí y guarda de vuelta.</span>
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={alGuardarGoogle}
+              disabled={guardandoGoogle}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {guardandoGoogle ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+              Guardar en Google
+            </button>
+            <a href={workbook.googleUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:underline" title="Abrir en Google">
+              <ExternalLink size={13} />
+            </a>
+          </div>
+        </div>
+      )}
+
+      {cargandoGoogle && (
+        <div className="h-8 flex items-center gap-2 px-3 border-b border-border bg-card flex-shrink-0 text-[12px] text-muted-foreground">
+          <Loader2 size={13} className="animate-spin" /> Cargando el Google Sheet…
+        </div>
+      )}
 
       <SavedSheetsModal isOpen={verGuardadas} onClose={() => setVerGuardadas(false)} />
 

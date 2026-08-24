@@ -15,6 +15,7 @@ import {
 } from '../engine/commands';
 import { importarArchivo, exportarXLSX, exportarCSV } from '../engine/io';
 import { guardarLibro, cargarLibro } from '../engine/storage';
+import { importarGoogleSheet, guardarEnGoogle } from '../engine/gsheets';
 import { normalizeRange, rangeToA1, forEachCell } from '../engine/address';
 import {
   rangeToTSV, parseTSV, buildPasteEntries, pastedRange, snapshotForCut,
@@ -527,6 +528,40 @@ export const useWorkbook = create((set, get) => ({
 
   exportarXLSX() { exportarXLSX(get().workbook); },
   exportarCSV() { exportarCSV(getActiveSheet(get().workbook)); },
+
+  /**
+   * Abre un Google Sheet (por su URL) dentro de MOS. FASE 1: solo lectura de
+   * contenido; se carga como un libro nuevo y se recuerda su origen (googleUrl)
+   * para el banner y el boton "Abrir en Google".
+   */
+  async abrirGoogleSheet(url) {
+    try {
+      const wb = await importarGoogleSheet(url);
+      set({
+        workbook: wb,
+        past: [], future: [],
+        active: seleccionInicial, anchor: seleccionInicial,
+        range: { r1: 0, c1: 0, r2: 0, c2: 0 },
+        editing: null,
+        dirty: false,
+        ultimoGuardado: null,
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message || 'No se pudo abrir el Google Sheet', necesitaConectar: !!e?.necesitaConectar };
+    }
+  },
+
+  /** Escribe los cambios de vuelta al Google Sheet de origen. */
+  guardandoGoogle: false,
+  async guardarEnGoogle() {
+    const { workbook } = get();
+    set({ guardandoGoogle: true });
+    const res = await guardarEnGoogle(workbook);
+    set({ guardandoGoogle: false });
+    if (res.ok) set({ dirty: false });
+    return res;
+  },
 
   // ── Guardar / cargar (persistencia local en el navegador) ──────────────────
   guardando: false,

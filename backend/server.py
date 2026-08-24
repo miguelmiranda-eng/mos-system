@@ -202,6 +202,7 @@ from routers.mcp import router as mcp_router
 from routers.mcp_oauth import router as mcp_oauth_router
 from routers.agenda import router as agenda_router
 from routers.google_calendar import router as google_calendar_router
+from routers.gsheets import router as gsheets_router
 from routers.shipping import router as shipping_router
 from routers.packing import router as packing_router
 from routers.report_scheduler import router as report_scheduler_router, start_report_scheduler
@@ -234,6 +235,7 @@ app.include_router(mcp_router)
 app.include_router(mcp_oauth_router)
 app.include_router(agenda_router)
 app.include_router(google_calendar_router)
+app.include_router(gsheets_router)
 app.include_router(shipping_router)
 app.include_router(packing_router)
 app.include_router(scheduled_shipments_router)

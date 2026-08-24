@@ -6,9 +6,12 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
 import { mapPool } from "../../lib/uploadPool";
+import { useNavigate } from "react-router-dom";
+import { esUrlGoogleSheets } from "../../sheets/engine/gsheets";
 
 export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const { t } = useLang();
+  const navigate = useNavigate();
   const [comments, setComments] = useState([]);
   const [links, setLinks] = useState([]);
   const [newComment, setNewComment] = useState("");
@@ -519,6 +522,16 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                     <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={link.url}>
                       {link.url.replace(/^https?:\/\//, '').split('/')[0]}
                     </span>
+                  )}
+                  {/* Si es un Google Sheet (packing list), abrirlo dentro de MOS Sheet. */}
+                  {esUrlGoogleSheets(link.url) && (
+                    <button
+                      onClick={() => navigate(`/sheets?gsheet=${encodeURIComponent(link.url.startsWith('http') ? link.url : `https://${link.url}`)}`)}
+                      className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-semibold hover:bg-primary/20 flex-shrink-0"
+                      title="Abrir en MOS Sheet"
+                    >
+                      <FileSpreadsheet className="w-3 h-3" /> MOS
+                    </button>
                   )}
                   <button onClick={() => handleDeleteLink(idx)}
                     className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity" title="Eliminar" data-testid={`delete-link-${idx}`}>
