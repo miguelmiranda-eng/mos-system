@@ -17,14 +17,47 @@ const MV_TYPE_LABELS = {
   pick_ticket_created: "Pick ticket creado", pick_confirmed: "Surtido confirmado",
   pick_progress: "Avance de surtido", neck_cut_delivery: "Surtido a producción (neck)",
   manual_inventory_add: "Entrada manual", manual_inventory_remove: "Salida manual",
+  // Faltaban: sin ellos el descuento por surtido (el evento que baja las piezas
+  // de la caja al surtir una orden) salía como chip crudo "pick deduction", y el
+  // resto de eventos de conteo/generación sin etiqueta legible.
+  pick_deduction: "Surtido a orden", exit_to_production: "Salida a producción",
+  cycle_count_shrink: "Merma (conteo cíclico)", cycle_count_manual_discard: "Descartada (conteo)",
+  cycle_count_manual_create: "Alta por conteo", cycle_count_bind_box: "Ligada por conteo (LPN físico)",
+  box_generated: "Caja generada", box_style_restored: "Estilo restaurado",
 };
 
-const summarize = (m) => {
+// `ctx` es la caja que se está viendo (data): sirve para localizar, dentro de un
+// surtido en lote, la línea que corresponde a ESTA caja.
+const summarize = (m, ctx) => {
   const d = m.details || {};
+  const parts = [];
+
+  // Surtido a orden: las piezas descontadas de ESTA caja viven en
+  // details.boxes[].taken (una entrada por caja tocada), la orden en
+  // details.order_number y el total del ticket en details.qty. La lógica de
+  // abajo no miraba ninguno de esos campos, por eso el pick se veía sin piezas
+  // ni orden. Sumamos solo las entradas cuyo box_id sea el de la caja mostrada.
+  if (m.type === "pick_deduction") {
+    const boxKeys = new Set(
+      [ctx?.box_id, ctx?.box?.box_id, ctx?.box?.lpn_id, ctx?.box?.barcode, ctx?.box?.physical_lpn]
+        .filter(Boolean)
+    );
+    let taken = null;
+    if (Array.isArray(d.boxes)) {
+      taken = d.boxes
+        .filter((b) => boxKeys.has(b.box_id))
+        .reduce((s, b) => s + (Number(b.taken) || 0), 0);
+    }
+    if (!taken && d.qty != null) taken = Number(d.qty) || 0;
+    if (taken != null) parts.push(`−${taken} u`);
+    if (d.order_number) parts.push(`orden ${d.order_number}`);
+    if (d.reason) parts.push(`“${d.reason}”`);
+    return parts.join(" · ");
+  }
+
   const origin = d.from || (Array.isArray(d.from_sources) && d.from_sources.join(", "))
     || (Array.isArray(d.sources) && d.sources.join(", ")) || "";
   const dest = d.to || d.to_loc || "";
-  const parts = [];
   if (origin || dest) parts.push(`${origin || "—"} → ${dest || "—"}`);
   else if (d.location) parts.push(d.location);
   if (d.old_units != null && d.new_units != null) parts.push(`${d.old_units} → ${d.new_units} u`);
@@ -189,7 +222,7 @@ export function BoxSearchBar({ compact = false }) {
                             <div className="min-w-0 flex-1">
                               <div className="text-sm flex items-center gap-2 flex-wrap">
                                 <Chip>{MV_TYPE_LABELS[m.type] || m.type?.replace(/_/g, " ")}</Chip>
-                                {summarize(m) && <span className="text-xs text-muted-foreground font-mono">{summarize(m)}</span>}
+                                {summarize(m, data) && <span className="text-xs text-muted-foreground font-mono">{summarize(m, data)}</span>}
                               </div>
                               <div className="text-xs text-muted-foreground mt-0.5">
                                 {new Date(m.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · {m.user_name || m.user_id || "Sistema"}
