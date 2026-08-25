@@ -64,13 +64,25 @@ export async function importarGoogleSheet(url) {
   const data = await res.json();
   const sheets = (data.sheets || []).map((s) => {
     const filas = s.values || [];
-    const nFilas = filas.length;
-    const nCols = filas.reduce((m, f) => Math.max(m, f.length), 0);
+    const formatos = s.formats || [];
+    const merges = s.merges || [];
+    const colWidths = s.colWidths || {};
+
+    // La hoja debe cubrir todo lo que llega: valores, celdas con solo formato,
+    // combinadas y columnas con ancho propio pueden ir mas alla de los valores.
+    let maxFila = filas.length - 1;
+    let maxCol = filas.reduce((m, f) => Math.max(m, f.length), 0) - 1;
+    for (const f of formatos) { maxFila = Math.max(maxFila, f.r); maxCol = Math.max(maxCol, f.c); }
+    for (const m of merges) { maxFila = Math.max(maxFila, m.r2); maxCol = Math.max(maxCol, m.c2); }
+    for (const c of Object.keys(colWidths)) maxCol = Math.max(maxCol, Number(c));
+
     const hoja = makeSheet(String(s.name || 'Hoja').slice(0, 60), {
-      rows: Math.max(200, nFilas + 20),
-      cols: Math.max(26, nCols + 4),
+      rows: Math.max(200, maxFila + 20),
+      cols: Math.max(26, maxCol + 4),
     });
-    for (let r = 0; r < nFilas; r++) {
+
+    // Valores.
+    for (let r = 0; r < filas.length; r++) {
       const fila = filas[r];
       for (let c = 0; c < fila.length; c++) {
         const v = fila[c];
@@ -78,6 +90,40 @@ export async function importarGoogleSheet(url) {
         hoja.cells.set(cellKey(r, c), makeCell({ value: String(v) }));
       }
     }
+
+    // Formato: se fusiona sobre la celda existente (o crea una vacia con estilo,
+    // p.ej. una cabecera de color sin texto).
+    for (const f of formatos) {
+      const estilo = {};
+      if (f.bold) estilo.bold = true;
+      if (f.italic) estilo.italic = true;
+      if (f.underline) estilo.underline = true;
+      if (f.align) estilo.align = f.align;
+      if (f.color) estilo.color = f.color;
+      if (f.fill) estilo.fill = f.fill;
+      if (f.fontFamily) estilo.fontFamily = f.fontFamily;
+      if (f.fontSize) estilo.fontSize = f.fontSize;
+      if (f.wrap) estilo.wrap = true;
+      if (Object.keys(estilo).length === 0) continue;
+      const k = cellKey(f.r, f.c);
+      const prev = hoja.cells.get(k);
+      hoja.cells.set(k, makeCell({
+        value: prev?.value ?? null,
+        formula: prev?.formula ?? null,
+        format: prev?.format,
+        style: estilo,
+      }));
+    }
+
+    // Combinadas.
+    hoja.merges = merges.filter(m => m.r1 >= 0 && m.c1 >= 0 && m.r2 >= m.r1 && m.c2 >= m.c1);
+
+    // Anchos de columna.
+    for (const [c, px] of Object.entries(colWidths)) {
+      const w = Math.round(px);
+      if (w > 0) hoja.colWidths.set(Number(c), w);
+    }
+
     return hoja;
   });
 

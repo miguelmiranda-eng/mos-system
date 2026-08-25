@@ -73,6 +73,61 @@ def _id_de_url(url: str):
     return m.group(1) if m else None
 
 
+# ── Formato de celda (Google -> modelo de MOS) ────────────────────────────────
+# Se traduce el formato que el usuario aplicó en Google (colores, negrita,
+# alineación, combinadas, anchos) para que el packing list se vea PARECIDO dentro
+# de MOS. Los bordes por celda no tienen equivalente en el modelo de MOS (solo
+# hay gridlines on/off por hoja), así que no viajan.
+
+def _color_hex(col):
+    if not col:
+        return None
+    r = col.get("red", 0); g = col.get("green", 0); b = col.get("blue", 0)
+    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+
+
+def _casi_blanco(col):
+    return bool(col) and col.get("red", 0) >= 0.996 and col.get("green", 0) >= 0.996 and col.get("blue", 0) >= 0.996
+
+
+def _casi_negro(col):
+    # Sin color = negro por defecto en el modelo de Google (canales ausentes = 0).
+    return (not col) or (col.get("red", 0) <= 0.004 and col.get("green", 0) <= 0.004 and col.get("blue", 0) <= 0.004)
+
+
+def _formato_de_celda(celda):
+    """Extrae solo lo NO-predeterminado; devuelve None si la celda no aporta estilo."""
+    uf = celda.get("userEnteredFormat")
+    if not uf:
+        return None
+    out = {}
+    bg = uf.get("backgroundColor")
+    if bg and not _casi_blanco(bg):
+        out["fill"] = _color_hex(bg)
+    tf = uf.get("textFormat") or {}
+    if tf.get("bold"):
+        out["bold"] = True
+    if tf.get("italic"):
+        out["italic"] = True
+    if tf.get("underline"):
+        out["underline"] = True
+    fg = tf.get("foregroundColor")
+    if fg and not _casi_negro(fg):
+        out["color"] = _color_hex(fg)
+    fam = tf.get("fontFamily")
+    if fam and fam.lower() not in ("arial", "calibri", "default"):
+        out["fontFamily"] = fam
+    fs = tf.get("fontSize")
+    if fs and fs != 10:
+        out["fontSize"] = fs
+    ha = uf.get("horizontalAlignment")
+    if ha in ("LEFT", "CENTER", "RIGHT"):
+        out["align"] = ha.lower()
+    if uf.get("wrapStrategy") == "WRAP":
+        out["wrap"] = True
+    return out or None
+
+
 # ── Conexion OAuth ────────────────────────────────────────────────────────────
 
 @router.get("/auth-url")
@@ -179,11 +234,23 @@ async def _get_sheets_service(user_id: str):
 
 # ── Lectura ───────────────────────────────────────────────────────────────────
 
+# Tope de filas que se procesan por pestaña. Los packing lists son chicos; el
+# tope evita que una hoja enorme entre entera al modelo del navegador.
+MAX_FILAS_LECTURA = 2000
+
+
 @router.get("/read")
 async def read_sheet(request: Request, url: str):
     """
-    Lee un Google Sheet (todas sus pestañas) y lo devuelve como estructura simple:
-      { name, googleId, googleUrl, sheets: [{ name, values: [[...], ...] }] }
+    Lee un Google Sheet (todas sus pestañas) con CONTENIDO y FORMATO, y lo
+    devuelve como:
+      { name, googleId, googleUrl, sheets: [{
+          name,
+          values:    [[texto, ...], ...],            # valor mostrado por Google
+          formats:   [{ r, c, bold, fill, ... }, ...],# solo celdas con estilo
+          merges:    [{ r1, c1, r2, c2 }, ...],
+          colWidths: { "0": px, ... },
+      }] }
     Codigos utiles para el front:
       401 need_connect  -> falta conectar Google (o falta el permiso de Sheets)
       403 no_access     -> conectado, pero no tiene acceso a esa hoja
@@ -198,9 +265,20 @@ async def read_sheet(request: Request, url: str):
         raise HTTPException(status_code=401, detail="need_connect")
 
     try:
+        # Una sola llamada con includeGridData: trae valores mostrados + formato
+        # aplicado por el usuario + combinadas + anchos de columna.
         meta = service.spreadsheets().get(
             spreadsheetId=sheet_id,
-            fields="properties.title,sheets.properties.title",
+            includeGridData=True,
+            fields=(
+                "properties.title,"
+                "sheets.properties.title,"
+                "sheets.merges,"
+                "sheets.data(columnMetadata.pixelSize,rowData.values("
+                "formattedValue,userEnteredFormat(backgroundColor,horizontalAlignment,"
+                "wrapStrategy,textFormat(bold,italic,underline,foregroundColor,"
+                "fontFamily,fontSize))))"
+            ),
         ).execute()
     except Exception as e:
         msg = str(e)
@@ -211,28 +289,59 @@ async def read_sheet(request: Request, url: str):
         logging.error(f"GSHEETS read meta error: {e}")
         raise HTTPException(status_code=502, detail="Error leyendo la hoja de Google.")
 
-    titulos = [s["properties"]["title"] for s in meta.get("sheets", []) if s.get("properties")]
-    if not titulos:
+    sheets_meta = meta.get("sheets", [])
+    if not sheets_meta:
         raise HTTPException(status_code=422, detail="La hoja no tiene pestañas legibles.")
 
-    try:
-        valores = service.spreadsheets().values().batchGet(
-            spreadsheetId=sheet_id,
-            ranges=[f"'{t}'" for t in titulos],
-            majorDimension="ROWS",
-        ).execute()
-    except Exception as e:
-        logging.error(f"GSHEETS read values error: {e}")
-        raise HTTPException(status_code=502, detail="Error leyendo los valores de la hoja.")
-
-    rangos = valores.get("valueRanges", [])
     sheets = []
-    for i, t in enumerate(titulos):
-        sheets.append({"name": t, "values": (rangos[i].get("values", []) if i < len(rangos) else [])})
+    for sh in sheets_meta:
+        titulo = (sh.get("properties") or {}).get("title", "Hoja")
+        grid = (sh.get("data") or [{}])[0]
+        row_data = grid.get("rowData") or []
+        col_meta = grid.get("columnMetadata") or []
+
+        values = []
+        formats = []
+        for r, fila in enumerate(row_data):
+            if r >= MAX_FILAS_LECTURA:
+                break
+            celdas = fila.get("values") or []
+            fila_val = []
+            for c, celda in enumerate(celdas):
+                fila_val.append(celda.get("formattedValue", ""))
+                fmt = _formato_de_celda(celda)
+                if fmt:
+                    fmt["r"] = r
+                    fmt["c"] = c
+                    formats.append(fmt)
+            values.append(fila_val)
+
+        merges = []
+        for m in sh.get("merges") or []:
+            merges.append({
+                "r1": m.get("startRowIndex", 0),
+                "c1": m.get("startColumnIndex", 0),
+                "r2": m.get("endRowIndex", 1) - 1,
+                "c2": m.get("endColumnIndex", 1) - 1,
+            })
+
+        col_widths = {}
+        for c, cm in enumerate(col_meta):
+            px = cm.get("pixelSize")
+            if px:
+                col_widths[str(c)] = px
+
+        sheets.append({
+            "name": titulo,
+            "values": values,
+            "formats": formats,
+            "merges": merges,
+            "colWidths": col_widths,
+        })
 
     await log_activity(user, "gsheets_read", {"sheet_id": sheet_id})
     return {
-        "name": meta.get("properties", {}).get("title", "Google Sheet"),
+        "name": (meta.get("properties") or {}).get("title", "Google Sheet"),
         "googleId": sheet_id,
         "googleUrl": url,
         "sheets": sheets,
