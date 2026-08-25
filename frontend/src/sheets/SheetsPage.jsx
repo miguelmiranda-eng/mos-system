@@ -41,6 +41,9 @@ export default function SheetsPage() {
     return () => document.body.classList.remove(clase);
   }, [temaClaro]);
   const workbook = useWorkbook(s => s.workbook);
+  // ¿Este libro vino de Google Sheets? Si es asi, el guardado principal (boton
+  // "Guardar" y Ctrl+S) escribe de vuelta a Google, no al almacen local.
+  const esGoogle = !!workbook.googleUrl;
   const [pedirConexion, setPedirConexion] = useState(null);
   const dirty = useWorkbook(s => s.dirty);
   const guardando = useWorkbook(s => s.guardando);
@@ -116,12 +119,19 @@ export default function SheetsPage() {
     else toast.error(res.error || 'No se pudo guardar');
   };
 
+  // Guardado principal: para una hoja de Google, Ctrl+S y el boton "Guardar"
+  // escriben de vuelta a Google; para el resto, al almacen local. El ref se
+  // mantiene apuntando a la funcion actual para que el listener de teclado (que
+  // se registra una sola vez) no llame a una version vieja tras cargar la hoja.
+  const guardadoPrincipalRef = useRef(null);
+  guardadoPrincipalRef.current = esGoogle ? alGuardarGoogle : alGuardar;
+
   // Ctrl+S guarda. Se escucha en captura para ganarle al guardado del navegador.
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        alGuardar();
+        guardadoPrincipalRef.current?.();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -151,15 +161,27 @@ export default function SheetsPage() {
 
         <MenuArchivo />
 
-        <button
-          onClick={alGuardar}
-          disabled={guardando}
-          className="h-7 px-2 rounded flex items-center gap-1.5 text-[12px] text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground disabled:opacity-50"
-          title="Guardar (Ctrl+S)"
-        >
-          {guardando ? <Loader2 size={13} className="animate-spin" /> : <Save size={14} />}
-          Guardar
-        </button>
+        {esGoogle ? (
+          <button
+            onClick={alGuardarGoogle}
+            disabled={guardandoGoogle}
+            className="h-7 px-2.5 rounded flex items-center gap-1.5 text-[12px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+            title="Guardar de vuelta en Google Sheets (Ctrl+S)"
+          >
+            {guardandoGoogle ? <Loader2 size={13} className="animate-spin" /> : <Save size={14} />}
+            Guardar en Google
+          </button>
+        ) : (
+          <button
+            onClick={alGuardar}
+            disabled={guardando}
+            className="h-7 px-2 rounded flex items-center gap-1.5 text-[12px] text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground disabled:opacity-50"
+            title="Guardar (Ctrl+S)"
+          >
+            {guardando ? <Loader2 size={13} className="animate-spin" /> : <Save size={14} />}
+            Guardar
+          </button>
+        )}
 
         <button
           onClick={() => setVerGuardadas(true)}
