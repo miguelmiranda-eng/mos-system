@@ -239,6 +239,84 @@ async def _get_sheets_service(user_id: str):
 MAX_FILAS_LECTURA = 2000
 
 
+def _col_letra(n_cols):
+    """Letra A1 de la ULTIMA columna dado el numero de columnas (26 -> 'Z')."""
+    idx = max(1, int(n_cols or 1))
+    letras = ""
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        letras = chr(65 + rem) + letras
+    return letras
+
+
+def _leer_formato(service, sheet_id, props_hojas):
+    """
+    Lee el formato (colores, negrita, alineacion, combinadas, anchos) por pestaña.
+    BEST-EFFORT: ante cualquier problema devuelve lo que haya (o {}) y la hoja
+    abre igual con su contenido; el formato nunca debe dejar la hoja en blanco.
+    Se acota el rango por pestaña para no traer una respuesta enorme.
+    """
+    out = {}
+    try:
+        ranges = []
+        for p in props_hojas:
+            t = p.get("title")
+            if not t:
+                continue
+            grid = p.get("gridProperties") or {}
+            rows = min(int(grid.get("rowCount") or 0) or MAX_FILAS_LECTURA, MAX_FILAS_LECTURA)
+            cols = min(int(grid.get("columnCount") or 0) or 26, 64)
+            ranges.append(f"'{t}'!A1:{_col_letra(cols)}{rows}")
+        if not ranges:
+            return out
+        resp = service.spreadsheets().get(
+            spreadsheetId=sheet_id,
+            includeGridData=True,
+            ranges=ranges,
+            fields=(
+                "sheets.properties.title,sheets.merges,"
+                "sheets.data(startRow,startColumn,columnMetadata.pixelSize,"
+                "rowData.values(userEnteredFormat(backgroundColor,horizontalAlignment,"
+                "wrapStrategy,textFormat(bold,italic,underline,foregroundColor,"
+                "fontFamily,fontSize))))"
+            ),
+        ).execute()
+        for sh in resp.get("sheets", []):
+            titulo = (sh.get("properties") or {}).get("title")
+            if not titulo:
+                continue
+            data0 = (sh.get("data") or [{}])[0]
+            base_r = int(data0.get("startRow", 0) or 0)
+            base_c = int(data0.get("startColumn", 0) or 0)
+            row_data = data0.get("rowData") or []
+            col_meta = data0.get("columnMetadata") or []
+            formats = []
+            for r, fila in enumerate(row_data):
+                for c, celda in enumerate(fila.get("values") or []):
+                    f = _formato_de_celda(celda)
+                    if f:
+                        f["r"] = base_r + r
+                        f["c"] = base_c + c
+                        formats.append(f)
+            merges = []
+            for m in sh.get("merges") or []:
+                merges.append({
+                    "r1": m.get("startRowIndex", 0),
+                    "c1": m.get("startColumnIndex", 0),
+                    "r2": m.get("endRowIndex", 1) - 1,
+                    "c2": m.get("endColumnIndex", 1) - 1,
+                })
+            col_widths = {}
+            for i, cm in enumerate(col_meta):
+                px = cm.get("pixelSize")
+                if px:
+                    col_widths[str(base_c + i)] = px
+            out[titulo] = {"formats": formats, "merges": merges, "colWidths": col_widths}
+    except Exception as e:
+        logging.warning(f"GSHEETS formato best-effort fallo (se abre sin formato): {e}")
+    return out
+
+
 @router.get("/read")
 async def read_sheet(request: Request, url: str):
     """
@@ -264,21 +342,11 @@ async def read_sheet(request: Request, url: str):
     if not service:
         raise HTTPException(status_code=401, detail="need_connect")
 
+    # 1) Titulos y dimensiones (llamada chica y confiable).
     try:
-        # Una sola llamada con includeGridData: trae valores mostrados + formato
-        # aplicado por el usuario + combinadas + anchos de columna.
         meta = service.spreadsheets().get(
             spreadsheetId=sheet_id,
-            includeGridData=True,
-            fields=(
-                "properties.title,"
-                "sheets.properties.title,"
-                "sheets.merges,"
-                "sheets.data(columnMetadata.pixelSize,rowData.values("
-                "formattedValue,userEnteredFormat(backgroundColor,horizontalAlignment,"
-                "wrapStrategy,textFormat(bold,italic,underline,foregroundColor,"
-                "fontFamily,fontSize))))"
-            ),
+            fields="properties.title,sheets.properties(title,gridProperties(rowCount,columnCount))",
         ).execute()
     except Exception as e:
         msg = str(e)
@@ -289,54 +357,35 @@ async def read_sheet(request: Request, url: str):
         logging.error(f"GSHEETS read meta error: {e}")
         raise HTTPException(status_code=502, detail="Error leyendo la hoja de Google.")
 
-    sheets_meta = meta.get("sheets", [])
-    if not sheets_meta:
+    props_hojas = [(s.get("properties") or {}) for s in meta.get("sheets", [])]
+    titulos = [p.get("title") for p in props_hojas if p.get("title")]
+    if not titulos:
         raise HTTPException(status_code=422, detail="La hoja no tiene pestañas legibles.")
 
+    # 2) Valores (camino probado: el valor MOSTRADO por Google).
+    try:
+        valores = service.spreadsheets().values().batchGet(
+            spreadsheetId=sheet_id,
+            ranges=[f"'{t}'" for t in titulos],
+            majorDimension="ROWS",
+        ).execute()
+        rangos = valores.get("valueRanges", [])
+    except Exception as e:
+        logging.error(f"GSHEETS read values error: {e}")
+        raise HTTPException(status_code=502, detail="Error leyendo los valores de la hoja.")
+
+    # 3) Formato (best-effort): si falla, la hoja abre igual con su contenido.
+    fmt_por_titulo = _leer_formato(service, sheet_id, props_hojas)
+
     sheets = []
-    for sh in sheets_meta:
-        titulo = (sh.get("properties") or {}).get("title", "Hoja")
-        grid = (sh.get("data") or [{}])[0]
-        row_data = grid.get("rowData") or []
-        col_meta = grid.get("columnMetadata") or []
-
-        values = []
-        formats = []
-        for r, fila in enumerate(row_data):
-            if r >= MAX_FILAS_LECTURA:
-                break
-            celdas = fila.get("values") or []
-            fila_val = []
-            for c, celda in enumerate(celdas):
-                fila_val.append(celda.get("formattedValue", ""))
-                fmt = _formato_de_celda(celda)
-                if fmt:
-                    fmt["r"] = r
-                    fmt["c"] = c
-                    formats.append(fmt)
-            values.append(fila_val)
-
-        merges = []
-        for m in sh.get("merges") or []:
-            merges.append({
-                "r1": m.get("startRowIndex", 0),
-                "c1": m.get("startColumnIndex", 0),
-                "r2": m.get("endRowIndex", 1) - 1,
-                "c2": m.get("endColumnIndex", 1) - 1,
-            })
-
-        col_widths = {}
-        for c, cm in enumerate(col_meta):
-            px = cm.get("pixelSize")
-            if px:
-                col_widths[str(c)] = px
-
+    for i, t in enumerate(titulos):
+        extra = fmt_por_titulo.get(t, {})
         sheets.append({
-            "name": titulo,
-            "values": values,
-            "formats": formats,
-            "merges": merges,
-            "colWidths": col_widths,
+            "name": t,
+            "values": (rangos[i].get("values", []) if i < len(rangos) else []),
+            "formats": extra.get("formats", []),
+            "merges": extra.get("merges", []),
+            "colWidths": extra.get("colWidths", {}),
         })
 
     await log_activity(user, "gsheets_read", {"sheet_id": sheet_id})
