@@ -41,6 +41,7 @@ export default function SheetsPage() {
     return () => document.body.classList.remove(clase);
   }, [temaClaro]);
   const workbook = useWorkbook(s => s.workbook);
+  const [pedirConexion, setPedirConexion] = useState(null);
   const dirty = useWorkbook(s => s.dirty);
   const guardando = useWorkbook(s => s.guardando);
   const guardar = useWorkbook(s => s.guardar);
@@ -56,10 +57,8 @@ export default function SheetsPage() {
         ? `Guardado en Google. Pestañas nuevas no escritas: ${res.skipped.join(', ')}`
         : 'Guardado en Google Sheets');
     } else if (res.necesitaConectar) {
-      toast.error(res.error, {
-        action: { label: 'Conectar Google', onClick: () => conectarGoogle().catch(() => toast.error('No se pudo conectar')) },
-        duration: 10000,
-      });
+      if (workbook.googleUrl) sessionStorage.setItem('mos_gsheet_pendiente', workbook.googleUrl);
+      setPedirConexion({ url: workbook.googleUrl });
     } else {
       toast.error(res.error);
     }
@@ -77,15 +76,12 @@ export default function SheetsPage() {
       const res = await abrirGoogleSheet(url);
       setCargandoGoogle(false);
       if (res.ok) {
-        toast.success('Google Sheet abierto (vista de contenido)');
+        toast.success('Google Sheet abierto');
       } else if (res.necesitaConectar) {
-        // Falta conectar Google: se ofrece el boton y se guarda la URL para
-        // reabrirla al volver del consentimiento.
+        // Falta el permiso de Sheets: se muestra un cartel para conectar, y se
+        // guarda la URL para reabrir la hoja al volver del consentimiento.
         sessionStorage.setItem('mos_gsheet_pendiente', url);
-        toast.error(res.error, {
-          action: { label: 'Conectar Google', onClick: () => conectarGoogle().catch(() => toast.error('No se pudo conectar')) },
-          duration: 10000,
-        });
+        setPedirConexion({ url });
       } else {
         toast.error(res.error);
       }
@@ -254,6 +250,34 @@ export default function SheetsPage() {
       </div>
 
       <SheetTabs />
+
+      {/* Cartel para conectar Google cuando falta el permiso de Sheets. */}
+      {pedirConexion && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setPedirConexion(null)}>
+          <div className="w-[380px] max-w-[90vw] rounded-lg border border-border bg-card shadow-xl p-5 text-center" onClick={(e) => e.stopPropagation()}>
+            <FileSpreadsheet size={32} className="mx-auto text-emerald-600 mb-2" />
+            <h3 className="text-[15px] font-semibold text-foreground">Conecta tu cuenta de Google</h3>
+            <p className="text-[13px] text-muted-foreground mt-1.5">
+              Para abrir y editar hojas de Google Sheets desde MOS, hay que darle permiso una sola vez.
+              Se abrirá la pantalla de Google y volverás aquí solo.
+            </p>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => setPedirConexion(null)}
+                className="flex-1 h-9 rounded-md border border-border text-[13px] text-muted-foreground hover:text-foreground"
+              >
+                Ahora no
+              </button>
+              <button
+                onClick={() => conectarGoogle().catch(() => toast.error('No se pudo iniciar la conexión con Google'))}
+                className="flex-1 h-9 rounded-md bg-emerald-600 text-white text-[13px] font-semibold hover:bg-emerald-700"
+              >
+                Conectar Google
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
