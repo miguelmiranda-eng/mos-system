@@ -1,9 +1,11 @@
 import { useState } from "react";
 import {
   Activity, PackageSearch, Layers, History, Search, Loader2,
-  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle,
+  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { fetcher, poster } from "./lib";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
@@ -313,6 +315,50 @@ const SkuTab = () => {
   const bal = data?.balance;
   const cd = data?.cajas_desglose;
   const ok = bal && Math.abs(bal.diferencia) <= 5;
+
+  // Export a Excel: hoja "Cajas" (los números de caja recibidos) + hoja
+  // "Resumen" (balance, desglose de cajas y diagnóstico). Cliente-side con
+  // SheetJS, mismo patrón que Analytics/Art.
+  const exportExcel = () => {
+    if (!data) return;
+    const wb = XLSX.utils.book_new();
+
+    const cajas = (data.cajas_lista || []).map((b) => ({
+      "Caja": b.box_id || b.barcode || "",
+      "Talla": b.size || "",
+      "Estatus": b.status || "",
+      "Consumida": b.consumida ? "SI" : "NO",
+      "Unidades": b.units ?? 0,
+      "Ubicación": b.location || "",
+      "Recibida": b.created_at || "",
+      "Recibo": b.receiving_id || "",
+    }));
+    const wsCajas = XLSX.utils.json_to_sheet(cajas.length ? cajas : [{ "Caja": "(sin cajas)" }]);
+    XLSX.utils.book_append_sheet(wb, wsCajas, "Cajas");
+
+    const b = data.balance || {}, c = data.cajas_desglose || {}, dg = data.diagnostico || {};
+    const resumen = [
+      { Campo: "Style", Valor: data.style }, { Campo: "Color", Valor: data.color }, { Campo: "Talla", Valor: data.size },
+      { Campo: "", Valor: "" },
+      { Campo: "Recibido (u)", Valor: b.recibido }, { Campo: "Pickeado (u)", Valor: b.pickeado },
+      { Campo: "Esperado R−P (u)", Valor: b.esperado }, { Campo: "En mano (u)", Valor: b.en_mano },
+      { Campo: "Diferencia (u)", Valor: b.diferencia },
+      { Campo: "", Valor: "" },
+      { Campo: "Cajas recibidas", Valor: c.recibidas }, { Campo: "Cajas consumidas", Valor: c.consumidas },
+      { Campo: "Cajas deberían quedar", Valor: c.deberian }, { Campo: "Cajas en existencia", Valor: c.vivas },
+      { Campo: "Diferencia cajas", Valor: c.diferencia },
+      { Campo: "", Valor: "" },
+      { Campo: "Diagnóstico", Valor: dg.mensaje || "" },
+      ...(dg.causas || []).map((x, i) => ({ Campo: `Causa ${i + 1}`, Valor: x })),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
+
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const tag = [data.style, data.color, data.size].filter(Boolean).join("_").replace(/[^\w-]+/g, "");
+    saveAs(new Blob([buf], { type: "application/octet-stream" }),
+      `Balance_SKU_${tag || "export"}_${new Date().toISOString().split("T")[0]}.xlsx`);
+    toast.success("Excel exportado");
+  };
   return (
     <div className="space-y-4">
       <form onSubmit={run} className="flex flex-wrap gap-2 max-w-2xl">
@@ -327,6 +373,11 @@ const SkuTab = () => {
       </form>
       {data && (
         <>
+          <div className="flex justify-end">
+            <Btn onClick={exportExcel} disabled={loading}>
+              <Download className="w-4 h-4" /> Exportar Excel
+            </Btn>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Card title="Recibido" value={bal.recibido.toLocaleString()} sub={`${data.recibos.length} recibos`} />
             <Card title="Pickeado" value={bal.pickeado.toLocaleString()} sub={`${data.tickets.length} tickets`} />
