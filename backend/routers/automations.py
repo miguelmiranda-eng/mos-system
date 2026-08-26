@@ -175,7 +175,32 @@ async def execute_action(action_type, params, target_obj, user=None):
             # Determine collection
             collection = db.orders if "order_id" in target_obj else db.invoices
             id_key = "order_id" if "order_id" in target_obj else "invoice_id"
-            await collection.update_one({id_key: target_obj[id_key]}, {"$set": {field: value}})
+            # Igual que el salto de tablero: registrar el cambio en la vida de la
+            # orden (antes/despues) en vez de escribir en silencio. Si el valor ya
+            # coincide, no se reescribe ni se ensucia el historial.
+            prev = await collection.find_one(
+                {id_key: target_obj[id_key]}, {"_id": 0, field: 1, "order_number": 1})
+            old_value = (prev or {}).get(field)
+            if old_value != value:
+                now = datetime.now(timezone.utc).isoformat()
+                set_doc = {field: value, "updated_at": now}
+                # Sella cuando entro al estatus de produccion (igual que el update
+                # manual): Final Bill lee production_status_at y no debe quedar sin
+                # el solo porque el cambio lo hizo una regla.
+                if id_key == "order_id" and field == "production_status":
+                    set_doc["production_status_at"] = now
+                await collection.update_one({id_key: target_obj[id_key]}, {"$set": set_doc})
+                actor = user or {"user_id": "automation", "name": "Automatización",
+                                 "email": "system@prosper-mfg.com"}
+                await log_activity(
+                    actor, "update_order",
+                    {"order_id": target_obj.get("order_id"),
+                     "order_number": (prev or {}).get("order_number") or target_obj.get("order_number"),
+                     "changed_fields": [field],
+                     "changes": {field: {"from": old_value, "to": value}},
+                     "via": "automation"},
+                    previous_data={"order_id": target_obj.get("order_id"),
+                                   "fields": {field: old_value}})
     elif action_type == "notify_slack":
         await send_slack_notification(params, target_obj)
 
