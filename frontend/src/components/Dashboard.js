@@ -190,6 +190,31 @@ const Dashboard = () => {
   const [trashLoading, setTrashLoading] = useState(false);
   const [groupByDate, setGroupByDate] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({});
+  // Congelar (sticky) las cabeceras de grupo (ACTIVA / LUNES / etc.) para que
+  // queden fijas bajo el encabezado de columnas al hacer scroll. Medimos la
+  // altura real del encabezado de columnas y de la cabecera de cola para apilar
+  // los niveles sin adivinar pixeles (el zoom/tema los cambia).
+  const colHeadRef = useRef(null);
+  const queueHeadRef = useRef(null);
+  const [freezeTops, setFreezeTops] = useState({ col: 52, queue: 40 });
+  useEffect(() => {
+    const measure = () => {
+      const col = colHeadRef.current?.offsetHeight;
+      const q = queueHeadRef.current?.offsetHeight;
+      setFreezeTops(prev => {
+        const next = { col: col || prev.col, queue: q || prev.queue };
+        return next.col === prev.col && next.queue === prev.queue ? prev : next;
+      });
+    };
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (ro) {
+      if (colHeadRef.current) ro.observe(colHeadRef.current);
+      if (queueHeadRef.current) ro.observe(queueHeadRef.current);
+    }
+    window.addEventListener('resize', measure);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [currentBoard, groupByDate]);
   const [openFilterKey, setOpenFilterKey] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
   const [showNewBoard, setShowNewBoard] = useState(false);
@@ -1380,6 +1405,11 @@ const Dashboard = () => {
 
   const renderTableBody = () => {
     const _allOrders = (orders && Array.isArray(orders) ? orders : []);
+    // Estilo para congelar una cabecera de grupo bajo el encabezado de columnas.
+    // z por ENCIMA de las celdas sticky de las filas (z-30) y por DEBAJO de las
+    // del encabezado de columnas (z-50); fondo opaco para tapar lo que scrollea.
+    const freezeBg = isDark ? 'hsl(220, 30%, 9%)' : '#ffffff';
+    const freezeSticky = (topPx, z) => ({ position: 'sticky', top: `${topPx}px`, zIndex: z, background: freezeBg });
     // While searching, render only the matches (small set) instead of all
     // displayLimit rows — this is what made search laggy on iPad.
     // Los tableros con grupos por día se renderizan COMPLETOS (son los
@@ -1441,7 +1471,7 @@ const Dashboard = () => {
         return (
           <React.Fragment key={key}>
             <div
-              style={{ gridColumn: '1 / -1' }}
+              style={{ gridColumn: '1 / -1', ...freezeSticky(level >= 1 ? freezeTops.col + freezeTops.queue : freezeTops.col, 40) }}
               className={`py-0 px-0 border-b ${tone.bar} ${isEmpty ? 'opacity-60' : ''}`}
               data-testid={`group-${key}`}
             >
@@ -1515,7 +1545,8 @@ const Dashboard = () => {
           return (
             <React.Fragment key={queueGroupKey}>
               <div
-                style={{ gridColumn: '1 / -1' }}
+                ref={queueKey === 'active' ? queueHeadRef : undefined}
+                style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }}
                 className={`py-0 px-0 border-b ${queueTone.bar} ${isQueueEmpty ? 'opacity-70' : ''}`}
                 data-testid={`queue-group-${queueKey}`}
               >
@@ -1585,7 +1616,7 @@ const Dashboard = () => {
       const totalQty = groupOrders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
       return (
         <React.Fragment key={dateKey}>
-          <div style={{ gridColumn: '1 / -1' }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
+          <div style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
             <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-muted/20' : 'text-blue-700 hover:bg-muted/40'}`}>
               <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
               <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
@@ -2363,7 +2394,7 @@ const Dashboard = () => {
                   width: 'max-content'
                 }}>
 
-                  <div className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                  <div ref={colHeadRef} className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
                   <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
