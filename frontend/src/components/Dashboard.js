@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -197,6 +197,28 @@ const Dashboard = () => {
   const colHeadRef = useRef(null);
   const queueHeadRef = useRef(null);
   const [freezeTops, setFreezeTops] = useState({ col: 52, queue: 40 });
+  // Órdenes programadas para envío (viven en scheduled_shipments, no en la orden).
+  // Mapa { order_number: fecha_export } para pintar el reloj + dd/mm en la tarjeta.
+  const [shipMap, setShipMap] = useState({});
+  const loadShipMap = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/scheduled-shipments`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const m = {};
+      (data.items || []).forEach(it => {
+        if (it.order_number) m[it.order_number] = it.scheduled_export_date || '';
+      });
+      setShipMap(m);
+    } catch { /* silent */ }
+  }, []);
+  useEffect(() => { loadShipMap(); }, [loadShipMap, currentBoard]);
+  // Al volver de otra pestaña/módulo (p.ej. Envíos) refrescamos el mapa.
+  useEffect(() => {
+    const onFocus = () => loadShipMap();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [loadShipMap]);
   useEffect(() => {
     const measure = () => {
       const col = colHeadRef.current?.offsetHeight;
@@ -1142,7 +1164,7 @@ const Dashboard = () => {
           {/* TWIN / NECK / SEP / PL badges horizontal row (centered).
               Padding y gap reducidos para que los 4 quepan sin apretarse en la
               columna de 200px. */}
-          <div className="flex flex-row items-center justify-center gap-1 mt-2 w-full shrink-0">
+          <div className="flex flex-row flex-wrap items-center justify-center gap-1 mt-2 w-full shrink-0">
             {/* TWIN Badge */}
             {order.twin_order_number ? (
               <button
@@ -1194,6 +1216,24 @@ const Dashboard = () => {
               data-testid={`order-pl-badge-${order.order_id}`}>
               <Truck className="w-2.5 h-2.5" />
             </span>
+
+            {/* ENVÍO programado — reloj + fecha (dd/mm). Se enciende cuando la
+                orden está programada en el módulo de Envíos (scheduled_shipments). */}
+            {order.order_number && shipMap[order.order_number] !== undefined && (() => {
+              const raw = String(shipMap[order.order_number] || '').slice(0, 10);
+              const p = raw.split('-');           // [YYYY, MM, DD] sin corrimiento de zona
+              const dm = p.length === 3 ? `${p[2]}/${p[1]}` : '';
+              return (
+                <span
+                  className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border inline-flex items-center gap-0.5 bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 border-sky-200/20"
+                  title={raw ? `Programada para envío: ${raw}` : 'Programada para envío'}
+                  data-testid={`order-ship-badge-${order.order_id}`}
+                >
+                  <Clock className="w-2.5 h-2.5" />
+                  {dm && <span>{dm}</span>}
+                </span>
+              );
+            })()}
           </div>
         </div>
 
