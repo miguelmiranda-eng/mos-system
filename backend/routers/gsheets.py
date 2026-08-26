@@ -488,3 +488,18 @@ async def write_sheet(request: Request):
 
     await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data)})
     return {"ok": True, "written": len(data), "skipped": omitidas}
+
+
+@router.get("/ping")
+async def ping():
+    """
+    Sin auth: confirma QUE version del router de gsheets esta desplegada.
+    Sirve para saber, desde fuera, si EasyPanel ya tomo el ultimo commit del
+    backend. TEMPORAL — quitar cuando el modulo quede cerrado.
+    """
+    return {
+        "build": "gsheets-diag-1",
+        "has_write": True,
+        "has_format_read": True,
+        "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
+    }
