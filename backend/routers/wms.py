@@ -7621,15 +7621,80 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
     for b in cajas_lista:
         b["consumida"] = (b.get("status") or "") in _BOX_OUT_STATUSES
 
-    movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
+    # ── Diagnóstico del descuadre ────────────────────────────────────────────
+    # La "Diferencia" de unidades (en_mano − esperado) NO explica su causa por sí
+    # sola. Aquí cuantificamos lo que sí podemos rastrear para que el balance diga
+    # POR QUÉ no cuadra, en vez de dejar al usuario adivinando:
+    #   · ajustes manuales de inventario (agregan/quitan unidades SIN recibo),
+    #   · cajas ingresadas sin recibo registrado.
     esperado = recibido - pickeado
+    diff = on_hand - esperado
+    manual_q = {"type": {"$in": ["manual_inventory_add", "manual_inventory_remove"]},
+                "details.style": st}
+    if color.strip():
+        manual_q["details.color"] = _ci_eq(color.strip())
+    if size.strip():
+        manual_q["details.size"] = _ci_eq(size.strip())
+    aj_add = aj_remove = 0
+    async for m in db.wms_movements.find(manual_q, {"_id": 0, "type": 1, "details": 1}):
+        d = m.get("details") or {}
+        if m.get("type") == "manual_inventory_add":
+            aj_add += int(d.get("added_units") or 0)
+        else:
+            aj_remove += int(d.get("removed_units") or 0)
+    ajustes_neto = aj_add - aj_remove
+    cajas_sin_recibo = await db.wms_boxes.count_documents(
+        {**q_box, "$or": [{"receiving_id": {"$exists": False}}, {"receiving_id": None}, {"receiving_id": ""}]})
+
+    tol = 5
+    cuadra = abs(diff) <= tol
+    residual = diff - ajustes_neto          # lo que queda tras descontar ajustes manuales
+    causas = []
+    if ajustes_neto:
+        causas.append(f"Ajustes manuales de inventario: {ajustes_neto:+,} u "
+                      f"(agregadas {aj_add:,}, quitadas {aj_remove:,}).")
+    if cajas_sin_recibo:
+        causas.append(f"{cajas_sin_recibo} caja(s) ingresadas SIN recibo registrado.")
+    if cuadra:
+        mensaje = "El balance de unidades cuadra (dentro de la tolerancia de ±5)."
+    elif diff > 0:
+        mensaje = (f"Hay {diff:,} unidades MÁS en existencia de las que explican los recibos "
+                   f"(recibido − pickeado).")
+        if abs(residual) > tol:
+            causas.append(f"{residual:+,} u sin explicar tras descontar ajustes: probables "
+                          f"entradas sin rastrear (recibos no capturados).")
+        elif ajustes_neto:
+            causas.append("Los ajustes manuales explican prácticamente todo el sobrante.")
+    else:
+        mensaje = (f"Faltan {abs(diff):,} unidades frente a lo recibido − pickeado.")
+        if abs(residual) > tol:
+            causas.append(f"{residual:+,} u sin explicar tras descontar ajustes: probables "
+                          f"picks/salidas sin descontar o mermas.")
+    # Nota puente cuando las cajas cuadran pero las unidades no.
+    if not cuadra and cajas_desglose["diferencia"] == 0:
+        causas.append("Las CAJAS cuadran perfecto; el descuadre es solo de unidades → "
+                      "el 'Recibido' está subregistrado o hubo ajustes/entradas sin recibo.")
+    diagnostico = {
+        "diferencia_unidades": diff,
+        "diferencia_cajas": cajas_desglose["diferencia"],
+        "cuadra": cuadra,
+        "ajustes_manuales_neto": ajustes_neto,
+        "ajustes_add": aj_add,
+        "ajustes_remove": aj_remove,
+        "cajas_sin_recibo": cajas_sin_recibo,
+        "residual_sin_explicar": residual,
+        "mensaje": mensaje,
+        "causas": causas,
+    }
+
+    movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
     return {
         "style": style.strip().upper(), "color": color.strip().upper(), "size": size.strip().upper(),
         "balance": {"recibido": recibido, "pickeado": pickeado, "esperado": esperado,
-                    "en_mano": on_hand, "diferencia": on_hand - esperado},
+                    "en_mano": on_hand, "diferencia": diff},
         "recibos": recv_list, "tickets": tickets, "inventario": inv_rows,
         "cajas_por_status": boxes_by_status, "cajas_desglose": cajas_desglose,
-        "cajas_lista": cajas_lista, "movimientos": movements,
+        "cajas_lista": cajas_lista, "diagnostico": diagnostico, "movimientos": movements,
     }
 
 

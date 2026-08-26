@@ -335,6 +335,32 @@ const SkuTab = () => {
             <Card title="Diferencia" value={`${bal.diferencia > 0 ? "+" : ""}${bal.diferencia.toLocaleString()}`}
               tone={ok ? "good" : "bad"} sub={ok ? "cuadra" : "revisar: fantasma o entradas sin rastrear"} />
           </div>
+          {data.diagnostico && (
+            <div className={`rounded-lg border p-4 ${data.diagnostico.cuadra
+              ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10"
+              : "border-amber-200 bg-amber-50 dark:border-amber-500/25 dark:bg-amber-500/10"}`}>
+              <div className="flex items-start gap-2">
+                {data.diagnostico.cuadra
+                  ? <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  : <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />}
+                <div className="min-w-0 space-y-1">
+                  <div className="text-sm font-semibold text-foreground">Diagnóstico: {data.diagnostico.mensaje}</div>
+                  {data.diagnostico.causas?.length > 0 && (
+                    <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
+                      {data.diagnostico.causas.map((c, i) => <li key={i}>{c}</li>)}
+                    </ul>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
+                    <Chip>Ajustes manuales: {data.diagnostico.ajustes_manuales_neto > 0 ? "+" : ""}{(data.diagnostico.ajustes_manuales_neto || 0).toLocaleString()} u</Chip>
+                    <Chip>Cajas sin recibo: {data.diagnostico.cajas_sin_recibo || 0}</Chip>
+                    {!data.diagnostico.cuadra && (
+                      <Chip>Sin explicar: {data.diagnostico.residual_sin_explicar > 0 ? "+" : ""}{(data.diagnostico.residual_sin_explicar || 0).toLocaleString()} u</Chip>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {cd && (
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center gap-2">
