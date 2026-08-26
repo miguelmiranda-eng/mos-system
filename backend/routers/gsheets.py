@@ -257,6 +257,7 @@ def _leer_formato(service, sheet_id, props_hojas):
     Se acota el rango por pestaña para no traer una respuesta enorme.
     """
     out = {}
+    err = None
     try:
         ranges = []
         for p in props_hojas:
@@ -268,7 +269,7 @@ def _leer_formato(service, sheet_id, props_hojas):
             cols = min(int(grid.get("columnCount") or 0) or 26, 64)
             ranges.append(f"'{t}'!A1:{_col_letra(cols)}{rows}")
         if not ranges:
-            return out
+            return out, err
         resp = service.spreadsheets().get(
             spreadsheetId=sheet_id,
             includeGridData=True,
@@ -313,8 +314,9 @@ def _leer_formato(service, sheet_id, props_hojas):
                     col_widths[str(base_c + i)] = px
             out[titulo] = {"formats": formats, "merges": merges, "colWidths": col_widths}
     except Exception as e:
+        err = str(e)[:600]
         logging.warning(f"GSHEETS formato best-effort fallo (se abre sin formato): {e}")
-    return out
+    return out, err
 
 
 @router.get("/read")
@@ -375,7 +377,7 @@ async def read_sheet(request: Request, url: str):
         raise HTTPException(status_code=502, detail="Error leyendo los valores de la hoja.")
 
     # 3) Formato (best-effort): si falla, la hoja abre igual con su contenido.
-    fmt_por_titulo = _leer_formato(service, sheet_id, props_hojas)
+    fmt_por_titulo, fmt_error = _leer_formato(service, sheet_id, props_hojas)
 
     sheets = []
     for i, t in enumerate(titulos):
@@ -389,11 +391,27 @@ async def read_sheet(request: Request, url: str):
         })
 
     await log_activity(user, "gsheets_read", {"sheet_id": sheet_id})
+
+    # DIAGNOSTICO TEMPORAL — quitar cuando formato/guardado queden cerrados.
+    # Deja ver, abriendo /api/gsheets/read?url=... en el navegador (con sesion),
+    # por que el formato no aparece y si el scope permite escribir.
+    token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
+    scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
+    diag = {
+        "build": "gsheets-diag-1",
+        "titulos": titulos,
+        "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
+        "formato_error": fmt_error,
+        "puede_escribir": SHEETS_SCOPE in scopes,
+        "scopes": scopes,
+    }
+
     return {
         "name": (meta.get("properties") or {}).get("title", "Google Sheet"),
         "googleId": sheet_id,
         "googleUrl": url,
         "sheets": sheets,
+        "_diag": diag,
     }
 
 
@@ -445,7 +463,11 @@ async def write_sheet(request: Request):
         data.append({"range": f"'{nombre}'!A1", "values": s.get("values", [])})
 
     if not data:
-        raise HTTPException(status_code=422, detail="Ninguna pestaña coincide con las de Google. No se escribió nada.")
+        logging.error(f"GSHEETS write: sin coincidencias. pedidas={[str(s.get('name','')) for s in entrada]} existentes={sorted(existentes)}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Ninguna pestaña coincide. En Google hay: {sorted(existentes)}; se intento: {[str(s.get('name','')) for s in entrada]}.",
+        )
 
     try:
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
@@ -460,7 +482,9 @@ async def write_sheet(request: Request):
         if "403" in msg or "PERMISSION" in msg.upper():
             raise HTTPException(status_code=403, detail="no_edit")
         logging.error(f"GSHEETS write error: {e}")
-        raise HTTPException(status_code=502, detail="Error escribiendo en la hoja de Google.")
+        # DIAGNOSTICO TEMPORAL: se devuelve el error real de Google para verlo en
+        # el toast. Volver a "Error escribiendo en la hoja de Google." al cerrar.
+        raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
 
     await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data)})
     return {"ok": True, "written": len(data), "skipped": omitidas}
