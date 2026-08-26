@@ -26,6 +26,11 @@ READY_SHIPPING = "LISTO PARA ENVIO"
 READY_INVENTORY = "LISTO PARA INVENTARIO"
 TABS = {"envio": READY_SHIPPING, "inventario": READY_INVENTORY}
 
+# El tablero EDI se factura por intercambio electrónico (EDI), NO por este
+# módulo. Sus órdenes nunca entran a la bandeja ni a los reportes de Final Bill
+# — misma exclusión que ya aplican orders/paint/art/wms.
+EDI_BOARD = "EDI"
+
 # Campos que la tabla muestra. `design_#` y `total_amount` van explicados abajo.
 PROJECTION = {
     "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1,
@@ -118,6 +123,10 @@ def _build_query(tab: str, params: dict) -> dict:
         # Una orden ya revisada sale de las dos primeras pestañas: si se quedara,
         # el encargado la volvería a revisar cada mañana sin saber que ya estaba.
         query = {"production_status": status, "final_bill_review.reviewed": {"$ne": True}}
+
+    # El tablero EDI no se factura aquí: fuera de todas las pestañas (y por lo
+    # tanto también de los tab_counts, que reusan este builder).
+    query["board"] = {"$ne": EDI_BOARD}
 
     search = (params.get("search") or "").strip()
     if search:
@@ -228,7 +237,7 @@ async def final_bill_options(request: Request):
     encargado eligiendo opciones que no devuelven nada.
     """
     await require_auth(request)
-    base = {"$or": [
+    base = {"board": {"$ne": EDI_BOARD}, "$or": [
         {"production_status": {"$in": [READY_SHIPPING, READY_INVENTORY]}},
         {"final_bill_review.reviewed": True},
     ]}
@@ -330,6 +339,9 @@ async def set_review_bulk(request: Request):
 # scripts/cleanup_test_data.py). No deben salir en un reporte de facturación.
 _CLIENTES_PRUEBA = ["FINAL CLIENT", "FINAL VERIFICATION", "TEST CLIENT"]
 _BOARD_BASURA = "PAPELERA DE RECICLAJE"
+# Tableros que no se facturan en este reporte: la papelera y EDI (se factura por
+# intercambio electrónico, no aquí).
+_BOARDS_EXCLUIDOS = {_BOARD_BASURA, EDI_BOARD}
 
 
 def _a_tijuana(iso: str) -> str:
@@ -386,9 +398,9 @@ async def printed_report(request: Request, date_from: str = "", date_to: str = "
     numeros = [g["_id"] for g in grupos if g["_id"]]
     ordenes = {}
     async for o in db.orders.find({"order_number": {"$in": numeros}}, PROJECTION | {"board": 1, "quantity": 1}):
-        # Una orden en la papelera no se factura; y si el mismo número existiera
-        # dos veces, gana la que NO está en la basura.
-        if o.get("board") == _BOARD_BASURA and o.get("order_number") in ordenes:
+        # Una orden en la papelera/EDI no se factura; y si el mismo número
+        # existiera dos veces, gana la que NO está excluida.
+        if o.get("board") in _BOARDS_EXCLUIDOS and o.get("order_number") in ordenes:
             continue
         ordenes[o.get("order_number")] = o
 
@@ -396,7 +408,7 @@ async def printed_report(request: Request, date_from: str = "", date_to: str = "
     for g in grupos:
         num = g["_id"]
         o = ordenes.get(num) or {}
-        if o.get("board") == _BOARD_BASURA:
+        if o.get("board") in _BOARDS_EXCLUIDOS:
             continue
 
         por_pos = {}
