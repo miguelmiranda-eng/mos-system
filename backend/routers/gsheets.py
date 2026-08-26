@@ -249,24 +249,27 @@ def _col_letra(n_cols):
     return letras
 
 
-def _leer_formato(service, sheet_id, props_hojas):
+def _leer_formato(service, sheet_id, extension_usada):
     """
     Lee el formato (colores, negrita, alineacion, combinadas, anchos) por pestaña.
     BEST-EFFORT: ante cualquier problema devuelve lo que haya (o {}) y la hoja
     abre igual con su contenido; el formato nunca debe dejar la hoja en blanco.
-    Se acota el rango por pestaña para no traer una respuesta enorme.
+
+    `extension_usada`: [(titulo, filas_con_datos, cols_con_datos)]. El rango del
+    formato se acota a lo REALMENTE usado (+ un margen para cabeceras de color
+    sin texto): pedir el formato de miles de filas vacias dispara el limite de
+    amplificacion de Google ("Amplification ratio ... exceeds limit 100") y
+    tumba la consulta entera. Las pestañas sin datos se saltan.
     """
     out = {}
     err = None
     try:
         ranges = []
-        for p in props_hojas:
-            t = p.get("title")
-            if not t:
+        for (t, filas_usadas, cols_usadas) in extension_usada:
+            if not t or (filas_usadas <= 0 and cols_usadas <= 0):
                 continue
-            grid = p.get("gridProperties") or {}
-            rows = min(int(grid.get("rowCount") or 0) or MAX_FILAS_LECTURA, MAX_FILAS_LECTURA)
-            cols = min(int(grid.get("columnCount") or 0) or 26, 64)
+            rows = min(filas_usadas + 30, MAX_FILAS_LECTURA)
+            cols = min(max(cols_usadas + 6, 8), 64)
             ranges.append(f"'{t}'!A1:{_col_letra(cols)}{rows}")
         if not ranges:
             return out, err
@@ -377,7 +380,14 @@ async def read_sheet(request: Request, url: str):
         raise HTTPException(status_code=502, detail="Error leyendo los valores de la hoja.")
 
     # 3) Formato (best-effort): si falla, la hoja abre igual con su contenido.
-    fmt_por_titulo, fmt_error = _leer_formato(service, sheet_id, props_hojas)
+    # El rango del formato se acota a lo que los VALORES ya dijeron que se usa.
+    extension = []
+    for i, t in enumerate(titulos):
+        vals = rangos[i].get("values", []) if i < len(rangos) else []
+        n_filas = len(vals)
+        n_cols = max((len(f) for f in vals), default=0)
+        extension.append((t, n_filas, n_cols))
+    fmt_por_titulo, fmt_error = _leer_formato(service, sheet_id, extension)
 
     sheets = []
     for i, t in enumerate(titulos):
@@ -398,7 +408,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-3",
+        "build": "gsheets-diag-4",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -515,7 +525,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-3",
+        "build": "gsheets-diag-4",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),

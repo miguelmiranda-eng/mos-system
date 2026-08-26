@@ -43,8 +43,8 @@ export async function importarGoogleSheet(url) {
   let res;
   try {
     res = await fetch(`${API}/gsheets/read?url=${encodeURIComponent(url)}`, { credentials: 'include' });
-  } catch {
-    throw new Error('No se pudo contactar el servidor.');
+  } catch (e) {
+    throw new Error(`No se pudo contactar el servidor (${e?.message || 'error de red'}).`);
   }
 
   if (!res.ok) {
@@ -151,7 +151,10 @@ export async function importarGoogleSheet(url) {
 /** Convierte una hoja del modelo en una matriz de valores (hasta la ultima celda escrita). */
 function hojaAMatriz(sheet) {
   let maxR = -1; let maxC = -1;
-  for (const k of sheet.cells.keys()) {
+  for (const [k, cell] of sheet.cells) {
+    // Solo cuentan las celdas con CONTENIDO: una celda que apenas trae estilo
+    // (cabecera de color de Google) no debe estirar la matriz a miles de "".
+    if (cell.value == null && cell.formula == null) continue;
     const i = k.indexOf(':');
     maxR = Math.max(maxR, +k.slice(0, i));
     maxC = Math.max(maxC, +k.slice(i + 1));
@@ -187,8 +190,8 @@ export async function guardarEnGoogle(workbook) {
       credentials: 'include',
       body: JSON.stringify(payload),
     });
-  } catch {
-    return { ok: false, error: 'No se pudo contactar el servidor.' };
+  } catch (e) {
+    return { ok: false, error: `No se pudo contactar el servidor (${e?.message || 'error de red'}). Reintenta en unos segundos.` };
   }
   if (!res.ok) {
     let detalle = `Error ${res.status}`;

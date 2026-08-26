@@ -109,9 +109,11 @@ describe('guardarEnGoogle arma y manda el payload correcto', () => {
     const payload = JSON.parse(opciones.body);
     expect(payload.googleId).toBe('GID123');
     expect(payload.sheets[0].name).toBe('PACKING LIST');
-    // La matriz cubre hasta la ultima celda escrita (la de solo-estilo en 5,3).
     expect(payload.sheets[0].values[0][0]).toBe('VENDOR PO');
     expect(payload.sheets[0].values[2][1]).toBe('Garment Type');
+    // La matriz llega hasta la ultima celda CON CONTENIDO (fila 2). La celda de
+    // solo-estilo en (5,3) no la estira: estilo sin valor no viaja a Google.
+    expect(payload.sheets[0].values.length).toBe(3);
   });
 
   test('un libro que no vino de Google no intenta escribir', async () => {
