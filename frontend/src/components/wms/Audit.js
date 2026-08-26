@@ -27,6 +27,20 @@ const fmtDate = (iso) => {
   return isNaN(d) ? String(iso).slice(0, 16) : d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 };
 
+// Descarga un .xlsx con una o varias hojas. sheets = [{name, rows}]. Cliente-side
+// con SheetJS, mismo patrón que Analytics/Art. Nombre de hoja acotado a 31 chars
+// (límite de Excel).
+const downloadXlsx = (sheets, filename) => {
+  const wb = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    const ws = XLSX.utils.json_to_sheet(rows && rows.length ? rows : [{ "": "(sin datos)" }]);
+    XLSX.utils.book_append_sheet(wb, ws, String(name).slice(0, 31));
+  });
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  saveAs(new Blob([buf], { type: "application/octet-stream" }), filename);
+};
+const today = () => new Date().toISOString().split("T")[0];
+
 const Card = ({ title, value, tone = "default", sub }) => (
   <div className={`p-4 rounded-lg border ${tone === "bad" ? "border-red-200 bg-red-50 dark:border-red-500/25 dark:bg-red-500/10" : tone === "good" ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10" : "border-border bg-card"}`}>
     <div className="text-xs font-medium text-muted-foreground">{title}</div>
@@ -67,6 +81,33 @@ const HealthTab = () => {
     finally { setLoading(false); }
   };
 
+  const exportExcel = () => {
+    if (!data) return;
+    const t = data.totales || {};
+    const resumen = [
+      { Métrica: "Unidades (inventario)", Valor: t.inventario_unidades, Extra: `${t.inventario_filas} filas` },
+      { Métrica: "Unidades (cajas vivas)", Valor: t.cajas_unidades, Extra: `${t.cajas_vivas} cajas` },
+      { Métrica: "Celdas con drift", Valor: data.drift?.celdas, Extra: `${data.drift?.unidades_abs} u de diferencia` },
+      { Métrica: "Tickets con picks sin descontar", Valor: data.sin_descontar?.tickets, Extra: "" },
+      { Métrica: "Asignado > en mano", Valor: data.negativos_allocated, Extra: "" },
+      { Métrica: "Filas en 0 con cajas", Valor: data.ceros_con_cajas, Extra: "" },
+      { Métrica: "Cajas pendientes +14 días", Valor: data.cajas_pendientes_14d, Extra: "" },
+    ];
+    const drift = (data.drift?.top || []).map(d => ({
+      "Ubicación": d.location, "Style": d.style, "Color": d.color, "Talla": d.size,
+      "Inventario": d.inventario, "Cajas": d.cajas, "Diferencia": d.diff,
+    }));
+    const undeducted = (data.sin_descontar?.top || []).map(t2 => ({
+      "Ticket": t2.ticket_id, "Orden": t2.order, "Style": t2.style, "Color": t2.color,
+      "Status": t2.status, "Pickeado": t2.picked, "Creado": t2.created_at,
+    }));
+    downloadXlsx(
+      [{ name: "Resumen", rows: resumen }, { name: "Drift", rows: drift },
+       { name: "Picks sin descontar", rows: undeducted }],
+      `Salud_Sistema_${today()}.xlsx`);
+    toast.success("Excel exportado");
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -74,6 +115,7 @@ const HealthTab = () => {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Ejecutar chequeo completo
         </Btn>
+        {data && <Btn onClick={exportExcel}><Download className="w-4 h-4" /> Exportar Excel</Btn>}
         {data && <span className="text-xs text-muted-foreground">Generado: {fmtDate(data.generated_at)}</span>}
       </div>
       {!data && !loading && (
@@ -530,6 +572,18 @@ const MovementsTab = () => {
     finally { setLoading(false); }
   };
 
+  const exportExcel = () => {
+    if (!data) return;
+    const rows = (data.movements || []).map(m => ({
+      "Fecha": m.created_at || "",
+      "Tipo": m.type || "",
+      "Usuario": m.user_name || "",
+      "Detalles": JSON.stringify(m.details || {}),
+    }));
+    downloadXlsx([{ name: "Movimientos", rows }], `Movimientos_${today()}.xlsx`);
+    toast.success("Excel exportado");
+  };
+
   return (
     <div className="space-y-4">
       <form onSubmit={run} className="flex flex-wrap gap-2 items-end">
@@ -550,8 +604,11 @@ const MovementsTab = () => {
       </form>
       {data && (
         <div className="border border-border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">
-            {data.count} de {data.total.toLocaleString()} movimientos
+          <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between gap-2">
+            <span>{data.count} de {data.total.toLocaleString()} movimientos</span>
+            {data.movements?.length > 0 && (
+              <Btn onClick={exportExcel}><Download className="w-3.5 h-3.5" /> Exportar Excel</Btn>
+            )}
           </div>
           <div className="max-h-[32rem] overflow-y-auto divide-y divide-border/60">
             {data.movements.map((m, i) => (
