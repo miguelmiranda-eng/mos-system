@@ -166,9 +166,35 @@ function hojaAMatriz(sheet) {
       // getEditValue: valor crudo o "=formula" (Google la interpreta con USER_ENTERED).
       fila.push(getEditValue(getCell(sheet, r, c)));
     }
-    filas.push(fila);
+    // Sin cola de vacios: cada "" de relleno engorda el POST, y el proxy corta
+    // los cuerpos grandes. La pestaña se limpia antes de escribir, asi que las
+    // filas cortas no dejan datos viejos.
+    let fin = fila.length;
+    while (fin > 0 && fila[fin - 1] === '') fin--;
+    filas.push(fila.slice(0, fin));
   }
   return filas;
+}
+
+/**
+ * Parte una matriz en bloques de filas cuyo JSON no pase de maxBytes. El proxy
+ * de produccion corta los cuerpos de ~1MB sin responder (el navegador lo ve
+ * como "Failed to fetch"), asi que ningun POST debe acercarse a ese limite.
+ */
+export function partirEnBloques(matriz, maxBytes = 600 * 1024) {
+  const bloques = [];
+  let inicio = 0; let bytes = 0; let filas = [];
+  for (let i = 0; i < matriz.length; i++) {
+    const b = JSON.stringify(matriz[i]).length + 1;
+    if (filas.length && bytes + b > maxBytes) {
+      bloques.push({ startRow: inicio, values: filas });
+      inicio = i; filas = []; bytes = 0;
+    }
+    filas.push(matriz[i]);
+    bytes += b;
+  }
+  if (filas.length) bloques.push({ startRow: inicio, values: filas });
+  return bloques;
 }
 
 /**
@@ -178,40 +204,64 @@ function hojaAMatriz(sheet) {
  */
 export async function guardarEnGoogle(workbook) {
   if (!workbook.googleId) return { ok: false, error: 'Este libro no vino de Google.' };
-  const payload = {
-    googleId: workbook.googleId,
-    sheets: workbook.sheets.map(s => ({ name: s.name, values: hojaAMatriz(s) })),
-  };
-  let res;
-  try {
-    res = await fetch(`${API}/gsheets/write`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload),
+
+  // Cada pestaña viaja en BLOQUES de filas en peticiones separadas: el primer
+  // bloque limpia la pestaña (clear) y los demas escriben en su offset. Una
+  // pestaña vacia manda un solo bloque sin valores, que solo limpia.
+  const peticiones = [];
+  for (const s of workbook.sheets) {
+    const matriz = hojaAMatriz(s);
+    const bloques = matriz.length ? partirEnBloques(matriz) : [{ startRow: 0, values: [] }];
+    bloques.forEach((b, i) => {
+      peticiones.push({ name: s.name, values: b.values, startRow: b.startRow, clear: i === 0 });
     });
-  } catch (e) {
-    return { ok: false, error: `No se pudo contactar el servidor (${e?.message || 'error de red'}). Reintenta en unos segundos.` };
   }
-  if (!res.ok) {
-    let detalle = `Error ${res.status}`;
-    try { const j = await res.json(); detalle = j.detail || detalle; } catch { /* noop */ }
-    if (res.status === 401 && detalle === 'need_connect') {
-      return { ok: false, error: 'Conecta tu cuenta de Google.', necesitaConectar: true };
+
+  let updatedCells = 0;
+  let spreadsheetTitle = '';
+  const skipped = new Set();
+  for (const p of peticiones) {
+    let res;
+    try {
+      res = await fetch(`${API}/gsheets/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ googleId: workbook.googleId, sheets: [p] }),
+      });
+    } catch (e) {
+      return { ok: false, error: `No se pudo contactar el servidor (${e?.message || 'error de red'}). Reintenta en unos segundos.` };
     }
-    if (res.status === 403 && detalle === 'no_edit') {
-      return { ok: false, error: 'No tienes permiso de edición en esa hoja de Google.' };
+    if (!res.ok) {
+      let detalle = `Error ${res.status}`;
+      try { const j = await res.json(); detalle = j.detail || detalle; } catch { /* noop */ }
+      if (res.status === 401 && detalle === 'need_connect') {
+        return { ok: false, error: 'Conecta tu cuenta de Google.', necesitaConectar: true };
+      }
+      if (res.status === 403 && detalle === 'no_edit') {
+        return { ok: false, error: 'No tienes permiso de edición en esa hoja de Google.' };
+      }
+      return { ok: false, error: detalle };
     }
-    return { ok: false, error: detalle };
+    const data = await res.json();
+    updatedCells += data.updatedCells || 0;
+    spreadsheetTitle = data.spreadsheetTitle || spreadsheetTitle;
+    for (const n of data.skipped || []) skipped.add(n);
   }
-  const data = await res.json();
+
+  // Si TODAS las pestañas de MOS fueron omitidas, nada se escribio: es un error
+  // (los nombres no coinciden con los de Google), no un guardado exitoso.
+  if (skipped.size >= workbook.sheets.length) {
+    return { ok: false, error: `Ninguna pestaña coincide con las de Google: ${[...skipped].join(', ')}` };
+  }
+
   return {
     ok: true,
-    skipped: data.skipped || [],
+    skipped: [...skipped],
     // Confirmacion de Google: celdas realmente escritas y titulo del archivo
     // destino. Sirve para distinguir "Google rechazo" de "escribio pero el
     // usuario mira otro archivo".
-    updatedCells: data.updatedCells ?? null,
-    spreadsheetTitle: data.spreadsheetTitle || '',
+    updatedCells,
+    spreadsheetTitle,
   };
 }

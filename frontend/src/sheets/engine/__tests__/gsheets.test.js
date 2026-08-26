@@ -1,4 +1,4 @@
-import { esUrlGoogleSheets, idDeUrl, importarGoogleSheet, guardarEnGoogle } from '../gsheets';
+import { esUrlGoogleSheets, idDeUrl, importarGoogleSheet, guardarEnGoogle, partirEnBloques } from '../gsheets';
 import { getCell } from '../model';
 
 describe('deteccion de URLs de Google Sheets', () => {
@@ -109,6 +109,9 @@ describe('guardarEnGoogle arma y manda el payload correcto', () => {
     const payload = JSON.parse(opciones.body);
     expect(payload.googleId).toBe('GID123');
     expect(payload.sheets[0].name).toBe('PACKING LIST');
+    // El primer bloque de cada pestaña limpia y escribe desde la fila 0.
+    expect(payload.sheets[0].clear).toBe(true);
+    expect(payload.sheets[0].startRow).toBe(0);
     expect(payload.sheets[0].values[0][0]).toBe('VENDOR PO');
     expect(payload.sheets[0].values[2][1]).toBe('Garment Type');
     // La matriz llega hasta la ultima celda CON CONTENIDO (fila 2). La celda de
@@ -119,5 +122,38 @@ describe('guardarEnGoogle arma y manda el payload correcto', () => {
   test('un libro que no vino de Google no intenta escribir', async () => {
     const res = await guardarEnGoogle({ sheets: [] });
     expect(res.ok).toBe(false);
+  });
+});
+
+describe('partirEnBloques (el proxy corta los POST de ~1MB)', () => {
+  const fila = (txt) => [txt, 'x'.repeat(30)];
+
+  test('una matriz chica queda en un solo bloque desde la fila 0', () => {
+    const m = [fila('a'), fila('b')];
+    expect(partirEnBloques(m)).toEqual([{ startRow: 0, values: m }]);
+  });
+
+  test('una matriz grande se parte y los offsets rearman la matriz original', () => {
+    const m = Array.from({ length: 50 }, (_, i) => fila(`r${i}`));
+    const bloques = partirEnBloques(m, 200);   // limite artificialmente chico
+    expect(bloques.length).toBeGreaterThan(1);
+
+    // Cada bloque respeta el limite y arranca donde termino el anterior.
+    let esperado = 0;
+    const rearmada = [];
+    for (const b of bloques) {
+      expect(JSON.stringify(b.values).length).toBeLessThanOrEqual(200 + 80);
+      expect(b.startRow).toBe(esperado);
+      esperado += b.values.length;
+      rearmada.push(...b.values);
+    }
+    expect(rearmada).toEqual(m);
+  });
+
+  test('una fila sola mas grande que el limite viaja igual (bloque de una fila)', () => {
+    const m = [ ['y'.repeat(500)], fila('b') ];
+    const bloques = partirEnBloques(m, 200);
+    expect(bloques[0]).toEqual({ startRow: 0, values: [m[0]] });
+    expect(bloques[1]).toEqual({ startRow: 1, values: [m[1]] });
   });
 });

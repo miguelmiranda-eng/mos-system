@@ -408,7 +408,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-4",
+        "build": "gsheets-diag-5",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -430,10 +430,14 @@ async def write_sheet(request: Request):
     """
     Escribe de vuelta los valores a un Google Sheet, para poder editar el packing
     list dentro de MOS sin abrir Google. Recibe:
-      { googleId, sheets: [{ name, values: [[...], ...] }] }
-    Por cada pestaña EXISTENTE (por nombre) borra sus valores y escribe los
-    nuevos. Solo toca valores: el formato de Google no se altera. Las pestañas
-    nuevas que no existan en Google se omiten (v1).
+      { googleId, sheets: [{ name, values: [[...], ...], startRow?, clear? }] }
+    Por cada pestaña EXISTENTE (por nombre): si `clear` (default true) borra sus
+    valores, y escribe `values` a partir de la fila `startRow` (default 0).
+    startRow/clear permiten mandar una pestaña grande EN BLOQUES: el proxy corta
+    los cuerpos de ~1MB o mas sin responder (el navegador lo ve como "Failed to
+    fetch"), asi que el frontend trocea y aqui cada bloque escribe en su offset
+    (el primero limpia, los demas no). Solo toca valores: el formato de Google
+    no se altera. Las pestañas que no existan en Google se omiten (v1).
       401 need_connect -> falta conectar / permiso
       403 no_edit      -> el usuario no puede editar esa hoja
     """
@@ -469,27 +473,33 @@ async def write_sheet(request: Request):
         if nombre not in existentes:
             omitidas.append(nombre)
             continue
-        a_borrar.append(f"'{nombre}'")
+        if s.get("clear", True):
+            a_borrar.append(f"'{nombre}'")
         valores = s.get("values") or []
         # Una pestaña vacia (p.ej. una "Hoja1" sin contenido) NO entra al
         # batchUpdate: Google rechaza con 400 un ValueRange sin valores y eso
         # tumbaba TODO el guardado. Solo se limpia (batchClear ya la cubre).
         if valores:
-            data.append({"range": f"'{nombre}'!A1", "values": valores})
+            fila_inicial = max(0, int(s.get("startRow") or 0))
+            data.append({"range": f"'{nombre}'!A{fila_inicial + 1}", "values": valores})
 
-    if not a_borrar:
-        logging.error(f"GSHEETS write: sin coincidencias. pedidas={[str(s.get('name','')) for s in entrada]} existentes={sorted(existentes)}")
-        raise HTTPException(
-            status_code=422,
-            detail=f"Ninguna pestaña coincide. En Google hay: {sorted(existentes)}; se intento: {[str(s.get('name','')) for s in entrada]}.",
-        )
+    if not a_borrar and not data:
+        # Nada que escribir en ESTA peticion (p.ej. un bloque de una pestaña que
+        # no existe en Google). No es un error del lote: se reporta como omitido
+        # y el frontend decide si el guardado completo fallo.
+        logging.warning(f"GSHEETS write: sin coincidencias en esta peticion. pedidas={[str(s.get('name','')) for s in entrada]} existentes={sorted(existentes)}")
+        return {
+            "ok": True, "written": 0, "skipped": omitidas, "updatedCells": 0,
+            "spreadsheetTitle": (meta.get("properties") or {}).get("title", ""),
+        }
 
     celdas_escritas = 0
     try:
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
         # sin tocar el formato; luego se escriben los nuevos.
-        service.spreadsheets().values().batchClear(
-            spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
+        if a_borrar:
+            service.spreadsheets().values().batchClear(
+                spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
         if data:
             resp = service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
@@ -525,7 +535,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-4",
+        "build": "gsheets-diag-5",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
