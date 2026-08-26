@@ -132,6 +132,13 @@ CORE_INDEXES = [
     ("notifications", [("user_id", 1), ("created_at", -1)], {}),
     ("activity_logs", [("timestamp", -1)], {}),
     ("activity_logs", [("timestamp", -1), ("action", 1)], {}),
+    # Historial consolidado por orden (/reports/order-history): sin estos, el
+    # $or filtraba activity_logs con SCAN completo (miles de docs) por cada
+    # apertura del "registro de vida". Cubren las tres formas en que un evento
+    # apunta a una orden, incluida la lista de IDs de los movimientos en lote.
+    ("activity_logs", [("details.order_id", 1)], {}),
+    ("activity_logs", [("details.order_number", 1)], {}),
+    ("activity_logs", [("previous_data.order_ids", 1)], {}),
     ("production_logs", "created_at", {}),
     ("production_logs", "order_id", {}),
     # QC — /qc/stats ($facet) + record listing sorted by created_at.

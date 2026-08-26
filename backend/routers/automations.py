@@ -147,7 +147,27 @@ async def execute_action(action_type, params, target_obj, user=None):
     elif action_type == "move_board":
         target_board = params.get("target_board")
         if target_board and "order_id" in target_obj:
-            await db.orders.update_one({"order_id": target_obj["order_id"]}, {"$set": {"board": target_board}})
+            oid = target_obj["order_id"]
+            # Registrar el salto de tablero en la vida de la orden. Antes la
+            # automatizacion movia con un update silencioso: el historial solo
+            # mostraba "Automatizacion ejecutada" sin de-donde-a-donde, y el
+            # equipo reportaba que "no se registra cuando se mueve de tablero".
+            prev = await db.orders.find_one(
+                {"order_id": oid}, {"_id": 0, "board": 1, "order_number": 1})
+            old_board = (prev or {}).get("board")
+            if old_board != target_board:
+                await db.orders.update_one(
+                    {"order_id": oid},
+                    {"$set": {"board": target_board,
+                              "updated_at": datetime.now(timezone.utc).isoformat()}})
+                actor = user or {"user_id": "automation", "name": "Automatización",
+                                 "email": "system@prosper-mfg.com"}
+                await log_activity(
+                    actor, "move_order",
+                    {"order_id": oid,
+                     "order_number": (prev or {}).get("order_number") or target_obj.get("order_number"),
+                     "from_board": old_board, "to_board": target_board, "via": "automation"},
+                    previous_data={"order_id": oid, "fields": {"board": old_board}})
     elif action_type == "assign_field" or action_type == "change_status":
         field = params.get("field")
         value = params.get("value")
