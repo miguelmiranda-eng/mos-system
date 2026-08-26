@@ -460,9 +460,14 @@ async def write_sheet(request: Request):
             omitidas.append(nombre)
             continue
         a_borrar.append(f"'{nombre}'")
-        data.append({"range": f"'{nombre}'!A1", "values": s.get("values", [])})
+        valores = s.get("values") or []
+        # Una pestaña vacia (p.ej. una "Hoja1" sin contenido) NO entra al
+        # batchUpdate: Google rechaza con 400 un ValueRange sin valores y eso
+        # tumbaba TODO el guardado. Solo se limpia (batchClear ya la cubre).
+        if valores:
+            data.append({"range": f"'{nombre}'!A1", "values": valores})
 
-    if not data:
+    if not a_borrar:
         logging.error(f"GSHEETS write: sin coincidencias. pedidas={[str(s.get('name','')) for s in entrada]} existentes={sorted(existentes)}")
         raise HTTPException(
             status_code=422,
@@ -474,9 +479,10 @@ async def write_sheet(request: Request):
         # sin tocar el formato; luego se escriben los nuevos.
         service.spreadsheets().values().batchClear(
             spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
-        service.spreadsheets().values().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
+        if data:
+            service.spreadsheets().values().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():

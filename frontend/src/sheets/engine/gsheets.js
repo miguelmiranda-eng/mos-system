@@ -62,6 +62,7 @@ export async function importarGoogleSheet(url) {
   }
 
   const data = await res.json();
+  let totalEstilos = 0;
   const sheets = (data.sheets || []).map((s) => {
     const filas = s.values || [];
     const formatos = s.formats || [];
@@ -105,6 +106,7 @@ export async function importarGoogleSheet(url) {
       if (f.fontSize) estilo.fontSize = f.fontSize;
       if (f.wrap) estilo.wrap = true;
       if (Object.keys(estilo).length === 0) continue;
+      totalEstilos++;
       const k = cellKey(f.r, f.c);
       const prev = hoja.cells.get(k);
       hoja.cells.set(k, makeCell({
@@ -136,6 +138,13 @@ export async function importarGoogleSheet(url) {
     activeSheetId: sheets[0].id,
     googleUrl: data.googleUrl || url,
     googleId: data.googleId,
+    // Diagnostico de la carga (no es parte del libro; el store lo separa y lo
+    // reporta en el toast): cuantos estilos se aplicaron y, si el backend no
+    // pudo leer el formato, el motivo.
+    _info: {
+      estilos: totalEstilos,
+      formatoError: data._diag?.formato_error || null,
+    },
   };
 }
 

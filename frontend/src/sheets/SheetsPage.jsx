@@ -18,6 +18,20 @@ import { conectarGoogle } from './engine/gsheets';
 import { cn } from '../lib/utils';
 
 /**
+ * Aviso al abrir un Google Sheet. El conteo de estilos confirma que llego el
+ * formato; si el backend no pudo leerlo, se muestra el motivo en vez de fallar
+ * en silencio (la hoja abre igual, solo con su contenido).
+ */
+function avisoAperturaGoogle(res) {
+  const info = res.info || {};
+  if (info.formatoError) {
+    toast.warning(`Se abrió sin estilos. Motivo: ${String(info.formatoError).slice(0, 180)}`, { duration: 12000 });
+  } else {
+    toast.success(`Google Sheet abierto · ${info.estilos ?? 0} estilos aplicados`);
+  }
+}
+
+/**
  * Modulo de hojas de calculo.
  *
  * La hoja ocupa toda la pantalla menos las barras: sin sidebar, sin tarjetas,
@@ -79,7 +93,7 @@ export default function SheetsPage() {
       const res = await abrirGoogleSheet(url);
       setCargandoGoogle(false);
       if (res.ok) {
-        toast.success('Google Sheet abierto');
+        avisoAperturaGoogle(res);
       } else if (res.necesitaConectar) {
         // Falta el permiso de Sheets: se muestra un cartel para conectar, y se
         // guarda la URL para reabrir la hoja al volver del consentimiento.
@@ -107,7 +121,7 @@ export default function SheetsPage() {
     (async () => {
       const res = await abrirGoogleSheet(pendiente);
       setCargandoGoogle(false);
-      if (res.ok) toast.success('Google Sheet abierto');
+      if (res.ok) avisoAperturaGoogle(res);
       else toast.error(res.error);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

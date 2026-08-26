@@ -536,7 +536,7 @@ export const useWorkbook = create((set, get) => ({
    */
   async abrirGoogleSheet(url) {
     try {
-      const wb = await importarGoogleSheet(url);
+      const { _info, ...wb } = await importarGoogleSheet(url);
       set({
         workbook: wb,
         past: [], future: [],
@@ -546,7 +546,7 @@ export const useWorkbook = create((set, get) => ({
         dirty: false,
         ultimoGuardado: null,
       });
-      return { ok: true };
+      return { ok: true, info: _info };
     } catch (e) {
       return { ok: false, error: e?.message || 'No se pudo abrir el Google Sheet', necesitaConectar: !!e?.necesitaConectar };
     }
