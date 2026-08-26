@@ -1478,17 +1478,21 @@ const Dashboard = () => {
               <button
                 onClick={() => setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))}
                 disabled={isEmpty}
-                className={`w-full flex items-center gap-2 py-2 ${pad} text-left font-roboto font-bold ${level === 0 ? 'text-sm uppercase tracking-wide' : 'text-xs uppercase tracking-widest'} transition-colors ${tone.text} ${isEmpty ? 'cursor-default' : ''}`}
+                className={`w-full flex items-center py-0 text-left font-roboto font-bold ${level === 0 ? 'text-sm uppercase tracking-wide' : 'text-xs uppercase tracking-widest'} transition-colors ${tone.text} ${isEmpty ? 'cursor-default' : ''}`}
               >
-                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed || isEmpty ? '-rotate-90' : ''} ${isEmpty ? 'opacity-30' : ''}`} />
-                {icon && <span className="text-base">{icon}</span>}
-                <span>{label}</span>
-                <span className="font-normal text-[10px] text-muted-foreground ml-1">({list.length})</span>
-                {totalQty > 0 && (
-                  <span className={`font-mono text-[10px] ml-2 px-2 py-0.5 rounded ${tone.badge}`}>
-                    {totalQty.toLocaleString()} pcs
-                  </span>
-                )}
+                {/* La etiqueta se fija a la IZQUIERDA (sticky left-0) para seguir
+                    visible al scrollear en horizontal. */}
+                <span className={`sticky left-0 inline-flex items-center gap-2 py-2 ${pad}`} style={{ background: freezeBg }}>
+                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed || isEmpty ? '-rotate-90' : ''} ${isEmpty ? 'opacity-30' : ''}`} />
+                  {icon && <span className="text-base">{icon}</span>}
+                  <span>{label}</span>
+                  <span className="font-normal text-[10px] text-muted-foreground ml-1">({list.length})</span>
+                  {totalQty > 0 && (
+                    <span className={`font-mono text-[10px] ml-2 px-2 py-0.5 rounded ${tone.badge}`}>
+                      {totalQty.toLocaleString()} pcs
+                    </span>
+                  )}
+                </span>
               </button>
             </div>
             {!isCollapsed && !isEmpty && list.map(renderOrderRow)}
@@ -1552,17 +1556,19 @@ const Dashboard = () => {
               >
                 <button
                   onClick={() => setCollapsedGroups(prev => ({ ...prev, [queueGroupKey]: !prev[queueGroupKey] }))}
-                  className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${queueTone.text}`}
+                  className={`w-full flex items-center py-0 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${queueTone.text}`}
                 >
-                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isQueueCollapsed ? '-rotate-90' : ''}`} />
-                  <span className="text-base">{queueIcon}</span>
-                  <span>{queueLabel}</span>
-                  <span className="font-normal text-xs text-muted-foreground ml-1">({queueList.length})</span>
-                  {queueTotalQty > 0 && (
-                    <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${queueTone.badge}`}>
-                      {queueTotalQty.toLocaleString()} pcs
-                    </span>
-                  )}
+                  <span className="sticky left-0 inline-flex items-center gap-2 py-2 px-4" style={{ background: freezeBg }}>
+                    <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isQueueCollapsed ? '-rotate-90' : ''}`} />
+                    <span className="text-base">{queueIcon}</span>
+                    <span>{queueLabel}</span>
+                    <span className="font-normal text-xs text-muted-foreground ml-1">({queueList.length})</span>
+                    {queueTotalQty > 0 && (
+                      <span className={`font-mono text-xs ml-2 px-2 py-0.5 rounded ${queueTone.badge}`}>
+                        {queueTotalQty.toLocaleString()} pcs
+                      </span>
+                    )}
+                  </span>
                 </button>
               </div>
               {/* "En Cola" is intentionally flat — the queue is a single
@@ -1617,13 +1623,15 @@ const Dashboard = () => {
       return (
         <React.Fragment key={dateKey}>
           <div style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
-            <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center gap-2 py-2 px-4 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-muted/20' : 'text-blue-700 hover:bg-muted/40'}`}>
-              <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
-              <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
-              {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
-              <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
-              <span className={`font-mono text-xs ml-2 ${isDark ? 'text-primary/70' : 'text-blue-600/70'}`}>
-                {totalQty.toLocaleString()} pcs
+            <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center py-0 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-muted/20' : 'text-blue-700 hover:bg-muted/40'}`}>
+              <span className="sticky left-0 inline-flex items-center gap-2 py-2 px-4" style={{ background: freezeBg }}>
+                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
+                <CalendarDays className="w-4 h-4 flex-shrink-0 -mt-0.5" />
+                {groupLabelMap[groupByDate] || groupByDate}: <span className="font-mono ml-1">{dateKey}</span>
+                <span className="font-normal text-xs text-muted-foreground ml-1">({groupOrders.length})</span>
+                <span className={`font-mono text-xs ml-2 ${isDark ? 'text-primary/70' : 'text-blue-600/70'}`}>
+                  {totalQty.toLocaleString()} pcs
+                </span>
               </span>
             </button>
           </div>
