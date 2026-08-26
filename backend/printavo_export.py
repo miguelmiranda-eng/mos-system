@@ -15,6 +15,7 @@ import io
 import os
 import json
 import re
+from datetime import date
 import pdfplumber
 
 from routers.import_router import SIZES_MAP
@@ -36,7 +37,24 @@ NEW_BOXES_PRICE = 2.50  # master invoice 2406 lo trae con 2.50 (antes 0.00 en SP
 ALLOWED_SHORTAGE_DEFAULT = "ALLOWED SHORTAGE:\n0%"
 SAMPLES_DEFAULT = "SAMPLES\nN/A"
 SPECIAL_NOTES_HEADER = "SPECIAL NOTES:"
-CUSTOMER_NOTE = "DIGITAL PACKING LIST."
+# Notas del quote — texto FIJO en NEGRITA, copiado verbatim del master invoice
+# #2406. Printavo guarda customerNote/productionNote como HTML; el <strong> es lo
+# que en la revision se ve "en letra negrita" (ver instruccion de las capturas).
+# El link de Google Sheets del packing list NO va aqui: Viviana lo pega por orden.
+CUSTOMER_NOTE = "<div><strong>DIGITAL PACKING LIST.</strong></div>"
+# Mensaje fijo de PRODUCTION NOTES — va SIEMPRE, tal cual el master invoice
+# (respeta los dobles espacios y el "DEPARTAMENT" original). El equipo solo
+# rellena los links debajo de ART LINK / SEPS al revisar.
+PRODUCTION_NOTE = (
+    "<div><strong>ART LINKS ONLY.  FOR ART  DEPARTAMENT ONLY.<br>"
+    "NO ADDITIONAL NOTES. DON'T OVERCROWD WITH INFORMATION.<br><br>"
+    "ART LINK:<br><br><br>SEPS:</strong></div>"
+)
+# Categoria de line item que Printavo debe dejar SIEMPRE en las lineas de
+# impresion (ver captura "DEJAR ESTA OPCION SIEMPRE"). Se resuelve a su ID en
+# printavo_client.find_category_id_by_name() porque LineItemCreateInput.category
+# es un IDInput, no el nombre.
+SCREEN_PRINTING_CATEGORY = "Screen Printing"
 # APPROVAL METHOD estandarizado (master invoice 2406 usa este texto fijo en
 # lugar del que trae el PDF — Viviana normaliza al armar el quote).
 APPROVAL_METHOD_DEFAULT = "Please follow APPROVED SAMPLE and send picture for REFERENCE."
@@ -442,13 +460,17 @@ def _addr_input(addr: dict, company: str, person: str) -> dict:
     return {k: v for k, v in out.items() if v}
 
 
-def _li(desc, color=None, sizes=None, price=0.0):
-    """One line item; every item carries an explicit price (0.0 for text sections)."""
+def _li(desc, color=None, sizes=None, price=0.0, category_id=None):
+    """One line item; every item carries an explicit price (0.0 for text sections).
+    `category_id` (opcional) fija la categoria del line item (p.ej. Screen
+    Printing). Printavo espera un IDInput, por eso va como {'id': ...}."""
     item = {"description": desc, "price": price}
     if color:
         item["color"] = color
     if sizes:
         item["sizes"] = sizes
+    if category_id:
+        item["category"] = {"id": category_id}
     return item
 
 
@@ -457,7 +479,7 @@ def _status_disp(r):
     return "n/a" if s.upper() == "ORIGINAL" else s
 
 
-def _spencers_groups(r, sizes_input):
+def _spencers_groups(r, sizes_input, category_id=None):
     """2-group SPENCERS template. Alineado con el master invoice #2406
     (SPENCERS PO#21767 - 323354 - THT0109M1000 - ROLLOUT):
       - Packing usa el PACK verbatim del PDF (pack_raw), no el reformateado.
@@ -477,8 +499,9 @@ def _spencers_groups(r, sizes_input):
         _li(_garment_description(r), color=r["color"], sizes=sizes_input, price=r["unit_price"]),
         # Bloque de muestras: el detalle (1 MD, 1 LG, ECOM SAMPLE, M-1...) NO
         # esta en el PDF; Viviana lo completa. Dejamos solo el header editable.
-        _li("TOPS NEEDED:"),
-        _li(front),
+        # TOPS NEEDED y FRONT PRINT llevan categoria Screen Printing (master #2406).
+        _li("TOPS NEEDED:", category_id=category_id),
+        _li(front, category_id=category_id),
         _li("APPROVAL METHOD:\n" + APPROVAL_METHOD_DEFAULT),
         _li(ALLOWED_SHORTAGE_DEFAULT),
         _li(SPECIAL_NOTES_HEADER),
@@ -487,7 +510,7 @@ def _spencers_groups(r, sizes_input):
     return [g1, g2]
 
 
-def _tractor_groups(r, sizes_input):
+def _tractor_groups(r, sizes_input, category_id=None):
     """3-group TRACTOR SUPPLY template (matches corrected quote #2127):
       G1 production (garment + notes; the re-size block lives in SPECIAL NOTES),
       G2 the PACKING DEPARTMENT header alone,
@@ -506,7 +529,7 @@ def _tractor_groups(r, sizes_input):
         _li(PRODUCTION_DEPT),
         _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
         _li("N/A"),
-        _li(front),
+        _li(front, category_id=category_id),
         _li("APPROVAL METHOD:\n" + approval),
         _li("ALLOWED SHORTAGE:\n0%"),
         _li(special_notes),
@@ -520,14 +543,14 @@ def _tractor_groups(r, sizes_input):
     return [g1, g2, g3]
 
 
-def _spektrum_groups(r, sizes_input):
+def _spektrum_groups(r, sizes_input, category_id=None):
     """First-pass CULTURE KINGS / SPEKTRUM template (2 groups). No reference quote
     yet — meant to be reviewed and perfected, then aligned like the others."""
     size_lines = "\n".join(r["pack_lines"])
     garment = "\n".join(p for p in [r["description"], r["color"], r["blank"], size_lines] if p)
     g1 = [
         _li(PRODUCTION_DEPT),
-        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
+        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"], category_id=category_id),
         _li(SPECIAL_NOTES_HEADER),
     ]
     g2 = [
@@ -539,10 +562,14 @@ def _spektrum_groups(r, sizes_input):
     return [g1, g2]
 
 
-def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None) -> dict:
+def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: str = None,
+                      category_id: str = None, invoice_date: str = None) -> dict:
     """Assemble a Printavo QuoteCreateInput. Picks the SPENCERS (2-group) or
     TRACTOR SUPPLY (3-group) template by brand. `contact` supplies the customer's
-    billing/shipping addresses, which Printavo does not auto-copy from the contact."""
+    billing/shipping addresses, which Printavo does not auto-copy from the contact.
+    `category_id` fija la categoria Screen Printing en las lineas de impresion;
+    `invoice_date` (ISO YYYY-MM-DD) fija el Invoice Date — por defecto HOY, igual
+    a la fecha de creacion (ver instruccion de las capturas)."""
     sizes_input = [
         {"size": MOS_TO_PRINTAVO_SIZE[k], "count": v}
         for k, v in r["sizes"].items() if k in MOS_TO_PRINTAVO_SIZE
@@ -551,11 +578,11 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     is_tractor = "TRACTOR" in brand_up
     is_spektrum = "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up
     if is_tractor:
-        groups = _tractor_groups(r, sizes_input)
+        groups = _tractor_groups(r, sizes_input, category_id)
     elif is_spektrum:
-        groups = _spektrum_groups(r, sizes_input)
+        groups = _spektrum_groups(r, sizes_input, category_id)
     else:
-        groups = _spencers_groups(r, sizes_input)
+        groups = _spencers_groups(r, sizes_input, category_id)
     for grp in groups:
         for idx, item in enumerate(grp):
             item["position"] = idx
@@ -581,9 +608,12 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         "contact": {"id": contact_id},
         "customerDueAt": due_date,
         "dueAt": (due_date + "T00:00:00Z") if due_date else None,
+        # Invoice Date = fecha de creacion (hoy). Master #2406: invoiceAt == createdAt.
+        "invoiceAt": invoice_date or date.today().isoformat(),
         "nickname": nickname,
         "visualPoNumber": r["po_number"],
         "customerNote": CUSTOMER_NOTE,
+        "productionNote": PRODUCTION_NOTE,
         "lineItemGroups": [{"position": i, "lineItems": g} for i, g in enumerate(groups)],
     }
     if owner_id:

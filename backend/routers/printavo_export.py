@@ -79,11 +79,23 @@ async def create_quotes(request: Request):
     except Exception as e:
         logger.error(f"[printavo-export] owner lookup failed: {e}")
 
+    # Resolve the "Screen Printing" category id once (line-item category va SIEMPRE
+    # en las lineas de impresion). Si no se resuelve, las quotes se crean igual sin
+    # categoria en vez de romper la mutation.
+    category_id = None
+    try:
+        category_id = await printavo_client.find_category_id_by_name("Screen Printing")
+        if not category_id:
+            logger.warning("[printavo-export] categoria 'Screen Printing' no encontrada; line items sin categoria")
+    except Exception as e:
+        logger.error(f"[printavo-export] category lookup failed: {e}")
+
     results = []
     for r in styles:
         design = r.get("design_num")
         try:
-            quote_input = build_quote_input(r, contact_id, contact=contact, owner_id=owner_id)
+            quote_input = build_quote_input(r, contact_id, contact=contact, owner_id=owner_id,
+                                            category_id=category_id)
             created = await printavo_client.create_quote(quote_input)
             results.append({"design_num": design, "ok": True,
                             "quote_id": created.get("id"), "visual_id": created.get("visualId")})

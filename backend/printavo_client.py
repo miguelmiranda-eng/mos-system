@@ -9,6 +9,7 @@ no created-at sort field, so we sort by VISUAL_ID descending (the invoice
 number is sequential, so highest = newest) and keep a high-water mark.
 """
 import os
+import re
 import httpx
 from deps import logger
 
@@ -118,6 +119,32 @@ USERS_QUERY = """
 query { account { users(first: 200) { nodes { id name email } } } }
 """
 
+# Categorias de line item de la cuenta (Screen Printing, Embroidery, ...). No hay
+# query top-level de categorias en Printavo v2: viven bajo account.categories.
+CATEGORIES_QUERY = """
+query { account { categories(first: 200) { nodes { id name } } } }
+"""
+
+# Cache por proceso: el id de "Screen Printing" no cambia entre quotes.
+_category_id_cache: dict = {}
+
+
+async def find_category_id_by_name(name: str):
+    """Return the account line-item category id whose name matches (case-insensitive),
+    else None. Used to set a quote line item's `category` (p.ej. Screen Printing);
+    Printavo's LineItemCreateInput.category es un IDInput, no el nombre. Cacheado."""
+    if not name:
+        return None
+    key = name.strip().lower()
+    if key in _category_id_cache:
+        return _category_id_cache[key]
+    data = await _graphql(CATEGORIES_QUERY, {})
+    nodes = (((data.get("account") or {}).get("categories") or {}).get("nodes")) or []
+    found = next((n.get("id") for n in nodes
+                  if (n.get("name") or "").strip().lower() == key), None)
+    _category_id_cache[key] = found
+    return found
+
 
 async def find_user_id_by_email(email: str):
     """Return the Printavo user id whose email matches (case-insensitive), else None.
@@ -142,16 +169,29 @@ async def get_contact(contact_id: str) -> dict:
     return data.get("contact") or {}
 
 
+# Contactos "EDIs - <empresa>" (variante EDI de facturacion). El motor debe
+# dejar solo la empresa real (instruccion "DEJAR SOLO LA PRIMERA OPCION"): si no,
+# aparece un segundo GOODIE y se termina eligiendo el contacto equivocado.
+_EDI_COMPANY_RE = re.compile(r"^\s*EDIs?\b", re.I)
+
+
 async def search_contacts(q: str) -> list:
-    """Search Printavo contacts by name/company for the review UI's customer picker."""
+    """Search Printavo contacts by name/company for the review UI's customer picker.
+    Filtra los contactos EDI ('EDIs - <empresa>') para dejar solo la empresa real."""
     data = await _graphql(CONTACTS_QUERY, {"q": q})
     nodes = ((data.get("contacts") or {}).get("nodes")) or []
-    return [{
-        "id": n.get("id"),
-        "name": n.get("fullName"),
-        "email": n.get("email"),
-        "company": (n.get("customer") or {}).get("companyName"),
-    } for n in nodes]
+    out = []
+    for n in nodes:
+        company = (n.get("customer") or {}).get("companyName") or ""
+        if _EDI_COMPANY_RE.match(company):
+            continue
+        out.append({
+            "id": n.get("id"),
+            "name": n.get("fullName"),
+            "email": n.get("email"),
+            "company": company,
+        })
+    return out
 
 
 async def create_quote(quote_input: dict) -> dict:
