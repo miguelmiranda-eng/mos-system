@@ -202,5 +202,13 @@ export async function guardarEnGoogle(workbook) {
     return { ok: false, error: detalle };
   }
   const data = await res.json();
-  return { ok: true, skipped: data.skipped || [] };
+  return {
+    ok: true,
+    skipped: data.skipped || [],
+    // Confirmacion de Google: celdas realmente escritas y titulo del archivo
+    // destino. Sirve para distinguir "Google rechazo" de "escribio pero el
+    // usuario mira otro archivo".
+    updatedCells: data.updatedCells ?? null,
+    spreadsheetTitle: data.spreadsheetTitle || '',
+  };
 }

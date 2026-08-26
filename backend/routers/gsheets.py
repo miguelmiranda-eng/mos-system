@@ -398,7 +398,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-2",
+        "build": "gsheets-diag-3",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -440,7 +440,7 @@ async def write_sheet(request: Request):
 
     try:
         meta = service.spreadsheets().get(
-            spreadsheetId=sheet_id, fields="sheets.properties.title").execute()
+            spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -474,15 +474,18 @@ async def write_sheet(request: Request):
             detail=f"Ninguna pestaña coincide. En Google hay: {sorted(existentes)}; se intento: {[str(s.get('name','')) for s in entrada]}.",
         )
 
+    celdas_escritas = 0
     try:
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
         # sin tocar el formato; luego se escriben los nuevos.
         service.spreadsheets().values().batchClear(
             spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
         if data:
-            service.spreadsheets().values().batchUpdate(
+            resp = service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
                 body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
+            # Confirmacion de Google: cuantas celdas actualizo de verdad.
+            celdas_escritas = int(resp.get("totalUpdatedCells") or 0)
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -492,8 +495,16 @@ async def write_sheet(request: Request):
         # el toast. Volver a "Error escribiendo en la hoja de Google." al cerrar.
         raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
 
-    await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data)})
-    return {"ok": True, "written": len(data), "skipped": omitidas}
+    await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data), "cells": celdas_escritas})
+    return {
+        "ok": True,
+        "written": len(data),
+        "skipped": omitidas,
+        # Confirmacion verificable: celdas que Google reporto escritas y el
+        # titulo del archivo destino (para descartar "estoy mirando otro archivo").
+        "updatedCells": celdas_escritas,
+        "spreadsheetTitle": (meta.get("properties") or {}).get("title", ""),
+    }
 
 
 @router.get("/ping")
@@ -504,7 +515,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-2",
+        "build": "gsheets-diag-3",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),

@@ -66,6 +66,7 @@ export default function SheetsPage() {
   const abrirGoogleSheet = useWorkbook(s => s.abrirGoogleSheet);
   const guardarEnGoogleAction = useWorkbook(s => s.guardarEnGoogle);
   const guardandoGoogle = useWorkbook(s => s.guardandoGoogle);
+  const gsInfo = useWorkbook(s => s.gsInfo);
 
   const alGuardarGoogle = async () => {
     const res = await guardarEnGoogleAction();
@@ -255,7 +256,19 @@ export default function SheetsPage() {
           Es EDITABLE: se escribe de vuelta con "Guardar en Google". */}
       {workbook.googleUrl && (
         <div className="h-8 flex items-center gap-3 px-3 border-b border-border bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 flex-shrink-0 text-[12px]">
-          <span className="flex items-center gap-1.5"><FileSpreadsheet size={13} /> Conectado a Google Sheets · edita aquí y guarda de vuelta.</span>
+          <span className="flex items-center gap-1.5">
+            <FileSpreadsheet size={13} /> Conectado a Google Sheets
+            {/* Diagnostico persistente: se lee en cualquier momento (no como los
+                toasts, que desaparecen). estilos = formato traido de Google. */}
+            {gsInfo && !gsInfo.formatoError && <span> · {gsInfo.estilos} estilos</span>}
+            {gsInfo?.guardado && (
+              <span className="font-semibold">
+                {' '}· Guardado {gsInfo.guardado.hora}
+                {gsInfo.guardado.celdas != null && ` (${gsInfo.guardado.celdas} celdas)`}
+                {gsInfo.guardado.titulo && ` en "${gsInfo.guardado.titulo}"`}
+              </span>
+            )}
+          </span>
           <div className="ml-auto flex items-center gap-3">
             <button
               onClick={alGuardarGoogle}
@@ -269,6 +282,18 @@ export default function SheetsPage() {
               <ExternalLink size={13} />
             </a>
           </div>
+        </div>
+      )}
+
+      {/* Errores de Google, FIJOS (no toast): quedan a la vista hasta resolverse. */}
+      {workbook.googleUrl && gsInfo?.formatoError && (
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-border bg-amber-500/10 text-amber-700 dark:text-amber-400 flex-shrink-0 text-[12px]">
+          La hoja abrió sin estilos. Motivo de Google: {String(gsInfo.formatoError).slice(0, 300)}
+        </div>
+      )}
+      {workbook.googleUrl && gsInfo?.guardadoError && (
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-border bg-red-500/10 text-red-700 dark:text-red-400 flex-shrink-0 text-[12px]">
+          No se pudo guardar en Google: {String(gsInfo.guardadoError).slice(0, 300)}
         </div>
       )}
 

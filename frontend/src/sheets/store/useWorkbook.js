@@ -534,6 +534,10 @@ export const useWorkbook = create((set, get) => ({
    * contenido; se carga como un libro nuevo y se recuerda su origen (googleUrl)
    * para el banner y el boton "Abrir en Google".
    */
+  // Diagnostico persistente de la conexion con Google (visible en el banner):
+  // { estilos, formatoError, guardado: {hora, celdas, titulo, skipped}, guardadoError }
+  gsInfo: null,
+
   async abrirGoogleSheet(url) {
     try {
       const { _info, ...wb } = await importarGoogleSheet(url);
@@ -545,6 +549,7 @@ export const useWorkbook = create((set, get) => ({
         editing: null,
         dirty: false,
         ultimoGuardado: null,
+        gsInfo: { estilos: _info?.estilos ?? 0, formatoError: _info?.formatoError || null },
       });
       return { ok: true, info: _info };
     } catch (e) {
@@ -557,9 +562,32 @@ export const useWorkbook = create((set, get) => ({
   async guardarEnGoogle() {
     const { workbook } = get();
     set({ guardandoGoogle: true });
-    const res = await guardarEnGoogle(workbook);
+    let res;
+    try {
+      res = await guardarEnGoogle(workbook);
+    } catch (e) {
+      // Nunca dejar el spinner colgado ni fallar sin aviso.
+      res = { ok: false, error: e?.message || 'Fallo inesperado al guardar en Google.' };
+    }
+    const previa = get().gsInfo || {};
+    if (res.ok) {
+      set({
+        dirty: false,
+        gsInfo: {
+          ...previa,
+          guardadoError: null,
+          guardado: {
+            hora: new Date().toLocaleTimeString(),
+            celdas: res.updatedCells,
+            titulo: res.spreadsheetTitle,
+            skipped: res.skipped || [],
+          },
+        },
+      });
+    } else {
+      set({ gsInfo: { ...previa, guardadoError: res.error || 'Error desconocido' } });
+    }
     set({ guardandoGoogle: false });
-    if (res.ok) set({ dirty: false });
     return res;
   },
 
