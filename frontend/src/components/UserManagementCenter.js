@@ -55,6 +55,10 @@ const UserManagementCenter = () => {
   const [newCust, setNewCust] = useState('');
   const [inviteCust, setInviteCust] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
+  // Acceso por módulo del WMS (delegable): {levels, defaults, labels, supersu_only_level}
+  const [moduleAccess, setModuleAccess] = useState(null);
+  const [savingAccess, setSavingAccess] = useState(false);
+  const [showAccess, setShowAccess] = useState(false);
 
   const isSupersu = currentUser?.role === 'supersu';
   const isAdmin = currentUser?.role === 'admin';
@@ -84,14 +88,46 @@ const UserManagementCenter = () => {
     } catch {}
   };
 
+  const fetchModuleAccess = async () => {
+    try {
+      const res = await fetch(`${API}/wms/module-access`, { credentials: 'include' });
+      if (res.ok) setModuleAccess(await res.json());
+    } catch {}
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchCustomers();
+    fetchModuleAccess();
     fetch(`${API}/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(u => setCurrentUser(u))
       .catch(() => {});
   }, []);
+
+  // Guarda el nivel de acceso de un módulo del WMS (solo supersu). Optimista:
+  // refleja el cambio y confirma con lo que devuelve el backend.
+  const handleSaveModuleAccess = async (moduleId, level) => {
+    const nextLevels = { ...(moduleAccess?.levels || {}), [moduleId]: Number(level) };
+    setModuleAccess(a => ({ ...a, levels: nextLevels }));
+    setSavingAccess(true);
+    try {
+      const res = await fetch(`${API}/wms/module-access`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ levels: nextLevels }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setModuleAccess(a => ({ ...a, levels: d.levels || nextLevels }));
+        toast.success('Acceso actualizado');
+      } else {
+        const e = await res.json().catch(() => ({}));
+        toast.error(e.detail || 'Error guardando acceso');
+        fetchModuleAccess();
+      }
+    } catch { toast.error('Error de conexión'); fetchModuleAccess(); }
+    finally { setSavingAccess(false); }
+  };
 
   const handleCreateUser = async () => {
     if (!newEmail.trim() || !newPassword) { toast.error('Email y contraseña requeridos'); return; }
@@ -357,6 +393,46 @@ const UserManagementCenter = () => {
             </button>
         </div>
       </header>
+
+      {/* Acceso por módulo del WMS — solo supersu reparte quién entra a cada
+          módulo sensible. Se aplica en el menú del WMS y lo valida el backend. */}
+      {isSupersu && moduleAccess && Object.keys(moduleAccess.defaults || {}).length > 0 && (
+        <div className="relative z-10 mb-8 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl overflow-hidden">
+          <button onClick={() => setShowAccess(s => !s)}
+            className="w-full flex items-center justify-between px-6 py-4 hover:bg-secondary/20 transition-colors">
+            <span className="flex items-center gap-2 text-lg font-black uppercase tracking-widest text-foreground">
+              <Shield className="w-5 h-5 text-primary" /> Acceso por módulo del WMS
+            </span>
+            {showAccess ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
+          </button>
+          {showAccess && (
+            <div className="px-6 pb-6 space-y-3">
+              <p className="text-xs text-muted-foreground -mt-1">
+                Define qué nivel de admin abre cada módulo sensible del WMS. Se aplica en el
+                menú y lo valida el backend. «Solo supersu» lo reserva al super usuario.
+              </p>
+              {Object.keys(moduleAccess.defaults || {}).map(id => {
+                const soloLevel = moduleAccess.supersu_only_level || 6;
+                const lvl = (moduleAccess.levels || {})[id] ?? moduleAccess.defaults[id];
+                return (
+                  <div key={id} className="flex items-center justify-between gap-3 bg-secondary/20 border border-border/50 rounded-xl px-4 py-3">
+                    <span className="text-sm font-bold text-foreground">{(moduleAccess.labels || {})[id] || id}</span>
+                    <Select value={String(lvl)} onValueChange={(v) => handleSaveModuleAccess(id, v)} disabled={savingAccess}>
+                      <SelectTrigger className="w-48 h-9 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/15">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-[300]">
+                        {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>Admin nivel {n}+</SelectItem>)}
+                        <SelectItem value={String(soloLevel)}>Solo supersu</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 relative z-10">
         {/* Left Side: Create/Invite Panel */}

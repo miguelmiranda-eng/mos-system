@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -714,7 +714,7 @@ async def list_incidents(request: Request, kind: str = "", days: int = 30,
     pantalla, ni reporte. Un registro que nadie abre no sirve de nada — este
     endpoint existe para que dejen de ser invisibles.
     """
-    user = await require_supersu(request)
+    user = await require_wms_module_access(request, "incidents")
     desde = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
     q = {"created_at": {"$gte": desde}}
     if kind:
@@ -744,8 +744,9 @@ async def list_incidents(request: Request, kind: str = "", days: int = 30,
 
 @router.post("/incidents/{incident_id}/resolve")
 async def resolve_incident(incident_id: str, request: Request):
-    """Marca una incidencia como atendida. SOLO supersu. No borra: deja rastro."""
-    user = await require_supersu(request)
+    """Marca una incidencia como atendida. Acceso configurable (default: solo
+    supersu). No borra: deja rastro."""
+    user = await require_wms_module_access(request, "incidents")
     body = await request.json() if await request.body() else {}
     res = await db.wms_incidents.update_one(
         {"incident_id": incident_id},
@@ -7292,10 +7293,82 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
     return movements
 
 
-# ==================== AUDITORIA (SOLO SUPER ADMIN) ====================
+# ============= ACCESO POR MODULO (WMS) — delegable desde la app =============
+# El nivel de acceso de los modulos SENSIBLES del WMS se delega desde la app
+# (Centro de usuarios → "Acceso por modulo del WMS"): el supersu decide que nivel
+# de admin abre cada uno, sin tocar codigo.
+#
+# Escala: 1..5 = nivel de admin minimo (get_admin_level); 6 = SOLO super usuario
+# (no representable como nivel de admin porque supersu == nivel 5).
+#
+# Solo se listan modulos con un guard UNICO y limpio. Conciliacion queda fuera a
+# proposito: su permiso es mixto (contadores PDA en inventario nivel 2 + supersu
+# para resolver), no un guard unico que se pueda mover con un solo numero.
+SUPERSU_ONLY_LEVEL = 6
+WMS_MODULE_ACCESS_DEFAULTS = {"audit": 5, "incidents": SUPERSU_ONLY_LEVEL}
+WMS_MODULE_ACCESS_LABELS = {"audit": "Auditoría", "incidents": "Incidencias"}
+
+
+async def get_wms_module_levels() -> dict:
+    """Nivel efectivo por modulo = lo guardado (si es valido) sobre los defaults."""
+    doc = await db.config_options.find_one(
+        {"config_id": "wms_module_access"}, {"_id": 0, "levels": 1}) or {}
+    out = dict(WMS_MODULE_ACCESS_DEFAULTS)
+    for k, v in (doc.get("levels") or {}).items():
+        if k in WMS_MODULE_ACCESS_DEFAULTS:
+            try:
+                out[k] = max(1, min(SUPERSU_ONLY_LEVEL, int(v)))
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+async def require_wms_module_access(request: Request, module_id: str):
+    """Exige el nivel configurado para `module_id`. 6 = solo supersu; 1..5 = nivel
+    de admin minimo (supersu siempre pasa)."""
+    levels = await get_wms_module_levels()
+    lvl = levels.get(module_id, WMS_MODULE_ACCESS_DEFAULTS.get(module_id, SUPERSU_ONLY_LEVEL))
+    if lvl >= SUPERSU_ONLY_LEVEL:
+        return await require_supersu(request)
+    return await require_admin_level(request, lvl)
+
+
+@router.get("/module-access")
+async def wms_module_access_get(request: Request):
+    """Niveles de acceso por modulo — para el panel y para el filtro del front.
+    Cualquier usuario autenticado lo lee (el front necesita saber que ocultar)."""
+    await require_auth(request)
+    return {"levels": await get_wms_module_levels(),
+            "defaults": WMS_MODULE_ACCESS_DEFAULTS,
+            "labels": WMS_MODULE_ACCESS_LABELS,
+            "supersu_only_level": SUPERSU_ONLY_LEVEL}
+
+
+@router.put("/module-access")
+async def wms_module_access_put(request: Request):
+    """Guarda los niveles. Solo supersu — es quien reparte accesos."""
+    user = await require_supersu(request)
+    body = await request.json()
+    clean = {}
+    for k, v in (body.get("levels") or {}).items():
+        if k not in WMS_MODULE_ACCESS_DEFAULTS:
+            continue
+        try:
+            clean[k] = max(1, min(SUPERSU_ONLY_LEVEL, int(v)))
+        except (TypeError, ValueError):
+            continue
+    await db.config_options.update_one(
+        {"config_id": "wms_module_access"},
+        {"$set": {"levels": clean, "updated_at": now_iso(), "updated_by": user.get("email")}},
+        upsert=True)
+    await log_activity(user, "wms_module_access_update", {"levels": clean})
+    return {"ok": True, "levels": await get_wms_module_levels()}
+
+
+# ==================== AUDITORIA ====================
 # Modulo de auditoria del flujo completo: salud/consistencia del sistema,
 # trazabilidad por caja, trazabilidad por SKU y busqueda de movimientos.
-# Todo gated a require_supersu.
+# Gated por require_wms_module_access("audit") — nivel configurable (default 5).
 
 def _norm_cell(loc, key, color, size):
     return (str(loc or "").strip().upper(), str(key or "").strip().upper(),
@@ -7306,7 +7379,7 @@ def _norm_cell(loc, key, color, size):
 async def audit_health(request: Request):
     """Panel de consistencia: totales, drift inventario vs cajas por celda,
     tickets con picks sin descontar, negativos y cajas estancadas."""
-    await require_supersu(request)
+    await require_wms_module_access(request, "audit")
     from collections import defaultdict
 
     inv_agg = await db.wms_inventory.aggregate([
@@ -7388,7 +7461,7 @@ async def audit_health(request: Request):
 async def audit_box(box_id: str, request: Request):
     """Ciclo de vida completo de una caja: recibo, estado actual, renglon de
     inventario ligado, ticket que la surtio y todos sus movimientos."""
-    await require_supersu(request)
+    await require_wms_module_access(request, "audit")
     bid = box_id.strip()
     box = await db.wms_boxes.find_one({"$or": [{"box_id": bid}, {"barcode": bid}, {"lpn_id": bid}]}, {"_id": 0})
 
@@ -7426,7 +7499,7 @@ async def audit_box(box_id: str, request: Request):
 async def audit_sku(request: Request, style: str, color: str = "", size: str = ""):
     """Balance del flujo completo de un SKU: recibido - pickeado vs en mano,
     cajas por estatus y su historial de movimientos."""
-    await require_supersu(request)
+    await require_wms_module_access(request, "audit")
     if not style.strip():
         raise HTTPException(400, "style requerido")
     st = _ci_eq(style.strip())
@@ -7473,6 +7546,34 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
             {"$group": {"_id": "$status", "cajas": {"$sum": 1}, "unidades": {"$sum": "$units"}}}]):
         boxes_by_status[str(g["_id"])] = {"cajas": g["cajas"], "unidades": g["unidades"]}
 
+    # Desglose por CAJA (no por unidad): cuántas cajas entraron para este SKU,
+    # cuántas ya se consumieron (depleted/shipped/en producción/…) y cuántas
+    # DEBERÍAN seguir en piso — comparado con las que el sistema tiene vivas.
+    #   recibidas  = todas las cajas del SKU (cualquier estatus; una caja vacía
+    #                sigue existiendo con status depleted, así que cuenta como
+    #                recibida).
+    #   consumidas = las que ya salieron de inventario (_BOX_OUT_STATUSES).
+    #   deberian   = recibidas − consumidas (lo que tendría que quedar).
+    #   vivas      = las que el sistema tiene con unidades > 0 y estatus vivo.
+    #   diferencia = vivas − deberian; negativa = cajas en limbo (estatus vivo
+    #                pero 0 unidades) que nadie marcó como consumidas.
+    cajas_recibidas = sum(v["cajas"] for v in boxes_by_status.values())
+    cajas_consumidas = sum(v["cajas"] for st, v in boxes_by_status.items()
+                           if st in _BOX_OUT_STATUSES)
+    unidades_consumidas = sum(v["unidades"] for st, v in boxes_by_status.items()
+                              if st in _BOX_OUT_STATUSES)
+    cajas_vivas = await db.wms_boxes.count_documents(
+        {**q_box, "units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}})
+    cajas_deberian = cajas_recibidas - cajas_consumidas
+    cajas_desglose = {
+        "recibidas": cajas_recibidas,
+        "consumidas": cajas_consumidas,
+        "unidades_consumidas": unidades_consumidas,
+        "deberian": cajas_deberian,
+        "vivas": cajas_vivas,
+        "diferencia": cajas_vivas - cajas_deberian,
+    }
+
     movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
     esperado = recibido - pickeado
     return {
@@ -7480,7 +7581,8 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
         "balance": {"recibido": recibido, "pickeado": pickeado, "esperado": esperado,
                     "en_mano": on_hand, "diferencia": on_hand - esperado},
         "recibos": recv_list, "tickets": tickets, "inventario": inv_rows,
-        "cajas_por_status": boxes_by_status, "movimientos": movements,
+        "cajas_por_status": boxes_by_status, "cajas_desglose": cajas_desglose,
+        "movimientos": movements,
     }
 
 
@@ -7489,7 +7591,7 @@ async def audit_movements(request: Request, q: str = "", movement_type: str = ""
                           since: str = "", until: str = "", limit: int = 200):
     """Busqueda de movimientos con filtros: texto libre (caja/sku/orden/
     ubicacion/ticket), tipo, usuario y rango de fechas."""
-    await require_supersu(request)
+    await require_wms_module_access(request, "audit")
     query = {}
     if movement_type.strip():
         query["type"] = movement_type.strip()
@@ -7552,7 +7654,7 @@ async def audit_self_test(request: Request):
     ejecutando las MISMAS funciones internas del sistema real (donde vivio el
     bug de descuento), con datos de prueba marcados y limpieza automatica.
     Verifica el inventario en cada paso. No toca nada de material real."""
-    user = await require_supersu(request)
+    user = await require_wms_module_access(request, "audit")
     body = await request.json() if request.headers.get("content-length") else {}
     color = "TESTCOLOR"
     size = "M"

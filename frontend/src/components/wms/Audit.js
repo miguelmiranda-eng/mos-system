@@ -7,9 +7,9 @@ import { toast } from "sonner";
 import { fetcher, poster } from "./lib";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
-// Módulo de Auditoría — EXCLUSIVO super admin (el backend rechaza con 403 a
-// cualquier otro rol). Cuatro vistas: salud del sistema, trazabilidad por
-// caja, balance por SKU y búsqueda de movimientos.
+// Módulo de Auditoría — admin nivel 5 y supersu (el backend valida con
+// require_admin_level(5) y rechaza al resto con 403). Cuatro vistas: salud del
+// sistema, trazabilidad por caja, balance por SKU y búsqueda de movimientos.
 
 const TABS = [
   { id: "health", label: "Salud del sistema", icon: Activity },
@@ -35,6 +35,21 @@ const Card = ({ title, value, tone = "default", sub }) => (
 
 const Td = ({ children, right, mono }) => (
   <td className={`px-3 py-2 text-xs ${right ? "text-right tabular-nums" : ""} ${mono ? "font-mono" : ""}`}>{children}</td>
+);
+
+// Cajita del desglose de cajas (recibidas → consumidas → deberían quedar).
+const BoxStat = ({ label, value, sub, tone = "default" }) => (
+  <div className={`px-3 py-2 rounded-lg border text-center min-w-[96px] ${
+    tone === "bad" ? "border-red-200 bg-red-50 dark:border-red-500/25 dark:bg-red-500/10"
+      : tone === "good" ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10"
+        : tone === "accent" ? "border-primary/40 bg-primary/10" : "border-border bg-card"}`}>
+    <div className="text-[10px] uppercase tracking-wide font-medium text-muted-foreground">{label}</div>
+    <div className={`text-lg font-semibold tabular-nums ${
+      tone === "bad" ? "text-red-600 dark:text-red-400"
+        : tone === "good" ? "text-emerald-600 dark:text-emerald-400"
+          : tone === "accent" ? "text-primary" : "text-foreground"}`}>{value}</div>
+    {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+  </div>
 );
 
 // ─── Tab 1: Salud ────────────────────────────────────────────────────────────
@@ -296,6 +311,7 @@ const SkuTab = () => {
   };
 
   const bal = data?.balance;
+  const cd = data?.cajas_desglose;
   const ok = bal && Math.abs(bal.diferencia) <= 5;
   return (
     <div className="space-y-4">
@@ -319,6 +335,31 @@ const SkuTab = () => {
             <Card title="Diferencia" value={`${bal.diferencia > 0 ? "+" : ""}${bal.diferencia.toLocaleString()}`}
               tone={ok ? "good" : "bad"} sub={ok ? "cuadra" : "revisar: fantasma o entradas sin rastrear"} />
           </div>
+          {cd && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                <Layers className="w-4 h-4" /> Desglose de cajas — recibidas, consumidas y las que deberían quedar
+              </div>
+              <div className="p-4 flex flex-wrap items-center gap-2 md:gap-3">
+                <BoxStat label="Recibidas" value={cd.recibidas.toLocaleString()} />
+                <span className="text-muted-foreground font-semibold">−</span>
+                <BoxStat label="Consumidas" value={cd.consumidas.toLocaleString()} sub="depleted / embarcadas" />
+                <span className="text-muted-foreground font-semibold">=</span>
+                <BoxStat label="Deberían quedar" value={cd.deberian.toLocaleString()} tone="accent" />
+                <span className="text-muted-foreground mx-1">·</span>
+                <BoxStat label="En existencia" value={cd.vivas.toLocaleString()} />
+                <BoxStat label="Diferencia" value={`${cd.diferencia > 0 ? "+" : ""}${cd.diferencia.toLocaleString()}`}
+                  tone={cd.diferencia === 0 ? "good" : "bad"} />
+              </div>
+              {cd.diferencia !== 0 && (
+                <div className="px-4 pb-3 -mt-1 text-xs text-red-600 dark:text-red-400">
+                  {cd.diferencia < 0
+                    ? `${Math.abs(cd.diferencia)} caja(s) en limbo: estatus vivo pero 0 unidades — nadie las marcó como consumidas.`
+                    : `${cd.diferencia} caja(s) de más sobre lo esperado: revisar entradas sin rastrear.`}
+                </div>
+              )}
+            </div>
+          )}
           <div className="grid md:grid-cols-2 gap-3">
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">Inventario por ubicación</div>

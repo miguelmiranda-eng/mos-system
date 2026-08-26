@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2, Tag, MapPin, Layers, ChevronDown, ChevronUp, Search, Edit2, ArrowUpToLine, X, Users, Palette, Shirt, Ruler, Lock, Wand2, AlertTriangle, ArrowRight, Factory } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, refreshWmsSizes, refreshWmsColors, refreshWmsCatalogs, API } from "./lib";
 import { UpcCatalog } from "./UpcCatalog";
 import { Btn, cls } from "./ui";
 
@@ -52,15 +52,39 @@ export const HomeModule = () => {
   // catálogos de identidad. Refleja el guard del backend; aquí solo oculta los
   // controles para todos los demás.
   const [isManager, setIsManager] = useState(false);
+  const [isSupersu, setIsSupersu] = useState(false);
   useEffect(() => {
     fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(u => {
         const level = u?.role === 'supersu' ? 5 : (u?.role === 'admin' ? Math.max(1, parseInt(u?.admin_level || 1)) : 0);
         setIsManager(level >= 3);
+        setIsSupersu(u?.role === 'supersu');
       })
       .catch(() => {});
   }, []);
+
+  // Acceso por módulo del WMS (delegable) — solo supersu. Mismo panel que vive en
+  // User Management, aquí a la mano dentro del WMS. Define qué nivel abre cada
+  // módulo sensible; se aplica en el menú y lo valida el backend.
+  const [moduleAccess, setModuleAccess] = useState(null);
+  const [savingAccess, setSavingAccess] = useState(false);
+  const [showAccess, setShowAccess] = useState(false);
+  const loadModuleAccess = useCallback(() => {
+    fetcher('/module-access').then(setModuleAccess).catch(logLoadError('module access'));
+  }, []);
+  useEffect(() => { loadModuleAccess(); }, [loadModuleAccess]);
+  const saveModuleAccess = async (moduleId, level) => {
+    const nextLevels = { ...(moduleAccess?.levels || {}), [moduleId]: Number(level) };
+    setModuleAccess(a => ({ ...a, levels: nextLevels }));
+    setSavingAccess(true);
+    try {
+      const res = await putter('/module-access', { levels: nextLevels });
+      if (res.ok) { const d = await res.json(); setModuleAccess(a => ({ ...a, levels: d.levels || nextLevels })); toast.success('Acceso actualizado'); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error guardando acceso'); loadModuleAccess(); }
+    } catch { toast.error('Error de conexión'); loadModuleAccess(); }
+    finally { setSavingAccess(false); }
+  };
 
   // Sources panel state — distinct values from wms_inventory + wms_receiving.
   const [sources, setSources] = useState({}); // { [type]: { items: [{value,count,in_catalog}], total_distinct } }
@@ -310,6 +334,47 @@ export const HomeModule = () => {
 
   return (
     <div className="space-y-6">
+      {/* Acceso por módulo del WMS — solo supersu decide qué nivel abre cada
+          módulo sensible (Auditoría, Incidencias). Se aplica en el menú del WMS
+          y lo valida el backend. El mismo panel existe en User Management. */}
+      {isSupersu && moduleAccess && Object.keys(moduleAccess.defaults || {}).length > 0 && (
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
+          <button onClick={() => setShowAccess(s => !s)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/40 transition-colors">
+            <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Lock className="w-4 h-4 text-primary" /> Acceso por módulo del WMS
+            </span>
+            {showAccess ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          </button>
+          {showAccess && (
+            <div className="px-5 pb-5 space-y-3">
+              <p className="text-xs text-muted-foreground -mt-1">
+                Define qué nivel de admin abre cada módulo sensible. «Solo supersu» lo reserva
+                al super usuario. Cambia al instante en el menú y lo valida el backend.
+              </p>
+              {Object.keys(moduleAccess.defaults || {}).map(id => {
+                const soloLevel = moduleAccess.supersu_only_level || 6;
+                const lvl = (moduleAccess.levels || {})[id] ?? moduleAccess.defaults[id];
+                return (
+                  <div key={id} className="flex items-center justify-between gap-3 bg-muted/30 border border-border rounded-md px-4 py-3">
+                    <span className="text-sm font-medium text-foreground">{(moduleAccess.labels || {})[id] || id}</span>
+                    <select
+                      value={String(lvl)}
+                      onChange={e => saveModuleAccess(id, e.target.value)}
+                      disabled={savingAccess}
+                      className="w-48 px-3 py-2 bg-card border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50"
+                    >
+                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>Admin nivel {n}+</option>)}
+                      <option value={String(soloLevel)}>Solo supersu</option>
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Catálogo de UPC — el menú del supervisor para dar de alta los códigos
           que el operador escanea en Receiving (Receiving ya no los crea). */}
       <UpcCatalog isManager={isManager} />

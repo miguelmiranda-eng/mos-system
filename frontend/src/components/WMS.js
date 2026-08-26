@@ -189,6 +189,16 @@ export default function WMS() {
       .catch(logLoadError('current user'));
   }, []);
 
+  // Niveles de acceso por módulo (delegables desde el Centro de usuarios). El
+  // filtro del nav los aplica encima de los flags hardcodeados; el backend
+  // valida igual. {} hasta que carga → cae a los defaults del código.
+  const [moduleLevels, setModuleLevels] = useState({});
+  useEffect(() => {
+    fetcher('/module-access')
+      .then(d => setModuleLevels(d?.levels || {}))
+      .catch(logLoadError('module access'));
+  }, []);
+
   const associatedCustomer = currentUser?.associated_customer || '';
 
   // Inventory-role users don't have the config/home module; land them on the
@@ -229,7 +239,7 @@ export default function WMS() {
   // La lista y su reparto en grupos viven en wms/modules.js — la barra
   // superior, el sidebar y (fase 2) la paleta ⌘K consumen la misma fuente.
   const MODULES = useMemo(() => buildModules(t), [t]);
-  const visibleModules = useMemo(() => filterModules(MODULES, currentUser), [MODULES, currentUser]);
+  const visibleModules = useMemo(() => filterModules(MODULES, currentUser, moduleLevels), [MODULES, currentUser, moduleLevels]);
   const navGroups = useMemo(() => groupModules(visibleModules), [visibleModules]);
 
   // Bandera de la fase 1: la barra superior es el default; para volver al

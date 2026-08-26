@@ -39,6 +39,20 @@ const tr = (t, llave, respaldo) => {
   return !v || v === llave ? respaldo : v;
 };
 
+/* Nivel de admin efectivo del usuario — espejo de get_admin_level() del backend
+   (deps.py): supersu = MAX (5); admin = su admin_level (default 1, tope 5);
+   inventory_level ≥ 3 confiere nivel 3. Se usa para gatear módulos por
+   `minAdminLevel` sin que la UI y el backend puedan discrepar. */
+export const adminLevelOf = (u) => {
+  if (!u) return 0;
+  if (u.role === 'supersu') return 5;
+  let lvl = 0;
+  if (u.role === 'admin') lvl = Math.max(1, Math.min(5, parseInt(u.admin_level, 10) || 1));
+  const inv = parseInt(u.inventory_level, 10) || 0;
+  if (inv >= 3) lvl = Math.max(lvl, 3);
+  return lvl;
+};
+
 export const buildModules = (t) => [
   // ── Entradas ────────────────────────────────────────────────────────────
   { id: 'asn', group: 'in', label: 'ASN', icon: FileDown, color: 'text-orange-400',
@@ -89,9 +103,9 @@ export const buildModules = (t) => [
     desc: t('wms_mod_movements_desc') },
 
   // ── Sistema ─────────────────────────────────────────────────────────────
-  // Solo super admin: el backend también rechaza (403) a cualquier otro rol.
+  // Auditoría: admin nivel 5 y supersu (el backend valida con require_admin_level(5)).
   { id: 'audit', group: 'sys', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400',
-    desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', supersuOnly: true },
+    desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', minAdminLevel: 5 },
   // Incidencias del sistema: material no encontrado, duplicados bloqueados,
   // errores de recepción. SOLO super usuario (el backend responde 403 al resto).
   { id: 'incidents', group: 'sys', label: 'Incidencias', icon: ShieldAlert, color: 'text-orange-400',
@@ -103,7 +117,7 @@ export const buildModules = (t) => [
 /* Filtro por rol y nivel — es LITERALMENTE el que corría dentro del sidebar.
    Se movió aquí para que la barra superior, el sidebar y la paleta no puedan
    discrepar sobre qué ve cada quien. El backend valida igual por su cuenta. */
-export const filterModules = (modules, currentUser) => modules.filter(m => {
+export const filterModules = (modules, currentUser, moduleLevels = {}) => modules.filter(m => {
   // Rol `inventory` del WMS: acotado al área de inventario por nivel. Es una
   // lista blanca explícita, así que corre ANTES de las guardas adminOnly /
   // supersuOnly — por eso NO puede incluir 'reconciliation'.
@@ -119,7 +133,19 @@ export const filterModules = (modules, currentUser) => modules.filter(m => {
     const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'aging', 'movements'];
     return allowed.includes(m.id);
   }
+  // Acceso configurable desde la app (Centro de usuarios → Acceso por módulo).
+  // Gana sobre los flags hardcodeados para los módulos que el backend delega
+  // (audit, incidents). Escala: 6 = solo supersu; 1..5 = nivel de admin mínimo.
+  const lvl = moduleLevels?.[m.id];
+  if (lvl != null) {
+    if (lvl >= 6) return currentUser?.role === 'supersu';
+    return adminLevelOf(currentUser) >= lvl;
+  }
+
   if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
+  // Módulos gateados por nivel de admin (p.ej. Auditoría = nivel 5). supersu
+  // siempre pasa porque adminLevelOf lo trata como el nivel máximo.
+  if (m.minAdminLevel && adminLevelOf(currentUser) < m.minAdminLevel) return false;
   if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
   if (currentUser?.role === 'customer') return m.id === 'dashboard';
   if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
