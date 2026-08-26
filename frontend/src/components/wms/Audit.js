@@ -360,6 +360,36 @@ const SkuTab = () => {
               )}
             </div>
           )}
+          {Array.isArray(data.cajas_lista) && data.cajas_lista.length > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                <PackageSearch className="w-4 h-4" /> Números de caja recibidos ({data.cajas_lista.length})
+              </div>
+              <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                <table className="w-full">
+                  <thead className={tableCls.thead}><tr>
+                    <Th>Caja</Th><Th>Talla</Th><Th>Estatus</Th><Th right>Unidades</Th><Th>Ubicación</Th><Th>Recibida</Th>
+                  </tr></thead>
+                  <tbody>
+                    {data.cajas_lista.map((b, i) => (
+                      <tr key={i} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
+                        <Td mono>{b.box_id || b.barcode || "-"}</Td>
+                        <Td>{b.size || "-"}</Td>
+                        <Td>
+                          <span className={b.consumida ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400 font-medium"}>
+                            {b.status || "-"}{b.consumida ? " · consumida" : ""}
+                          </span>
+                        </Td>
+                        <Td right>{(b.units ?? 0).toLocaleString()}</Td>
+                        <Td mono>{b.location || "-"}</Td>
+                        <Td>{fmtDate(b.created_at)}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           <div className="grid md:grid-cols-2 gap-3">
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground">Inventario por ubicación</div>

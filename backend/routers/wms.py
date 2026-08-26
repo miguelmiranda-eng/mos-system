@@ -7304,9 +7304,40 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
 # Solo se listan modulos con un guard UNICO y limpio. Conciliacion queda fuera a
 # proposito: su permiso es mixto (contadores PDA en inventario nivel 2 + supersu
 # para resolver), no un guard unico que se pueda mover con un solo numero.
-SUPERSU_ONLY_LEVEL = 6
-WMS_MODULE_ACCESS_DEFAULTS = {"audit": 5, "incidents": SUPERSU_ONLY_LEVEL}
-WMS_MODULE_ACCESS_LABELS = {"audit": "Auditoría", "incidents": "Incidencias"}
+ALL_LEVEL = 0            # 0 = todos los usuarios autenticados
+SUPERSU_ONLY_LEVEL = 6   # 6 = solo super usuario (supersu == nivel admin MAX)
+
+# TODOS los modulos del WMS con su nivel de acceso ACTUAL (segun corresponde), en
+# el orden del menu. Escala: 0 = todos; 1..5 = nivel admin minimo; 6 = solo
+# supersu. Enforcement de backend HOY: 'audit' e 'incidents' (guardan con
+# require_wms_module_access). El resto usa este nivel para el MENU y conserva su
+# propio guard de endpoint como piso de seguridad. Los roles con lista blanca
+# (inventory / picker / customer) no se rigen por esta tabla.
+WMS_MODULE_ACCESS_DEFAULTS = {
+    # Entradas
+    "asn": 0, "receiving": 0, "transit": 0,
+    # Inventario
+    "inventory": 0, "locations": 0, "mover": 0, "aging": 0, "cycle_count": 0,
+    "reconciliation": SUPERSU_ONLY_LEVEL,
+    # Salidas
+    "directed": 0, "picking": 0, "neck_cutting": 0, "finished": 0,
+    # Analisis
+    "dashboard": 0, "reports": 1, "movements": 0,
+    # Sistema
+    "audit": 5, "incidents": SUPERSU_ONLY_LEVEL, "home": 0,
+}
+WMS_MODULE_ACCESS_LABELS = {
+    "asn": "ASN", "receiving": "Receiving", "transit": "Putaway 2.0",
+    "inventory": "Inventario", "locations": "Locaciones", "mover": "MOVER",
+    "aging": "Antigüedad", "cycle_count": "Conteo cíclico",
+    "reconciliation": "Conciliación",
+    "directed": "Trabajo Dirigido", "picking": "Picking",
+    "neck_cutting": "Corte de Neck", "finished": "Terminados",
+    "dashboard": "Dashboard", "reports": "Reportes", "movements": "Movimientos",
+    "audit": "Auditoría", "incidents": "Incidencias", "home": "Configuración WMS",
+}
+# Modulos cuyo nivel ADEMAS lo valida el backend (no solo el menu).
+WMS_MODULE_ACCESS_ENFORCED = {"audit", "incidents"}
 
 
 async def get_wms_module_levels() -> dict:
@@ -7317,17 +7348,19 @@ async def get_wms_module_levels() -> dict:
     for k, v in (doc.get("levels") or {}).items():
         if k in WMS_MODULE_ACCESS_DEFAULTS:
             try:
-                out[k] = max(1, min(SUPERSU_ONLY_LEVEL, int(v)))
+                out[k] = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
             except (TypeError, ValueError):
                 pass
     return out
 
 
 async def require_wms_module_access(request: Request, module_id: str):
-    """Exige el nivel configurado para `module_id`. 6 = solo supersu; 1..5 = nivel
-    de admin minimo (supersu siempre pasa)."""
+    """Exige el nivel configurado para `module_id`. 0 = cualquier autenticado;
+    6 = solo supersu; 1..5 = nivel de admin minimo (supersu siempre pasa)."""
     levels = await get_wms_module_levels()
     lvl = levels.get(module_id, WMS_MODULE_ACCESS_DEFAULTS.get(module_id, SUPERSU_ONLY_LEVEL))
+    if lvl <= ALL_LEVEL:
+        return await require_auth(request)
     if lvl >= SUPERSU_ONLY_LEVEL:
         return await require_supersu(request)
     return await require_admin_level(request, lvl)
@@ -7341,6 +7374,9 @@ async def wms_module_access_get(request: Request):
     return {"levels": await get_wms_module_levels(),
             "defaults": WMS_MODULE_ACCESS_DEFAULTS,
             "labels": WMS_MODULE_ACCESS_LABELS,
+            "order": list(WMS_MODULE_ACCESS_DEFAULTS.keys()),
+            "enforced": sorted(WMS_MODULE_ACCESS_ENFORCED),
+            "all_level": ALL_LEVEL,
             "supersu_only_level": SUPERSU_ONLY_LEVEL}
 
 
@@ -7354,7 +7390,7 @@ async def wms_module_access_put(request: Request):
         if k not in WMS_MODULE_ACCESS_DEFAULTS:
             continue
         try:
-            clean[k] = max(1, min(SUPERSU_ONLY_LEVEL, int(v)))
+            clean[k] = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
         except (TypeError, ValueError):
             continue
     await db.config_options.update_one(
@@ -7574,6 +7610,17 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
         "diferencia": cajas_vivas - cajas_deberian,
     }
 
+    # Lista de NÚMEROS DE CAJA recibidos para este SKU (cada caja = una recibida),
+    # con su estatus, unidades y ubicación para ver cuáles se consumieron y cuáles
+    # siguen vivas. Ordenadas por creación; tope 1000 para no reventar la vista.
+    cajas_lista = await db.wms_boxes.find(
+        q_box,
+        {"_id": 0, "box_id": 1, "barcode": 1, "status": 1, "units": 1, "size": 1,
+         "location": 1, "created_at": 1, "receiving_id": 1},
+    ).sort("created_at", 1).to_list(1000)
+    for b in cajas_lista:
+        b["consumida"] = (b.get("status") or "") in _BOX_OUT_STATUSES
+
     movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
     esperado = recibido - pickeado
     return {
@@ -7582,7 +7629,7 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
                     "en_mano": on_hand, "diferencia": on_hand - esperado},
         "recibos": recv_list, "tickets": tickets, "inventario": inv_rows,
         "cajas_por_status": boxes_by_status, "cajas_desglose": cajas_desglose,
-        "movimientos": movements,
+        "cajas_lista": cajas_lista, "movimientos": movements,
     }
 
 

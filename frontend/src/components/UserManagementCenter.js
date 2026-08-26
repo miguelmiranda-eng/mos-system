@@ -408,20 +408,27 @@ const UserManagementCenter = () => {
           {showAccess && (
             <div className="px-6 pb-6 space-y-3">
               <p className="text-xs text-muted-foreground -mt-1">
-                Define qué nivel de admin abre cada módulo sensible del WMS. Se aplica en el
-                menú y lo valida el backend. «Solo supersu» lo reserva al super usuario.
+                Define qué nivel abre cada módulo del WMS en el menú. «Todos» = cualquier
+                usuario; 1–5 = nivel de admin mínimo; «Solo supersu» lo reserva al super usuario.
+                Los marcados <span className="text-primary font-semibold">backend</span> además
+                se validan en el servidor (el resto controla solo el menú).
               </p>
-              {Object.keys(moduleAccess.defaults || {}).map(id => {
+              {(moduleAccess.order || Object.keys(moduleAccess.defaults || {})).map(id => {
                 const soloLevel = moduleAccess.supersu_only_level || 6;
                 const lvl = (moduleAccess.levels || {})[id] ?? moduleAccess.defaults[id];
+                const enforced = (moduleAccess.enforced || []).includes(id);
                 return (
                   <div key={id} className="flex items-center justify-between gap-3 bg-secondary/20 border border-border/50 rounded-xl px-4 py-3">
-                    <span className="text-sm font-bold text-foreground">{(moduleAccess.labels || {})[id] || id}</span>
+                    <span className="text-sm font-bold text-foreground flex items-center gap-2">
+                      {(moduleAccess.labels || {})[id] || id}
+                      {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5">backend</span>}
+                    </span>
                     <Select value={String(lvl)} onValueChange={(v) => handleSaveModuleAccess(id, v)} disabled={savingAccess}>
                       <SelectTrigger className="w-48 h-9 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/15">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
+                        <SelectItem value="0">Todos</SelectItem>
                         {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>Admin nivel {n}+</SelectItem>)}
                         <SelectItem value={String(soloLevel)}>Solo supersu</SelectItem>
                       </SelectContent>

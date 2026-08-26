@@ -349,21 +349,28 @@ export const HomeModule = () => {
           {showAccess && (
             <div className="px-5 pb-5 space-y-3">
               <p className="text-xs text-muted-foreground -mt-1">
-                Define qué nivel de admin abre cada módulo sensible. «Solo supersu» lo reserva
-                al super usuario. Cambia al instante en el menú y lo valida el backend.
+                Define qué nivel abre cada módulo del WMS en el menú. «Todos» = cualquier
+                usuario; 1–5 = nivel de admin mínimo; «Solo supersu» lo reserva al super
+                usuario. Los marcados <span className="text-primary font-semibold">backend</span>{' '}
+                además se validan en el servidor (el resto controla solo el menú).
               </p>
-              {Object.keys(moduleAccess.defaults || {}).map(id => {
+              {(moduleAccess.order || Object.keys(moduleAccess.defaults || {})).map(id => {
                 const soloLevel = moduleAccess.supersu_only_level || 6;
                 const lvl = (moduleAccess.levels || {})[id] ?? moduleAccess.defaults[id];
+                const enforced = (moduleAccess.enforced || []).includes(id);
                 return (
                   <div key={id} className="flex items-center justify-between gap-3 bg-muted/30 border border-border rounded-md px-4 py-3">
-                    <span className="text-sm font-medium text-foreground">{(moduleAccess.labels || {})[id] || id}</span>
+                    <span className="text-sm font-medium text-foreground flex items-center gap-2">
+                      {(moduleAccess.labels || {})[id] || id}
+                      {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5">backend</span>}
+                    </span>
                     <select
                       value={String(lvl)}
                       onChange={e => saveModuleAccess(id, e.target.value)}
                       disabled={savingAccess}
                       className="w-48 px-3 py-2 bg-card border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50"
                     >
+                      <option value="0">Todos</option>
                       {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>Admin nivel {n}+</option>)}
                       <option value={String(soloLevel)}>Solo supersu</option>
                     </select>

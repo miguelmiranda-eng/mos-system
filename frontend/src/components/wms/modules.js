@@ -48,6 +48,7 @@ export const adminLevelOf = (u) => {
   if (u.role === 'supersu') return 5;
   let lvl = 0;
   if (u.role === 'admin') lvl = Math.max(1, Math.min(5, parseInt(u.admin_level, 10) || 1));
+  if (u.role === 'ceo') lvl = Math.max(lvl, 3);   // el CEO cuenta como admin-3 para el menú
   const inv = parseInt(u.inventory_level, 10) || 0;
   if (inv >= 3) lvl = Math.max(lvl, 3);
   return lvl;
@@ -133,22 +134,24 @@ export const filterModules = (modules, currentUser, moduleLevels = {}) => module
     const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'aging', 'movements'];
     return allowed.includes(m.id);
   }
-  // Acceso configurable desde la app (Centro de usuarios → Acceso por módulo).
-  // Gana sobre los flags hardcodeados para los módulos que el backend delega
-  // (audit, incidents). Escala: 6 = solo supersu; 1..5 = nivel de admin mínimo.
+  // Roles con lista blanca propia — su piso NO lo mueve el panel de accesos.
+  if (currentUser?.role === 'customer') return m.id === 'dashboard';
+  if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
+
+  // Acceso configurable desde la app (Centro de usuarios / Configuración WMS).
+  // Rige el MENÚ de todos los módulos para admin/general/ceo/supersu. Escala:
+  //   0 = todos · 1..5 = nivel de admin mínimo · 6 = solo supersu.
   const lvl = moduleLevels?.[m.id];
   if (lvl != null) {
+    if (lvl <= 0) return true;
     if (lvl >= 6) return currentUser?.role === 'supersu';
     return adminLevelOf(currentUser) >= lvl;
   }
 
+  // Respaldo: flags hardcodeados (por si un módulo no está en la config).
   if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
-  // Módulos gateados por nivel de admin (p.ej. Auditoría = nivel 5). supersu
-  // siempre pasa porque adminLevelOf lo trata como el nivel máximo.
   if (m.minAdminLevel && adminLevelOf(currentUser) < m.minAdminLevel) return false;
   if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
-  if (currentUser?.role === 'customer') return m.id === 'dashboard';
-  if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
   return true;
 });
 
