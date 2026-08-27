@@ -571,9 +571,25 @@ async def print_preview(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _pallet_printer_name(user):
+    """Usuario que dispara la impresión, para estampar 'Imprimió' en la papeleta."""
+    return (user or {}).get("name") or (user or {}).get("email") or (user or {}).get("user_id") or "—"
+
+
+def _pallet_print_stamp():
+    """dd/mm/yyyy HH:MM en hora del almacén (America/Tijuana)."""
+    try:
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        return datetime.now(timezone.utc).astimezone(ZoneInfo("America/Tijuana")).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        from datetime import datetime
+        return datetime.now().strftime("%d/%m/%Y %H:%M")
+
+
 @router.post("/pallet_label", response_class=HTMLResponse)
 async def pallet_label(request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     try:
         data = await _parse_payload(request)
         pallets = {}
@@ -716,7 +732,10 @@ async def pallet_label(request: Request):
                 p['current_pallet'] = idx + 1
                 p['total_pallets_count'] = total_pallets
 
-        return templates.TemplateResponse("pallet_label.html", {"request": request, "pallets": sorted_pallets, "meta": meta})
+        return templates.TemplateResponse("pallet_label.html", {
+            "request": request, "pallets": sorted_pallets, "meta": meta,
+            "printed_by": _pallet_printer_name(user), "printed_at": _pallet_print_stamp(),
+        })
     except Exception as e:
         print(f"Pallet Label Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
