@@ -9225,12 +9225,21 @@ def _fmt_label_date(iso):
         return ""
 
 
-def _build_box_labels_html(items):
+def _build_box_labels_html(items, printed_by="", printed_at=""):
     """Printable HTML (4x6) — one label per box, barcodes rendered in the browser
     via JsBarcode. No server-side barcode/reportlab dependency. Mirrors the
-    Receiving label so a reprint looks identical to the original."""
+    Receiving label so a reprint looks identical to the original.
+
+    `printed_by` (el usuario autenticado que dispara la impresión) y `printed_at`
+    se estampan en TODAS las etiquetas: a diferencia de "Recibió" —que sale en
+    blanco en cajas sin recepción válida (p. ej. recibos interrumpidos)— aquí
+    siempre queda quién y cuándo se imprimió."""
     import html as _html
     esc = lambda v: _html.escape(str(v if v is not None else ""))
+    # Si no llega, sella el momento de la impresión igual (hora del almacén).
+    if not printed_at:
+        printed_at = _fmt_label_date(now_iso())
+    printed_by = printed_by or "—"
     pages, calls = [], []
     n = len(items)
     for idx, r in enumerate(items):
@@ -9289,6 +9298,10 @@ def _build_box_labels_html(items):
             <div><span class="label">Fecha de recibo</span><span style="font-size:15px;font-weight:bold">{esc(_fmt_label_date(r.get("created_at")))}</span></div>
             <div style="text-align:right"><span class="label">Recibi&oacute;</span><span style="font-size:15px;font-weight:bold">{esc(r.get("received_by_name"))}</span></div>
           </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;border-top:1px dashed #999;padding-top:4px">
+            <div><span class="label">Imprimi&oacute;</span><span style="font-size:15px;font-weight:bold">{esc(printed_by)}</span></div>
+            <div style="text-align:right"><span class="label">Impreso</span><span style="font-size:13px;font-weight:bold">{esc(printed_at)}</span></div>
+          </div>
         </div>
       </div>''')
         # JS-context escape: json.dumps neutralizes quotes/backslashes/</script>
@@ -9319,18 +9332,23 @@ def _build_box_labels_html(items):
     </body></html>'''
 
 
+def _label_printer_name(user):
+    """Nombre a estampar como 'Imprimió' en la etiqueta: el usuario autenticado
+    que dispara la impresión. Cae a email y por último al user_id."""
+    return (user or {}).get("name") or (user or {}).get("email") or (user or {}).get("user_id") or "—"
+
 @router.get("/labels/box/{box_id}")
 async def generate_box_label(box_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
         raise HTTPException(404, "Caja no encontrada")
     enriched = await _enrich_box_for_label(box)
-    return HTMLResponse(_build_box_labels_html([enriched]))
+    return HTMLResponse(_build_box_labels_html([enriched], printed_by=_label_printer_name(user)))
 
 @router.get("/labels/boxes")
 async def generate_multi_box_labels(request: Request, box_ids: str = ""):
-    await require_auth(request)
+    user = await require_auth(request)
     ids = [b.strip() for b in box_ids.split(",") if b.strip()]
     if not ids:
         raise HTTPException(400, "box_ids requeridos (separados por coma)")
@@ -9341,13 +9359,13 @@ async def generate_multi_box_labels(request: Request, box_ids: str = ""):
             items.append(await _enrich_box_for_label(box))
     if not items:
         raise HTTPException(404, "Ninguna de las cajas existe")
-    return HTMLResponse(_build_box_labels_html(items))
+    return HTMLResponse(_build_box_labels_html(items, printed_by=_label_printer_name(user)))
 
 @router.get("/labels/location")
 async def generate_location_labels(request: Request, location: str = ""):
     """Print one box label per LPN currently sitting (units>0) in a location.
     Used by the Locations detail modal ('Imprimir etiquetas')."""
-    await require_auth(request)
+    user = await require_auth(request)
     loc = (location or "").strip()
     if not loc:
         raise HTTPException(400, "location requerido")
@@ -9358,7 +9376,7 @@ async def generate_location_labels(request: Request, location: str = ""):
     if not boxes:
         raise HTTPException(404, f"No hay cajas con unidades en {loc}")
     items = [await _enrich_box_for_label(b) for b in boxes]
-    return HTMLResponse(_build_box_labels_html(items))
+    return HTMLResponse(_build_box_labels_html(items, printed_by=_label_printer_name(user)))
 
 # ==================== EXPORT ====================
 
