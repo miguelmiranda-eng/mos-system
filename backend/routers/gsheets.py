@@ -22,7 +22,9 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 import os
 import re
+import time
 import logging
+from collections import deque
 from datetime import datetime, timezone
 
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -50,6 +52,20 @@ else:
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 SHEETS_SCOPE = SCOPES[0]
+
+# ── Trazas en memoria (diagnostico TEMPORAL) ─────────────────────────────────
+# El guardado muere con 502 sin que ningun error llegue a FastAPI y el usuario
+# no tiene a mano los logs de EasyPanel. Cada paso deja una traza aqui y en el
+# log; GET /api/gsheets/trazas las muestra en el navegador. Si el proceso se
+# reinicia (crash), el buffer llega vacio y `arranque_proceso` delata el reinicio.
+ARRANQUE_PROCESO = datetime.now(timezone.utc).isoformat()
+TRAZAS = deque(maxlen=200)
+
+
+def _traza(msg):
+    linea = f"{datetime.now(timezone.utc).isoformat()} {msg}"
+    TRAZAS.append(linea)
+    logging.error(f"GSHEETS-TRACE {msg}")
 
 
 def _get_flow():
@@ -415,7 +431,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-7",
+        "build": "gsheets-diag-8",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -452,11 +468,11 @@ async def write_sheet(request: Request):
     # el nivel de log filtre INFO). El guardado muere con 502 sin llegar ningun
     # error a FastAPI; estas lineas dicen en el log de EasyPanel hasta que paso
     # llego la peticion. Quitar al cerrar el problema.
-    logging.error("GSHEETS-TRACE write 1: peticion recibida")
+    _traza("write 1: peticion recibida")
     user = await require_auth(request)
-    logging.error("GSHEETS-TRACE write 2: auth ok")
+    _traza("write 2: auth ok")
     body = await request.json()
-    logging.error(f"GSHEETS-TRACE write 3: body leido ({len(body.get('sheets', []))} bloques)")
+    _traza(f"write 3: body leido ({len(body.get('sheets', []))} bloques)")
     sheet_id = body.get("googleId")
     entrada = body.get("sheets", [])
     if not sheet_id or not isinstance(entrada, list):
@@ -465,7 +481,7 @@ async def write_sheet(request: Request):
     service = await _get_sheets_service(user["user_id"])
     if not service:
         raise HTTPException(status_code=401, detail="need_connect")
-    logging.error("GSHEETS-TRACE write 4: servicio de Google listo")
+    _traza("write 4: servicio de Google listo")
 
     try:
         meta = await run_in_threadpool(lambda: service.spreadsheets().get(
@@ -508,7 +524,7 @@ async def write_sheet(request: Request):
             "spreadsheetTitle": (meta.get("properties") or {}).get("title", ""),
         }
 
-    logging.error(f"GSHEETS-TRACE write 5: meta ok, a escribir {len(data)} rangos, limpiar {len(a_borrar)}")
+    _traza(f"write 5: meta ok, a escribir {len(data)} rangos, limpiar {len(a_borrar)}")
     celdas_escritas = 0
     try:
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
@@ -516,14 +532,14 @@ async def write_sheet(request: Request):
         if a_borrar:
             await run_in_threadpool(lambda: service.spreadsheets().values().batchClear(
                 spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute())
-            logging.error("GSHEETS-TRACE write 6: clear ok")
+            _traza("write 6: clear ok")
         if data:
             resp = await run_in_threadpool(lambda: service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
                 body={"valueInputOption": "USER_ENTERED", "data": data}).execute())
             # Confirmacion de Google: cuantas celdas actualizo de verdad.
             celdas_escritas = int(resp.get("totalUpdatedCells") or 0)
-            logging.error(f"GSHEETS-TRACE write 7: update ok ({celdas_escritas} celdas)")
+            _traza(f"write 7: update ok ({celdas_escritas} celdas)")
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -534,7 +550,7 @@ async def write_sheet(request: Request):
         raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
 
     await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data), "cells": celdas_escritas})
-    logging.error("GSHEETS-TRACE write 8: fin, devolviendo respuesta")
+    _traza("write 8: fin, devolviendo respuesta")
     return {
         "ok": True,
         "written": len(data),
@@ -546,6 +562,76 @@ async def write_sheet(request: Request):
     }
 
 
+@router.get("/trazas")
+async def trazas(request: Request):
+    """
+    TEMPORAL: muestra en el navegador las trazas del guardado (buffer en
+    memoria). Si tras un guardado fallido el buffer llega vacio y
+    `arranque_proceso` es reciente, el proceso se reinicio (crash).
+    """
+    await require_auth(request)
+    return {
+        "build": "gsheets-diag-8",
+        "pid": os.getpid(),
+        "arranque_proceso": ARRANQUE_PROCESO,
+        "ahora": datetime.now(timezone.utc).isoformat(),
+        "trazas": list(TRAZAS),
+    }
+
+
+@router.get("/diag-write")
+async def diag_write(request: Request, url: str):
+    """
+    TEMPORAL: prueba la ESCRITURA a Google por GET (los GET atraviesan el proxy
+    sin problema). Escribe "MOS_DIAG" en la celda ZZ1 de la primera pestaña y la
+    limpia enseguida. Devuelve cada paso con su duracion y el error exacto si
+    alguno falla: separa "Google no deja escribir" de "el POST no llega".
+    """
+    user = await require_auth(request)
+    sheet_id = _id_de_url(url)
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="El enlace no es un Google Sheet válido.")
+
+    pasos = []
+
+    def paso(nombre, fn):
+        t0 = time.time()
+        try:
+            r = fn()
+            pasos.append({"paso": nombre, "ok": True, "ms": round((time.time() - t0) * 1000)})
+            return r
+        except Exception as e:
+            pasos.append({"paso": nombre, "ok": False, "ms": round((time.time() - t0) * 1000),
+                          "error": str(e)[:500]})
+            return None
+
+    service = await _get_sheets_service(user["user_id"])
+    if not service:
+        return {"build": "gsheets-diag-8", "error": "need_connect", "pasos": pasos}
+
+    meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
+        spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
+    primera = None
+    if meta:
+        hojas = [s["properties"]["title"] for s in meta.get("sheets", []) if s.get("properties")]
+        primera = hojas[0] if hojas else None
+
+    if primera:
+        rango = f"'{primera}'!ZZ1"
+        await run_in_threadpool(lambda: paso("update ZZ1", lambda: service.spreadsheets().values().update(
+            spreadsheetId=sheet_id, range=rango, valueInputOption="RAW",
+            body={"values": [["MOS_DIAG"]]}).execute()))
+        await run_in_threadpool(lambda: paso("clear ZZ1", lambda: service.spreadsheets().values().clear(
+            spreadsheetId=sheet_id, range=rango, body={}).execute()))
+
+    return {
+        "build": "gsheets-diag-8",
+        "titulo": (meta or {}).get("properties", {}).get("title"),
+        "primera_pestana": primera,
+        "pasos": pasos,
+    }
+
+
 @router.get("/ping")
 async def ping():
     """
@@ -554,7 +640,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-7",
+        "build": "gsheets-diag-8",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
