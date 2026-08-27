@@ -280,49 +280,52 @@ async def _pick_tickets(args):
 
 
 async def _historial_caja(args):
-    """Ciclo de vida de una caja del WMS: quien la recibio, estado, movimientos."""
+    """Ciclo de vida de una caja del WMS. Reusa la MISMA busqueda que el
+    buscador "Buscar caja / LPN" del frontend (buscar_historial_caja en
+    wms.py); aqui solo se resume la respuesta para el chat."""
     cid = str(args.get("caja") or "").strip()
     if not cid:
         return {"error": "Falta `caja` (el código, ej. BOX-037086)."}
 
-    box = await db.wms_boxes.find_one(
-        {"$or": [{"box_id": cid}, {"barcode": cid}, {"lpn_id": cid}, {"physical_lpn": cid}]},
-        {"_id": 0})
-    receiving = None
-    if box and box.get("receiving_id"):
-        receiving = await db.wms_receiving.find_one({"receiving_id": box["receiving_id"]}, {"_id": 0})
-    if not box:
-        # Caja ausente de wms_boxes (huerfana / embarcada): buscarla en recibos.
-        receiving = await db.wms_receiving.find_one({"boxes.box_id": cid}, {"_id": 0})
+    from routers.wms import buscar_historial_caja
+    h = await buscar_historial_caja(cid, limit=100)
+    eventos = h.get("box_events") or []
+    if not h.get("found") and not eventos:
+        return {"error": f"Sin rastro de la caja {cid} en cajas ni movimientos."}
 
-    movimientos = await db.wms_movements.find({"$or": [
-        {"details.box_id": cid}, {"details.box_ids": cid}, {"details.boxes.box_id": cid},
-    ]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    out = {"caja": h.get("box_id", cid), "existe": h.get("found", False)}
 
-    if not box and not receiving and not movimientos:
-        return {"error": f"Sin rastro de la caja {cid} en cajas, recibos ni movimientos."}
+    # El evento de recepcion es el mas viejo de tipo receiving; la busqueda ya
+    # le pego el nombre de quien recibio (received_by_name) y el detalle del recibo.
+    recep = next((m for m in reversed(eventos) if m.get("type") == "receiving"), None)
+    if recep:
+        out["recibida_por"] = recep.get("user_name") or recep.get("user_id") or "Sistema"
+        out["recibida_cuando"] = recep.get("created_at")
+        det = recep.get("details") or {}
+        if det.get("asn_reference"):
+            out["asn"] = det["asn_reference"]
+        if det.get("box_units_received") is not None:
+            out["piezas_recibidas"] = det["box_units_received"]
 
-    out = {"caja": cid}
-    if receiving:
-        out["recibida_por"] = receiving.get("received_by_name") or receiving.get("received_by")
-        out["recibida_cuando"] = receiving.get("created_at")
-        out["recibo"] = receiving.get("receiving_id")
-        out["cliente"] = receiving.get("customer")
-        if receiving.get("asn_reference"):
-            out["asn"] = receiving["asn_reference"]
+    box = h.get("box") or {}
     if box:
-        out.setdefault("recibida_por", box.get("received_by_name"))
-        out["estado"] = box.get("status")
+        out["estado"] = box.get("status") or box.get("state")
         out["ubicacion"] = box.get("location")
-        out["piezas"] = box.get("units")
+        out["piezas"] = box.get("units", box.get("qty"))
+        out["cliente"] = box.get("customer")
         out["sku"] = " / ".join(str(box.get(k) or "") for k in ("style", "color", "size")).strip(" /")
-        if box.get("last_pick_ticket"):
-            out["ultimo_pick_ticket"] = box["last_pick_ticket"]
+    elif eventos:
+        out["aviso"] = "La caja ya no existe (eliminada/embarcada); se muestra su historial."
+
+    if h.get("inventario_corrupto"):
+        out["aviso_inventario"] = ("Caja de la carga inicial de Excel: su número, piezas "
+                                   "y lote pueden no coincidir con el cartón físico.")
+
     out["movimientos"] = [{
         "cuando": m.get("created_at"),
-        "quien": m.get("user_name"),
         "tipo": m.get("type"),
-    } for m in movimientos[-25:]]
+        "quien": m.get("user_name") or m.get("user_id") or "Sistema",
+    } for m in eventos[:25]]
     return out
 
 

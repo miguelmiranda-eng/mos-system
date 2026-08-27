@@ -3566,7 +3566,14 @@ async def box_history(box_id: str, request: Request, limit: int = 300):
     Read-only; any authenticated WMS user.
     """
     await require_auth(request)
+    return await buscar_historial_caja(box_id, limit)
 
+
+async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
+    """Nucleo del buscador de caja/LPN. Lo comparten la ruta de arriba (el
+    buscador "Buscar caja / LPN" del WMS) y el conector MCP (historial_caja):
+    una sola busqueda con todos sus casos — LPN fisico, cajas borradas o
+    embarcadas, y el recibo pegado a la linea de tiempo."""
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
         box = await db.wms_boxes.find_one(
