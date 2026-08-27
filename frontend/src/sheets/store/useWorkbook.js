@@ -573,6 +573,10 @@ export const useWorkbook = create((set, get) => ({
     if (res.ok) {
       set({
         dirty: false,
+        // Lo guardado pasa a ser el nuevo punto de comparacion del diff.
+        workbook: res.nuevoOrigen
+          ? { ...get().workbook, origenGoogle: res.nuevoOrigen }
+          : get().workbook,
         gsInfo: {
           ...previa,
           guardadoError: null,
@@ -581,6 +585,7 @@ export const useWorkbook = create((set, get) => ({
             celdas: res.updatedCells,
             titulo: res.spreadsheetTitle,
             skipped: res.skipped || [],
+            sinCambios: !!res.sinCambios,
           },
         },
       });

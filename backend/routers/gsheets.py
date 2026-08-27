@@ -383,7 +383,7 @@ async def read_sheet(request: Request, url: str):
         if "404" in msg:
             raise HTTPException(status_code=404, detail="No se encontró la hoja.")
         logging.error(f"GSHEETS read meta error: {e}")
-        raise HTTPException(status_code=502, detail="Error leyendo la hoja de Google.")
+        raise HTTPException(status_code=409, detail="Error leyendo la hoja de Google.")  # 502 lo intercepta el proxy
 
     props_hojas = [(s.get("properties") or {}) for s in meta.get("sheets", [])]
     titulos = [p.get("title") for p in props_hojas if p.get("title")]
@@ -400,7 +400,7 @@ async def read_sheet(request: Request, url: str):
         rangos = valores.get("valueRanges", [])
     except Exception as e:
         logging.error(f"GSHEETS read values error: {e}")
-        raise HTTPException(status_code=502, detail="Error leyendo los valores de la hoja.")
+        raise HTTPException(status_code=409, detail="Error leyendo los valores de la hoja.")  # 502 lo intercepta el proxy
 
     # 3) Formato (best-effort): si falla, la hoja abre igual con su contenido.
     # El rango del formato se acota a lo que los VALORES ya dijeron que se usa.
@@ -431,7 +431,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-9",
+        "build": "gsheets-diag-10",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -493,7 +493,7 @@ async def write_sheet(request: Request):
             raise HTTPException(status_code=403, detail="no_edit")
         if "404" in msg:
             raise HTTPException(status_code=404, detail="No se encontró la hoja.")
-        raise HTTPException(status_code=502, detail="Error accediendo a la hoja de Google.")
+        raise HTTPException(status_code=409, detail="Error accediendo a la hoja de Google.")  # 502 lo intercepta el proxy
 
     existentes = {s["properties"]["title"] for s in meta.get("sheets", []) if s.get("properties")}
 
@@ -505,6 +505,18 @@ async def write_sheet(request: Request):
         if nombre not in existentes:
             omitidas.append(nombre)
             continue
+        if isinstance(s.get("updates"), list):
+            # Protocolo por DIFERENCIAS: solo las celdas cambiadas, cada corrida
+            # con su rango A1. NO se limpia nada: tocar celdas protegidas de la
+            # plantilla (aunque sea para reescribir lo mismo) hace que Google
+            # rechace la escritura entera.
+            for u in s["updates"]:
+                a1 = str(u.get("a1", "")).strip()
+                vals = u.get("values") or []
+                if a1 and vals:
+                    data.append({"range": f"'{nombre}'!{a1}", "values": vals})
+            continue
+        # Protocolo viejo (libro completo por bloques), por compatibilidad.
         if s.get("clear", True):
             a_borrar.append(f"'{nombre}'")
         valores = s.get("values") or []
@@ -543,12 +555,20 @@ async def write_sheet(request: Request):
             _traza(f"write 7: update ok ({celdas_escritas} celdas)")
     except Exception as e:
         msg = str(e)
+        _traza(f"write ERROR en clear/update: {msg[:300]}")
         if "403" in msg or "PERMISSION" in msg.upper():
             raise HTTPException(status_code=403, detail="no_edit")
-        _traza(f"write ERROR en clear/update: {msg[:300]}")
-        # DIAGNOSTICO TEMPORAL: se devuelve el error real de Google para verlo en
-        # el toast. Volver a "Error escribiendo en la hoja de Google." al cerrar.
-        raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
+        # OJO: nunca responder 502 desde aqui — el proxy de EasyPanel intercepta
+        # los 502 del upstream y los sustituye por su propia pagina sin CORS, y
+        # el navegador solo ve "Failed to fetch" en vez del motivo.
+        if "protected" in msg.lower():
+            raise HTTPException(
+                status_code=409,
+                detail="La hoja de Google tiene celdas PROTEGIDAS y el guardado intentó "
+                       "modificar alguna. Revisa qué celdas editaste; si necesitas editar "
+                       "esas, el dueño de la hoja debe quitarles la protección.",
+            )
+        raise HTTPException(status_code=409, detail=f"Google rechazó la escritura: {msg[:400]}")
 
     await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data), "cells": celdas_escritas})
     _traza("write 8: fin, devolviendo respuesta")
@@ -573,7 +593,7 @@ async def trazas():
     el proceso se reinicio (crash).
     """
     return {
-        "build": "gsheets-diag-9",
+        "build": "gsheets-diag-10",
         "pid": os.getpid(),
         "arranque_proceso": ARRANQUE_PROCESO,
         "ahora": datetime.now(timezone.utc).isoformat(),
@@ -609,7 +629,7 @@ async def diag_write(request: Request, url: str):
 
     service = await _get_sheets_service(user["user_id"])
     if not service:
-        return {"build": "gsheets-diag-9", "error": "need_connect", "pasos": pasos}
+        return {"build": "gsheets-diag-10", "error": "need_connect", "pasos": pasos}
 
     meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
         spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
@@ -627,7 +647,7 @@ async def diag_write(request: Request, url: str):
             spreadsheetId=sheet_id, range=rango, body={}).execute()))
 
     return {
-        "build": "gsheets-diag-9",
+        "build": "gsheets-diag-10",
         "titulo": (meta or {}).get("properties", {}).get("title"),
         "primera_pestana": primera,
         "pasos": pasos,
@@ -642,7 +662,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-9",
+        "build": "gsheets-diag-10",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),

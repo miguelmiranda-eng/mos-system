@@ -1,5 +1,6 @@
-import { esUrlGoogleSheets, idDeUrl, importarGoogleSheet, guardarEnGoogle, partirEnBloques } from '../gsheets';
-import { getCell } from '../model';
+import { esUrlGoogleSheets, idDeUrl, importarGoogleSheet, guardarEnGoogle, partirEnBloques, diferencias } from '../gsheets';
+import { getCell, makeCell } from '../model';
+import { cellKey } from '../address';
 
 describe('deteccion de URLs de Google Sheets', () => {
   test('reconoce enlaces de Google Sheets', () => {
@@ -89,18 +90,24 @@ describe('importarGoogleSheet aplica contenido y formato', () => {
   });
 });
 
-describe('guardarEnGoogle arma y manda el payload correcto', () => {
+describe('guardarEnGoogle escribe SOLO las diferencias', () => {
   afterEach(() => { delete global.fetch; });
 
-  test('POST a /gsheets/write con nombre de pestaña y matriz de valores', async () => {
+  test('una celda editada viaja como update con su rango A1; lo demas no se toca', async () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => RESPUESTA_READ })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, written: 1, skipped: [] }) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, updatedCells: 1, skipped: [], spreadsheetTitle: 'PACKING 3003' }) });
 
     const wb = await importarGoogleSheet(RESPUESTA_READ.googleUrl);
+    // El origen quedo guardado para el diff.
+    expect(wb.origenGoogle['PACKING LIST'][0][0]).toBe('VENDOR PO');
+
+    // El usuario edita UNA celda (E1) y guarda.
+    wb.sheets[0].cells.set(cellKey(0, 4), makeCell({ value: 'hola mundo' }));
     const res = await guardarEnGoogle(wb);
 
     expect(res.ok).toBe(true);
+    expect(res.updatedCells).toBe(1);
     const [urlWrite, opciones] = global.fetch.mock.calls[1];
     expect(String(urlWrite)).toMatch(/\/gsheets\/write$/);
     expect(opciones.method).toBe('POST');
@@ -108,20 +115,55 @@ describe('guardarEnGoogle arma y manda el payload correcto', () => {
 
     const payload = JSON.parse(opciones.body);
     expect(payload.googleId).toBe('GID123');
-    expect(payload.sheets[0].name).toBe('PACKING LIST');
-    // El primer bloque de cada pestaña limpia y escribe desde la fila 0.
-    expect(payload.sheets[0].clear).toBe(true);
-    expect(payload.sheets[0].startRow).toBe(0);
-    expect(payload.sheets[0].values[0][0]).toBe('VENDOR PO');
-    expect(payload.sheets[0].values[2][1]).toBe('Garment Type');
-    // La matriz llega hasta la ultima celda CON CONTENIDO (fila 2). La celda de
-    // solo-estilo en (5,3) no la estira: estilo sin valor no viaja a Google.
-    expect(payload.sheets[0].values.length).toBe(3);
+    expect(payload.sheets).toEqual([{
+      name: 'PACKING LIST',
+      // Solo la celda cambiada: las protegidas de la plantilla no se tocan.
+      updates: [{ a1: 'E1:E1', values: [['hola mundo']] }],
+    }]);
+
+    // El nuevo origen ya refleja el cambio: guardar de nuevo = sin cambios.
+    expect(res.nuevoOrigen['PACKING LIST'][0][4]).toBe('hola mundo');
+  });
+
+  test('sin cambios no manda NINGUNA peticion y avisa sinCambios', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => RESPUESTA_READ });
+    const wb = await importarGoogleSheet(RESPUESTA_READ.googleUrl);
+    const res = await guardarEnGoogle(wb);
+    expect(res.ok).toBe(true);
+    expect(res.sinCambios).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);   // solo la lectura
   });
 
   test('un libro que no vino de Google no intenta escribir', async () => {
     const res = await guardarEnGoogle({ sheets: [] });
     expect(res.ok).toBe(false);
+  });
+});
+
+describe('diferencias (diff de matrices en corridas A1)', () => {
+  test('cambios contiguos en una fila salen como UNA corrida', () => {
+    const base = [['a', 'b', 'c', 'd']];
+    const cur = [['a', 'X', 'Y', 'd']];
+    expect(diferencias(cur, base)).toEqual([
+      { a1: 'B1:C1', values: [['X', 'Y']] },
+    ]);
+  });
+
+  test('borrar una celda viaja como cadena vacia (limpia en Google)', () => {
+    expect(diferencias([['a']], [['a', 'b']])).toEqual([
+      { a1: 'B1:B1', values: [['']] },
+    ]);
+  });
+
+  test('filas nuevas mas alla del origen tambien viajan', () => {
+    expect(diferencias([[], ['x']], [])).toEqual([
+      { a1: 'A2:A2', values: [['x']] },
+    ]);
+  });
+
+  test('sin cambios -> sin updates', () => {
+    expect(diferencias([['a', 'b']], [['a', 'b']])).toEqual([]);
   });
 });
 

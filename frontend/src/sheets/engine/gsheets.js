@@ -1,5 +1,5 @@
 import { makeSheet, makeCell, getCell, getEditValue } from './model';
-import { cellKey } from './address';
+import { cellKey, colToLetters } from './address';
 import { API } from '../../lib/constants';
 
 /**
@@ -63,6 +63,13 @@ export async function importarGoogleSheet(url) {
 
   const data = await res.json();
   let totalEstilos = 0;
+  // Copia de los valores tal como llegaron de Google, por pestaña. El guardado
+  // compara contra esto y escribe SOLO lo que cambio: asi las celdas protegidas
+  // de la plantilla (encabezados, formulas) no se tocan y Google no rechaza.
+  const origenGoogle = {};
+  for (const s of data.sheets || []) {
+    origenGoogle[String(s.name || 'Hoja').slice(0, 60)] = (s.values || []).map(f => f.slice());
+  }
   const sheets = (data.sheets || []).map((s) => {
     const filas = s.values || [];
     const formatos = s.formats || [];
@@ -138,6 +145,7 @@ export async function importarGoogleSheet(url) {
     activeSheetId: sheets[0].id,
     googleUrl: data.googleUrl || url,
     googleId: data.googleId,
+    origenGoogle,
     // Diagnostico de la carga (no es parte del libro; el store lo separa y lo
     // reporta en el toast): cuantos estilos se aplicaron y, si el backend no
     // pudo leer el formato, el motivo.
@@ -202,19 +210,70 @@ export function partirEnBloques(matriz, maxBytes = 400 * 1024) {
  * {ok:false, error, necesitaConectar}. Solo se escriben las pestañas que existen
  * en Google (por nombre).
  */
+/**
+ * Diferencias entre la hoja actual y la matriz con la que llego de Google:
+ * corridas contiguas por fila, como [{ a1: 'C5:F5', values: [[...]] }].
+ * Guardar SOLO lo cambiado evita tocar las celdas protegidas de la plantilla
+ * (encabezados, formulas): tocarlas hace que Google rechace TODA la escritura.
+ */
+export function diferencias(matriz, base) {
+  const updates = [];
+  const nFilas = Math.max(matriz.length, base.length);
+  for (let r = 0; r < nFilas; r++) {
+    const fCur = matriz[r] || [];
+    const fBase = base[r] || [];
+    const nCols = Math.max(fCur.length, fBase.length);
+    let inicio = -1; let valores = [];
+    const cerrar = () => {
+      if (inicio < 0) return;
+      updates.push({
+        a1: `${colToLetters(inicio)}${r + 1}:${colToLetters(inicio + valores.length - 1)}${r + 1}`,
+        values: [valores],
+      });
+      inicio = -1; valores = [];
+    };
+    for (let c = 0; c < nCols; c++) {
+      const cur = fCur[c] ?? '';
+      const orig = fBase[c] ?? '';
+      if (String(cur) !== String(orig)) {
+        if (inicio < 0) inicio = c;
+        valores.push(cur);
+      } else {
+        cerrar();
+      }
+    }
+    cerrar();
+  }
+  return updates;
+}
+
 export async function guardarEnGoogle(workbook) {
   if (!workbook.googleId) return { ok: false, error: 'Este libro no vino de Google.' };
 
-  // Cada pestaña viaja en BLOQUES de filas en peticiones separadas: el primer
-  // bloque limpia la pestaña (clear) y los demas escriben en su offset. Una
-  // pestaña vacia manda un solo bloque sin valores, que solo limpia.
+  // Guardado por DIFERENCIAS: cada peticion lleva solo las celdas cambiadas de
+  // una pestaña (troceadas si fueran muchas — el proxy corta cuerpos grandes).
+  const MAX_BYTES = 300 * 1024;
   const peticiones = [];
+  const hojasConCambios = [];
+  const origen = workbook.origenGoogle || {};
   for (const s of workbook.sheets) {
-    const matriz = hojaAMatriz(s);
-    const bloques = matriz.length ? partirEnBloques(matriz) : [{ startRow: 0, values: [] }];
-    bloques.forEach((b, i) => {
-      peticiones.push({ name: s.name, values: b.values, startRow: b.startRow, clear: i === 0 });
-    });
+    const updates = diferencias(hojaAMatriz(s), origen[s.name] || []);
+    if (!updates.length) continue;
+    hojasConCambios.push(s.name);
+    let grupo = []; let bytes = 0;
+    for (const u of updates) {
+      const b = JSON.stringify(u).length + 1;
+      if (grupo.length && bytes + b > MAX_BYTES) {
+        peticiones.push({ name: s.name, updates: grupo });
+        grupo = []; bytes = 0;
+      }
+      grupo.push(u); bytes += b;
+    }
+    if (grupo.length) peticiones.push({ name: s.name, updates: grupo });
+  }
+
+  if (!peticiones.length) {
+    return { ok: true, sinCambios: true, skipped: [], updatedCells: 0, spreadsheetTitle: '' };
   }
 
   let updatedCells = 0;
@@ -249,11 +308,16 @@ export async function guardarEnGoogle(workbook) {
     for (const n of data.skipped || []) skipped.add(n);
   }
 
-  // Si TODAS las pestañas de MOS fueron omitidas, nada se escribio: es un error
-  // (los nombres no coinciden con los de Google), no un guardado exitoso.
-  if (skipped.size >= workbook.sheets.length) {
+  // Si TODAS las pestañas con cambios fueron omitidas, nada se escribio: es un
+  // error (los nombres no coinciden con los de Google), no un guardado exitoso.
+  if (hojasConCambios.length && hojasConCambios.every(n => skipped.has(n))) {
     return { ok: false, error: `Ninguna pestaña coincide con las de Google: ${[...skipped].join(', ')}` };
   }
+
+  // El guardado quedo aplicado: lo actual pasa a ser el nuevo punto de
+  // comparacion para el siguiente diff.
+  const nuevoOrigen = {};
+  for (const s of workbook.sheets) nuevoOrigen[s.name] = hojaAMatriz(s);
 
   return {
     ok: true,
@@ -263,5 +327,6 @@ export async function guardarEnGoogle(workbook) {
     // usuario mira otro archivo".
     updatedCells,
     spreadsheetTitle,
+    nuevoOrigen,
   };
 }

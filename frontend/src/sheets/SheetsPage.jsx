@@ -71,7 +71,8 @@ export default function SheetsPage() {
   const alGuardarGoogle = async () => {
     const res = await guardarEnGoogleAction();
     if (res.ok) {
-      toast.success(res.skipped?.length
+      if (res.sinCambios) toast.info('No hay cambios que guardar.');
+      else toast.success(res.skipped?.length
         ? `Guardado en Google. Pestañas nuevas no escritas: ${res.skipped.join(', ')}`
         : 'Guardado en Google Sheets');
     } else if (res.necesitaConectar) {
