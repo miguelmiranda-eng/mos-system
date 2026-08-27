@@ -42,7 +42,6 @@ import { AutomationsModal } from "./dashboard/AutomationsModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { SystemGuideModal } from "./dashboard/SystemGuideModal";
-import { ImportExcelModal } from "./dashboard/ImportExcelModal";
 import { SeedPackingLinkModal } from "./dashboard/SeedPackingLinkModal";
 // Existing top-level components
 import AnalyticsView from "./AnalyticsView";
@@ -178,7 +177,6 @@ const Dashboard = () => {
   const [showCapacityPlan, setShowCapacityPlan] = useState(false);
   const [showProductionScreen, setShowProductionScreen] = useState(false);
   const [showFormFields, setShowFormFields] = useState(false);
-  const [showImportExcel, setShowImportExcel] = useState(false);
   const [showSeedLink, setShowSeedLink] = useState(false);
   const [showBoardVisibility, setShowBoardVisibility] = useState(false);
   const [savedViews, setSavedViews] = useState({});
@@ -2189,7 +2187,6 @@ const Dashboard = () => {
                 </PopoverContent>
               </Popover>
 
-              <button onClick={() => setShowImportExcel(true)} title="Importar Excel" className="p-2.5 rounded-lg hover:bg-emerald-600/10 text-emerald-600 transition-all"><FileDown size={18} /></button>
               <button onClick={() => setShowSeedLink(true)} title="Sembrar enlace de packing en órdenes" className="p-2.5 rounded-lg hover:bg-indigo-600/10 text-indigo-500 transition-all" data-testid="open-seed-link"><Link2 size={18} /></button>
             </div>
           )}
@@ -3055,8 +3052,6 @@ const Dashboard = () => {
 
       <SystemGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
 
-      {/* Import Excel Modal */}
-      <ImportExcelModal isOpen={showImportExcel} onClose={() => setShowImportExcel(false)} onImportSuccess={() => fetchOrders()} />
       <SeedPackingLinkModal isOpen={showSeedLink} onClose={() => setShowSeedLink(false)} onSeeded={() => fetchOrders()} />
       {/* Enterprise Side-Drawer Detail View */}
       {/* Barra de navegación inferior — solo móvil. Cada acción usa lo que ya existe. */}
