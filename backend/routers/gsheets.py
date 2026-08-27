@@ -15,6 +15,7 @@ completo y un endpoint aparte; se deja para despues.
 """
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -218,7 +219,10 @@ async def _get_sheets_service(user_id: str):
     )
     try:
         if creds.expired and creds.refresh_token:
-            creds.refresh(GoogleRequest())
+            # En hilo aparte: cada llamada de red sincrona dentro del servidor
+            # async congela el event loop; si se congela demasiado, el proxy da
+            # el servicio por muerto y responde 502 a las peticiones en vuelo.
+            await run_in_threadpool(creds.refresh, GoogleRequest())
             creds_data['token'] = creds.token
             creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
             await db.user_google_tokens.update_one(
@@ -348,11 +352,14 @@ async def read_sheet(request: Request, url: str):
         raise HTTPException(status_code=401, detail="need_connect")
 
     # 1) Titulos y dimensiones (llamada chica y confiable).
+    # Todas las llamadas a Google van en hilo aparte (run_in_threadpool): son
+    # sincronas y bloquean el event loop; un bloqueo largo hace que el proxy de
+    # el servicio por muerto y corte con 502 las peticiones en vuelo.
     try:
-        meta = service.spreadsheets().get(
+        meta = await run_in_threadpool(lambda: service.spreadsheets().get(
             spreadsheetId=sheet_id,
             fields="properties.title,sheets.properties(title,gridProperties(rowCount,columnCount))",
-        ).execute()
+        ).execute())
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -369,11 +376,11 @@ async def read_sheet(request: Request, url: str):
 
     # 2) Valores (camino probado: el valor MOSTRADO por Google).
     try:
-        valores = service.spreadsheets().values().batchGet(
+        valores = await run_in_threadpool(lambda: service.spreadsheets().values().batchGet(
             spreadsheetId=sheet_id,
             ranges=[f"'{t}'" for t in titulos],
             majorDimension="ROWS",
-        ).execute()
+        ).execute())
         rangos = valores.get("valueRanges", [])
     except Exception as e:
         logging.error(f"GSHEETS read values error: {e}")
@@ -387,7 +394,7 @@ async def read_sheet(request: Request, url: str):
         n_filas = len(vals)
         n_cols = max((len(f) for f in vals), default=0)
         extension.append((t, n_filas, n_cols))
-    fmt_por_titulo, fmt_error = _leer_formato(service, sheet_id, extension)
+    fmt_por_titulo, fmt_error = await run_in_threadpool(_leer_formato, service, sheet_id, extension)
 
     sheets = []
     for i, t in enumerate(titulos):
@@ -408,7 +415,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-6",
+        "build": "gsheets-diag-7",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -461,8 +468,8 @@ async def write_sheet(request: Request):
     logging.error("GSHEETS-TRACE write 4: servicio de Google listo")
 
     try:
-        meta = service.spreadsheets().get(
-            spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()
+        meta = await run_in_threadpool(lambda: service.spreadsheets().get(
+            spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute())
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -507,13 +514,13 @@ async def write_sheet(request: Request):
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
         # sin tocar el formato; luego se escriben los nuevos.
         if a_borrar:
-            service.spreadsheets().values().batchClear(
-                spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
+            await run_in_threadpool(lambda: service.spreadsheets().values().batchClear(
+                spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute())
             logging.error("GSHEETS-TRACE write 6: clear ok")
         if data:
-            resp = service.spreadsheets().values().batchUpdate(
+            resp = await run_in_threadpool(lambda: service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
-                body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
+                body={"valueInputOption": "USER_ENTERED", "data": data}).execute())
             # Confirmacion de Google: cuantas celdas actualizo de verdad.
             celdas_escritas = int(resp.get("totalUpdatedCells") or 0)
             logging.error(f"GSHEETS-TRACE write 7: update ok ({celdas_escritas} celdas)")
@@ -547,7 +554,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-6",
+        "build": "gsheets-diag-7",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
