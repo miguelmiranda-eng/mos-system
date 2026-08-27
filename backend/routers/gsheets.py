@@ -297,15 +297,19 @@ def _leer_formato(service, sheet_id, extension_usada):
             spreadsheetId=sheet_id,
             includeGridData=True,
             ranges=ranges,
+            # OJO: rowData.values va UNA sola vez, con todos sus miembros dentro
+            # del mismo grupo — repetir el campo (una vez con parentesis y otra
+            # con puntos) hace que Google rechace la mascara entera con 400.
             fields=(
                 "sheets.properties.title,sheets.merges,"
                 "sheets.data(startRow,startColumn,columnMetadata.pixelSize,"
-                "rowData.values(userEnteredFormat(backgroundColor,horizontalAlignment,"
+                "rowData.values("
+                "userEnteredFormat(backgroundColor,horizontalAlignment,"
                 "wrapStrategy,textFormat(bold,italic,underline,foregroundColor,"
                 "fontFamily,fontSize)),"
                 # Formula real de la celda y validacion de datos (desplegables).
-                "rowData.values.userEnteredValue.formulaValue,"
-                "rowData.values.dataValidation.condition))"
+                "userEnteredValue(formulaValue),"
+                "dataValidation(condition)))"
             ),
         ).execute()
         for sh in resp.get("sheets", []):
@@ -450,7 +454,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-11",
+        "build": "gsheets-diag-12",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -612,7 +616,7 @@ async def trazas():
     el proceso se reinicio (crash).
     """
     return {
-        "build": "gsheets-diag-11",
+        "build": "gsheets-diag-12",
         "pid": os.getpid(),
         "arranque_proceso": ARRANQUE_PROCESO,
         "ahora": datetime.now(timezone.utc).isoformat(),
@@ -648,7 +652,7 @@ async def diag_write(request: Request, url: str):
 
     service = await _get_sheets_service(user["user_id"])
     if not service:
-        return {"build": "gsheets-diag-11", "error": "need_connect", "pasos": pasos}
+        return {"build": "gsheets-diag-12", "error": "need_connect", "pasos": pasos}
 
     meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
         spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
@@ -666,7 +670,7 @@ async def diag_write(request: Request, url: str):
             spreadsheetId=sheet_id, range=rango, body={}).execute()))
 
     return {
-        "build": "gsheets-diag-11",
+        "build": "gsheets-diag-12",
         "titulo": (meta or {}).get("properties", {}).get("title"),
         "primera_pestana": primera,
         "pasos": pasos,
@@ -681,7 +685,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-11",
+        "build": "gsheets-diag-12",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
