@@ -596,12 +596,16 @@ const Cell = React.memo(function Cell({
 }) {
   const st = cell?.style || {};
   const alineaDerecha = st.align ? st.align === 'right' : alineaNum;
+  // Casilla de verificacion: la celda se dibuja como checkbox y el clic la
+  // palomea. El valor sigue siendo TRUE/FALSE (editable en crudo con F2).
+  const esCasilla = !!st.checkbox && !editando;
+  const marcada = esCasilla && /^(true|verdadero|1|si|sí)$/i.test(String(cell?.value ?? '').trim());
 
   const estilo = {
     // posStyle: para celdas congeladas (position sticky). Por defecto, absoluta.
     ...(posStyle || { position: 'absolute', top, left }),
     width, height,
-    justifyContent: st.align === 'center' ? 'center' : (alineaDerecha ? 'flex-end' : 'flex-start'),
+    justifyContent: (st.checkbox || st.align === 'center') ? 'center' : (alineaDerecha ? 'flex-end' : 'flex-start'),
     color: st.color || undefined,
     backgroundColor: st.fill || undefined,
     fontFamily: st.fontFamily || DEFAULT_FONT,
@@ -614,6 +618,7 @@ const Cell = React.memo(function Cell({
       onMouseDown={onMouseDown}
       onMouseEnter={onMouseEnter}
       onDoubleClick={onDoubleClick}
+      onClick={esCasilla ? () => useWorkbook.getState().alternarCasilla(row, col) : undefined}
       className={cn(
         'px-1.5 leading-none flex items-center overflow-hidden',
         // Las lineas de la cuadricula se pueden ocultar por hoja.
@@ -634,9 +639,20 @@ const Cell = React.memo(function Cell({
     >
       {editando
         ? <CellEditor row={row} col={col} cell={cell} onCommit={onCommit} />
-        : display}
-      {/* Indicador de desplegable (validacion traida de Google). */}
-      {!editando && st.lista?.length > 0 && (
+        : (esCasilla ? (
+          <span className={cn(
+            'inline-flex items-center justify-center w-[14px] h-[14px] rounded-[3px] border transition-colors',
+            marcada ? 'bg-royal border-royal text-white' : 'border-muted-foreground/50 bg-background',
+          )}>
+            {marcada && (
+              <svg viewBox="0 0 10 10" className="w-[9px] h-[9px]" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1.5 5.5l2.5 2.5 4.5-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </span>
+        ) : display)}
+      {/* Indicador de desplegable (lista de validacion). */}
+      {!editando && !esCasilla && st.lista?.length > 0 && (
         <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground/50 pointer-events-none">▾</span>
       )}
     </div>

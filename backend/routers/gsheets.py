@@ -334,6 +334,9 @@ def _leer_formato(service, sheet_id, extension_usada):
                         f["lista"] = [v for v in vals if v]
                     elif cond.get("type") == "ONE_OF_RANGE" and vals and vals[0]:
                         f["listaRango"] = vals[0]
+                    elif cond.get("type") == "BOOLEAN":
+                        # Checkbox de Google -> casilla de verificacion en MOS.
+                        f["checkbox"] = True
                     if f:
                         f["r"] = base_r + r
                         f["c"] = base_c + c

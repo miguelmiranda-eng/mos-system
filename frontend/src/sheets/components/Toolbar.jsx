@@ -4,10 +4,10 @@ import {
   Undo2, Redo2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
   Rows3, Columns3, Trash2, Snowflake, EyeOff, Eye,
   Merge, Split, ArrowDownAZ, ArrowUpAZ, Baseline, PaintBucket, Ban, ChevronDown,
-  WrapText, Paintbrush, Grid3x3, Filter,
+  WrapText, Paintbrush, Grid3x3, Filter, ListChecks, CheckSquare,
 } from 'lucide-react';
 import { useWorkbook } from '../store/useWorkbook';
-import { FORMATS, FONT_FAMILIES, FONT_SIZES } from '../engine/model';
+import { FORMATS, FONT_FAMILIES, FONT_SIZES, getActiveSheet, getCell } from '../engine/model';
 import { cn } from '../../lib/utils';
 
 // Paleta fija (la de Google Sheets). Colores explicitos, no un selector que
@@ -35,6 +35,82 @@ const Btn = ({ onClick, activo, disabled, title, children }) => (
 );
 
 const Sep = () => <div className="w-px h-5 bg-border mx-1 flex-shrink-0" />;
+
+/**
+ * Validacion de datos: lista desplegable y casillas de verificacion sobre la
+ * seleccion. Mismo patron de PORTAL que la paleta de colores (la barra tiene
+ * overflow y recortaria el panel).
+ */
+function ValidacionBtn() {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState({ left: 0, top: 0 });
+  const [texto, setTexto] = useState('');
+  const btnRef = useRef(null);
+  const listaDesplegable = useWorkbook(s => s.listaDesplegable);
+  const casillas = useWorkbook(s => s.casillas);
+
+  const abrir = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ left: r.left, top: r.bottom + 4 });
+    // Precarga las opciones de la celda activa, para editar una lista existente.
+    const { workbook, active } = useWorkbook.getState();
+    const cell = getCell(getActiveSheet(workbook), active.row, active.col);
+    setTexto((cell?.style?.lista || []).join('\n'));
+    setAbierto(v => !v);
+  };
+
+  return (
+    <div className="h-7 flex items-center">
+      <button
+        ref={btnRef} onClick={abrir}
+        title="Validación de datos: lista desplegable o casillas"
+        className={cn(
+          'h-7 min-w-7 px-1.5 rounded flex items-center justify-center transition-colors',
+          abierto ? 'bg-royal/15 text-royal'
+            : 'text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground',
+        )}
+      >
+        <ListChecks size={14} />
+      </button>
+      {abierto && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setAbierto(false)} />
+          <div style={{ left: pos.left, top: pos.top }}
+            className="fixed z-50 w-60 rounded-md border border-border bg-card shadow-lg p-2.5 space-y-2">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Lista desplegable
+            </div>
+            <textarea
+              value={texto} onChange={(e) => setTexto(e.target.value)} rows={5}
+              placeholder={'Una opción por línea:\nS\nM\nL\nXL'}
+              className="w-full rounded border border-border bg-background p-1.5 text-[12px] resize-y outline-none focus:border-royal"
+            />
+            <button
+              onClick={() => { listaDesplegable(texto.split('\n')); setAbierto(false); }}
+              className="w-full h-7 rounded bg-royal text-white text-[12px] font-semibold hover:opacity-90"
+            >
+              Aplicar a la selección
+            </button>
+            <div className="h-px bg-border" />
+            <button
+              onClick={() => { casillas(true); setAbierto(false); }}
+              className="w-full h-7 rounded border border-border text-[12px] text-foreground flex items-center justify-center gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              <CheckSquare size={13} /> Casillas de verificación
+            </button>
+            <button
+              onClick={() => { listaDesplegable(null); setAbierto(false); }}
+              className="w-full h-7 rounded border border-border text-[12px] text-muted-foreground hover:text-foreground"
+            >
+              Quitar validación
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  );
+}
 
 /**
  * Selector de color: abre una paleta fija con opcion "Sin color".
@@ -184,6 +260,7 @@ export function Toolbar() {
       <Btn onClick={alternarAjusteTexto} title="Ajustar texto (varias lineas)"><WrapText size={14} /></Btn>
       <Btn onClick={combinar} title="Combinar celdas"><Merge size={14} /></Btn>
       <Btn onClick={separar} title="Separar celdas"><Split size={14} /></Btn>
+      <ValidacionBtn />
 
       <Sep />
 

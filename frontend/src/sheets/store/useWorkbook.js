@@ -254,6 +254,33 @@ export const useWorkbook = create((set, get) => ({
     ));
   },
 
+  // ── Validacion de datos (desplegables y casillas) ─────────────────────────
+
+  /** Pone (o quita, con lista vacia/null) un desplegable en la seleccion. */
+  listaDesplegable(opciones) {
+    const limpias = (opciones || []).map(o => String(o).trim()).filter(Boolean);
+    get().aplicarEstilo(
+      { lista: limpias.length ? limpias : null, checkbox: null },
+      limpias.length ? 'Lista desplegable' : 'Quitar desplegable',
+    );
+  },
+
+  /** Convierte la seleccion en casillas de verificacion (o las quita). */
+  casillas(activar) {
+    get().aplicarEstilo(
+      { checkbox: activar ? true : null, lista: null },
+      activar ? 'Casillas de verificación' : 'Quitar casillas',
+    );
+  },
+
+  /** Palomear/despalomear una casilla con clic (conserva estilo: escribirCelda). */
+  alternarCasilla(row, col) {
+    const cell = getCell(getActiveSheet(get().workbook), row, col);
+    if (!cell?.style?.checkbox) return;
+    const marcada = /^(true|verdadero|1|si|sí)$/i.test(String(cell.value ?? '').trim());
+    get().escribirCelda(row, col, marcada ? 'FALSE' : 'TRUE');
+  },
+
   // ── Copiar / pegar formato (brocha) ──────────────────────────────────────
   copiarFormato() {
     const { workbook, active } = get();

@@ -154,6 +154,7 @@ export async function importarGoogleSheet(url) {
         ? f.lista.map(String)
         : (f.listaRango ? resolverListaRango(f.listaRango, hoja.name, valoresPorHoja) : null);
       if (lista) estilo.lista = lista;
+      if (f.checkbox) estilo.checkbox = true;   // checkbox de Google
 
       // Formula real de Google (llega con "="); el motor de MOS la calcula al
       // editar los datos, y el guardado por diff no la toca si no cambio.
