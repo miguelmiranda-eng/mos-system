@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useMemo, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useWorkbook } from '../store/useWorkbook';
 import {
@@ -651,9 +652,12 @@ const Cell = React.memo(function Cell({
             )}
           </span>
         ) : display)}
-      {/* Indicador de desplegable (lista de validacion). */}
+      {/* Indicador de desplegable: un clic en el ▾ abre el editor con las opciones. */}
       {!editando && !esCasilla && st.lista?.length > 0 && (
-        <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground/50 pointer-events-none">▾</span>
+        <span
+          onClick={(e) => { e.stopPropagation(); useWorkbook.getState().empezarEdicion(row, col); }}
+          className="absolute right-0 top-0 bottom-0 w-3.5 flex items-center justify-center text-[8px] text-muted-foreground/60 cursor-pointer hover:text-foreground"
+        >▾</span>
       )}
     </div>
   );
@@ -703,19 +707,40 @@ function CellEditor({ row, col, cell, onCommit }) {
     return () => document.removeEventListener('mousedown', alMousedownFuera, true);
   }, []);
 
-  // Desplegable (validacion de datos traida de Google): las opciones se ofrecen
-  // con un <datalist> nativo — sugiere al escribir o al desplegar, pero no
-  // impide teclear otro valor (v1: sugerencia, no candado).
+  // Desplegable (validacion de datos): panel PROPIO con TODAS las opciones.
+  // El <datalist> nativo filtraba por el valor ya escrito en la celda y no
+  // mostraba nada — parecia que el desplegable venia vacio. Este panel muestra
+  // todo al abrir, filtra solo cuando el usuario TECLEA, y elige con clic o
+  // flechas+Enter. No impide teclear otro valor (v1: sugerencia, no candado).
   const opciones = cell?.style?.lista;
-  const listaId = opciones?.length ? `dl_${row}_${col}` : undefined;
+  const [rectPanel, setRectPanel] = useState(null);
+  const [filtro, setFiltro] = useState(null);   // null = sin teclear: todas
+  const [idx, setIdx] = useState(-1);
+  useEffect(() => {
+    if (opciones?.length && ref.current) setRectPanel(ref.current.getBoundingClientRect());
+  }, [opciones]);
+
+  const textoActual = filtro ?? inicial ?? '';
+  const visibles = !opciones?.length ? [] : (
+    (filtro == null || filtro === '')
+      ? opciones
+      : opciones.filter(o => o.toLowerCase().includes(filtro.toLowerCase()))
+  );
+  const panelAbierto = opciones?.length > 0 && rectPanel && visibles.length > 0
+    && !textoActual.startsWith('=');
+
+  const elegirOpcion = (o) => {
+    ref.current.value = o;
+    asist.cerrar();
+    confirmar(1, 0);
+  };
 
   return (
     <>
       <input
         ref={ref}
         defaultValue={inicial}
-        list={listaId}
-        onChange={asist.onInput}
+        onChange={(e) => { setFiltro(e.target.value); setIdx(-1); asist.onInput(e); }}
         onKeyUp={asist.onInput}
         onClick={asist.onInput}
         onBlur={() => { confirmar(0, 0); asist.cerrar(); }}
@@ -723,16 +748,45 @@ function CellEditor({ row, col, cell, onCommit }) {
           e.stopPropagation();
           // El asistente se queda con las teclas de navegacion si su lista esta abierta.
           if (asist.onKeyDown(e)) return;
+          // Navegacion del desplegable: flechas + Enter eligen una opcion.
+          if (panelAbierto) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(visibles.length - 1, i + 1)); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); return; }
+            if (e.key === 'Enter' && idx >= 0 && visibles[idx] != null) {
+              e.preventDefault(); elegirOpcion(visibles[idx]); return;
+            }
+          }
           if (e.key === 'Enter') { e.preventDefault(); asist.cerrar(); confirmar(1, 0); }
           else if (e.key === 'Tab') { e.preventDefault(); asist.cerrar(); confirmar(0, e.shiftKey ? -1 : 1); }
           else if (e.key === 'Escape') { e.preventDefault(); listo.current = true; asist.cerrar(); cancelar(); }
         }}
         className="w-full h-full bg-background outline-none text-[13px] px-0 select-text"
       />
-      {listaId && (
-        <datalist id={listaId}>
-          {opciones.map((o, i) => <option key={i} value={o} />)}
-        </datalist>
+      {panelAbierto && createPortal(
+        // data-formula-assist: exime al panel del "mousedown fuera confirma y
+        // desmonta" del editor, igual que la ventana del asistente de formulas.
+        <div
+          data-formula-assist=""
+          style={{ left: rectPanel.left, top: rectPanel.bottom + 2, minWidth: Math.max(rectPanel.width, 120) }}
+          className="fixed z-[90] max-h-48 overflow-y-auto rounded-md border border-border bg-card shadow-lg py-1"
+        >
+          {visibles.map((o, i) => (
+            <div
+              key={i}
+              // mousedown con preventDefault: elige la opcion SIN quitarle el
+              // foco al input (el blur confirmaria el valor viejo antes).
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); elegirOpcion(o); }}
+              className={cn(
+                'px-2.5 py-1 text-[12.5px] cursor-pointer whitespace-nowrap',
+                i === idx ? 'bg-royal/15 text-royal' : 'text-foreground hover:bg-black/5 dark:hover:bg-white/5',
+                o === inicial && i !== idx && 'font-semibold',
+              )}
+            >
+              {o}
+            </div>
+          ))}
+        </div>,
+        document.body,
       )}
       {asist.overlay}
     </>

@@ -261,7 +261,7 @@ export default function SheetsPage() {
             {/* v6: marcador visible de la version del frontend que CORRE el
                 navegador (el servidor puede tener otra si la cache sirvio un
                 index.html viejo). Subirlo en cada cambio del modulo. */}
-            <FileSpreadsheet size={13} /> Conectado a Google Sheets <span className="opacity-50">v9</span>
+            <FileSpreadsheet size={13} /> Conectado a Google Sheets <span className="opacity-50">v10</span>
             {/* Diagnostico persistente: se lee en cualquier momento (no como los
                 toasts, que desaparecen). estilos = formato traido de Google. */}
             {gsInfo && !gsInfo.formatoError && <span> · {gsInfo.estilos} estilos</span>}
