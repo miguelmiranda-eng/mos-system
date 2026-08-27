@@ -257,7 +257,10 @@ export default function SheetsPage() {
       {workbook.googleUrl && (
         <div className="h-8 flex items-center gap-3 px-3 border-b border-border bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 flex-shrink-0 text-[12px]">
           <span className="flex items-center gap-1.5">
-            <FileSpreadsheet size={13} /> Conectado a Google Sheets
+            {/* v6: marcador visible de la version del frontend que CORRE el
+                navegador (el servidor puede tener otra si la cache sirvio un
+                index.html viejo). Subirlo en cada cambio del modulo. */}
+            <FileSpreadsheet size={13} /> Conectado a Google Sheets <span className="opacity-50">v6</span>
             {/* Diagnostico persistente: se lee en cualquier momento (no como los
                 toasts, que desaparecen). estilos = formato traido de Google. */}
             {gsInfo && !gsInfo.formatoError && <span> · {gsInfo.estilos} estilos</span>}

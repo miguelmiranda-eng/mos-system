@@ -181,7 +181,7 @@ function hojaAMatriz(sheet) {
  * de produccion corta los cuerpos de ~1MB sin responder (el navegador lo ve
  * como "Failed to fetch"), asi que ningun POST debe acercarse a ese limite.
  */
-export function partirEnBloques(matriz, maxBytes = 600 * 1024) {
+export function partirEnBloques(matriz, maxBytes = 400 * 1024) {
   const bloques = [];
   let inicio = 0; let bytes = 0; let filas = [];
   for (let i = 0; i < matriz.length; i++) {
