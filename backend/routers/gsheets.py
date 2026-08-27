@@ -431,7 +431,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-8",
+        "build": "gsheets-diag-9",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -488,6 +488,7 @@ async def write_sheet(request: Request):
             spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute())
     except Exception as e:
         msg = str(e)
+        _traza(f"write ERROR en meta: {msg[:300]}")
         if "403" in msg or "PERMISSION" in msg.upper():
             raise HTTPException(status_code=403, detail="no_edit")
         if "404" in msg:
@@ -544,7 +545,7 @@ async def write_sheet(request: Request):
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
             raise HTTPException(status_code=403, detail="no_edit")
-        logging.error(f"GSHEETS write error: {e}")
+        _traza(f"write ERROR en clear/update: {msg[:300]}")
         # DIAGNOSTICO TEMPORAL: se devuelve el error real de Google para verlo en
         # el toast. Volver a "Error escribiendo en la hoja de Google." al cerrar.
         raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
@@ -563,15 +564,16 @@ async def write_sheet(request: Request):
 
 
 @router.get("/trazas")
-async def trazas(request: Request):
+async def trazas():
     """
-    TEMPORAL: muestra en el navegador las trazas del guardado (buffer en
-    memoria). Si tras un guardado fallido el buffer llega vacio y
-    `arranque_proceso` es reciente, el proceso se reinicio (crash).
+    TEMPORAL: muestra las trazas del guardado (buffer en memoria). SIN auth a
+    proposito: no contiene datos sensibles (solo "write N: ..." y conteos) y
+    permite diagnosticar desde fuera sin la sesion del usuario. Si tras un
+    guardado fallido el buffer llega vacio y `arranque_proceso` es reciente,
+    el proceso se reinicio (crash).
     """
-    await require_auth(request)
     return {
-        "build": "gsheets-diag-8",
+        "build": "gsheets-diag-9",
         "pid": os.getpid(),
         "arranque_proceso": ARRANQUE_PROCESO,
         "ahora": datetime.now(timezone.utc).isoformat(),
@@ -607,7 +609,7 @@ async def diag_write(request: Request, url: str):
 
     service = await _get_sheets_service(user["user_id"])
     if not service:
-        return {"build": "gsheets-diag-8", "error": "need_connect", "pasos": pasos}
+        return {"build": "gsheets-diag-9", "error": "need_connect", "pasos": pasos}
 
     meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
         spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
@@ -625,7 +627,7 @@ async def diag_write(request: Request, url: str):
             spreadsheetId=sheet_id, range=rango, body={}).execute()))
 
     return {
-        "build": "gsheets-diag-8",
+        "build": "gsheets-diag-9",
         "titulo": (meta or {}).get("properties", {}).get("title"),
         "primera_pestana": primera,
         "pasos": pasos,
@@ -640,7 +642,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-8",
+        "build": "gsheets-diag-9",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
