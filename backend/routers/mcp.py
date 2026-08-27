@@ -155,6 +155,10 @@ async def _buscar_orden(args):
     texto = str(args.get("busqueda") or "").strip()
     if not texto:
         return {"error": "Falta `busqueda` (número de orden, PO, cliente o design)."}
+    # Un codigo de caja/LPN/recibo del WMS no es una orden: se contesta con el
+    # historial de la caja (quien la recibio, donde esta, sus movimientos).
+    if re.match(r"^(BOX-|LPN|RCV_)", texto, re.IGNORECASE):
+        return await _historial_caja({"caja": texto})
     rx = {"$regex": re.escape(texto), "$options": "i"}
     q = {**VIVAS, "$or": [
         {"order_number": rx}, {"customer_po": rx}, {"client": rx},
@@ -275,6 +279,53 @@ async def _pick_tickets(args):
                          "asignado_a": d.get("assigned_to_name")} for d in docs]}
 
 
+async def _historial_caja(args):
+    """Ciclo de vida de una caja del WMS: quien la recibio, estado, movimientos."""
+    cid = str(args.get("caja") or "").strip()
+    if not cid:
+        return {"error": "Falta `caja` (el código, ej. BOX-037086)."}
+
+    box = await db.wms_boxes.find_one(
+        {"$or": [{"box_id": cid}, {"barcode": cid}, {"lpn_id": cid}, {"physical_lpn": cid}]},
+        {"_id": 0})
+    receiving = None
+    if box and box.get("receiving_id"):
+        receiving = await db.wms_receiving.find_one({"receiving_id": box["receiving_id"]}, {"_id": 0})
+    if not box:
+        # Caja ausente de wms_boxes (huerfana / embarcada): buscarla en recibos.
+        receiving = await db.wms_receiving.find_one({"boxes.box_id": cid}, {"_id": 0})
+
+    movimientos = await db.wms_movements.find({"$or": [
+        {"details.box_id": cid}, {"details.box_ids": cid}, {"details.boxes.box_id": cid},
+    ]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+
+    if not box and not receiving and not movimientos:
+        return {"error": f"Sin rastro de la caja {cid} en cajas, recibos ni movimientos."}
+
+    out = {"caja": cid}
+    if receiving:
+        out["recibida_por"] = receiving.get("received_by_name") or receiving.get("received_by")
+        out["recibida_cuando"] = receiving.get("created_at")
+        out["recibo"] = receiving.get("receiving_id")
+        out["cliente"] = receiving.get("customer")
+        if receiving.get("asn_reference"):
+            out["asn"] = receiving["asn_reference"]
+    if box:
+        out.setdefault("recibida_por", box.get("received_by_name"))
+        out["estado"] = box.get("status")
+        out["ubicacion"] = box.get("location")
+        out["piezas"] = box.get("units")
+        out["sku"] = " / ".join(str(box.get(k) or "") for k in ("style", "color", "size")).strip(" /")
+        if box.get("last_pick_ticket"):
+            out["ultimo_pick_ticket"] = box["last_pick_ticket"]
+    out["movimientos"] = [{
+        "cuando": m.get("created_at"),
+        "quien": m.get("user_name"),
+        "tipo": m.get("type"),
+    } for m in movimientos[-25:]]
+    return out
+
+
 async def _resumen_tableros(args):
     salida = {}
     async for r in db.orders.aggregate([
@@ -343,6 +394,15 @@ HERRAMIENTAS = {
         _resumen_tableros,
         "Cuántas órdenes y piezas hay en cada tablero. Sirve para una foto general.",
         {"type": "object", "properties": {}},
+    ),
+    "historial_caja": (
+        _historial_caja,
+        "Ciclo de vida de una caja del almacén (WMS) por su código (BOX-…, LPN o "
+        "recibo): quién la recibió y cuándo, estado y ubicación actuales, piezas, "
+        "y sus movimientos con quién los hizo.",
+        {"type": "object",
+         "properties": {"caja": {"type": "string", "description": "Código de la caja, ej. BOX-037086"}},
+         "required": ["caja"]},
     ),
 }
 
