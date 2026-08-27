@@ -408,7 +408,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-5",
+        "build": "gsheets-diag-6",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -441,8 +441,15 @@ async def write_sheet(request: Request):
       401 need_connect -> falta conectar / permiso
       403 no_edit      -> el usuario no puede editar esa hoja
     """
+    # GSHEETS-TRACE: trazas TEMPORALES en logging.error (para que salgan aunque
+    # el nivel de log filtre INFO). El guardado muere con 502 sin llegar ningun
+    # error a FastAPI; estas lineas dicen en el log de EasyPanel hasta que paso
+    # llego la peticion. Quitar al cerrar el problema.
+    logging.error("GSHEETS-TRACE write 1: peticion recibida")
     user = await require_auth(request)
+    logging.error("GSHEETS-TRACE write 2: auth ok")
     body = await request.json()
+    logging.error(f"GSHEETS-TRACE write 3: body leido ({len(body.get('sheets', []))} bloques)")
     sheet_id = body.get("googleId")
     entrada = body.get("sheets", [])
     if not sheet_id or not isinstance(entrada, list):
@@ -451,6 +458,7 @@ async def write_sheet(request: Request):
     service = await _get_sheets_service(user["user_id"])
     if not service:
         raise HTTPException(status_code=401, detail="need_connect")
+    logging.error("GSHEETS-TRACE write 4: servicio de Google listo")
 
     try:
         meta = service.spreadsheets().get(
@@ -493,6 +501,7 @@ async def write_sheet(request: Request):
             "spreadsheetTitle": (meta.get("properties") or {}).get("title", ""),
         }
 
+    logging.error(f"GSHEETS-TRACE write 5: meta ok, a escribir {len(data)} rangos, limpiar {len(a_borrar)}")
     celdas_escritas = 0
     try:
         # Primero se limpian los valores (para reflejar filas/columnas borradas),
@@ -500,12 +509,14 @@ async def write_sheet(request: Request):
         if a_borrar:
             service.spreadsheets().values().batchClear(
                 spreadsheetId=sheet_id, body={"ranges": a_borrar}).execute()
+            logging.error("GSHEETS-TRACE write 6: clear ok")
         if data:
             resp = service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
                 body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
             # Confirmacion de Google: cuantas celdas actualizo de verdad.
             celdas_escritas = int(resp.get("totalUpdatedCells") or 0)
+            logging.error(f"GSHEETS-TRACE write 7: update ok ({celdas_escritas} celdas)")
     except Exception as e:
         msg = str(e)
         if "403" in msg or "PERMISSION" in msg.upper():
@@ -516,6 +527,7 @@ async def write_sheet(request: Request):
         raise HTTPException(status_code=502, detail=f"Error escribiendo en Google: {msg[:400]}")
 
     await log_activity(user, "gsheets_write", {"sheet_id": sheet_id, "tabs": len(data), "cells": celdas_escritas})
+    logging.error("GSHEETS-TRACE write 8: fin, devolviendo respuesta")
     return {
         "ok": True,
         "written": len(data),
@@ -535,7 +547,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-5",
+        "build": "gsheets-diag-6",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),
