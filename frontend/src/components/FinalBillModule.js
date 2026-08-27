@@ -31,7 +31,10 @@ const COLUMNS = [
   { key: 'design', label: 'Design', sortable: true },
   { key: 'client', label: 'Client', sortable: true },
   { key: 'branding', label: 'Branding', sortable: true },
-  { key: 'qty', label: 'Final Unido Qty', sortable: true, align: 'right' },
+  // Qty = lo REQUERIDO por la orden. Final Unido Qty = el conteo que llega del
+  // Final Bill de Printavo (total_quantity). Antes iban revueltas en una columna.
+  { key: 'qty', label: 'Qty', sortable: true, align: 'right' },
+  { key: 'final_unido_qty', label: 'Final Unido Qty', sortable: true, align: 'right' },
   { key: 'total_amount', label: 'Total Amount', sortable: true, align: 'right' },
 ];
 
@@ -315,7 +318,8 @@ const FinalBillModule = () => {
         'Design': r.design,
         'Client': r.client,
         'Branding': r.branding,
-        'Final Unido Qty': r.qty,
+        'Qty': r.qty,
+        'Final Unido Qty': (r.final_unido_qty === null || r.final_unido_qty === undefined) ? '' : r.final_unido_qty,
         // Se exporta el número crudo, no "$1,234.00": en Excel el texto no suma.
         'Total Amount': (r.total_amount === null || r.total_amount === undefined) ? '' : r.total_amount,
         'Production Status': r.production_status,
@@ -324,7 +328,7 @@ const FinalBillModule = () => {
       }));
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(sheet);
-      ws['!cols'] = [12, 16, 13, 13, 18, 12, 26, 18, 15, 14, 22, 20, 20].map(wch => ({ wch }));
+      ws['!cols'] = [12, 16, 13, 13, 18, 12, 26, 18, 10, 15, 14, 22, 20, 20].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, ws, 'Final Bill');
       XLSX.writeFile(wb, `Final_Bill_${tab}_${todayStr()}.xlsx`);
       toast.success(`${sheet.length} renglones exportados`);
@@ -491,8 +495,13 @@ const FinalBillModule = () => {
           />
           <StatCard
             icon={Package} chip="bg-emerald-50 text-emerald-600"
-            label="Final Unido Qty" value={fmt(data?.totals?.units)}
-            sub="Total de unidades"
+            label="Qty" value={fmt(data?.totals?.units)}
+            sub="Requerido por las órdenes"
+          />
+          <StatCard
+            icon={Package} chip="bg-teal-50 text-teal-600"
+            label="Final Unido Qty" value={fmt(data?.totals?.final_unido_units)}
+            sub="Piezas del Final Bill (Printavo)"
           />
           <StatCard
             icon={DollarSign} chip="bg-violet-50 text-violet-600"
@@ -629,6 +638,16 @@ const FinalBillModule = () => {
                             >{fmtStamp(r.status_at)}</span>
                           );
                           else if (c.key === 'qty') content = <span className="font-semibold text-slate-800">{fmt(r.qty)}</span>;
+                          else if (c.key === 'final_unido_qty') content = (
+                            <span
+                              className={r.final_unido_qty === null || r.final_unido_qty === undefined
+                                ? 'text-slate-300'
+                                : 'font-semibold text-slate-800 tabular-nums'}
+                              title={r.final_unido_qty === null || r.final_unido_qty === undefined
+                                ? 'La orden todavía no tiene Final Bill aplicado desde Printavo'
+                                : 'Piezas del Final Bill (Printavo)'}
+                            >{fmt(r.final_unido_qty)}</span>
+                          );
                           else if (c.key === 'total_amount') content = (
                             <span
                               className={r.total_amount === null || r.total_amount === undefined

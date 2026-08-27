@@ -52,6 +52,7 @@ SORTABLE = {
     "client": "client",
     "branding": "branding",
     "qty": "quantity",
+    "final_unido_qty": "total_quantity",
     "status_at": "production_status_at",
     "total_amount": "invoice",
 }
@@ -98,7 +99,13 @@ def _row(o: dict) -> dict:
         "design": o.get("design_#") or o.get("desing_#") or "",
         "client": o.get("client") or "",
         "branding": o.get("branding") or "",
-        "qty": o.get("quantity") or o.get("total_quantity") or 0,
+        # Dos cantidades DISTINTAS que antes se colapsaban en una sola columna:
+        #   · qty            = lo REQUERIDO por la orden (campo `quantity`).
+        #   · final_unido_qty = el conteo de piezas del Final Bill de Printavo
+        #     (`total_quantity`, lo escribe printavo_sync.apply_final_bill). None
+        #     si aún no se factura, para que la columna diga "—" y no un 0 falso.
+        "qty": o.get("quantity") or 0,
+        "final_unido_qty": o.get("total_quantity"),
         "total_amount": _amount(o.get("invoice")),
         # Cuándo entró la orden a su estado actual. Se sella en orders.py al
         # cambiar el status y se rellenó hacia atrás desde activity_logs
@@ -194,18 +201,21 @@ async def list_final_bill(
     # ese denominador, "$669,856" sobre 1,705 órdenes se lee como el total de
     # todas cuando en realidad es el de 364.
     units = 0
+    final_unido_units = 0
     amount = None
     amount_orders = 0
     async for r in db.orders.aggregate([
         {"$match": query},
         {"$group": {
             "_id": None,
-            "u": {"$sum": {"$ifNull": ["$quantity", 0]}},
+            "u": {"$sum": {"$ifNull": ["$quantity", 0]}},          # Qty (requerido por la orden)
+            "fu": {"$sum": {"$ifNull": ["$total_quantity", 0]}},   # Final Unido Qty (Printavo)
             "a": {"$sum": {"$cond": [{"$isNumber": "$invoice"}, "$invoice", 0]}},
             "n": {"$sum": {"$cond": [{"$isNumber": "$invoice"}, 1, 0]}},
         }},
     ]):
         units = r.get("u") or 0
+        final_unido_units = r.get("fu") or 0
         amount_orders = r.get("n") or 0
         # Ninguna orden facturada → None, para que la tarjeta diga "—" en vez
         # de un $0.00 que parecería una suma real de ceros.
@@ -223,6 +233,7 @@ async def list_final_bill(
         "pages": max(1, -(-total // page_size)),
         "rows": [_row(o) for o in rows],
         "totals": {"orders": total, "units": units,
+                   "final_unido_units": final_unido_units,
                    "amount": amount, "amount_orders": amount_orders},
         "tab_counts": counts,
     }
