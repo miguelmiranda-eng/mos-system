@@ -39,9 +39,15 @@ const RESPUESTA_READ = {
       { r: 0, c: 0, bold: true, fill: '#ffff00' },
       { r: 2, c: 1, align: 'center', color: '#ff0000', wrap: true },
       { r: 5, c: 3, fill: '#00ff00' },          // celda con estilo SIN valor
+      { r: 0, c: 5, formula: '=SUM(B1:B1)' },   // formula real de Google
+      { r: 2, c: 0, lista: ['SHORT SLEEVE', 'LONG SLEEVE'] },       // desplegable fijo
+      { r: 2, c: 2, listaRango: "=Listas!$A$1:$A$2" },              // desplegable por rango
     ],
     merges: [{ r1: 0, c1: 0, r2: 0, c2: 3 }],
     colWidths: { 0: 140, 2: 60 },
+  }, {
+    name: 'Listas',
+    values: [['ROJO'], ['AZUL']],
   }],
 };
 
@@ -73,9 +79,33 @@ describe('importarGoogleSheet aplica contenido y formato', () => {
     expect(hoja.colWidths.get(0)).toBe(140);
     expect(hoja.colWidths.get(2)).toBe(60);
 
-    // El diagnostico reporta cuantos estilos entraron.
-    expect(wb._info.estilos).toBe(3);
+    // El diagnostico reporta cuantas celdas con estilo/formula/lista entraron.
+    expect(wb._info.estilos).toBe(6);
     expect(wb._info.formatoError).toBeNull();
+  });
+
+  test('formulas y desplegables de Google llegan al modelo', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => RESPUESTA_READ });
+    const wb = await importarGoogleSheet(RESPUESTA_READ.googleUrl);
+    const hoja = wb.sheets[0];
+
+    // La formula queda ACTIVA (el motor la calcula) y el origen del diff dice
+    // "=formula": una formula sin tocar no viaja al guardar.
+    expect(getCell(hoja, 0, 5).formula).toBe('SUM(B1:B1)');
+    expect(wb.origenGoogle['PACKING LIST'][0][5]).toBe('=SUM(B1:B1)');
+
+    // Desplegable con lista fija.
+    expect(getCell(hoja, 2, 0).style.lista).toEqual(['SHORT SLEEVE', 'LONG SLEEVE']);
+    // Desplegable por rango, resuelto con la pestaña "Listas" del mismo libro.
+    expect(getCell(hoja, 2, 2).style.lista).toEqual(['ROJO', 'AZUL']);
+  });
+
+  test('un libro con formulas sin tocar sigue siendo "sin cambios" al guardar', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => RESPUESTA_READ });
+    const wb = await importarGoogleSheet(RESPUESTA_READ.googleUrl);
+    const res = await guardarEnGoogle(wb);
+    expect(res.sinCambios).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
   test('sin formats/merges/colWidths (backend viejo) abre igual solo con valores', async () => {

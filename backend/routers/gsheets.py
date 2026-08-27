@@ -302,7 +302,10 @@ def _leer_formato(service, sheet_id, extension_usada):
                 "sheets.data(startRow,startColumn,columnMetadata.pixelSize,"
                 "rowData.values(userEnteredFormat(backgroundColor,horizontalAlignment,"
                 "wrapStrategy,textFormat(bold,italic,underline,foregroundColor,"
-                "fontFamily,fontSize))))"
+                "fontFamily,fontSize)),"
+                # Formula real de la celda y validacion de datos (desplegables).
+                "rowData.values.userEnteredValue.formulaValue,"
+                "rowData.values.dataValidation.condition))"
             ),
         ).execute()
         for sh in resp.get("sheets", []):
@@ -317,7 +320,20 @@ def _leer_formato(service, sheet_id, extension_usada):
             formats = []
             for r, fila in enumerate(row_data):
                 for c, celda in enumerate(fila.get("values") or []):
-                    f = _formato_de_celda(celda)
+                    f = _formato_de_celda(celda) or {}
+                    # Formula real (Google manda formulaValue con el "=").
+                    fv = (celda.get("userEnteredValue") or {}).get("formulaValue")
+                    if fv:
+                        f["formula"] = fv
+                    # Desplegable (validacion de datos): lista fija u origen en
+                    # un rango; el rango lo resuelve el frontend con los valores
+                    # de las pestañas ya cargadas.
+                    cond = (celda.get("dataValidation") or {}).get("condition") or {}
+                    vals = [v.get("userEnteredValue") for v in (cond.get("values") or [])]
+                    if cond.get("type") == "ONE_OF_LIST":
+                        f["lista"] = [v for v in vals if v]
+                    elif cond.get("type") == "ONE_OF_RANGE" and vals and vals[0]:
+                        f["listaRango"] = vals[0]
                     if f:
                         f["r"] = base_r + r
                         f["c"] = base_c + c
@@ -431,7 +447,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-10",
+        "build": "gsheets-diag-11",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -593,7 +609,7 @@ async def trazas():
     el proceso se reinicio (crash).
     """
     return {
-        "build": "gsheets-diag-10",
+        "build": "gsheets-diag-11",
         "pid": os.getpid(),
         "arranque_proceso": ARRANQUE_PROCESO,
         "ahora": datetime.now(timezone.utc).isoformat(),
@@ -629,7 +645,7 @@ async def diag_write(request: Request, url: str):
 
     service = await _get_sheets_service(user["user_id"])
     if not service:
-        return {"build": "gsheets-diag-10", "error": "need_connect", "pasos": pasos}
+        return {"build": "gsheets-diag-11", "error": "need_connect", "pasos": pasos}
 
     meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
         spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
@@ -647,7 +663,7 @@ async def diag_write(request: Request, url: str):
             spreadsheetId=sheet_id, range=rango, body={}).execute()))
 
     return {
-        "build": "gsheets-diag-10",
+        "build": "gsheets-diag-11",
         "titulo": (meta or {}).get("properties", {}).get("title"),
         "primera_pestana": primera,
         "pasos": pasos,
@@ -662,7 +678,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-10",
+        "build": "gsheets-diag-11",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),

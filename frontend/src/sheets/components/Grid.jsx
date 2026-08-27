@@ -635,6 +635,10 @@ const Cell = React.memo(function Cell({
       {editando
         ? <CellEditor row={row} col={col} cell={cell} onCommit={onCommit} />
         : display}
+      {/* Indicador de desplegable (validacion traida de Google). */}
+      {!editando && st.lista?.length > 0 && (
+        <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground/50 pointer-events-none">▾</span>
+      )}
     </div>
   );
 });
@@ -683,11 +687,18 @@ function CellEditor({ row, col, cell, onCommit }) {
     return () => document.removeEventListener('mousedown', alMousedownFuera, true);
   }, []);
 
+  // Desplegable (validacion de datos traida de Google): las opciones se ofrecen
+  // con un <datalist> nativo — sugiere al escribir o al desplegar, pero no
+  // impide teclear otro valor (v1: sugerencia, no candado).
+  const opciones = cell?.style?.lista;
+  const listaId = opciones?.length ? `dl_${row}_${col}` : undefined;
+
   return (
     <>
       <input
         ref={ref}
         defaultValue={inicial}
+        list={listaId}
         onChange={asist.onInput}
         onKeyUp={asist.onInput}
         onClick={asist.onInput}
@@ -702,6 +713,11 @@ function CellEditor({ row, col, cell, onCommit }) {
         }}
         className="w-full h-full bg-background outline-none text-[13px] px-0 select-text"
       />
+      {listaId && (
+        <datalist id={listaId}>
+          {opciones.map((o, i) => <option key={i} value={o} />)}
+        </datalist>
+      )}
       {asist.overlay}
     </>
   );

@@ -69,7 +69,7 @@ export function parseTSV(texto) {
  * Si el destino es un rango mas grande y multiplo exacto de lo copiado, se
  * repite para llenarlo — como Excel. Si no, se pega una vez desde la esquina.
  */
-export function buildPasteEntries(matriz, destino, limites) {
+export function buildPasteEntries(matriz, destino, limites, sheet = null) {
   if (!matriz.length) return [];
 
   const altoOrigen = matriz.length;
@@ -91,7 +91,16 @@ export function buildPasteEntries(matriz, destino, limites) {
           // un pegado que se sale por abajo.
           if (row >= limites.rows || col >= limites.cols) continue;
           const patch = parseInput(matriz[r][c] ?? '');
-          entradas.push({ row, col, cell: patch ? makeCell(patch) : null });
+          // Pegar texto plano conserva el formato/estilo del DESTINO (como
+          // Excel al pegar valores): color y desplegables no se pierden.
+          const previa = sheet ? getCell(sheet, row, col) : null;
+          let cell = null;
+          if (patch) {
+            cell = makeCell({ ...patch, format: previa?.format, style: previa?.style ?? null });
+          } else if (previa?.style) {
+            cell = makeCell({ format: previa.format, style: previa.style });
+          }
+          entradas.push({ row, col, cell });
         }
       }
     }

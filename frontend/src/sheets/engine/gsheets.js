@@ -1,5 +1,5 @@
 import { makeSheet, makeCell, getCell, getEditValue } from './model';
-import { cellKey, colToLetters } from './address';
+import { cellKey, colToLetters, fromA1 } from './address';
 import { API } from '../../lib/constants';
 
 /**
@@ -14,6 +14,35 @@ import { API } from '../../lib/constants';
  * Viaja el CONTENIDO (valores). Formato, formulas y graficas de Google no
  * viajan; para eso queda el boton "Abrir en Google".
  */
+
+/**
+ * Resuelve el origen de un desplegable ONE_OF_RANGE ("=Listas!$A$2:$A$20") a
+ * sus valores no vacios, usando las pestañas ya cargadas del mismo libro.
+ */
+function resolverListaRango(ref, hojaNombre, valoresPorHoja) {
+  let s = String(ref || '').trim();
+  if (s.startsWith('=')) s = s.slice(1);
+  let nombre = hojaNombre;
+  let rango = s;
+  const sep = s.lastIndexOf('!');
+  if (sep >= 0) {
+    nombre = s.slice(0, sep).replace(/^'(.*)'$/, '$1');
+    rango = s.slice(sep + 1);
+  }
+  const [ini, fin = ini] = rango.split(':');
+  const a = fromA1(ini);
+  const b = fromA1(fin);
+  const vals = valoresPorHoja[nombre];
+  if (!a || !b || !vals) return null;
+  const out = [];
+  for (let r = Math.min(a.row, b.row); r <= Math.max(a.row, b.row) && out.length < 100; r++) {
+    for (let c = Math.min(a.col, b.col); c <= Math.max(a.col, b.col) && out.length < 100; c++) {
+      const v = vals[r]?.[c];
+      if (v !== '' && v != null) out.push(String(v));
+    }
+  }
+  return out.length ? out : null;
+}
 
 /** ¿La URL es de Google Sheets? */
 export function esUrlGoogleSheets(url) {
@@ -67,8 +96,13 @@ export async function importarGoogleSheet(url) {
   // compara contra esto y escribe SOLO lo que cambio: asi las celdas protegidas
   // de la plantilla (encabezados, formulas) no se tocan y Google no rechaza.
   const origenGoogle = {};
+  // Valores tal cual (sin las formulas sobrepuestas): para resolver los rangos
+  // de los desplegables (p.ej. una pestaña "Listas" con las opciones).
+  const valoresPorHoja = {};
   for (const s of data.sheets || []) {
-    origenGoogle[String(s.name || 'Hoja').slice(0, 60)] = (s.values || []).map(f => f.slice());
+    const nombre = String(s.name || 'Hoja').slice(0, 60);
+    origenGoogle[nombre] = (s.values || []).map(f => f.slice());
+    valoresPorHoja[nombre] = s.values || [];
   }
   const sheets = (data.sheets || []).map((s) => {
     const filas = s.values || [];
@@ -99,8 +133,8 @@ export async function importarGoogleSheet(url) {
       }
     }
 
-    // Formato: se fusiona sobre la celda existente (o crea una vacia con estilo,
-    // p.ej. una cabecera de color sin texto).
+    // Formato + formulas + desplegables: se fusionan sobre la celda existente
+    // (o crean una vacia con estilo, p.ej. una cabecera de color sin texto).
     for (const f of formatos) {
       const estilo = {};
       if (f.bold) estilo.bold = true;
@@ -112,16 +146,40 @@ export async function importarGoogleSheet(url) {
       if (f.fontFamily) estilo.fontFamily = f.fontFamily;
       if (f.fontSize) estilo.fontSize = f.fontSize;
       if (f.wrap) estilo.wrap = true;
-      if (Object.keys(estilo).length === 0) continue;
+
+      // Desplegable: lista fija de Google, o rango resuelto con las pestañas
+      // cargadas. Vive en style.lista para sobrevivir copias/ediciones igual
+      // que el resto del estilo.
+      const lista = (f.lista && f.lista.length)
+        ? f.lista.map(String)
+        : (f.listaRango ? resolverListaRango(f.listaRango, hoja.name, valoresPorHoja) : null);
+      if (lista) estilo.lista = lista;
+
+      // Formula real de Google (llega con "="); el motor de MOS la calcula al
+      // editar los datos, y el guardado por diff no la toca si no cambio.
+      const conFormula = typeof f.formula === 'string' && f.formula.startsWith('=');
+
+      if (Object.keys(estilo).length === 0 && !conFormula) continue;
       totalEstilos++;
       const k = cellKey(f.r, f.c);
       const prev = hoja.cells.get(k);
       hoja.cells.set(k, makeCell({
         value: prev?.value ?? null,
-        formula: prev?.formula ?? null,
+        formula: conFormula ? f.formula.slice(1) : (prev?.formula ?? null),
         format: prev?.format,
-        style: estilo,
+        style: Object.keys(estilo).length ? estilo : (prev?.style ?? null),
       }));
+      if (conFormula) {
+        // El origen del diff debe decir lo MISMO que getEditValue de esta celda
+        // ("=formula"): asi una formula sin tocar no viaja al guardar (y no
+        // choca con las celdas protegidas de la plantilla).
+        const base = origenGoogle[hoja.name];
+        if (base) {
+          while (base.length <= f.r) base.push([]);
+          while (base[f.r].length <= f.c) base[f.r].push('');
+          base[f.r][f.c] = f.formula;
+        }
+      }
     }
 
     // Combinadas.

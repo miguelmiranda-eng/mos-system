@@ -182,9 +182,19 @@ export const useWorkbook = create((set, get) => ({
     const { workbook } = get();
     const sheetId = workbook.activeSheetId;
     const patch = parseInput(texto);
+    // Reescribir el CONTENIDO no borra el formato ni el estilo (igual que
+    // Excel/Sheets): color, negrita y desplegables sobreviven a la edicion.
+    // Borrar el contenido tampoco: la celda queda vacia pero con su estilo.
+    const previa = getCell(getSheet(workbook, sheetId), row, col);
+    let cell = null;
+    if (patch) {
+      cell = makeCell({ ...patch, format: previa?.format, style: previa?.style ?? null });
+    } else if (previa && (previa.style || (previa.format && previa.format !== FORMATS.GENERAL))) {
+      cell = makeCell({ format: previa.format, style: previa.style });
+    }
     const cmd = setCellsCommand.create(
       workbook, sheetId,
-      [{ row, col, cell: patch ? makeCell(patch) : null }],
+      [{ row, col, cell }],
       'Editar celda',
     );
     get().ejecutar(cmd);
@@ -494,7 +504,7 @@ export const useWorkbook = create((set, get) => ({
     const { workbook, range } = get();
     const sheet = getActiveSheet(workbook);
     const limites = { rows: sheet.rows, cols: sheet.cols };
-    const entradas = buildPasteEntries(matriz, range, limites);
+    const entradas = buildPasteEntries(matriz, range, limites, sheet);
     if (!entradas.length) return;
     get().ejecutar(setCellsCommand.create(workbook, workbook.activeSheetId, entradas, 'Pegar'));
     get().seleccionarRango(pastedRange(matriz, range, limites));
