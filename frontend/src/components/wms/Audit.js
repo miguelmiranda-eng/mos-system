@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Activity, PackageSearch, Layers, History, Search, Loader2,
-  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download,
+  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download, Ghost,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -15,6 +15,7 @@ import { Btn, Th, Chip, tableCls } from "./ui";
 
 const TABS = [
   { id: "health", label: "Salud del sistema", icon: Activity },
+  { id: "fantasmas", label: "Renglones fantasma", icon: Ghost },
   { id: "selftest", label: "Simulación", icon: FlaskConical },
   { id: "box", label: "Rastrear caja", icon: PackageSearch },
   { id: "sku", label: "Balance por SKU", icon: Layers },
@@ -627,6 +628,110 @@ const MovementsTab = () => {
   );
 };
 
+// ─── Tab: Renglones fantasma ─────────────────────────────────────────────────
+// Filas del libro (wms_inventory) que mantienen algún contador vivo pero sin
+// NINGUNA caja viva que las respalde. Son las que hacen que el export de
+// inventario muestre SKUs en ubicaciones donde "Cajas - LPNs" no tiene nada
+// (típico de la carga inicial por Excel). La limpieza es por conteo cíclico de
+// la ubicación o por Conciliación; aquí se cazan todas de una vez.
+const FantasmasTab = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      setData(await fetcher("/audit/fantasmas"));
+    } catch { toast.error("Error al buscar renglones fantasma (¿rol super admin?)"); }
+    finally { setLoading(false); }
+  };
+
+  const exportExcel = () => {
+    if (!data) return;
+    const rows = (data.fantasmas || []).map(f => ({
+      "Ubicación": f.location, "Customer": f.customer, "Style": f.style,
+      "SKU": f.sku, "UPC": f.upc, "Color": f.color, "Talla": f.size,
+      "En mano": f.units_on_hand, "Apartadas": f.units_allocated,
+      "Contador de cajas": f.total_boxes,
+      "Creado": f.created_at, "Actualizado": f.updated_at,
+      "Inventory ID": f.inventory_id,
+    }));
+    downloadXlsx([{ name: "Renglones fantasma", rows }], `Renglones_Fantasma_${today()}.xlsx`);
+    toast.success("Excel exportado");
+  };
+
+  const top = (data?.fantasmas || []).slice(0, 200);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Btn variant="primary" onClick={run} disabled={loading}>
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          Buscar renglones fantasma
+        </Btn>
+        {data && <Btn onClick={exportExcel}><Download className="w-4 h-4" /> Exportar Excel ({data.renglones})</Btn>}
+        {data && <span className="text-xs text-muted-foreground">Generado: {fmtDate(data.generated_at)}</span>}
+      </div>
+      {!data && !loading && (
+        <p className="text-sm text-muted-foreground">
+          Encuentra las filas del inventario que no tienen ninguna caja viva que las respalde
+          (ni ligada al renglón ni parada en su misma ubicación con el mismo SKU). Son las que
+          aparecen en el export de inventario pero no en "Cajas - LPNs". Se limpian con conteo
+          cíclico de la ubicación o con Conciliación.
+        </p>
+      )}
+      {data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Card title="Renglones fantasma" value={data.renglones.toLocaleString()}
+              tone={data.renglones > 0 ? "bad" : "good"} />
+            <Card title="Unidades fantasma (en mano)" value={data.unidades.toLocaleString()}
+              tone={data.unidades > 0 ? "bad" : "good"} sub="piezas que el libro dice tener y ninguna caja respalda" />
+          </div>
+          {data.renglones > 0 && (
+            <div className="border border-border rounded-lg overflow-x-auto">
+              <table className={tableCls}>
+                <thead>
+                  <tr>
+                    <Th>Ubicación</Th><Th>Customer</Th><Th>Style</Th><Th>SKU</Th>
+                    <Th>Color</Th><Th>Talla</Th><Th right>En mano</Th>
+                    <Th right>Apartadas</Th><Th right>Cont. cajas</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top.map((f, i) => (
+                    <tr key={f.inventory_id || i} className="border-t border-border/60">
+                      <Td mono>{f.location || "—"}</Td>
+                      <Td>{f.customer || "—"}</Td>
+                      <Td>{f.style || "—"}</Td>
+                      <Td mono>{f.sku || "—"}</Td>
+                      <Td>{f.color || "—"}</Td>
+                      <Td>{f.size || "—"}</Td>
+                      <Td right>{f.units_on_hand}</Td>
+                      <Td right>{f.units_allocated}</Td>
+                      <Td right>{f.total_boxes}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {data.renglones > top.length && (
+                <div className="p-2 text-[11px] text-muted-foreground border-t border-border/60">
+                  Mostrando {top.length} de {data.renglones} — el Excel trae todos.
+                </div>
+              )}
+            </div>
+          )}
+          {data.renglones === 0 && (
+            <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> El libro está limpio: cada renglón vivo tiene cajas que lo respaldan.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─── Módulo ──────────────────────────────────────────────────────────────────
 export const AuditModule = () => {
   const [tab, setTab] = useState("health");
@@ -645,6 +750,7 @@ export const AuditModule = () => {
         })}
       </div>
       {tab === "health" && <HealthTab />}
+      {tab === "fantasmas" && <FantasmasTab />}
       {tab === "selftest" && <SelfTestTab />}
       {tab === "box" && <BoxTab />}
       {tab === "sku" && <SkuTab />}

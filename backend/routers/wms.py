@@ -7500,6 +7500,61 @@ async def audit_health(request: Request):
     }
 
 
+@router.get("/audit/fantasmas")
+async def audit_fantasmas(request: Request):
+    """Renglones FANTASMA del libro de inventario: filas de wms_inventory que
+    mantienen algún contador vivo (en mano, apartado o cajas) pero sin NINGUNA
+    caja viva que las respalde — ni ligada por inventory_id ni parada en su
+    misma celda (ubicación/style/color/talla, misma regla que el drift de
+    salud). Típicos de la carga inicial por Excel (SKUs compuestos a mano sin
+    cajas) o de movimientos que descontaron un lado y no el otro."""
+    await require_wms_module_access(request, "audit")
+
+    # Todas las cajas vivas, indexadas por renglón ligado y por celda.
+    inv_ids = set()
+    box_cells = set()
+    async for b in db.wms_boxes.find(
+            {"units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}},
+            {"_id": 0, "inventory_id": 1, "location": 1, "style": 1, "color": 1, "size": 1}):
+        if b.get("inventory_id"):
+            inv_ids.add(b["inventory_id"])
+        box_cells.add(_norm_cell(b.get("location"), b.get("style"), b.get("color"), b.get("size")))
+
+    fantasmas = []
+    unidades = 0
+    async for r in db.wms_inventory.find(
+            {"$or": [{"units_on_hand": {"$gt": 0}}, {"units_allocated": {"$gt": 0}},
+                     {"total_boxes": {"$gt": 0}}]},
+            {"_id": 0}):
+        if r.get("inventory_id") and r["inventory_id"] in inv_ids:
+            continue
+        celda = _norm_cell(r.get("location"), r.get("style") or r.get("sku"),
+                           r.get("color"), r.get("size"))
+        if celda in box_cells:
+            continue
+        fila = {
+            "inventory_id": r.get("inventory_id"),
+            "customer": r.get("customer"),
+            "style": r.get("style"),
+            "sku": r.get("sku"),
+            "upc": r.get("upc"),
+            "color": r.get("color"),
+            "size": r.get("size"),
+            "location": r.get("location"),
+            "units_on_hand": int(r.get("units_on_hand", 0) or 0),
+            "units_allocated": int(r.get("units_allocated", 0) or 0),
+            "total_boxes": int(r.get("total_boxes", 0) or 0),
+            "created_at": r.get("created_at"),
+            "updated_at": r.get("updated_at"),
+        }
+        unidades += max(0, fila["units_on_hand"])
+        fantasmas.append(fila)
+
+    fantasmas.sort(key=lambda f: -f["units_on_hand"])
+    return {"generated_at": now_iso(), "renglones": len(fantasmas),
+            "unidades": unidades, "fantasmas": fantasmas}
+
+
 @router.get("/audit/box/{box_id}")
 async def audit_box(box_id: str, request: Request):
     """Ciclo de vida completo de una caja: recibo, estado actual, renglon de
