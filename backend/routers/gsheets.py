@@ -23,6 +23,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 import os
 import re
 import time
+import uuid
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -454,7 +455,7 @@ async def read_sheet(request: Request, url: str):
     token_doc = await db.user_google_tokens.find_one({"user_id": user["user_id"]})
     scopes = (token_doc or {}).get("credentials", {}).get("scopes") or []
     diag = {
-        "build": "gsheets-diag-12",
+        "build": "gsheets-diag-13",
         "titulos": titulos,
         "formato_entradas": {t: len(fmt_por_titulo.get(t, {}).get("formats", [])) for t in titulos},
         "formato_error": fmt_error,
@@ -606,6 +607,157 @@ async def write_sheet(request: Request):
     }
 
 
+# ── Crear packing list desde el template ─────────────────────────────────────
+
+# El template (el "formato") NO se toca: cada packing nace como COPIA suya.
+# Config por variables de entorno del backend:
+#   GSHEETS_PACKING_TEMPLATE_URL  link del Google Sheet template (obligatoria)
+#   GSHEETS_OWNER_EMAIL           cuenta dueña de los archivos nuevos
+PACKING_TEMPLATE_URL = os.environ.get("GSHEETS_PACKING_TEMPLATE_URL", "").strip()
+PACKING_OWNER_EMAIL = os.environ.get("GSHEETS_OWNER_EMAIL", "jesus.mercado@prosper-mfg.com").strip()
+
+
+@router.post("/crear-packing")
+async def crear_packing(request: Request):
+    """
+    Crea un packing list nuevo a partir del template, como archivo de la cuenta
+    dueña (via SU conexion de Google en MOS), lo rellena con los datos de la
+    orden (VENDOR PO=store_po, CLIENT PO=customer_po, STORE NAME=branding,
+    Design Code=design_#, Client=client) y deja el link como comentario de la
+    orden. Recibe { orden: "2911" }.
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    num = str(body.get("orden") or "").strip()
+    if not num:
+        raise HTTPException(status_code=400, detail="Falta `orden`.")
+
+    template_id = _id_de_url(PACKING_TEMPLATE_URL)
+    if not template_id:
+        raise HTTPException(status_code=409, detail=(
+            "Falta configurar el link del formato: variable GSHEETS_PACKING_TEMPLATE_URL "
+            "en el backend (EasyPanel) con el link del Google Sheet template."))
+
+    owner = await db.users.find_one(
+        {"email": {"$regex": f"^{re.escape(PACKING_OWNER_EMAIL)}$", "$options": "i"}},
+        {"_id": 0, "user_id": 1})
+    service = await _get_sheets_service(owner["user_id"]) if owner else None
+    if not service:
+        raise HTTPException(status_code=409, detail=(
+            f"La cuenta {PACKING_OWNER_EMAIL} no tiene Google conectado en MOS. "
+            "Que entre a MOS y pulse 'Conectar Google' una sola vez."))
+
+    o = await db.orders.find_one(
+        {"$or": [{"order_number": num}, {"order_id": num}]},
+        {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "store_po": 1,
+         "customer_po": 1, "branding": 1, "design_#": 1, "desing_#": 1})
+    if not o:
+        raise HTTPException(status_code=404, detail=f"No existe la orden {num}.")
+
+    titulo = f"#{o.get('order_number', num)} - {(o.get('client') or '').strip()} PACKING LIST".replace("  ", " ")
+    try:
+        # 1) Pestañas del template (solo lectura: el formato queda tal cual).
+        tmeta = await run_in_threadpool(lambda: service.spreadsheets().get(
+            spreadsheetId=template_id,
+            fields="sheets.properties(sheetId,title,index)").execute())
+        pestanas = sorted([s["properties"] for s in tmeta.get("sheets", [])],
+                          key=lambda p: p.get("index", 0))
+        if not pestanas:
+            raise HTTPException(status_code=409, detail="El template no tiene pestañas.")
+
+        # 2) Archivo nuevo: nace en la cuenta dueña del token.
+        nuevo = await run_in_threadpool(lambda: service.spreadsheets().create(
+            body={"properties": {"title": titulo}},
+            fields="spreadsheetId,sheets.properties.sheetId").execute())
+        new_id = nuevo["spreadsheetId"]
+        hoja_default = nuevo["sheets"][0]["properties"]["sheetId"]
+
+        # 3) Copiar cada pestaña y devolverle su nombre (copyTo la deja como
+        #    "Copy of ..."); al final se borra la hoja vacia con la que nace
+        #    todo spreadsheet.
+        renombres = []
+        for p in pestanas:
+            cop = await run_in_threadpool(lambda p=p: service.spreadsheets().sheets().copyTo(
+                spreadsheetId=template_id, sheetId=p["sheetId"],
+                body={"destinationSpreadsheetId": new_id}).execute())
+            renombres.append({"updateSheetProperties": {
+                "properties": {"sheetId": cop["sheetId"], "title": p["title"],
+                               "index": p.get("index", 0)},
+                "fields": "title,index"}})
+        renombres.append({"deleteSheet": {"sheetId": hoja_default}})
+        await run_in_threadpool(lambda: service.spreadsheets().batchUpdate(
+            spreadsheetId=new_id, body={"requests": renombres}).execute())
+
+        # 4) Autollenado: se localizan las ETIQUETAS en el encabezado de la
+        #    primera pestaña y el dato se escribe a su derecha (saltando la
+        #    celda combinada de la etiqueta, si la hay). Buscar por etiqueta
+        #    aguanta que el template mueva filas/columnas.
+        primera = pestanas[0]["title"]
+        gmeta = await run_in_threadpool(lambda: service.spreadsheets().get(
+            spreadsheetId=new_id, ranges=[f"'{primera}'"],
+            fields="sheets.merges").execute())
+        merges = (gmeta.get("sheets") or [{}])[0].get("merges", [])
+        vals = (await run_in_threadpool(lambda: service.spreadsheets().values().get(
+            spreadsheetId=new_id, range=f"'{primera}'!A1:T12").execute())).get("values", [])
+
+        datos = {
+            "VENDOR PO": o.get("store_po"),
+            "CLIENT PO": o.get("customer_po"),
+            "STORE NAME": o.get("branding"),
+            "DESIGN CODE": o.get("design_#") or o.get("desing_#"),
+            "CLIENT": o.get("client"),
+        }
+
+        def _col_tras_etiqueta(r, c):
+            for m in merges:
+                if (m.get("startRowIndex", 0) <= r < m.get("endRowIndex", 0)
+                        and m.get("startColumnIndex", 0) <= c < m.get("endColumnIndex", 0)):
+                    return m.get("endColumnIndex", c + 1)
+            return c + 1
+
+        data = []
+        llenadas = set()
+        for r, fila in enumerate(vals):
+            for c, v in enumerate(fila):
+                etiqueta = str(v or "").strip().rstrip(":").upper()
+                if etiqueta in datos and etiqueta not in llenadas and datos[etiqueta] not in (None, ""):
+                    llenadas.add(etiqueta)
+                    cd = _col_tras_etiqueta(r, c)
+                    data.append({"range": f"'{primera}'!{_col_letra(cd + 1)}{r + 1}",
+                                 "values": [[str(datos[etiqueta])]]})
+        if data:
+            await run_in_threadpool(lambda: service.spreadsheets().values().batchUpdate(
+                spreadsheetId=new_id,
+                body={"valueInputOption": "USER_ENTERED", "data": data}).execute())
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e)
+        logging.error(f"GSHEETS crear-packing error: {e}")
+        if "403" in msg or "PERMISSION" in msg.upper():
+            raise HTTPException(status_code=409, detail=(
+                f"La cuenta {PACKING_OWNER_EMAIL} no puede leer el template. "
+                "Comparte el formato con esa cuenta."))
+        raise HTTPException(status_code=409, detail=f"No se pudo crear el packing list: {msg[:300]}")
+
+    # 5) El link queda como comentario de la orden (asi llegan hoy los packings).
+    url_nueva = f"https://docs.google.com/spreadsheets/d/{new_id}/edit"
+    await db.comments.insert_one({
+        "comment_id": f"comment_{uuid.uuid4().hex[:12]}",
+        "order_id": o["order_id"],
+        "content": f"Packing list: {url_nueva}",
+        "parent_id": None,
+        "user_id": user["user_id"], "user_name": user.get("name", ""),
+        "user_picture": user.get("picture"), "mentions": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await log_activity(user, "gsheets_create_packing",
+                       {"order_id": o["order_id"], "order_number": o.get("order_number"),
+                        "sheet_id": new_id})
+    return {"ok": True, "url": url_nueva, "googleId": new_id, "titulo": titulo,
+            "llenado": sorted(llenadas)}
+
+
 @router.get("/trazas")
 async def trazas():
     """
@@ -616,7 +768,7 @@ async def trazas():
     el proceso se reinicio (crash).
     """
     return {
-        "build": "gsheets-diag-12",
+        "build": "gsheets-diag-13",
         "pid": os.getpid(),
         "arranque_proceso": ARRANQUE_PROCESO,
         "ahora": datetime.now(timezone.utc).isoformat(),
@@ -652,7 +804,7 @@ async def diag_write(request: Request, url: str):
 
     service = await _get_sheets_service(user["user_id"])
     if not service:
-        return {"build": "gsheets-diag-12", "error": "need_connect", "pasos": pasos}
+        return {"build": "gsheets-diag-13", "error": "need_connect", "pasos": pasos}
 
     meta = await run_in_threadpool(lambda: paso("meta", lambda: service.spreadsheets().get(
         spreadsheetId=sheet_id, fields="properties.title,sheets.properties.title").execute()))
@@ -670,7 +822,7 @@ async def diag_write(request: Request, url: str):
             spreadsheetId=sheet_id, range=rango, body={}).execute()))
 
     return {
-        "build": "gsheets-diag-12",
+        "build": "gsheets-diag-13",
         "titulo": (meta or {}).get("properties", {}).get("title"),
         "primera_pestana": primera,
         "pasos": pasos,
@@ -685,7 +837,7 @@ async def ping():
     backend. TEMPORAL — quitar cuando el modulo quede cerrado.
     """
     return {
-        "build": "gsheets-diag-12",
+        "build": "gsheets-diag-13",
         "has_write": True,
         "has_format_read": True,
         "creds_configured": bool(CLIENT_ID and CLIENT_SECRET),

@@ -24,6 +24,32 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const [editingId, setEditingId] = useState(null);
   const [editContent, setEditContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
+  const [creandoPacking, setCreandoPacking] = useState(false);
+
+  // Crea el packing list (copia del template, rellena con la orden, comenta el
+  // link) y lo abre en MOS Sheet. Los errores de config llegan con su motivo.
+  const crearPacking = async () => {
+    setCreandoPacking(true);
+    try {
+      const res = await fetch(`${API}/gsheets/crear-packing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ orden: order.order_number }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(j.detail || "No se pudo crear el packing list", { duration: 10000 });
+        return;
+      }
+      toast.success(`Packing list creado: ${j.titulo || ""}`);
+      navigate(`/sheets?gsheet=${encodeURIComponent(j.url)}`);
+    } catch {
+      toast.error("No se pudo contactar el servidor.");
+    } finally {
+      setCreandoPacking(false);
+    }
+  };
   const [users, setUsers] = useState([]);
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -460,9 +486,24 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
           <div className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3 font-bold">
             <MessageSquare className="w-5 h-5" /> {t('comments')} - {order.order_number}
           </div>
-          <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground" aria-label="Cerrar">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Crea el packing list desde el template de Google (copia a nombre
+                de la cuenta duena), rellena con los datos de ESTA orden, deja
+                el link como comentario y lo abre en MOS Sheet. */}
+            <button
+              onClick={crearPacking}
+              disabled={creandoPacking}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              data-testid="crear-packing"
+              title="Crear packing list nuevo desde el formato y llenarlo con los datos de esta orden"
+            >
+              {creandoPacking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
+              Nuevo packing
+            </button>
+            <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Packing list — SIEMPRE hasta arriba (ver useMemo `packing`). */}
