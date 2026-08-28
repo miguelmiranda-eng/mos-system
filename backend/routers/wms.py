@@ -7555,6 +7555,94 @@ async def audit_fantasmas(request: Request):
             "unidades": unidades, "fantasmas": fantasmas}
 
 
+def _n_upc_ident(s):
+    return re.sub(r"\s+", " ", str(s or "")).strip().upper()
+
+
+async def _sku_catalogo_diferencias():
+    """Cajas vivas con UPC registrado cuyo estilo/color/talla/SKU difiere del
+    catalogo UPC. El catalogo es la identidad curada; estas cajas entraron
+    ANTES del candado del recibo (que hoy rechaza esa divergencia)."""
+    catalogo = {}
+    async for u in db.wms_upc_catalog.find(
+            {}, {"_id": 0, "upc": 1, "style": 1, "color": 1, "size": 1, "sku": 1}):
+        catalogo[str(u.get("upc") or "").strip().upper()] = u
+
+    difs = []
+    async for b in db.wms_boxes.find(
+            {"units": {"$gt": 0}, "upc": {"$nin": [None, ""]}},
+            {"_id": 0, "box_id": 1, "customer": 1, "style": 1, "color": 1,
+             "size": 1, "sku": 1, "upc": 1, "location": 1, "units": 1}):
+        u = catalogo.get(str(b.get("upc") or "").strip().upper())
+        if not u:
+            continue
+        objetivo = {
+            "style": _n_upc_ident(u.get("style")) or _n_upc_ident(b.get("style")),
+            "color": _n_upc_ident(u.get("color")) or _n_upc_ident(b.get("color")),
+            "size": _n_upc_ident(u.get("size")) or _n_upc_ident(b.get("size")),
+        }
+        # SKU compuesto: el del catalogo si lo trae; si no, la convencion
+        # STYLE-COLOR-SIZE (la de las cajas bien recibidas, ej. CORE-BLACK-L).
+        objetivo["sku"] = (_n_upc_ident(u.get("sku"))
+                           or "-".join(x for x in (objetivo["style"], objetivo["color"], objetivo["size"]) if x))
+        cambios = {}
+        for k in ("style", "color", "size", "sku"):
+            if _n_upc_ident(b.get(k)) != objetivo[k]:
+                cambios[k] = {"de": b.get(k) or "", "a": objetivo[k]}
+        if cambios:
+            difs.append({"box_id": b["box_id"], "location": b.get("location"),
+                         "customer": b.get("customer"), "upc": b.get("upc"),
+                         "units": int(b.get("units") or 0), "cambios": cambios})
+    return difs
+
+
+@router.get("/audit/sku-catalogo")
+async def audit_sku_catalogo(request: Request):
+    """VISTA PREVIA del barrido de SKUs contra el catalogo UPC. No cambia nada."""
+    await require_wms_module_access(request, "audit")
+    difs = await _sku_catalogo_diferencias()
+    return {"generated_at": now_iso(), "cajas": len(difs), "detalle": difs}
+
+
+@router.post("/audit/sku-catalogo/aplicar")
+async def audit_sku_catalogo_aplicar(request: Request):
+    """Aplica el barrido: reescribe estilo/color/talla/SKU de cada caja
+    divergente con la identidad del catalogo UPC y REPROYECTA el libro de todas
+    las celdas tocadas (la caja manda). Solo supersu; queda auditado."""
+    user = await require_supersu(request)
+    difs = await _sku_catalogo_diferencias()
+    if not difs:
+        return {"ok": True, "cajas": 0, "celdas_reproyectadas": 0}
+
+    celdas = set()
+    corregidas = 0
+    for d in difs:
+        box = await db.wms_boxes.find_one({"box_id": d["box_id"]}, {"_id": 0})
+        if not box:
+            continue
+        # Celda vieja y celda nueva: ambas se reproyectan desde las cajas.
+        celdas.add((box.get("style") or "", box.get("sku") or box.get("style") or "",
+                    box.get("color") or "", box.get("size") or "", box.get("location") or ""))
+        upd = {k: v["a"] for k, v in d["cambios"].items()}
+        await db.wms_boxes.update_one({"box_id": d["box_id"]}, {"$set": upd})
+        nb = {**box, **upd}
+        celdas.add((nb.get("style") or "", nb.get("sku") or nb.get("style") or "",
+                    nb.get("color") or "", nb.get("size") or "", nb.get("location") or ""))
+        corregidas += 1
+
+    reproyectadas = 0
+    for (style, sku, color, size, location) in celdas:
+        if location:
+            await _reproject_material_rows(style, sku, color, size, location,
+                                           user=user,
+                                           contexto={"via": "sku_catalogo_sweep"})
+            reproyectadas += 1
+
+    await log_movement(user, "sku_catalogo_sweep",
+                       {"cajas": corregidas, "celdas": reproyectadas})
+    return {"ok": True, "cajas": corregidas, "celdas_reproyectadas": reproyectadas}
+
+
 @router.get("/audit/box/{box_id}")
 async def audit_box(box_id: str, request: Request):
     """Ciclo de vida completo de una caja: recibo, estado actual, renglon de
@@ -9443,35 +9531,74 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     # UPC —que hoy solo tiene SPEKTRUM— se ve casi vacia porque las filas del
     # cliente con datos quedan dispersas. Con customer=X baja solo ese cliente.
     cust = (customer or "").strip()
-    stock_filter = {"$or": [
-        {"units_on_hand": {"$gt": 0}},
-        {"total_boxes": {"$gt": 0}},
-        {"units_allocated": {"$gt": 0}},
-    ]}
-    inv_query = dict(stock_filter)
     box_query = {"$or": [{"units": {"$gt": 0}}, {"qty": {"$gt": 0}}]}
+    alloc_query = {"units_allocated": {"$gt": 0}}
     if cust:
         cust_rx = {"$regex": f"^{re.escape(cust)}$", "$options": "i"}
-        inv_query = {"$and": [stock_filter, {"customer": cust_rx}]}
         box_query = {"$and": [box_query, {"customer": cust_rx}]}
-    # to_list(None) returns ALL rows. A fixed cap (e.g. 20000) silently dropped
-    # the alphabetical tail (W/X/Y/Z SKUs) once the catalog grew past it.
-    # Skip fully-empty orphan rows (no units, no boxes, no allocations) so the
-    # report never shows phantom lines — e.g. a row left behind after a move/pick
-    # decremented one counter but not the other.
-    inventory = await db.wms_inventory.find(inv_query, {"_id": 0}).sort("sku", 1).to_list(None)
-    # Optionally drop rows sitting in SAT-held locations (case-insensitive match
-    # against the hold list).
+        alloc_query = {"$and": [alloc_query, {"customer": cust_rx}]}
+    # UNA SOLA VERDAD (pedido 2026-08-28): la pestaña "Inventory" se AGREGA
+    # desde las cajas vivas — exactamente las mismas filas que alimentan
+    # "Cajas - LPNs" — en vez de leer el libro (wms_inventory). Asi las dos
+    # pestañas no pueden contradecirse y los renglones fantasma del libro
+    # (carga inicial sin cajas) desaparecen del reporte. El libro solo aporta
+    # el contador de APARTADAS (units_allocated): la asignacion a tickets es
+    # mecanica del libro y no existe a nivel caja.
+    alloc = {}
+    async for r in db.wms_inventory.find(alloc_query, {
+            "_id": 0, "location": 1, "style": 1, "sku": 1, "color": 1,
+            "size": 1, "units_allocated": 1}):
+        cell = _norm_cell(r.get("location"), r.get("style") or r.get("sku"),
+                          r.get("color"), r.get("size"))
+        alloc[cell] = alloc.get(cell, 0) + int(r.get("units_allocated", 0) or 0)
+    held = set()
     if exclude_hold:
         held = await _hold_location_names()
-        if held:
-            inventory = [r for r in inventory if (r.get("location") or "").strip().upper() not in held]
     import xlsxwriter
     # Pull boxes up-front so the aggregated "Inventory" sheet can show each row's
     # MOST RECENT box transfer (date + user). Reused for the per-box sheet below.
     boxes = await db.wms_boxes.find(box_query, {"_id": 0}).sort([("location", 1), ("sku", 1)]).to_list(None)
     if exclude_hold and held:
         boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
+
+    # Agregado por SKU + ubicacion DESDE LAS CAJAS (la unica verdad fisica).
+    grupos = {}
+    for b in boxes:
+        key = (
+            str(b.get("customer") or "").strip().upper(),
+            str(b.get("style") or b.get("sku") or "").strip().upper(),
+            str(b.get("sku") or "").strip().upper(),
+            str(b.get("upc") or "").strip(),
+            str(b.get("color") or "").strip().upper(),
+            str(b.get("size") or "").strip().upper(),
+            str(b.get("location") or "").strip().upper(),
+        )
+        g = grupos.get(key)
+        if not g:
+            g = grupos[key] = {
+                "customer": b.get("customer", ""),
+                "style": b.get("style", b.get("sku", "")),
+                "sku": b.get("sku", ""),
+                "upc": str(b.get("upc", "") or ""),
+                "color": b.get("color", ""),
+                "size": b.get("size", ""),
+                "description": "", "category": "", "manufacturer": "",
+                "location": b.get("location", ""),
+                "total_boxes": 0, "units_on_hand": 0,
+                "country_of_origin": "", "fabric_content": "",
+                "is_bpo": False,
+            }
+        g["total_boxes"] += 1
+        g["units_on_hand"] += int(b.get("units") or b.get("qty") or 0)
+        for campo in ("description", "category", "manufacturer", "fabric_content"):
+            if not g[campo] and b.get(campo):
+                g[campo] = b[campo]
+        if not g["country_of_origin"]:
+            g["country_of_origin"] = b.get("country_of_origin", b.get("coo", "")) or ""
+        if b.get("is_bpo"):
+            g["is_bpo"] = True
+    inventory = sorted(grupos.values(),
+                       key=lambda g: (str(g["sku"] or g["style"]), str(g["location"])))
     # Last transfer INTO each location (date + user) from the movement log. The
     # destination ('to') is always recorded — unlike the box_id list which bulk
     # moves cap at 50 — so this answers "cuándo se transfirió material a esta
@@ -9523,6 +9650,10 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
         ws.write(0, i, h, bold)
     for row, inv in enumerate(inventory, 1):
         _tr_at, _tr_by = _row_transfer(inv)
+        # Apartadas: del libro, casadas por celda; solo decoran filas que SI
+        # existen fisicamente (un apartado sobre celda sin cajas no crea fila).
+        apartadas = alloc.get(_norm_cell(inv.get("location"), inv.get("style") or inv.get("sku"),
+                                         inv.get("color"), inv.get("size")), 0)
         values = [
             inv.get("customer", ""),
             inv.get("style", inv.get("sku", "")),
@@ -9536,8 +9667,8 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
             inv.get("location", ""),
             inv.get("total_boxes", 0),
             inv.get("units_on_hand", 0),
-            inv.get("units_allocated", 0),
-            inv.get("units_on_hand", 0) - inv.get("units_allocated", 0),
+            apartadas,
+            inv.get("units_on_hand", 0) - apartadas,
             inv.get("country_of_origin", ""),
             inv.get("fabric_content", ""),
             "YES" if inv.get("is_bpo") else "NO",

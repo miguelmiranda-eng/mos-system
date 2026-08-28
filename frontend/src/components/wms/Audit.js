@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Activity, PackageSearch, Layers, History, Search, Loader2,
-  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download, Ghost,
+  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download, Ghost, Barcode,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -16,6 +16,7 @@ import { Btn, Th, Chip, tableCls } from "./ui";
 const TABS = [
   { id: "health", label: "Salud del sistema", icon: Activity },
   { id: "fantasmas", label: "Renglones fantasma", icon: Ghost },
+  { id: "skucat", label: "SKU vs catálogo", icon: Barcode },
   { id: "selftest", label: "Simulación", icon: FlaskConical },
   { id: "box", label: "Rastrear caja", icon: PackageSearch },
   { id: "sku", label: "Balance por SKU", icon: Layers },
@@ -732,6 +733,121 @@ const FantasmasTab = () => {
   );
 };
 
+// ─── Tab: SKU vs catálogo UPC ────────────────────────────────────────────────
+// Cajas vivas con UPC cuyo estilo/color/talla/SKU difiere de lo que el
+// catálogo dice para ese código (entraron ANTES del candado del recibo, que
+// hoy rechaza esa divergencia). Vista previa siempre; aplicar reescribe las
+// cajas con la identidad del catálogo y reproyecta el libro (solo supersu).
+const SkuCatalogoTab = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      setData(await fetcher("/audit/sku-catalogo"));
+    } catch { toast.error("Error al comparar contra el catálogo (¿rol super admin?)"); }
+    finally { setLoading(false); }
+  };
+
+  const aplicar = async () => {
+    if (!data?.cajas) return;
+    if (!window.confirm(`Se van a corregir ${data.cajas} cajas con la identidad del catálogo UPC y a reproyectar el libro de sus celdas. ¿Aplicar?`)) return;
+    setAplicando(true);
+    try {
+      const res = await poster("/audit/sku-catalogo/aplicar", {});
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(r.detail || "No se pudo aplicar (solo supersu)"); return; }
+      toast.success(`Corregidas ${r.cajas} cajas · ${r.celdas_reproyectadas} celdas del libro reproyectadas`);
+      run();
+    } catch { toast.error("No se pudo contactar el servidor."); }
+    finally { setAplicando(false); }
+  };
+
+  const fmtCambios = (c) => Object.entries(c || {})
+    .map(([k, v]) => `${k}: ${v.de || "—"} → ${v.a}`).join(" · ");
+
+  const exportExcel = () => {
+    if (!data) return;
+    const rows = (data.detalle || []).map(d => ({
+      "Caja": d.box_id, "Ubicación": d.location, "Customer": d.customer,
+      "UPC": d.upc, "Piezas": d.units, "Cambios": fmtCambios(d.cambios),
+    }));
+    downloadXlsx([{ name: "SKU vs catalogo", rows }], `SKU_vs_Catalogo_${today()}.xlsx`);
+    toast.success("Excel exportado");
+  };
+
+  const top = (data?.detalle || []).slice(0, 200);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Btn variant="primary" onClick={run} disabled={loading}>
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          Vista previa
+        </Btn>
+        {data?.cajas > 0 && (
+          <Btn onClick={aplicar} disabled={aplicando} className="!bg-red-600 !text-white hover:!bg-red-700">
+            {aplicando ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            Aplicar a {data.cajas} cajas
+          </Btn>
+        )}
+        {data && <Btn onClick={exportExcel}><Download className="w-4 h-4" /> Exportar Excel</Btn>}
+        {data && <span className="text-xs text-muted-foreground">Generado: {fmtDate(data.generated_at)}</span>}
+      </div>
+      {!data && !loading && (
+        <p className="text-sm text-muted-foreground">
+          Compara cada caja viva (que tenga UPC) contra el catálogo UPC. Las divergencias son
+          cajas recibidas antes del candado del recibo, con SKUs viejos o mal compuestos.
+          "Aplicar" las reescribe con la identidad del catálogo y reproyecta el libro
+          — solo supersu, y la vista previa muestra exactamente qué cambiaría.
+        </p>
+      )}
+      {data && (
+        <>
+          <Card title="Cajas divergentes del catálogo" value={data.cajas.toLocaleString()}
+            tone={data.cajas > 0 ? "bad" : "good"} />
+          {data.cajas > 0 && (
+            <div className="border border-border rounded-lg overflow-x-auto">
+              <table className={tableCls}>
+                <thead>
+                  <tr>
+                    <Th>Caja</Th><Th>Ubicación</Th><Th>Customer</Th><Th>UPC</Th>
+                    <Th right>Piezas</Th><Th>Cambios (de → a)</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top.map((d) => (
+                    <tr key={d.box_id} className="border-t border-border/60">
+                      <Td mono>{d.box_id}</Td>
+                      <Td mono>{d.location || "—"}</Td>
+                      <Td>{d.customer || "—"}</Td>
+                      <Td mono>{d.upc}</Td>
+                      <Td right>{d.units}</Td>
+                      <Td>{fmtCambios(d.cambios)}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {data.cajas > top.length && (
+                <div className="p-2 text-[11px] text-muted-foreground border-t border-border/60">
+                  Mostrando {top.length} de {data.cajas} — el Excel trae todas.
+                </div>
+              )}
+            </div>
+          )}
+          {data.cajas === 0 && (
+            <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> Todas las cajas con UPC coinciden con el catálogo.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─── Módulo ──────────────────────────────────────────────────────────────────
 export const AuditModule = () => {
   const [tab, setTab] = useState("health");
@@ -751,6 +867,7 @@ export const AuditModule = () => {
       </div>
       {tab === "health" && <HealthTab />}
       {tab === "fantasmas" && <FantasmasTab />}
+      {tab === "skucat" && <SkuCatalogoTab />}
       {tab === "selftest" && <SelfTestTab />}
       {tab === "box" && <BoxTab />}
       {tab === "sku" && <SkuTab />}
