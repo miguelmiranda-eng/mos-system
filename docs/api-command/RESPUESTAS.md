@@ -23,7 +23,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
 | 6.1-6.3 | Shipping estructurado + `delay_code` | ✅ Completa |
 | 7.1-7.3 | Documentación de API | ✅ Completa |
-| Pruebas | E2E con Command + regresión | 🔄 Batería A verde en producción (31/31); B espera llave de prueba |
+| Pruebas | E2E con Command + regresión | ✅ Completa: 53/53 contra producción con llave real (encontró y corrigió 1 bug de auth) |
 
 ---
 
@@ -650,21 +650,33 @@ sesión. El frontend jamás manda `X-API-Key`, así que el orden nuevo no toca
 a las sesiones (la batería A lo confirma: sigue verde). *Exactamente para
 esto era la fila "Pruebas" del plan.*
 
-### Batería B — superficie completa con llave real (lista, espera llave)
+### Batería B — superficie completa con llave real ✅
 
-Cubre: `customer` obligatorio y fuera-de-alcance (403), sobres de
-paginación, aislamiento por cliente en orders/scheduled/pick-tickets,
-contrato de packing-list, par `qty_ordered`/`qty_shipped`, `orders_detail`,
-catálogo de 7 `delay_codes`, y los rechazos de escritura. Para correrla,
-emitir una llave de PRUEBA (supersu, ver 2.3.a) y:
+Corrida contra **producción** el 2026-08-31 (llave emitida por Miguel,
+alcance SPEKTRUM, tras el fix de auth): **53/53 OK** (batería A + B).
+Quedó verificado con datos reales:
+
+- `customer` obligatorio (403) y fuera-de-alcance (403); todos los items
+  devueltos pertenecen al cliente de la llave (orders, scheduled).
+- Sobres de paginación en orders/available-to-ship/shipped/shipping.
+- Par `qty_ordered`/`qty_shipped` presente; contrato de `packing-list`;
+  `orders_detail` en cada registro de envío; catálogo de 7 `delay_codes`.
+- Guards del WMS (pick-tickets con y sin customer, allocations, shipments,
+  inventory/history sin revelar existencia).
+- Rechazos de escritura: sin customer 403, orden inexistente 400 (strict
+  forzado), delay_code inválido 400, registros inexistentes 404 — nada
+  persistió.
+
+Para re-correrla en el futuro (cualquier llave activa):
 
 ```powershell
-$env:MOS_API_KEY = '<llave de prueba>'
+$env:MOS_API_KEY = '<llave>'
 $env:MOS_API_CUSTOMER = '<cliente de la llave>'
 backend\venv\Scripts\python.exe backend\tests\e2e_command_api.py
 ```
 
-Revocar la llave de prueba al terminar (`DELETE /api/auth/api-keys/{id}`).
+La llave usada en esta corrida viajó por canales de trabajo: se revoca y se
+emite una nueva para entregar a Command (higiene de credenciales).
 
 ### Regresión de lo interno
 
