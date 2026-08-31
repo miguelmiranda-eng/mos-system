@@ -64,16 +64,27 @@ branding, quantity, cancel_date, ship_by, production_status, board`.
 style, color, quantity, customer_po, board, due_date, packing_link,
 packing_link_label, packing_link_at`.
 
-## 4. `GET /api/shipping` (lista de `RegistroEnvio`)
+## 4. Shipping — `GET /api/shipping`, `POST /api/shipping`, `PUT /api/shipping/{shipping_id}`
 
-Filtro `?date=YYYY-MM-DD`. Lista simple (histórico; se documenta tal cual —
-migrar al sobre paginado rompería a los consumidores actuales y se hará junto
-con las pruebas E2E). Cada registro: `shipping_id, order_numbers[], notes,
-evidence[] {id, filename, url, type}, created_by, created_by_name, created_at`.
+`GET` con filtro `?date=YYYY-MM-DD`. Lista simple (histórico; se documenta tal
+cual — migrar al sobre paginado rompería a los consumidores actuales y se hará
+junto con las pruebas E2E). Cada `RegistroEnvio`: `shipping_id,
+order_numbers[], notes, evidence[] {id, filename, url, type}, packed_at,
+dispatched_at, delivered_at, created_by, created_by_name, created_at`.
 
-> Nota (tareas 6.x pendientes): `order_numbers` hoy es texto capturado sin
-> validar contra órdenes, y no existen `packed_at`/`dispatched_at`/
-> `delivered_at`/`delay_code`. Ese endurecimiento es la tarea 6.1-6.3.
+**Timestamps (Tareas 3.2-3.4)** — reglas:
+
+| Campo | Regla |
+|---|---|
+| Formato | ISO 8601 **con zona horaria** (`2026-08-28T15:30:00-07:00` o `…Z`). Sin zona → `400`. Se normalizan a UTC al guardar. |
+| `dispatched_at` | Registrar el envío ES el despacho: el `POST` lo sella con el momento actual, salvo que venga explícito. |
+| `packed_at` | Opcional en el `POST`; no se inventa. |
+| `delivered_at` | Casi siempre llega días después: se captura con `PUT /api/shipping/{shipping_id}` mandando `{"delivered_at": "…"}` (acepta cualquiera de los tres campos; solo toca los que vienen). |
+| Registros históricos | Anteriores a esta versión traen los tres en `null`: usar `created_at` como aproximación del despacho. |
+
+> Nota (tareas 6.x pendientes): `order_numbers` sigue siendo texto capturado
+> sin validar contra órdenes, y `delay_code` no existe aún. Ese endurecimiento
+> es la tarea 6.1-6.3.
 
 ## 5. `GET /api/scheduled-shipments` (`{items: EnvioProgramado[], weeks: […]}`)
 

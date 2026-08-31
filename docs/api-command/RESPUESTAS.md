@@ -14,8 +14,8 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 2.2 | Contexto de cliente en historial de inventario | ✅ Completa |
 | 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
 | 3.1 | `ship_by` separado de `cancel_date` | ✅ Completa |
-| 3.2 | `dispatched_at` ISO 8601 | ⬜ Pendiente |
-| 3.3/3.4 | `packed_at`, `delivered_at` + doc | ⬜ Pendiente |
+| 3.2 | `dispatched_at` ISO 8601 | ✅ Completa |
+| 3.3/3.4 | `packed_at`, `delivered_at` + doc | ✅ Completa |
 | 4.1 | `qty_ordered` vs `qty_shipped` | ⬜ Pendiente |
 | 4.2 | Pulls → Hold/Allocation | ⬜ Pendiente |
 | 4.3 | Múltiples pick tickets por orden | ⬜ Pendiente |
@@ -357,3 +357,29 @@ decidir con qué credencial de Google lee el servidor.
 dinámicos pueden mandarlo). Agregar la columna/campo visible en el modal de
 edición y en el programador de envíos es iteración de UI aparte — el dato y su
 semántica ya están definidos y publicados en el contrato.
+
+---
+
+## Tareas 3.2, 3.3 y 3.4 — Timestamps del envío (`dispatched_at`, `packed_at`, `delivered_at`)
+
+**Qué se hizo** (`backend/routers/shipping.py`):
+
+1. **Tres hitos estructurados** en el registro de envío, todos **ISO 8601 con
+   zona horaria obligatoria** (sin zona → 400 con mensaje claro) y
+   **normalizados a UTC** al guardar.
+2. **Semántica por campo** (no se inventan datos):
+   - `dispatched_at` — registrar el envío ES el despacho: el `POST` lo sella
+     con el momento actual salvo valor explícito. *(Tarea 3.2)*
+   - `packed_at` — opcional en el `POST`; null hasta que se capture. *(3.3)*
+   - `delivered_at` — la entrega ocurre días después: se captura con el nuevo
+     **`PUT /api/shipping/{shipping_id}`** (acepta cualquiera de los tres
+     campos, solo toca los que vienen, queda auditado en el log). *(3.3)*
+3. **Contratos y documentación** *(3.4)*: `RegistroEnvio` actualizado en
+   `contracts.py` y la sección 4 de `CONTRATOS.md` reescrita con la tabla de
+   reglas — incluida la de registros históricos (traen null; usar `created_at`
+   como aproximación del despacho, no se backfillea historia).
+
+**Sin ruptura:** el `POST` actual del frontend (ShippingModule) sigue
+funcionando sin cambios — simplemente sus registros nuevos nacen con
+`dispatched_at` sellado. La captura de `packed_at`/`delivered_at` desde la UI
+es iteración aparte; el dato y el contrato ya existen.

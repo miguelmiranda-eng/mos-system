@@ -100,6 +100,15 @@ class RegistroEnvio(BaseModel):
     order_numbers: List[str]
     notes: Optional[str] = None
     evidence: List[EvidenciaEnvio] = []
+    # Hitos del envio (Tareas 3.2-3.4): ISO 8601 normalizado a UTC.
+    # dispatched_at se sella al registrar el envio (o el valor explicito que
+    # venga); packed_at/delivered_at son null hasta que se capturen (la entrega
+    # se completa despues via PUT /api/shipping/{shipping_id}). En registros
+    # anteriores a esta version los tres pueden venir null: usar created_at
+    # como aproximacion del despacho historico.
+    packed_at: Optional[str] = None
+    dispatched_at: Optional[str] = None
+    delivered_at: Optional[str] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
     created_at: Optional[str] = None
