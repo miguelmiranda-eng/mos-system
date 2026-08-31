@@ -12,7 +12,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 1.2 | Ruta única de Packing List | ⬜ Pendiente |
 | 2.1 | `customer` obligatorio en búsqueda de órdenes | ⬜ Pendiente |
 | 2.2 | Contexto de cliente en historial de inventario | ⬜ Pendiente |
-| 2.3 | Auditoría multi-tenant global | ⬜ Pendiente |
+| 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
 | 3.1 | `ship_by` separado de `cancel_date` | ⬜ Pendiente |
 | 3.2 | `dispatched_at` ISO 8601 | ⬜ Pendiente |
 | 3.3/3.4 | `packed_at`, `delivered_at` + doc | ⬜ Pendiente |
@@ -84,14 +84,14 @@ Tres formas de entrar (`backend/deps.py`):
 > Además, la llave se acepta por **query param** (`?api_key=`), lo que la deja
 > expuesta en logs de proxys; debe quedar solo en header.
 >
-> ⚠️ **Hallazgo agravante:** la validación de la llave vive dentro de
-> `get_current_user()`, del que cuelgan TODOS los guards (`require_auth`,
-> `require_admin_level`, **incluso `require_supersu`**, porque
-> `SUPER_ROLES = {"admin","supersu"}` en `deps.py:526` y la llave devuelve rol
-> `admin`). Es decir: **la MASTER_API_KEY alcanza el 100 % de los endpoints del
-> sistema, incluidos los de solo-supersu** (conciliación, borrado, accesos).
-> No es una llave de integración: es una llave maestra literal. Su reemplazo
-> por llaves por cliente con alcance limitado debe ser lo primero del plan.
+> ⚠️ **Hallazgo agravante (precisado):** la validación de la llave vive dentro
+> de `get_current_user()` y devolvía rol `admin`, así que además de todo lo
+> `require_auth` pasaba **`require_admin`** (vía `SUPER_ROLES`), **`require_role`
+> completo** (bypass explícito para admin) y los candados de admin nivel 1.
+> No pasaba `require_supersu` (ese exige rol `supersu` estricto) ni niveles 2+.
+> Aun así: una sola llave externa, sin amarre a cliente, con poderes de admin
+> operativo en todo el sistema. *(Corregido el 2026-08-28: una versión previa de
+> este documento afirmaba que también pasaba supersu; no era exacto.)*
 
 ### 0.1.d — Confirmaciones puntuales de lo que el plan asume
 
@@ -158,3 +158,58 @@ exclusiva de Command, o código muerto — decidir antes de tipar contratos en 1
    descuento de inventario y toca Final Bill) y 5.4 (enum de estados: debe ser
    **capa de mapeo** board/estatus → estado canónico, nunca un reemplazo,
    o se rompen las automatizaciones y el piso).
+
+---
+
+## Tarea 2.3.a — Llaves de API por cliente (primera parte de la 2.3)
+
+**Qué se hizo** (commit correspondiente en `main`):
+
+1. **Llaves por cliente** (`backend/deps.py` + `backend/routers/auth.py`):
+   - Nueva colección `api_keys`: cada llave se guarda **hasheada** (SHA-256,
+     nunca el texto), amarrada a una **lista explícita de clientes**, con
+     nombre, prefijo identificador, `active`, quién la creó y último uso.
+   - Autentican **solo por header `X-API-Key`** (nunca query param, que queda
+     escrito en logs de proxys).
+   - Entran al sistema con rol **`external_api`**: pasan `require_auth` pero
+     **ningún candado de admin** (`require_admin`, `require_role`,
+     `require_admin_level`, supersu — todos rechazan).
+2. **Llave maestra degradada** (`deps.py`): la `MASTER_API_KEY` **sigue
+   autenticando** (para no romper a Command mientras migra) pero perdió el rol
+   `admin`: ahora es `external_api` con alcance `["*"]`. Ya no pasa
+   `require_admin` ni `require_role`.
+3. **Gestión (solo supersu)**: `POST /api/auth/api-keys` (crea; devuelve el
+   texto de la llave UNA sola vez), `GET /api/auth/api-keys` (lista sin hashes),
+   `DELETE /api/auth/api-keys/{key_id}` (revoca). Todo queda en el log de
+   actividad.
+4. **Gancho para las tareas 2.1/2.2**: `deps.api_customer_scope(user)` devuelve
+   el alcance de clientes del solicitante (None = usuario interno; lista = lo
+   que la llave puede ver). Los endpoints de las tareas 2.x filtrarán con esto.
+
+**Cómo emitir la llave de Command** (supersu, desde la consola del navegador
+con sesión en MOS):
+
+```js
+fetch('/api/auth/api-keys', { method: 'POST', credentials: 'include',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name: 'Command', customers: ['SPEKTRUM'] })
+}).then(r => r.json()).then(console.log)
+```
+
+Guardar el `api_key` devuelto en ese momento (no se puede volver a ver) y
+entregarlo a Command para que lo mande en el header `X-API-Key`.
+
+**Plan de retiro de la llave maestra**: cuando Command confirme que usa su
+llave nueva → borrar `MASTER_API_KEY` del entorno del backend en EasyPanel.
+*(Nota: `deps._llave_obligatoria` exige que la variable exista; al retirarla de
+verdad habrá que relajar esa exigencia — un cambio de una línea que se hará en
+ese momento.)*
+
+**Qué NO cambió** (a propósito): los bypass explícitos por query param en
+`GET /api/orders` y `production.py` siguen comparando contra la llave maestra
+tal cual — se retirarán junto con ella. El comportamiento de usuarios internos
+(sesión) no se tocó en absoluto.
+
+**Riesgo asumido**: si Command hoy llamara algún endpoint con candado de admin,
+dejará de poder (403) — la auditoría 0.1 indica que su superficie es
+`require_auth` puro, y un 403 es visible y reversible en un redeploy.

@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi.encoders import jsonable_encoder
-import os, uuid, logging, json
+import os, uuid, logging, json, hashlib
 
 
 def json_response_bytes(payload) -> bytes:
@@ -488,11 +488,33 @@ async def get_current_user(request: Request) -> Optional[Dict]:
         # Return a mock admin user for sync
         return {"user_id": "system_sync", "email": "miguel.miranda@prosper-mfg.com", "name": "System Sync", "role": "admin"}
 
-    # Support for Master API Key (External Integrations)
+    # ── Llaves de integración externa (Command, etc.) ─────────────────────────
     api_key_header = request.headers.get("X-API-Key")
     api_key_query = request.query_params.get("api_key")
     if MASTER_API_KEY and (api_key_header == MASTER_API_KEY or api_key_query == MASTER_API_KEY):
-        return {"user_id": "external_api", "email": "api@prosper-mfg.com", "name": "External API Integration", "role": "admin"}
+        # LLAVE MAESTRA (LEGADO). Antes devolvía rol "admin": una sola llave
+        # pasaba require_admin, require_role y los candados de nivel 1 en TODO
+        # el sistema, sin amarre a ningún cliente (Tarea 2.3 del plan API).
+        # Ahora autentica (require_auth) con rol external_api y sin poderes de
+        # admin. Migración: emitir llaves por cliente (POST /api/auth/api-keys)
+        # y, cuando Command ya use la suya, retirar MASTER_API_KEY del entorno.
+        return {"user_id": "external_api", "email": "api@prosper-mfg.com",
+                "name": "External API (llave maestra legado)",
+                "role": "external_api", "is_api": True, "api_customers": ["*"]}
+    if api_key_header:
+        # Llaves POR CLIENTE (colección api_keys): guardadas hasheadas, con la
+        # lista de clientes que pueden ver. SOLO por header X-API-Key — nunca
+        # query param, que queda escrito en logs de proxys.
+        key_doc = await db.api_keys.find_one(
+            {"key_hash": hash_api_key(api_key_header), "active": True}, {"_id": 0})
+        if key_doc:
+            await db.api_keys.update_one(
+                {"key_id": key_doc["key_id"]},
+                {"$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}})
+            return {"user_id": f"api_{key_doc['key_id']}", "email": "api@prosper-mfg.com",
+                    "name": key_doc.get("name") or "API key",
+                    "role": "external_api", "is_api": True,
+                    "api_customers": list(key_doc.get("customers") or [])}
         
     session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session:
@@ -522,6 +544,21 @@ async def require_auth(request: Request) -> Dict:
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
+
+def hash_api_key(llave) -> str:
+    """SHA-256 de la llave: en la base solo vive el hash, nunca el texto."""
+    return hashlib.sha256(str(llave or "").encode()).hexdigest()
+
+
+def api_customer_scope(user) -> Optional[List[str]]:
+    """Alcance de clientes del solicitante, para el aislamiento multi-tenant
+    (Tareas 2.x): None = usuario interno con sesión (sin restricción por llave);
+    lista = clientes que esta llave de API puede ver; ["*"] = todos (solo la
+    llave maestra legado, mientras se retira)."""
+    if not (user or {}).get("is_api"):
+        return None
+    return list((user or {}).get("api_customers") or [])
+
 
 SUPER_ROLES = {"admin", "supersu"}
 

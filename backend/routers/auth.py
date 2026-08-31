@@ -333,3 +333,66 @@ async def logout(request: Request, response: Response):
         await log_activity(user, "logout", {})
     response.delete_cookie(key="session_token", path="/")
     return {"message": "Logged out"}
+
+
+# ── Llaves de API por cliente (integraciones externas: Command, etc.) ─────────
+# Tarea 2.3 del plan API: reemplazo de la MASTER_API_KEY unica. Cada llave se
+# guarda HASHEADA (deps.hash_api_key), amarrada a una lista de clientes, y
+# autentica con rol external_api (sin poderes de admin). El texto de la llave
+# se muestra UNA sola vez, al crearla.
+
+from deps import require_supersu, hash_api_key  # noqa: E402
+import secrets  # noqa: E402
+
+
+@router.post("/api-keys")
+async def crear_api_key(request: Request):
+    user = await require_supersu(request)
+    body = await request.json()
+    nombre = str(body.get("name") or "").strip()
+    clientes = [str(c).strip() for c in (body.get("customers") or []) if str(c).strip()]
+    if not nombre:
+        raise HTTPException(400, "Falta `name` (para quién es la llave, ej. 'Command - SPEKTRUM').")
+    if not clientes:
+        raise HTTPException(400, "Falta `customers`: clientes que esta llave puede ver "
+                                 "(lista explícita, o ['*'] si de verdad debe ver todos).")
+    llave = f"mos_{secrets.token_urlsafe(32)}"
+    key_id = f"ak_{uuid.uuid4().hex[:10]}"
+    await db.api_keys.insert_one({
+        "key_id": key_id,
+        "name": nombre,
+        "customers": clientes,
+        "key_hash": hash_api_key(llave),
+        # Prefijo visible para identificarla en listados sin exponerla.
+        "prefix": llave[:9],
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user.get("user_id"),
+        "created_by_name": user.get("name", ""),
+        "last_used_at": None,
+    })
+    await log_activity(user, "api_key_created",
+                       {"key_id": key_id, "name": nombre, "customers": clientes})
+    return {
+        "key_id": key_id,
+        "api_key": llave,
+        "aviso": "Guarda la llave AHORA: se almacena hasheada y no se puede volver a mostrar. "
+                 "Se usa por header X-API-Key (nunca por query param).",
+    }
+
+
+@router.get("/api-keys")
+async def listar_api_keys(request: Request):
+    await require_supersu(request)
+    docs = await db.api_keys.find({}, {"_id": 0, "key_hash": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@router.delete("/api-keys/{key_id}")
+async def revocar_api_key(key_id: str, request: Request):
+    user = await require_supersu(request)
+    res = await db.api_keys.update_one({"key_id": key_id}, {"$set": {"active": False}})
+    if not res.matched_count:
+        raise HTTPException(404, f"No existe la llave {key_id}.")
+    await log_activity(user, "api_key_revoked", {"key_id": key_id})
+    return {"ok": True, "key_id": key_id, "active": False}
