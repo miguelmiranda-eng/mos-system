@@ -18,7 +18,20 @@ load_dotenv(ROOT_DIR / '.env')
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-app = FastAPI()
+# Tarea 7.1: metadatos del OpenAPI que FastAPI ya genera (/docs, /openapi.json).
+# OJO: el OpenAPI enumera TODA la API (interna incluida); el contrato de la
+# superficie externa es docs/api-command/CONTRATOS.md + backend/contracts.py.
+app = FastAPI(
+    title="MOS System API",
+    version="1.0",
+    description=(
+        "API del MOS System (Prosper MFG). La superficie EXTERNA para "
+        "consumidores con llave `X-API-Key` (Command) está definida en "
+        "docs/api-command/CONTRATOS.md + backend/contracts.py y protegida por "
+        "default-deny (deps.API_SURFACE_PERMITIDA). El resto de las rutas es "
+        "uso interno del frontend MOS y puede cambiar sin aviso."
+    ),
+)
 
 # CORS - Specific origins are required when allow_credentials is True
 ALLOWED_ORIGINS = [

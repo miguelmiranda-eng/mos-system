@@ -22,7 +22,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 5.1-5.3 | Paginación estandarizada | ✅ Completa |
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
 | 6.1-6.3 | Shipping estructurado + `delay_code` | ✅ Completa |
-| 7.1-7.3 | Documentación de API | ⬜ Pendiente |
+| 7.1-7.3 | Documentación de API | ✅ Completa |
 | Pruebas | E2E con Command + regresión | ⬜ Pendiente |
 
 ---
@@ -563,3 +563,42 @@ param, validado contra el alcance de la llave, filtro server-side):
 fuera de la superficie documentada (p.ej. `POST /api/packing/export` o un
 endpoint del WMS), recibirá 403 visible y reversible — la lista permitida se
 amplía con un cambio aditivo si resulta necesario.
+
+---
+
+## Tareas 7.1-7.3 — Documentación final de la API
+
+**7.1 — OpenAPI.** FastAPI ya genera `/docs` (Swagger) y `/openapi.json`; lo
+que faltaba era identidad: el app ahora declara título, versión y una
+descripción que remite al contrato real (CONTRATOS.md + `contracts.py`) y
+aclara que el resto de rutas es uso interno.
+
+> ⚠️ **Hallazgo para decidir (Miguel):** `/docs` y `/openapi.json` son
+> **públicos** (sin sesión) y enumeran TODAS las rutas internas del sistema.
+> No es fuga de datos (solo formas, no contenido) pero sí mapa del terreno.
+> Restringirlo es una línea (`docs_url=None` o candado por sesión); no se
+> tocó sin aprobación porque alguien puede estarlo usando hoy.
+
+**7.2 — CONTRATOS.md consolidado.** El documento quedó como el contrato único
+y navegable: **Guía rápida para Command** (6 reglas + ejemplo curl), reglas
+generales, tabla de **Superficie permitida** (2.3), secciones transversales
+(cantidades 4.1, paginación 5.x) y la referencia endpoint por endpoint. Cada
+tarea del plan lo fue actualizando en su momento — esta pasada agregó la guía
+y la costura, no reescribió contratos.
+
+**7.3 — Política de cambios.** Sección formal al final de CONTRATOS.md:
+
+- **Aditivo = libre** (campos, endpoints, valores de catálogo, modos opt-in);
+  la contraparte es que Command ignora lo que no conoce.
+- **Ruptura = aviso + 30 días naturales de gracia** (renombrar/quitar,
+  cambiar tipo o semántica, endurecer defaults, retirar compatibilidades);
+  única excepción: hueco de seguridad activo, que se corrige de inmediato
+  con aviso directo.
+- **Compromisos de estabilidad** explícitos (snake_case, sobre de
+  paginación, formato de error, ISO 8601).
+- **Rupturas ya anunciadas** con su disparador: retiro de `MASTER_API_KEY`,
+  `strict` obligatorio global, y validación runtime con las E2E.
+
+Con esto el plan queda completo salvo: **Pruebas E2E** (última fila de la
+tabla) y las **cirugías mayores 4.2 / 4.3 / 5.4**, que esperan aprobación
+explícita.

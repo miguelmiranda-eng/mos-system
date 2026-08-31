@@ -1,8 +1,33 @@
 # Contratos de la API externa MOS ↔ Command
 
 Fuente de verdad: `backend/contracts.py` (modelos Pydantic). Este documento es
-su lectura humana. Cambios a estos contratos siguen la política de la tarea 7.x
-(aditivos libres; renombrar o quitar campos exige aviso y período de gracia).
+su lectura humana y **el único contrato**: lo que no está aquí no es contrato.
+Los cambios siguen la **Política de cambios** (última sección).
+
+## Guía rápida para Command
+
+1. **Autenticación:** header `X-API-Key: <llave>` (llave por cliente emitida
+   por MOS — RESPUESTAS.md 2.3.a). Nunca por query param.
+2. **Cliente:** manda SIEMPRE `?customer=<cliente>` — también en
+   POST/PUT/DELETE. Sin él → `403`.
+3. **Listados:** manda siempre `skip` y `limit` → recibes el sobre
+   `{total, skip, limit, items}`.
+4. **Registrar envíos:** `POST /api/shipping` siempre con `strict=true`.
+5. **Superficie cerrada:** todo lo que no está en la tabla "Superficie
+   permitida" responde `403`. Si Command necesita algo más, se pacta como
+   cambio aditivo del contrato.
+6. **Tolerancia:** ignora campos que no conozcas y tolera códigos nuevos en
+   catálogos cerrados — así los cambios aditivos nunca te rompen.
+
+```bash
+curl -H "X-API-Key: $LLAVE" \
+  "https://<backend>/api/orders/available-to-ship?customer=SPEKTRUM&skip=0&limit=50"
+```
+
+> El OpenAPI generado por FastAPI vive en `/docs` y `/openapi.json` del
+> backend (Tarea 7.1) e incluye TODA la API, interna incluida. Sirve para ver
+> formas y probar; el contrato exigible es únicamente lo que este documento
+> define.
 
 ## Reglas generales
 
@@ -208,3 +233,50 @@ Los modelos se aplican como `response_model` en los endpoints **nuevos**
 en runtime se activará endpoint por endpoint junto con las pruebas E2E (los
 datos históricos traen tipos sucios y una activación ciega rompería respuestas
 que hoy funcionan — regla 0.1).
+
+## Política de cambios del contrato (Tarea 7.3)
+
+**La fuente de verdad es este documento + `backend/contracts.py`.** La forma
+de cualquier otra ruta (uso interno) puede cambiar sin aviso.
+
+### Cambios ADITIVOS — libres, sin aviso previo
+
+- Campos nuevos en respuestas existentes (por eso Command debe ignorar campos
+  que no conoce).
+- Endpoints nuevos en la superficie permitida.
+- Valores nuevos en catálogos cerrados (p. ej. `delay_code`) — Command debe
+  tolerar códigos que no conoce.
+- Modos opt-in nuevos (como el sobre por `skip`): jamás cambian la respuesta
+  de quien no los pide.
+
+### Cambios de RUPTURA — aviso + período de gracia
+
+Renombrar o quitar campos, endpoints o parámetros; cambiar tipos o semántica
+de un campo publicado; endurecer un default (p. ej. volver `strict`
+obligatorio); retirar mecanismos de compatibilidad (la `MASTER_API_KEY`).
+
+Proceso: **(1)** se anuncia en este documento y en RESPUESTAS.md; **(2)**
+corre un período de gracia de **30 días naturales** en el que conviven la
+forma vieja y la nueva (o corre el aviso del apagado); **(3)** se ejecuta.
+Excepción única: un hueco de seguridad activo se corrige de inmediato, con
+aviso directo a Command en paralelo.
+
+### Compromisos de estabilidad (cambiarlos ES ruptura)
+
+- `snake_case`; sobre `{total, skip, limit, items}`; errores
+  `{"detail": "..."}` con su código HTTP; fechas ISO 8601 (UTC al guardar,
+  `YYYY-MM-DD` sin hora).
+- Los campos ya publicados conservan nombre, tipo y semántica.
+
+### Rupturas ya anunciadas (en espera de su disparador)
+
+| Cambio | Disparador |
+|---|---|
+| Retiro de `MASTER_API_KEY` + bypass `?api_key=` de producción | Command confirma que usa su llave por cliente |
+| `strict` obligatorio en `POST /api/shipping` para todos | Command confirma que ya lo manda |
+| Validación runtime (`response_model`) en endpoints vivos | Pruebas E2E del plan |
+
+### Historial del contrato
+
+El historial vive en RESPUESTAS.md (una sección por tarea, con su porqué y
+sus decisiones) y en el log de git de `docs/api-command/`.
