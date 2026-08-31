@@ -35,6 +35,10 @@ class PackingListInfo(BaseModel):
     client: Optional[str] = None
     customer_po: Optional[str] = None
     qty_ordered: Optional[int] = None
+    # Tarea 4.1: unidades embarcadas, DERIVADAS de la bitácora del WMS
+    # (pick_deduction + embarques directos; ver services/qty_embarcada.py).
+    # 0 = sin salidas registradas. No es un contador: se calcula al leer.
+    qty_shipped: int = 0
     # None = la orden aún no tiene packing list cargado.
     packing_list: Optional[PackingLink] = None
     # "order" = campo packing_link de la orden; "comment" = sembrado en
@@ -50,6 +54,12 @@ class OrdenEmbarcable(BaseModel):
     customer_po: Optional[str] = None
     branding: Optional[str] = None
     quantity: Optional[int] = None
+    # Tarea 4.1 — el par pedido-vs-embarcado. quantity es el valor crudo
+    # histórico (puede traer mugre de tipos); qty_ordered es su lectura
+    # numérica (null si no es número) y qty_shipped se deriva de la bitácora
+    # del WMS al leer (0 = sin salidas registradas).
+    qty_ordered: Optional[int] = None
+    qty_shipped: int = 0
     cancel_date: Optional[str] = None
     # Fecha limite de ENVIO (Tarea 3.1), independiente de cancel_date.
     # Puede venir null mientras la orden no la tenga capturada.
@@ -71,6 +81,9 @@ class OrdenEmbarcada(BaseModel):
     style: Optional[str] = None
     color: Optional[str] = None
     quantity: Optional[int] = None
+    # Tarea 4.1 — misma semántica que en OrdenEmbarcable.
+    qty_ordered: Optional[int] = None
+    qty_shipped: int = 0
     customer_po: Optional[str] = None
     board: Optional[str] = None
     due_date: Optional[str] = None
@@ -95,9 +108,21 @@ class EvidenciaEnvio(BaseModel):
     type: Optional[str] = None
 
 
+class DetalleOrdenEnvio(BaseModel):
+    """Tarea 4.1: el par pedido-vs-embarcado por cada número capturado en
+    order_numbers. order_numbers sigue siendo texto libre hasta la tarea 6.1:
+    si el número no corresponde a una orden viva, qty_ordered viene null."""
+    order_number: str
+    qty_ordered: Optional[int] = None
+    # Derivado de la bitácora del WMS al leer (services/qty_embarcada.py).
+    qty_shipped: int = 0
+
+
 class RegistroEnvio(BaseModel):
     shipping_id: str
     order_numbers: List[str]
+    # Tarea 4.1: espejo de order_numbers con su par de cantidades.
+    orders_detail: List[DetalleOrdenEnvio] = []
     notes: Optional[str] = None
     evidence: List[EvidenciaEnvio] = []
     # Hitos del envio (Tareas 3.2-3.4): ISO 8601 normalizado a UTC.
@@ -136,6 +161,9 @@ class EnvioProgramado(BaseModel):
     client: Optional[str] = None
     branding: Optional[str] = None
     quantity: Optional[int] = None
+    # Tarea 4.1 — misma semántica que en OrdenEmbarcable.
+    qty_ordered: Optional[int] = None
+    qty_shipped: int = 0
     production_status: Optional[str] = None
     board: Optional[str] = None
     notes: Optional[str] = None

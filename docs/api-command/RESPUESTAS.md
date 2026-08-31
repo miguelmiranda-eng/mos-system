@@ -16,7 +16,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 3.1 | `ship_by` separado de `cancel_date` | ✅ Completa |
 | 3.2 | `dispatched_at` ISO 8601 | ✅ Completa |
 | 3.3/3.4 | `packed_at`, `delivered_at` + doc | ✅ Completa |
-| 4.1 | `qty_ordered` vs `qty_shipped` | ⬜ Pendiente |
+| 4.1 | `qty_ordered` vs `qty_shipped` | ✅ Completa |
 | 4.2 | Pulls → Hold/Allocation | ⬜ Pendiente |
 | 4.3 | Múltiples pick tickets por orden | ⬜ Pendiente |
 | 5.1-5.3 | Paginación estandarizada | ⬜ Pendiente |
@@ -383,3 +383,51 @@ semántica ya están definidos y publicados en el contrato.
 funcionando sin cambios — simplemente sus registros nuevos nacen con
 `dispatched_at` sellado. La captura de `packed_at`/`delivered_at` desde la UI
 es iteración aparte; el dato y el contrato ya existen.
+
+---
+
+## Tarea 4.1 — `qty_ordered` vs `qty_shipped` en la superficie de embarque
+
+**Decisión central: `qty_shipped` NO es un campo nuevo — se DERIVA al leer.**
+La lección del sistema ("la caja manda") es que un contador paralelo se
+desincroniza en silencio; aquí la fuente es la bitácora del WMS. La derivación
+vive en un solo lugar, `backend/services/qty_embarcada.py`, y suma dos fuentes
+sin doble conteo:
+
+1. **`wms_movements` tipo `pick_deduction`** — cada descuento de pick registra
+   `details.order_number` + `details.qty` (unidades que salieron del
+   inventario hacia esa orden, cajas + saldo sin caja). Se verificó que no
+   existe movimiento inverso de un pick: el neto es la suma directa.
+2. **`wms_shipments.total_units`** — el embarque directo
+   (`POST /api/wms/movements`) descuenta ahí mismo el inventario de las cajas
+   que NO pasaron por pick. Las cajas ya pickeadas llegan al embarque en 0
+   unidades, así que no aportan doble.
+
+Detalles defensivos (datos históricos sucios): las sumas usan
+`$convert(onError=0)`; los números de orden se buscan como string **y** como
+int; `wms_shipments.order_id` a veces guarda el `order_number` y a veces el
+`order_id` interno (el propio endpoint actualiza la orden con `$or` de ambos),
+así que se casan los dos. El servicio crea perezosamente los índices
+`wms_movements(type, details.order_number)` y `wms_shipments(order_id)` —
+sin ellos cada lectura barrería la bitácora completa.
+
+**Dónde viaja el par** (todo aditivo; `quantity` crudo se conserva donde ya
+existía para no mover a los consumidores actuales):
+
+| Endpoint | Qué se agregó |
+|---|---|
+| `GET /api/packing-list` | `qty_shipped` (ya traía `qty_ordered` desde la 1.2) |
+| `GET /api/orders/available-to-ship` | `qty_ordered` (lectura numérica de `quantity`) + `qty_shipped` por item |
+| `GET /api/orders/shipped` | ídem |
+| `GET /api/shipping` y respuesta del `PUT` | `orders_detail[] {order_number, qty_ordered, qty_shipped}` — espejo de `order_numbers`; número sin orden viva → `qty_ordered: null` (adelanto honesto de la 6.1, sin rechazar nada todavía) |
+| `GET /api/scheduled-shipments` (+ respuestas de POST/PUT) | `qty_ordered` + `qty_shipped` por fila |
+
+Contratos actualizados en `contracts.py` (`DetalleOrdenEnvio` nuevo; el par en
+`PackingListInfo`, `OrdenEmbarcable`, `OrdenEmbarcada`, `RegistroEnvio`,
+`EnvioProgramado`) y `CONTRATOS.md` (sección general "Cantidades" + cada
+endpoint).
+
+**Límites honestos:** `qty_shipped` refleja lo que el WMS registró — salidas de
+la era Excel (anteriores al WMS) no están en la bitácora y no se inventan.
+`GET /api/shipping` sigue sin guard multi-tenant (eso es la 2.3 restante; el
+enriquecimiento no revela órdenes que el endpoint no mostrara ya).

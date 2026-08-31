@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, R
 from typing import Optional
 import json
 from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, json_response_bytes, require_api_customer
+from services.qty_embarcada import qty_embarcada_por_orden, entero_o_none
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -291,6 +292,20 @@ async def check_order_number(request: Request, order_number: str = None):
         "in_trash": in_trash
     }
 
+async def _con_par_embarque(items):
+    """Tarea 4.1: agrega a cada item el par qty_ordered vs qty_shipped.
+    `quantity` (el valor crudo histórico) no se toca — consumidores actuales;
+    qty_ordered es su lectura numérica y qty_shipped se DERIVA de la bitácora
+    del WMS (ver services/qty_embarcada.py — no hay contador paralelo).
+    order_id se proyecta solo para el cálculo y no sale en la respuesta."""
+    embarcado = await qty_embarcada_por_orden(db, items)
+    for it in items:
+        it["qty_ordered"] = entero_o_none(it.get("quantity"))
+        it["qty_shipped"] = embarcado.get(str(it.get("order_number") or "").strip(), 0)
+        it.pop("order_id", None)
+    return items
+
+
 @router.get("/shipped")
 async def list_shipped_orders(request: Request, skip: int = 0, limit: int = 50):
     """Órdenes con packing cargado (el camioncito): las que ya tienen packing_link.
@@ -305,13 +320,14 @@ async def list_shipped_orders(request: Request, skip: int = 0, limit: int = 50):
         q.update(filtro_cliente)
     total = await db.orders.count_documents(q)
     proj = {
-        "_id": 0, "order_number": 1, "client": 1, "style": 1, "color": 1,
+        "_id": 0, "order_id": 1, "order_number": 1, "client": 1, "style": 1, "color": 1,
         "quantity": 1, "customer_po": 1, "board": 1, "due_date": 1,
         "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
     }
     items = await (db.orders.find(q, proj)
                    .sort("packing_link_at", -1).skip(skip).limit(limit).to_list(limit))
-    return {"total": total, "skip": skip, "limit": limit, "items": items}
+    return {"total": total, "skip": skip, "limit": limit,
+            "items": await _con_par_embarque(items)}
 
 
 @router.get("/available-to-ship")
@@ -334,13 +350,14 @@ async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 5
         rx = {"$regex": re.escape(search), "$options": "i"}
         q["$or"] = [{"order_number": rx}, {"client": rx}, {"customer_po": rx}]
     proj = {
-        "_id": 0, "order_number": 1, "client": 1, "customer_po": 1, "branding": 1,
+        "_id": 0, "order_id": 1, "order_number": 1, "client": 1, "customer_po": 1, "branding": 1,
         "quantity": 1, "cancel_date": 1, "ship_by": 1, "production_status": 1, "board": 1,
     }
     total = await db.orders.count_documents(q)
     items = await (db.orders.find(q, proj)
                    .sort("cancel_date", 1).skip(skip).limit(limit).to_list(limit))
-    return {"total": total, "skip": skip, "limit": limit, "items": items}
+    return {"total": total, "skip": skip, "limit": limit,
+            "items": await _con_par_embarque(items)}
 
 
 @router.get("/{order_id}")

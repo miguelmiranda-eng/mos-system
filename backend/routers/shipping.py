@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
 from typing import List, Optional
 from deps import db, require_auth, log_activity
+from services.qty_embarcada import qty_embarcada_por_orden, entero_o_none
 from datetime import datetime, timezone
 import os
 import uuid
@@ -89,6 +90,38 @@ async def create_shipping_record(
     return {"message": "Envío registrado con éxito", "shipping_id": record["shipping_id"]}
 
 
+async def _con_detalle_de_ordenes(records):
+    """Tarea 4.1: agrega a cada registro `orders_detail` — por cada número
+    capturado en `order_numbers`, el par qty_ordered (orders.quantity) vs
+    qty_shipped (derivado de la bitácora del WMS, ver
+    services/qty_embarcada.py). `order_numbers` sigue siendo texto libre hasta
+    la tarea 6.1: cuando el número no corresponde a una orden viva,
+    qty_ordered viene null (qty_shipped puede sumar igual — la bitácora se
+    consulta por número, exista o no la orden)."""
+    nums = sorted({str(n).strip() for r in records
+                   for n in (r.get("order_numbers") or []) if str(n).strip()})
+    if not nums:
+        for r in records:
+            r["orders_detail"] = []
+        return records
+    ordenes = await db.orders.find(
+        {"order_number": {"$in": nums}, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0, "order_number": 1, "order_id": 1, "quantity": 1},
+    ).to_list(None)
+    por_num = {o.get("order_number"): o for o in ordenes}
+    embarcado = await qty_embarcada_por_orden(db, [
+        {"order_number": n, "order_id": por_num.get(n, {}).get("order_id")}
+        for n in nums])
+    for r in records:
+        r["orders_detail"] = [
+            {"order_number": num,
+             "qty_ordered": entero_o_none(por_num.get(num, {}).get("quantity")),
+             "qty_shipped": embarcado.get(num, 0)}
+            for num in (str(n).strip() for n in (r.get("order_numbers") or []))
+            if num]
+    return records
+
+
 @router.put("/{shipping_id}")
 async def update_shipping_timestamps(shipping_id: str, request: Request):
     """Completa los hitos de un envio ya registrado (Tareas 3.2-3.4): recibe
@@ -109,7 +142,8 @@ async def update_shipping_timestamps(shipping_id: str, request: Request):
         raise HTTPException(404, f"No existe el registro de envío {shipping_id}.")
     await log_activity(user, "shipping_timestamps_updated",
                        {"shipping_id": shipping_id, "campos": sorted(cambios)})
-    return await db.shipping_records.find_one({"shipping_id": shipping_id}, {"_id": 0})
+    doc = await db.shipping_records.find_one({"shipping_id": shipping_id}, {"_id": 0})
+    return (await _con_detalle_de_ordenes([doc]))[0]
 
 @router.get("")
 async def get_shipping_records(request: Request, date: Optional[str] = None):
@@ -121,6 +155,6 @@ async def get_shipping_records(request: Request, date: Optional[str] = None):
         query["created_at"] = {"$regex": f"^{date}"}
     
     records = await db.shipping_records.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return records
+    return await _con_detalle_de_ordenes(records)
 
 # Static file serving handled in server.py (will add mount)

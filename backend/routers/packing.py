@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from deps import db, require_auth, require_api_customer
+from services.qty_embarcada import qty_embarcada, entero_o_none
 from contracts import PackingListInfo, PackingLink
 import re as _re
 import openpyxl
@@ -67,16 +68,13 @@ async def get_packing_list(request: Request, order: str = ""):
             pl_at = str(c.get("created_at") or "")
             source = "comment"
 
-    try:
-        qty = int(o.get("quantity"))
-    except (TypeError, ValueError):
-        qty = None
-
     return PackingListInfo(
         order_number=str(o.get("order_number") or order),
         client=o.get("client"),
         customer_po=o.get("customer_po"),
-        qty_ordered=qty,
+        qty_ordered=entero_o_none(o.get("quantity")),
+        # Tarea 4.1: derivado de la bitácora del WMS (services/qty_embarcada.py).
+        qty_shipped=await qty_embarcada(db, o),
         packing_list=PackingLink(url=pl_url, label=pl_label, updated_at=pl_at or None) if pl_url else None,
         source=source if pl_url else None,
     )

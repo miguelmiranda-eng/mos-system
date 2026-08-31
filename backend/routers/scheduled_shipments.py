@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 
 from deps import db, require_auth, log_activity
+from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
 
 # Extrae etiqueta|url de un comentario [file]etiqueta|url[/file] (packing_link_seed).
 _FILE_RE = re.compile(r"\[file\](.*?)\|(.*?)\[/file\]")
@@ -101,7 +102,8 @@ def _valid_shipment_no(v):
     return n
 
 
-def _row(sched: dict, order: dict | None, pl_seed: dict | None = None) -> dict:
+def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
+         qty_shipped: int = 0) -> dict:
     o = order or {}
     # PL (packing list): campo packing_link* de la orden, o el comentario
     # packing_link_seed más fresco. Misma lógica que el modal de comentarios.
@@ -134,6 +136,11 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None) -> dict:
         "client": o.get("client"),
         "branding": o.get("branding"),
         "quantity": o.get("quantity"),
+        # Tarea 4.1: el par pedido-vs-embarcado. quantity queda tal cual
+        # (consumidores actuales); qty_ordered es su lectura numérica y
+        # qty_shipped se deriva de la bitácora del WMS (services/qty_embarcada.py).
+        "qty_ordered": entero_o_none(o.get("quantity")),
+        "qty_shipped": qty_shipped,
         "production_status": o.get("production_status"),
         "board": o.get("board"),
         "notes": o.get("notes"),
@@ -178,8 +185,14 @@ async def list_scheduled(request: Request):
                 pl_by_num[o["order_number"]] = seed
     # Conteo de envíos configurado por semana (para grupos vacíos que sobreviven recarga).
     weeks = await db.scheduled_week_envios.find({}, {"_id": 0}).to_list(5000)
+    # Tarea 4.1: unidades embarcadas por orden en un solo cálculo para toda la
+    # lista (se piden por número aunque la orden ya no exista — la bitácora manda).
+    embarcado = await qty_embarcada_por_orden(db, [
+        {"order_number": n, "order_id": by_num.get(n, {}).get("order_id")} for n in nums])
     return {
-        "items": [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number"))) for s in scheds],
+        "items": [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number")),
+                       qty_shipped=embarcado.get(s.get("order_number"), 0))
+                  for s in scheds],
         "weeks": weeks,
     }
 
@@ -294,7 +307,7 @@ async def schedule_shipment(request: Request):
         })
     await log_activity(user, "schedule_shipment", {"order_number": order_number})
     sched = await db.scheduled_shipments.find_one({"shipment_id": sid}, {"_id": 0})
-    return _row(sched, order)
+    return _row(sched, order, qty_shipped=await qty_embarcada(db, order))
 
 
 @router.put("/{shipment_id}")
@@ -326,7 +339,9 @@ async def update_scheduled(shipment_id: str, request: Request):
     sched = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
     order = await db.orders.find_one({"order_number": sched.get("order_number")}, _ORDER_PROJ)
     await log_activity(user, "update_scheduled_shipment", {"shipment_id": shipment_id, **allowed})
-    return _row(sched, order)
+    return _row(sched, order, qty_shipped=await qty_embarcada(
+        db, {"order_number": sched.get("order_number"),
+             "order_id": (order or {}).get("order_id")}))
 
 
 @router.delete("/{shipment_id}")

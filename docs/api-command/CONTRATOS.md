@@ -15,6 +15,19 @@ su lectura humana. Cambios a estos contratos siguen la política de la tarea 7.x
 | Fechas | Strings ISO 8601; fechas sin hora como `YYYY-MM-DD`. |
 | Errores | `{"detail": "<motivo legible>"}` + código HTTP: 400 parámetro faltante/ inválido, 401 sin autenticar, 403 sin permiso o sin `customer`, 404 no existe. |
 
+## Cantidades: `qty_ordered` vs `qty_shipped` (Tarea 4.1)
+
+El par viaja en toda la superficie de embarque (packing-list,
+available-to-ship, shipped, shipping, scheduled-shipments):
+
+| Campo | Semántica |
+|---|---|
+| `qty_ordered` | Lo pedido: lectura numérica de `orders.quantity`. `null` cuando la orden no existe o su cantidad histórica no es un número. Donde también viaja `quantity`, ese es el valor crudo histórico (los consumidores viejos lo siguen recibiendo tal cual). |
+| `qty_shipped` | Lo embarcado: entero ≥ 0, **derivado al leer** de la bitácora del WMS — descuentos de pick (`pick_deduction`) + embarques directos de cajas sin pick. NO es un contador guardado: no puede desincronizarse del inventario. `0` = sin salidas registradas en el WMS. |
+
+> Nota honesta: `qty_shipped` refleja lo que el WMS registró. Salidas
+> anteriores al WMS (era Excel) no están en la bitácora y no se inventan.
+
 ## 1. `GET /api/packing-list` — la ruta ÚNICA del packing list (Tarea 1.2)
 
 Command no debe intentar ninguna otra ruta para obtener el packing list.
@@ -30,6 +43,7 @@ Command no debe intentar ninguna otra ruta para obtener el packing list.
   "client": "Goodie Two Sleeves LLC",
   "customer_po": "22359",
   "qty_ordered": 480,
+  "qty_shipped": 336,
   "packing_list": {
     "url": "https://docs.google.com/spreadsheets/d/…",
     "label": "PL-2911",
@@ -52,7 +66,8 @@ Command no debe intentar ninguna otra ruta para obtener el packing list.
 
 `skip`/`limit` (tope 5000) · `search` opcional · `customer` obligatorio con
 llave de API. Sobre paginado; `items[]`: `order_number, client, customer_po,
-branding, quantity, cancel_date, ship_by, production_status, board`.
+branding, quantity, qty_ordered, qty_shipped, cancel_date, ship_by,
+production_status, board` (el par de cantidades: Tarea 4.1, ver arriba).
 
 > `ship_by` (Tarea 3.1) es la **fecha límite de envío**, independiente de
 > `cancel_date` (fecha de cancelación del cliente). Puede venir `null` mientras
@@ -61,16 +76,25 @@ branding, quantity, cancel_date, ship_by, production_status, board`.
 ## 3. `GET /api/orders/shipped` (`PaginaOrdenesEmbarcadas`)
 
 Órdenes con packing cargado. Sobre paginado; `items[]`: `order_number, client,
-style, color, quantity, customer_po, board, due_date, packing_link,
-packing_link_label, packing_link_at`.
+style, color, quantity, qty_ordered, qty_shipped, customer_po, board, due_date,
+packing_link, packing_link_label, packing_link_at` (el par de cantidades:
+Tarea 4.1, ver arriba).
 
 ## 4. Shipping — `GET /api/shipping`, `POST /api/shipping`, `PUT /api/shipping/{shipping_id}`
 
 `GET` con filtro `?date=YYYY-MM-DD`. Lista simple (histórico; se documenta tal
 cual — migrar al sobre paginado rompería a los consumidores actuales y se hará
 junto con las pruebas E2E). Cada `RegistroEnvio`: `shipping_id,
-order_numbers[], notes, evidence[] {id, filename, url, type}, packed_at,
-dispatched_at, delivered_at, created_by, created_by_name, created_at`.
+order_numbers[], orders_detail[], notes, evidence[] {id, filename, url, type},
+packed_at, dispatched_at, delivered_at, created_by, created_by_name,
+created_at`.
+
+**`orders_detail[]` (Tarea 4.1)** — espejo de `order_numbers` con el par de
+cantidades por orden: `{order_number, qty_ordered, qty_shipped}`. Como
+`order_numbers` sigue siendo texto libre (hasta la 6.1), un número que no
+corresponde a una orden viva trae `qty_ordered: null`; `qty_shipped` se deriva
+de la bitácora del WMS por número, exista o no la orden. El `PUT` devuelve el
+registro ya enriquecido con `orders_detail`.
 
 **Timestamps (Tareas 3.2-3.4)** — reglas:
 
@@ -92,9 +116,10 @@ dispatched_at, delivered_at, created_by, created_by_name, created_at`.
 `shipment_id, order_number, scheduled_year, scheduled_month (1-12),
 scheduled_week (1-5), shipment_no, scheduled_export_date, delivery_to,
 pl_export, pl_number, pl_url, status, customer_po, design_num, cancel_date,
-ship_by, client, branding, quantity, production_status, board, notes,
-packing_link, packing_link_label, days_com, order_exists, created_at,
-updated_at`.
+ship_by, client, branding, quantity, qty_ordered, qty_shipped,
+production_status, board, notes, packing_link, packing_link_label, days_com,
+order_exists, created_at, updated_at` (el par de cantidades: Tarea 4.1, ver
+arriba).
 
 > `days_com` = días de hoy a la **fecha límite de envío**: `ship_by` cuando la
 > orden lo tiene (Tarea 3.1), con fallback a `cancel_date` mientras no
