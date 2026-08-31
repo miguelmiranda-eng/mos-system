@@ -9,8 +9,9 @@ import time
 import logging
 from datetime import datetime, timezone
 from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_swagger_ui_html
 from ws_manager import ws_manager
-from deps import db, api_surface_permitida
+from deps import db, api_surface_permitida, require_auth
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -31,7 +32,32 @@ app = FastAPI(
         "default-deny (deps.API_SURFACE_PERMITIDA). El resto de las rutas es "
         "uso interno del frontend MOS y puede cambiar sin aviso."
     ),
+    # Decisión de Miguel (2026-08-31, hallazgo de la Tarea 7.1): /docs, /redoc
+    # y /openapi.json ya NO son públicos — enumeraban todas las rutas internas
+    # sin sesión. Se desmontan aquí y /docs + /openapi.json se re-montan abajo
+    # con sesión interna obligatoria (/redoc no se re-monta: nadie lo usaba).
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def openapi_con_sesion(request: Request):
+    """El esquema OpenAPI completo, solo con sesión interna de MOS. Una llave
+    de API ni siquiera llega aquí: /openapi.json no está en la superficie
+    permitida, así que el middleware la corta antes con 403."""
+    await require_auth(request)
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+async def docs_con_sesion(request: Request):
+    """Swagger UI, solo con sesión interna de MOS (misma razón que arriba).
+    El navegador manda la cookie de sesión solo, así que para un usuario
+    logueado en MOS /docs se ve igual que siempre."""
+    await require_auth(request)
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="MOS System API — Docs")
 
 # CORS - Specific origins are required when allow_credentials is True
 ALLOWED_ORIGINS = [

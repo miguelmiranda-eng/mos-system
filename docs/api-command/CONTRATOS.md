@@ -25,9 +25,10 @@ curl -H "X-API-Key: $LLAVE" \
 ```
 
 > El OpenAPI generado por FastAPI vive en `/docs` y `/openapi.json` del
-> backend (Tarea 7.1) e incluye TODA la API, interna incluida. Sirve para ver
-> formas y probar; el contrato exigible es únicamente lo que este documento
-> define.
+> backend (Tarea 7.1) e incluye TODA la API, interna incluida — por eso exige
+> **sesión interna de MOS** (una llave de API recibe 403). Sirve al equipo
+> interno para ver formas y probar; el contrato exigible para Command es
+> únicamente lo que este documento define.
 
 ## Reglas generales
 

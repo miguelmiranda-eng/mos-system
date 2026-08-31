@@ -573,11 +573,13 @@ que faltaba era identidad: el app ahora declara título, versión y una
 descripción que remite al contrato real (CONTRATOS.md + `contracts.py`) y
 aclara que el resto de rutas es uso interno.
 
-> ⚠️ **Hallazgo para decidir (Miguel):** `/docs` y `/openapi.json` son
-> **públicos** (sin sesión) y enumeran TODAS las rutas internas del sistema.
-> No es fuga de datos (solo formas, no contenido) pero sí mapa del terreno.
-> Restringirlo es una línea (`docs_url=None` o candado por sesión); no se
-> tocó sin aprobación porque alguien puede estarlo usando hoy.
+> ✅ **Hallazgo resuelto (decisión de Miguel, 2026-08-31):** `/docs` y
+> `/openapi.json` eran públicos y enumeraban todas las rutas internas.
+> Quedaron **restringidos a sesión interna de MOS**: sin sesión → 401; con
+> llave de API → 403 del middleware (no están en la superficie permitida);
+> para un usuario logueado en MOS, `/docs` se ve igual que siempre (la
+> cookie viaja sola). `/redoc` se desmontó (nadie lo usaba). La batería A
+> del E2E verifica los tres casos.
 
 **7.2 — CONTRATOS.md consolidado.** El documento quedó como el contrato único
 y navegable: **Guía rápida para Command** (6 reglas + ejemplo curl), reglas

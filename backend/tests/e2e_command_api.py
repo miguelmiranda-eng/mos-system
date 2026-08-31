@@ -108,8 +108,17 @@ def bateria_a():
         s, _ = pide(metodo, ruta, llave=FALSA)
         check(f"superficie permitida: {metodo} {ruta} con llave falsa -> 401", s == 401, f"status={s}")
 
+    # Decisión de Miguel (2026-08-31): la documentación generada exige sesión
+    # interna. Sin sesión → 401; /redoc quedó desmontado (404); con llave de
+    # API el middleware corta antes (403, no está en la superficie permitida).
     s, _ = pide("GET", "/docs")
-    check("informativo: GET /docs es público (hallazgo 7.1, decisión pendiente)", s == 200, f"status={s}")
+    check("GET /docs sin sesión -> 401 (restringido, hallazgo 7.1)", s == 401, f"status={s}")
+    s, _ = pide("GET", "/openapi.json")
+    check("GET /openapi.json sin sesión -> 401", s == 401, f"status={s}")
+    s, _ = pide("GET", "/redoc")
+    check("GET /redoc -> 404 (desmontado)", s == 404, f"status={s}")
+    s, cuerpo = pide("GET", "/docs", llave="e2e-llave-falsa")
+    check("GET /docs con llave de API -> 403 superficie", s == 403 and "superficie" in str(cuerpo), f"status={s}")
 
 
 def bateria_b():
