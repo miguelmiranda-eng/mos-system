@@ -23,7 +23,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
 | 6.1-6.3 | Shipping estructurado + `delay_code` | ✅ Completa |
 | 7.1-7.3 | Documentación de API | ✅ Completa |
-| Pruebas | E2E con Command + regresión | 🔄 Batería A verde en producción (28/28); B espera llave de prueba |
+| Pruebas | E2E con Command + regresión | 🔄 Batería A verde en producción (31/31); B espera llave de prueba |
 
 ---
 
@@ -618,7 +618,8 @@ integración real de Command.
 
 ### Batería A — compuertas y default-deny (sin llave real) ✅
 
-Corrida contra **producción** el 2026-08-31: **28/28 OK.**
+Corrida contra **producción** el 2026-08-31: **31/31 OK** (última corrida ya
+con la restricción de `/docs` desplegada).
 
 - Sin llave: 401 en toda la superficie (packing-list, shipping, delay-codes,
   scheduled, orders).
@@ -630,8 +631,9 @@ Corrida contra **producción** el 2026-08-31: **28/28 OK.**
   week-config...), y las 8 rutas permitidas respondieron **401** (el
   middleware las deja pasar y la llave falsa muere en la autenticación —
   nunca un 403 de superficie).
-- Confirmado también el hallazgo 7.1: `GET /docs` responde 200 sin sesión
-  (decisión pendiente de Miguel).
+- Confirmada la restricción de la documentación generada (decisión 7.1):
+  `/docs` y `/openapi.json` sin sesión → 401, `/docs` con llave de API → 403
+  de superficie, `/redoc` → 404.
 
 ### Batería B — superficie completa con llave real (lista, espera llave)
 
