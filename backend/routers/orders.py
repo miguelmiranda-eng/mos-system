@@ -117,7 +117,11 @@ async def _run_automations(trigger_type, order, user, context=None):
     from routers.automations import run_automations
     return await run_automations(trigger_type, order, user, context)
 
-async def _fetch_orders(board, search, limit, include_images, filtro_cliente=None):
+async def _fetch_orders(board, search, limit, include_images, filtro_cliente=None,
+                        skip=None):
+    """skip=None → comportamiento clásico: lista de hasta `limit` órdenes.
+    skip=int (Tarea 5.1): página skip/limit y devuelve (items, total)."""
+    total = None
     query = {}
     if board == "MASTER":
         # Exclude trash AND ghost orders (null/missing board) using an indexable query
@@ -176,9 +180,19 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
             if hit:
                 ranked.append((0 if exact else 1, o))
         ranked.sort(key=lambda r: r[0])  # stable → keeps created_at desc within each tier
-        orders_raw = [o for _, o in ranked[:limit]]
-    else:
+        if skip is None:
+            orders_raw = [o for _, o in ranked[:limit]]
+        else:
+            # El total de una búsqueda es lo que sobrevivió al filtro en Python,
+            # no un count de Mongo.
+            total = len(ranked)
+            orders_raw = [o for _, o in ranked[skip:skip + limit]]
+    elif skip is None:
         orders_raw = await db.orders.find(query, projection).sort("created_at", -1).to_list(limit)
+    else:
+        total = await db.orders.count_documents(query)
+        orders_raw = await (db.orders.find(query, projection)
+                            .sort("created_at", -1).skip(skip).limit(limit).to_list(limit))
 
     # Safety loop to avoid serialization/merging crashes
     cleaned_orders = []
@@ -189,17 +203,29 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
         except Exception as e:
             logger.error(f"Error merging fields for order {order.get('order_id')}: {e}")
             cleaned_orders.append(order)
-    return cleaned_orders
+    return cleaned_orders if skip is None else (cleaned_orders, total)
 
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000,
-                     include_images: bool = False):
+                     include_images: bool = False, skip: int = None):
     # deps.get_current_user tambien autentica la llave (header o query legado),
     # asi que el viejo bypass explicito por api_key sobraba. Tarea 2.1: para
     # llaves de API, `customer` es OBLIGATORIO (403 si falta o esta fuera del
     # alcance de la llave) y el filtro se aplica server-side.
     user = await require_auth(request)
     filtro_cliente = require_api_customer(user, request)
+
+    # Tarea 5.1: paginación bajo demanda. Mandar `skip` (aunque sea 0) activa
+    # el sobre {total, skip, limit, items}; sin `skip`, TODO el comportamiento
+    # histórico (lista plana, caché global, limit libre) queda intacto. El modo
+    # sobre no toca la caché global: cada página es consulta directa (misma
+    # política que las búsquedas, que tampoco se cachean).
+    if skip is not None:
+        skip_v = max(0, skip)
+        limit_v = max(1, min(limit, 5000))
+        items, total = await _fetch_orders(board, search, limit_v, include_images,
+                                           filtro_cliente, skip=skip_v)
+        return {"total": total, "skip": skip_v, "limit": limit_v, "items": items}
 
     if filtro_cliente:
         # Consumidor externo: SIN cache (la cache global mezclaria clientes).

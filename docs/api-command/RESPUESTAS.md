@@ -19,7 +19,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 4.1 | `qty_ordered` vs `qty_shipped` | ✅ Completa |
 | 4.2 | Pulls → Hold/Allocation | ⬜ Pendiente |
 | 4.3 | Múltiples pick tickets por orden | ⬜ Pendiente |
-| 5.1-5.3 | Paginación estandarizada | ⬜ Pendiente |
+| 5.1-5.3 | Paginación estandarizada | ✅ Completa |
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
 | 6.1-6.3 | Shipping estructurado + `delay_code` | ⬜ Pendiente |
 | 7.1-7.3 | Documentación de API | ⬜ Pendiente |
@@ -431,3 +431,33 @@ endpoint).
 la era Excel (anteriores al WMS) no están en la bitácora y no se inventan.
 `GET /api/shipping` sigue sin guard multi-tenant (eso es la 2.3 restante; el
 enriquecimiento no revela órdenes que el endpoint no mostrara ya).
+
+---
+
+## Tareas 5.1-5.3 — Paginación estandarizada bajo demanda
+
+**La restricción que definió el diseño:** los tres endpoints que regresaban
+lista completa tienen consumidores vivos (frontend interno y Command) que
+esperan la forma actual — cambiarla a secas violaría la regla 0.1. La
+paginación entra entonces **por opt-in**: mandar **`skip`** (aunque sea `0`)
+activa el sobre estándar `{total, skip, limit, items}`; sin `skip`, la
+respuesta es byte a byte la de siempre. `limit` funciona en ambos modos (sin
+sobre, solo recorta la lista plana).
+
+| Tarea | Endpoint | Sin `skip` (intacto) | Con `skip` |
+|---|---|---|---|
+| 5.1 | `GET /api/orders` | Lista plana, `limit` default 1000, caché global | Sobre; `limit` tope 5000; **sin caché global** (mismo criterio que las búsquedas: cada página es consulta directa). En búsquedas, `total` = lo que sobrevivió al filtro en Python (el ranking se hace en memoria y un count de Mongo mentiría). |
+| 5.2 | `GET /api/shipping` | Lista plana, tope histórico 100 | Sobre `PaginaRegistrosEnvio`; permite recorrer TODO el histórico (antes el tope 100 era un muro); cada página sale enriquecida con `orders_detail` (4.1) |
+| 5.3 | `GET /api/scheduled-shipments` | `{items, weeks}` completo | `{total, skip, limit, items, weeks}` (`PaginaEnviosProgramados`); la paginación corta ANTES del join, así que una página chica también paga menos joins |
+
+**Ya paginados, quedan como están** (regla del plan): `available-to-ship` y
+`shipped` ya usaban el sobre desde antes.
+
+**Fuera a propósito:** `GET /api/wms/inventory/history` — es una vista acotada
+de movimientos recientes con filtro posterior en Python; un `total` ahí sería
+mentiroso. Documentado en CONTRATOS.md; si Command necesita recorrer historia
+completa de movimientos, es conversación aparte.
+
+Contratos: `PaginaRegistrosEnvio` y `PaginaEnviosProgramados` nuevos en
+`contracts.py`; CONTRATOS.md ganó la sección "Paginación bajo demanda" con la
+recomendación para Command: mandar **siempre** `skip` y `limit`.

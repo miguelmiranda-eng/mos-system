@@ -139,6 +139,16 @@ class RegistroEnvio(BaseModel):
     created_at: Optional[str] = None
 
 
+class PaginaRegistrosEnvio(BaseModel):
+    """Tarea 5.2: GET /api/shipping responde este sobre cuando la petición
+    trae `skip` (aunque sea 0). Sin `skip` sigue la lista plana histórica —
+    los consumidores actuales no cambian."""
+    total: int
+    skip: int
+    limit: int
+    items: List[RegistroEnvio]
+
+
 # ── Envíos programados ───────────────────────────────────────────────────────
 
 class EnvioProgramado(BaseModel):
@@ -173,3 +183,15 @@ class EnvioProgramado(BaseModel):
     order_exists: Optional[bool] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class PaginaEnviosProgramados(BaseModel):
+    """Tarea 5.3: GET /api/scheduled-shipments responde este sobre cuando la
+    petición trae `skip` (aunque sea 0). Sin `skip` sigue la forma histórica
+    {items, weeks}. `weeks` acompaña siempre (config del calendario por
+    semana; Command puede ignorarlo)."""
+    total: int
+    skip: int
+    limit: int
+    items: List[EnvioProgramado]
+    weeks: List[dict] = []

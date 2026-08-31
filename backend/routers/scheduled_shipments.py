@@ -156,9 +156,22 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
 
 
 @router.get("")
-async def list_scheduled(request: Request):
+async def list_scheduled(request: Request, skip: int | None = None,
+                         limit: int | None = None):
     await require_auth(request)
-    scheds = await db.scheduled_shipments.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    # Tarea 5.3: paginación bajo demanda. Mandar `skip` (aunque sea 0) activa
+    # el sobre {total, skip, limit, items, weeks}; sin `skip` la forma
+    # histórica {items, weeks} no cambia (frontend interno intacto) y `limit`
+    # solo recorta la lista (default histórico: 5000 = todo).
+    limit_v = max(1, min(limit if limit is not None else 5000, 5000))
+    cursor = db.scheduled_shipments.find({}, {"_id": 0}).sort("created_at", -1)
+    total = skip_v = None
+    if skip is None:
+        scheds = await cursor.to_list(limit_v)
+    else:
+        skip_v = max(0, skip)
+        total = await db.scheduled_shipments.count_documents({})
+        scheds = await cursor.skip(skip_v).limit(limit_v).to_list(limit_v)
     nums = [s.get("order_number") for s in scheds if s.get("order_number")]
     # Excluir PAPELERA: hay order_number gemelos y la copia vieja vive en la basura
     # sin packing; sin esto el join podía traer los datos de la gemela equivocada.
@@ -189,12 +202,15 @@ async def list_scheduled(request: Request):
     # lista (se piden por número aunque la orden ya no exista — la bitácora manda).
     embarcado = await qty_embarcada_por_orden(db, [
         {"order_number": n, "order_id": by_num.get(n, {}).get("order_id")} for n in nums])
-    return {
+    respuesta = {
         "items": [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number")),
                        qty_shipped=embarcado.get(s.get("order_number"), 0))
                   for s in scheds],
         "weeks": weeks,
     }
+    if total is not None:
+        respuesta = {"total": total, "skip": skip_v, "limit": limit_v, **respuesta}
+    return respuesta
 
 
 @router.post("/week-config")

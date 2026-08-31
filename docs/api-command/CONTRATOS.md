@@ -11,7 +11,7 @@ su lectura humana. Cambios a estos contratos siguen la política de la tarea 7.x
 | Autenticación externa | Header `X-API-Key` con una llave por cliente (ver RESPUESTAS.md 2.3.a). Nunca por query param. |
 | Aislamiento | Con llave de API, `customer` es **obligatorio** donde aplica → `403` si falta o está fuera del alcance de la llave. |
 | Nombres | **snake_case siempre.** No hay camelCase en esta superficie. |
-| Listas paginadas | Sobre `{total, skip, limit, items}`. |
+| Listas paginadas | Sobre `{total, skip, limit, items}`. En los endpoints históricos que regresan lista completa, el sobre se pide con `skip` (ver "Paginación bajo demanda"). |
 | Fechas | Strings ISO 8601; fechas sin hora como `YYYY-MM-DD`. |
 | Errores | `{"detail": "<motivo legible>"}` + código HTTP: 400 parámetro faltante/ inválido, 401 sin autenticar, 403 sin permiso o sin `customer`, 404 no existe. |
 
@@ -27,6 +27,28 @@ available-to-ship, shipped, shipping, scheduled-shipments):
 
 > Nota honesta: `qty_shipped` refleja lo que el WMS registró. Salidas
 > anteriores al WMS (era Excel) no están en la bitácora y no se inventan.
+
+## Paginación bajo demanda (Tareas 5.1-5.3)
+
+Los endpoints que ya nacían paginados (`available-to-ship`, `shipped`) no
+cambian. Los históricos que regresan lista completa ahora aceptan el sobre
+**por opt-in**, sin mover a ningún consumidor actual:
+
+**La regla:** mandar **`skip`** (aunque sea `0`) activa el sobre
+`{total, skip, limit, items}`. Sin `skip`, la respuesta tiene exactamente la
+forma de siempre; `limit` funciona en ambos modos (sin sobre solo recorta la
+lista). Recomendación para Command: mandar **siempre** `skip` y `limit`.
+
+| Endpoint | Sin `skip` (histórico, intacto) | Con `skip` |
+|---|---|---|
+| `GET /api/orders` | Lista plana (tope `limit`, default 1000; con caché global) | Sobre; `limit` tope 5000; sin caché global (cada página es consulta directa). `total` de una búsqueda = lo que sobrevivió al filtro. |
+| `GET /api/shipping` | Lista plana (default 100) | Sobre (`PaginaRegistrosEnvio`); `limit` tope 5000 |
+| `GET /api/scheduled-shipments` | `{items, weeks}` (todo) | `{total, skip, limit, items, weeks}` (`PaginaEnviosProgramados`) |
+
+> `GET /api/wms/inventory/history` queda fuera a propósito: es una vista
+> acotada de movimientos recientes (knob `limit`, filtro posterior en Python);
+> un `total` ahí sería mentiroso. Si Command necesita recorrer historia
+> completa de movimientos, es una conversación aparte.
 
 ## 1. `GET /api/packing-list` — la ruta ÚNICA del packing list (Tarea 1.2)
 
@@ -82,9 +104,9 @@ Tarea 4.1, ver arriba).
 
 ## 4. Shipping — `GET /api/shipping`, `POST /api/shipping`, `PUT /api/shipping/{shipping_id}`
 
-`GET` con filtro `?date=YYYY-MM-DD`. Lista simple (histórico; se documenta tal
-cual — migrar al sobre paginado rompería a los consumidores actuales y se hará
-junto con las pruebas E2E). Cada `RegistroEnvio`: `shipping_id,
+`GET` con filtro `?date=YYYY-MM-DD`. Lista simple por default; con `skip`
+responde el sobre paginado (ver "Paginación bajo demanda" — Tarea 5.2). Cada
+`RegistroEnvio`: `shipping_id,
 order_numbers[], orders_detail[], notes, evidence[] {id, filename, url, type},
 packed_at, dispatched_at, delivered_at, created_by, created_by_name,
 created_at`.
@@ -112,6 +134,8 @@ registro ya enriquecido con `orders_detail`.
 
 ## 5. `GET /api/scheduled-shipments` (`{items: EnvioProgramado[], weeks: […]}`)
 
+Con `skip` responde el sobre paginado `{total, skip, limit, items, weeks}`
+(ver "Paginación bajo demanda" — Tarea 5.3).
 `items[]` con el envío programado unido a los datos vivos de la orden:
 `shipment_id, order_number, scheduled_year, scheduled_month (1-12),
 scheduled_week (1-5), shipment_no, scheduled_export_date, delivery_to,

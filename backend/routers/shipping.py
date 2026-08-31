@@ -146,15 +146,29 @@ async def update_shipping_timestamps(shipping_id: str, request: Request):
     return (await _con_detalle_de_ordenes([doc]))[0]
 
 @router.get("")
-async def get_shipping_records(request: Request, date: Optional[str] = None):
+async def get_shipping_records(request: Request, date: Optional[str] = None,
+                               skip: Optional[int] = None,
+                               limit: Optional[int] = None):
     await require_auth(request)
-    
+
     query = {}
     if date:
         # Simple date match (YYYY-MM-DD)
         query["created_at"] = {"$regex": f"^{date}"}
-    
-    records = await db.shipping_records.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return await _con_detalle_de_ordenes(records)
+
+    # Tarea 5.2: paginación bajo demanda. Mandar `skip` (aunque sea 0) activa
+    # el sobre {total, skip, limit, items}; sin `skip` la respuesta sigue
+    # siendo la lista plana histórica (consumidores actuales intactos), donde
+    # `limit` solo ajusta su tamaño (default histórico: 100).
+    limit_v = max(1, min(limit if limit is not None else 100, 5000))
+    cursor = db.shipping_records.find(query, {"_id": 0}).sort("created_at", -1)
+    if skip is None:
+        records = await cursor.to_list(limit_v)
+        return await _con_detalle_de_ordenes(records)
+    skip_v = max(0, skip)
+    total = await db.shipping_records.count_documents(query)
+    records = await cursor.skip(skip_v).limit(limit_v).to_list(limit_v)
+    return {"total": total, "skip": skip_v, "limit": limit_v,
+            "items": await _con_detalle_de_ordenes(records)}
 
 # Static file serving handled in server.py (will add mount)
