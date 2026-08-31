@@ -635,6 +635,21 @@ con la restricción de `/docs` desplegada).
   `/docs` y `/openapi.json` sin sesión → 401, `/docs` con llave de API → 403
   de superficie, `/redoc` → 404.
 
+### Bug real encontrado por la batería B (2026-08-31) 🐛→✅
+
+Al correr por primera vez con una llave de verdad (Miguel emitió la llave
+"Command"), **toda la batería B dio 401**: en `deps.get_current_user()` el
+bloque que valida `X-API-Key` vivía DESPUÉS del `return None` de "sin token
+de sesión" — para una petición que solo trae el header (exactamente como
+llama Command, sin cookie ni Bearer) el flujo de llaves era **código
+inalcanzable**: toda llave, por cliente o maestra, moría en 401. Nunca se
+detectó porque no hay Mongo local y ninguna llave real se había probado.
+
+**Corrección:** el bloque de llaves se movió ANTES del early-return de
+sesión. El frontend jamás manda `X-API-Key`, así que el orden nuevo no toca
+a las sesiones (la batería A lo confirma: sigue verde). *Exactamente para
+esto era la fila "Pruebas" del plan.*
+
 ### Batería B — superficie completa con llave real (lista, espera llave)
 
 Cubre: `customer` obligatorio y fuera-de-alcance (403), sobres de

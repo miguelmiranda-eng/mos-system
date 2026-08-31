@@ -482,20 +482,13 @@ class WorkOrderModel(BaseModel):
 # ==================== AUTH HELPERS ====================
 
 async def get_current_user(request: Request) -> Optional[Dict]:
-    session_token = request.cookies.get("session_token")
-    if not session_token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            session_token = auth_header.split(" ")[1]
-    if not session_token:
-        return None
-    
-    # Support for internal sync token
-    if INTERNAL_SYNC_TOKEN and session_token == INTERNAL_SYNC_TOKEN:
-        # Return a mock admin user for sync
-        return {"user_id": "system_sync", "email": "miguel.miranda@prosper-mfg.com", "name": "System Sync", "role": "admin"}
-
     # ── Llaves de integración externa (Command, etc.) ─────────────────────────
+    # ANTES de la sesión, a propósito: una petición de API trae SOLO el header
+    # X-API-Key (ni cookie ni Bearer). La batería B del E2E (2026-08-31)
+    # encontró que este bloque vivía DESPUÉS del `return None` de "sin token
+    # de sesión" y era inalcanzable: toda llave — por cliente o maestra —
+    # recibía 401. El frontend nunca manda X-API-Key, así que el orden nuevo
+    # no toca a las sesiones.
     api_key_header = request.headers.get("X-API-Key")
     api_key_query = request.query_params.get("api_key")
     if MASTER_API_KEY and (api_key_header == MASTER_API_KEY or api_key_query == MASTER_API_KEY):
@@ -522,7 +515,20 @@ async def get_current_user(request: Request) -> Optional[Dict]:
                     "name": key_doc.get("name") or "API key",
                     "role": "external_api", "is_api": True,
                     "api_customers": list(key_doc.get("customers") or [])}
-        
+
+    session_token = request.cookies.get("session_token")
+    if not session_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            session_token = auth_header.split(" ")[1]
+    if not session_token:
+        return None
+
+    # Support for internal sync token
+    if INTERNAL_SYNC_TOKEN and session_token == INTERNAL_SYNC_TOKEN:
+        # Return a mock admin user for sync
+        return {"user_id": "system_sync", "email": "miguel.miranda@prosper-mfg.com", "name": "System Sync", "role": "admin"}
+
     session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session:
         return None
