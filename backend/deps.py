@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi.encoders import jsonable_encoder
-import os, uuid, logging, json, hashlib
+import os, re, uuid, logging, json, hashlib
 
 
 def json_response_bytes(payload) -> bytes:
@@ -558,6 +558,32 @@ def api_customer_scope(user) -> Optional[List[str]]:
     if not (user or {}).get("is_api"):
         return None
     return list((user or {}).get("api_customers") or [])
+
+
+def require_api_customer(user, request, campo: str = "client"):
+    """Aislamiento multi-tenant en consultas (Tareas 2.1/2.2).
+
+    Usuario interno (sesión): devuelve None — sin exigencia ni filtro, el
+    dashboard sigue igual. Llave de API: el parámetro `customer` es
+    OBLIGATORIO (403 si falta), debe estar dentro del alcance de la llave
+    (403 si no), y se devuelve un filtro Mongo {campo: regex exacta,
+    case-insensitive} que el endpoint DEBE aplicar a su query.
+
+    `campo` es el nombre del campo de cliente en la colección consultada:
+    "client" en orders, "customer" en las colecciones del WMS.
+    """
+    scope = api_customer_scope(user)
+    if scope is None:
+        return None
+    cust = (request.query_params.get("customer") or "").strip()
+    if not cust:
+        raise HTTPException(status_code=403, detail=(
+            "Falta el parámetro obligatorio `customer`: los consumidores de API "
+            "solo pueden consultar por cliente (aislamiento multi-tenant)."))
+    if "*" not in scope and cust.upper() not in {str(c).upper() for c in scope}:
+        raise HTTPException(status_code=403,
+                            detail=f"Esta llave no tiene acceso al cliente '{cust}'.")
+    return {campo: {"$regex": f"^{re.escape(cust)}$", "$options": "i"}}
 
 
 SUPER_ROLES = {"admin", "supersu"}

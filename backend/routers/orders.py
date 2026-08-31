@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, MASTER_API_KEY, json_response_bytes
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, json_response_bytes, require_api_customer
 from ws_manager import ws_manager
 from datetime import datetime, timezone
 import uuid, base64, os, io, re
@@ -116,7 +116,7 @@ async def _run_automations(trigger_type, order, user, context=None):
     from routers.automations import run_automations
     return await run_automations(trigger_type, order, user, context)
 
-async def _fetch_orders(board, search, limit, include_images):
+async def _fetch_orders(board, search, limit, include_images, filtro_cliente=None):
     query = {}
     if board == "MASTER":
         # Exclude trash AND ghost orders (null/missing board) using an indexable query
@@ -132,6 +132,9 @@ async def _fetch_orders(board, search, limit, include_images):
         query["board"] = {"$in": active_boards}
     elif board:
         query["board"] = board
+    # Aislamiento multi-tenant (Tarea 2.1): las llaves de API solo ven SU cliente.
+    if filtro_cliente:
+        query.update(filtro_cliente)
     # Exclude 'comments' and 'activity_logs' from dashboard list to keep payload small.
     # These are fetched individually when opening the order details.
     # 'images' (metadatos de adjuntos) era el 79% del payload del tablero
@@ -190,9 +193,16 @@ async def _fetch_orders(board, search, limit, include_images):
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000,
                      include_images: bool = False):
-    api_key = request.query_params.get("api_key")
-    if api_key != MASTER_API_KEY:
-        await require_auth(request)
+    # deps.get_current_user tambien autentica la llave (header o query legado),
+    # asi que el viejo bypass explicito por api_key sobraba. Tarea 2.1: para
+    # llaves de API, `customer` es OBLIGATORIO (403 si falta o esta fuera del
+    # alcance de la llave) y el filtro se aplica server-side.
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request)
+
+    if filtro_cliente:
+        # Consumidor externo: SIN cache (la cache global mezclaria clientes).
+        return await _fetch_orders(board, search, limit, include_images, filtro_cliente)
 
     if search:
         # Las búsquedas NO se cachean: cada string tecleado distinto (el
@@ -219,9 +229,14 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
 
 @router.get("/board-counts")
 async def get_board_counts(request: Request):
-    api_key = request.query_params.get("api_key")
-    if api_key != MASTER_API_KEY:
-        await require_auth(request)
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request)
+    if filtro_cliente:
+        # Consumidor externo: conteos SOLO de su cliente, sin cache global.
+        pipeline = [{"$match": filtro_cliente},
+                    {"$group": {"_id": "$board", "count": {"$sum": 1}}}]
+        results = await db.orders.aggregate(pipeline).to_list(1000)
+        return {r["_id"]: r["count"] for r in results if r["_id"]}
 
     # Mismo patrón que get_orders: caché invalidado en cada broadcast + lock
     # contra estampida.
@@ -281,10 +296,13 @@ async def list_shipped_orders(request: Request, skip: int = 0, limit: int = 50):
     """Órdenes con packing cargado (el camioncito): las que ya tienen packing_link.
     Paginado — 50 por defecto. Para exportar, el front pide páginas más grandes.
     NOTA: debe declararse ANTES de /{order_id} o el catch-all se la traga."""
-    await require_auth(request)
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request)
     skip = max(0, skip)
     limit = max(1, min(limit, 5000))
     q = {"packing_link": {"$nin": [None, ""]}, "board": {"$ne": "PAPELERA DE RECICLAJE"}}
+    if filtro_cliente:
+        q.update(filtro_cliente)
     total = await db.orders.count_documents(q)
     proj = {
         "_id": 0, "order_number": 1, "client": 1, "style": 1, "color": 1,
@@ -301,7 +319,8 @@ async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 5
     """Órdenes DISPONIBLES para programar envío: todas las vivas (fuera de PAPELERA)
     que NO estén ya programadas (excluye las de scheduled_shipments). Tengan o no
     packing (camioncito). NOTA: debe declararse ANTES de /{order_id}."""
-    await require_auth(request)
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request)
     skip = max(0, skip)
     limit = max(1, min(limit, 5000))
     scheduled_nums = await db.scheduled_shipments.distinct("order_number")
@@ -309,6 +328,8 @@ async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 5
         "board": {"$ne": "PAPELERA DE RECICLAJE"},
         "order_number": {"$nin": scheduled_nums},
     }
+    if filtro_cliente:
+        q.update(filtro_cliente)
     if search:
         rx = {"$regex": re.escape(search), "$options": "i"}
         q["$or"] = [{"order_number": rx}, {"client": rx}, {"customer_po": rx}]

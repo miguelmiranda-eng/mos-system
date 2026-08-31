@@ -10,7 +10,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 0.1 | Auditoría técnica previa | ✅ Completa |
 | 1.1 | Esquemas JSON tipados | ⬜ Pendiente |
 | 1.2 | Ruta única de Packing List | ⬜ Pendiente |
-| 2.1 | `customer` obligatorio en búsqueda de órdenes | ⬜ Pendiente |
+| 2.1 | `customer` obligatorio en búsqueda de órdenes | ✅ Completa |
 | 2.2 | Contexto de cliente en historial de inventario | ⬜ Pendiente |
 | 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
 | 3.1 | `ship_by` separado de `cancel_date` | ⬜ Pendiente |
@@ -213,3 +213,41 @@ tal cual — se retirarán junto con ella. El comportamiento de usuarios interno
 **Riesgo asumido**: si Command hoy llamara algún endpoint con candado de admin,
 dejará de poder (403) — la auditoría 0.1 indica que su superficie es
 `require_auth` puro, y un 403 es visible y reversible en un redeploy.
+
+---
+
+## Tarea 2.1 — Parámetro `customer` obligatorio en búsquedas de órdenes
+
+**Decisión de diseño (motivada por la auditoría 0.1):** la exigencia aplica a
+los **consumidores de API** (llaves externas: Command). Los usuarios internos
+con sesión no cambian — el dashboard y los tableros llaman estos endpoints sin
+`customer` en todos lados, y un 403 global los tumbaría (violando la regla 0.1
+de no romper la operación).
+
+**Qué se hizo** (`backend/deps.py` + `backend/routers/orders.py`):
+
+1. **`deps.require_api_customer(user, request, campo)`** — el guard reusable de
+   las tareas 2.x: para llaves de API exige `?customer=` (**HTTP 403** si
+   falta), valida que esté **dentro del alcance de la llave** (403 si no) y
+   devuelve el filtro Mongo que el endpoint aplica server-side (regex exacta,
+   case-insensitive). Para sesiones internas devuelve None (sin cambio).
+2. Aplicado a los **cuatro endpoints de listado de órdenes**:
+   - `GET /api/orders` (con o sin `search`) — además, para llaves de API se
+     **omite la caché global** (mezclaría clientes) y se eliminó el viejo
+     bypass explícito por `?api_key=` (redundante: la llave ya autentica por
+     `get_current_user`, ahora con alcance).
+   - `GET /api/orders/board-counts` — conteos solo del cliente de la llave
+     (`$match` en el pipeline), sin caché global.
+   - `GET /api/orders/shipped`
+   - `GET /api/orders/available-to-ship`
+3. El campo filtrado en `orders` es **`client`** (así se llama ahí; en las
+   colecciones del WMS es `customer` — el guard acepta el nombre de campo por
+   parámetro para la tarea 2.2).
+
+**Contrato para Command:** `GET /api/orders?customer=SPEKTRUM&search=...` con
+header `X-API-Key`. Sin `customer` → `403 {"detail": "Falta el parámetro
+obligatorio customer..."}`. Cliente fuera del alcance de la llave → 403.
+
+**Qué NO cubre esta tarea** (va en la 2.3): `GET /api/orders/{order_id}` (una
+orden puntual), los endpoints del WMS y de producción. El guard ya está listo
+para aplicarse ahí.
