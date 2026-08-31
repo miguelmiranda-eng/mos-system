@@ -11,7 +11,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 1.1 | Esquemas JSON tipados | ⬜ Pendiente |
 | 1.2 | Ruta única de Packing List | ⬜ Pendiente |
 | 2.1 | `customer` obligatorio en búsqueda de órdenes | ✅ Completa |
-| 2.2 | Contexto de cliente en historial de inventario | ⬜ Pendiente |
+| 2.2 | Contexto de cliente en historial de inventario | ✅ Completa |
 | 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
 | 3.1 | `ship_by` separado de `cancel_date` | ⬜ Pendiente |
 | 3.2 | `dispatched_at` ISO 8601 | ⬜ Pendiente |
@@ -251,3 +251,34 @@ obligatorio customer..."}`. Cliente fuera del alcance de la llave → 403.
 **Qué NO cubre esta tarea** (va en la 2.3): `GET /api/orders/{order_id}` (una
 orden puntual), los endpoints del WMS y de producción. El guard ya está listo
 para aplicarse ahí.
+
+---
+
+## Tarea 2.2 — Contexto obligatorio de cliente en Historial de Inventario
+
+**Endpoint:** `GET /api/wms/inventory/history` (historial de movimientos por
+SKU: style + color/talla opcionales). Misma política que la 2.1: la exigencia
+aplica a **llaves de API**; los usuarios internos con sesión no cambian.
+
+**Qué se hizo** (`backend/routers/wms.py`), con **tres candados** encadenados
+para el consumidor externo:
+
+1. **`customer` obligatorio** → HTTP 403 si falta, y 403 si el cliente está
+   fuera del alcance de la llave (mismo guard `require_api_customer`, con
+   `campo="customer"` — así se llama en las colecciones del WMS).
+2. **Pertenencia del SKU**: el estilo consultado debe existir en cajas o
+   inventario DE ese cliente. Si existe pero es de otro cliente → 403; si no
+   existe en ningún lado → historial vacío (sin revelar si el estilo existe).
+3. **Filtro de movimientos**: los movimientos traen formas heterogéneas y no
+   todos llevan cliente en sus detalles — los que sí lo traen y es OTRO
+   cliente, se descartan de la respuesta.
+
+**Contrato para Command:**
+`GET /api/wms/inventory/history?style=CORE&color=BLACK&customer=SPEKTRUM`
+con header `X-API-Key`.
+
+**Limitación honesta (anotada para la 2.3):** si dos clientes usaran el MISMO
+nombre de estilo, los movimientos antiguos sin cliente en sus detalles no son
+distinguibles al 100 %. El candado de pertenencia (paso 2) reduce el caso a
+estilos con nombre duplicado entre clientes; hoy el catálogo curado del WMS
+scopea styles por cliente, lo que hace ese choque improbable hacia adelante.

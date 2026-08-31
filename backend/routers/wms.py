@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
 from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS, require_api_customer
 from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
@@ -803,11 +803,41 @@ async def get_sku_movement_history(style: str, color: str = "", size: str = "", 
 
 @router.get("/inventory/history")
 async def inventory_history(request: Request, style: str = "", color: str = "", size: str = "", limit: int = 200):
-    """Audit trail for a specific SKU dimension (style + optional color/size)."""
-    await require_auth(request)
+    """Audit trail for a specific SKU dimension (style + optional color/size).
+
+    Aislamiento multi-tenant (Tarea 2.2): para llaves de API, `customer` es
+    OBLIGATORIO (403 si falta o esta fuera del alcance de la llave), el estilo
+    consultado debe PERTENECER a ese cliente (403 si es de otro), y los
+    movimientos que traen cliente en sus detalles se filtran. Usuarios internos
+    con sesion: sin cambios.
+    """
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request, campo="customer")
     if not style:
         raise HTTPException(400, "style requerido")
+
+    if filtro_cliente:
+        cust_rx = filtro_cliente["customer"]
+        dueno = (await db.wms_boxes.find_one({"style": _ci_eq(style), "customer": cust_rx}, {"_id": 1})
+                 or await db.wms_inventory.find_one({"style": _ci_eq(style), "customer": cust_rx}, {"_id": 1}))
+        if not dueno:
+            ajeno = (await db.wms_boxes.find_one({"style": _ci_eq(style)}, {"_id": 1})
+                     or await db.wms_inventory.find_one({"style": _ci_eq(style)}, {"_id": 1}))
+            if ajeno:
+                raise HTTPException(403, f"El estilo '{style}' no pertenece al cliente consultado.")
+            # No existe en ningun lado: historial vacio, sin revelar nada.
+            return {"style": style, "color": color, "size": size, "count": 0, "movements": []}
+
     movements = await get_sku_movement_history(style, color, size, limit)
+
+    if filtro_cliente:
+        # Ademas del candado de pertenencia, se descartan los movimientos que
+        # traen OTRO cliente en sus detalles (formas heterogeneas: no todos lo
+        # traen; los sin cliente pasan porque el estilo ya se valido arriba).
+        cust = (request.query_params.get("customer") or "").strip().upper()
+        movements = [m for m in movements
+                     if str((m.get("details") or {}).get("customer") or "").strip().upper() in ("", cust)]
+
     return {"style": style, "color": color, "size": size, "count": len(movements), "movements": movements}
 
 
