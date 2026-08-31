@@ -12,7 +12,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 1.2 | Ruta única de Packing List | ✅ Completa |
 | 2.1 | `customer` obligatorio en búsqueda de órdenes | ✅ Completa |
 | 2.2 | Contexto de cliente en historial de inventario | ✅ Completa |
-| 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
+| 2.3 | Auditoría multi-tenant global | ✅ Completa (retiro de llave maestra pendiente de Command) |
 | 3.1 | `ship_by` separado de `cancel_date` | ✅ Completa |
 | 3.2 | `dispatched_at` ISO 8601 | ✅ Completa |
 | 3.3/3.4 | `packed_at`, `delivered_at` + doc | ✅ Completa |
@@ -509,3 +509,57 @@ quedó saldada).
 
 **Captura en UI:** el selector de `delay_code` en ShippingModule es iteración
 de UI aparte — el dato, el catálogo consultable y el contrato ya existen.
+
+---
+
+## Tarea 2.3.b — Auditoría multi-tenant: default-deny + guards por endpoint
+
+Cierre de la 2.3 (la 2.3.a dejó las llaves por cliente). Dos capas:
+
+### Capa 1 — Default-deny central (la decisión de arquitectura)
+
+La auditoría reveló que enumerar endpoint por endpoint era una carrera
+perdida: el WMS tiene ~150 rutas `require_auth` que una llave `external_api`
+podía tocar (pick-progress, putaway, receiving, movimientos, recon…). En vez
+de perseguirlas, se invirtió la carga:
+
+- **`deps.API_SURFACE_PERMITIDA`** — la lista explícita de lo que una llave
+  de API puede tocar (espejo de la tabla "Superficie permitida" de
+  CONTRATOS.md).
+- **Middleware `candado_superficie_api`** (`server.py`) — una petición con
+  header `X-API-Key` fuera de esa lista recibe **403 antes de llegar al
+  endpoint**. Para sesiones internas y el `INTERNAL_SYNC_TOKEN` (que no traen
+  ese header) el middleware es un no-op literal: el frontend y el piso no
+  cambian en absoluto.
+- Los bypass legados por query param (`?api_key=` en `production.py`:
+  production-summary/neck-summary/capacity-plan/production-analytics) NO
+  pasan por el candado y quedan como estaban — se retiran junto con la
+  `MASTER_API_KEY`, como quedó acordado en 2.3.a.
+- Probado en frío: 34 casos método+ruta (permitidos y bloqueados) contra
+  `deps.api_surface_permitida` — todos correctos.
+
+### Capa 2 — Guard por cliente en cada endpoint permitido
+
+Todo con el mismo `require_api_customer` (customer obligatorio por query
+param, validado contra el alcance de la llave, filtro server-side):
+
+| Endpoint | Qué se aplicó |
+|---|---|
+| `GET /api/orders/{order}` | Pertenencia de la orden puntual (el hueco que la 2.1 dejó anotado) → 403 |
+| `GET /api/wms/pick-tickets` | Filtro `customer` en el query; tickets viejos sin campo NO salen (no se muestra lo que no se puede probar de quién es); pre-tickets virtuales (concepto de UI) no se sintetizan para llaves |
+| `GET /api/wms/allocations` y `GET /api/wms/shipments` | Estas colecciones no traen cliente propio: se hereda resolviendo su orden (`_solo_ordenes_del_cliente`); lo no resoluble NO sale |
+| `GET /api/shipping` | El registro hereda el cliente de sus órdenes: visible solo si TODAS las resolubles son del cliente y ≥1 resuelve; mixtos/irresolubles ocultos; paginación corta después del filtro |
+| `POST /api/shipping` | `strict` (6.1) **forzado** + todas las órdenes deben ser del cliente (403 con la lista de ajenas) |
+| `PUT /api/shipping/{id}` | Visibilidad del registro verificada ANTES de escribir |
+| `GET/POST/PUT/DELETE /api/scheduled-shipments` | Filtro por la orden unida; en escrituras se verifica pertenencia antes de tocar nada; `weeks` (calendario, sin datos de cliente) viaja completo |
+
+### Lo que queda de la 2.3 (fuera del código, esperando a Command)
+
+1. **Retirar `MASTER_API_KEY`** del entorno cuando Command confirme que usa
+   su llave por cliente (+ relajar `deps._llave_obligatoria`, una línea).
+2. **Retirar los bypass `?api_key=`** de `production.py` en ese mismo momento.
+
+**Riesgo asumido** (mismo criterio que 2.3.a): si Command hoy llamara algo
+fuera de la superficie documentada (p.ej. `POST /api/packing/export` o un
+endpoint del WMS), recibirá 403 visible y reversible — la lista permitida se
+amplía con un cambio aditivo si resulta necesario.

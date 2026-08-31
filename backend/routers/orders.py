@@ -388,7 +388,10 @@ async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 5
 
 @router.get("/{order_id}")
 async def get_order(order_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: para llaves de API, customer obligatorio y la orden debe
+    # pertenecerle (la 2.1 cubrió los listados; esto cierra la orden puntual).
+    filtro_cliente = require_api_customer(user, request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     if not order:
         # Prioritize active orders if searching by order number
@@ -398,6 +401,10 @@ async def get_order(order_id: str, request: Request):
             order = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    if filtro_cliente:
+        rx = filtro_cliente["client"]["$regex"]
+        if not re.match(rx, str(order.get("client") or ""), re.IGNORECASE):
+            raise HTTPException(status_code=403, detail="La orden no pertenece al cliente consultado.")
     return _merge_custom_fields(order)
 
 def validar_posiciones(valor):

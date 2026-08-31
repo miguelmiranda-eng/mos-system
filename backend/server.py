@@ -8,8 +8,9 @@ import os
 import time
 import logging
 from datetime import datetime, timezone
+from fastapi.responses import JSONResponse
 from ws_manager import ws_manager
-from deps import db
+from deps import db, api_surface_permitida
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -55,6 +56,22 @@ app.mount("/api/invoices/static", StaticFiles(directory=UPLOAD_DIR), name="invoi
 SHIPPING_DIR = "uploads/shipping"
 os.makedirs(SHIPPING_DIR, exist_ok=True)
 app.mount("/api/shipping/static", StaticFiles(directory=SHIPPING_DIR), name="shipping_static")
+
+@app.middleware("http")
+async def candado_superficie_api(request: Request, call_next):
+    """Tarea 2.3 (default-deny): una petición con llave de API (header
+    X-API-Key) solo puede tocar la superficie documentada de consumo
+    (deps.API_SURFACE_PERMITIDA ↔ docs/api-command/CONTRATOS.md); todo lo
+    demás responde 403 ANTES de llegar al endpoint. Las sesiones internas y
+    el INTERNAL_SYNC_TOKEN no traen ese header: para ellos este middleware
+    es un no-op y el frontend/piso no cambian en absoluto."""
+    if request.headers.get("X-API-Key") and not api_surface_permitida(
+            request.method.upper(), request.url.path):
+        return JSONResponse(status_code=403, content={"detail": (
+            "Las llaves de API solo pueden usar la superficie documentada de "
+            "consumo (ver CONTRATOS.md). Este endpoint es de uso interno.")})
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

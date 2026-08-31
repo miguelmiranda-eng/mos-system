@@ -9,11 +9,37 @@ su lectura humana. Cambios a estos contratos siguen la política de la tarea 7.x
 | Regla | Detalle |
 |---|---|
 | Autenticación externa | Header `X-API-Key` con una llave por cliente (ver RESPUESTAS.md 2.3.a). Nunca por query param. |
-| Aislamiento | Con llave de API, `customer` es **obligatorio** donde aplica → `403` si falta o está fuera del alcance de la llave. |
+| Aislamiento | Con llave de API, `customer` es **obligatorio en toda la superficie** (query param, también en POST/PUT/DELETE) → `403` si falta o está fuera del alcance de la llave. |
+| Superficie cerrada | **Default-deny (Tarea 2.3):** una llave de API solo puede tocar los endpoints de la tabla "Superficie permitida"; cualquier otra ruta responde `403` antes de llegar al endpoint. |
 | Nombres | **snake_case siempre.** No hay camelCase en esta superficie. |
 | Listas paginadas | Sobre `{total, skip, limit, items}`. En los endpoints históricos que regresan lista completa, el sobre se pide con `skip` (ver "Paginación bajo demanda"). |
 | Fechas | Strings ISO 8601; fechas sin hora como `YYYY-MM-DD`. |
 | Errores | `{"detail": "<motivo legible>"}` + código HTTP: 400 parámetro faltante/ inválido, 401 sin autenticar, 403 sin permiso o sin `customer`, 404 no existe. |
+
+## Superficie permitida para llaves de API (Tarea 2.3)
+
+Todo lo que NO está en esta tabla responde `403` para una llave de API. Los
+usuarios internos con sesión no pasan por este candado.
+
+| Método y ruta | Aislamiento aplicado |
+|---|---|
+| `GET /api/packing-list` | La orden debe ser del cliente (1.2) |
+| `GET /api/orders` · `/board-counts` · `/shipped` · `/available-to-ship` | Filtro server-side por cliente (2.1) |
+| `GET /api/orders/{order}` | La orden debe ser del cliente → `403` (2.3) |
+| `GET /api/wms/inventory/history` | Triple candado por cliente (2.2) |
+| `GET /api/wms/pick-tickets` | Solo tickets con `customer` del cliente. Tickets viejos sin campo `customer` NO salen (conservador) y los pre-tickets virtuales (concepto de la UI) no se sintetizan. |
+| `GET /api/wms/allocations` | El cliente se hereda de la orden referida; lo no resoluble NO sale. |
+| `GET /api/wms/shipments` | Ídem (por `order_id`/`order_number`). |
+| `GET /api/shipping` (+ `/delay-codes`) | Un registro es visible solo si TODAS sus órdenes resolubles son del cliente y al menos una resuelve; registros mixtos o irresolubles NO salen. `delay-codes` es catálogo estático (sin `customer`). |
+| `POST /api/shipping` | `strict` **forzado** + todas las órdenes deben ser del cliente → `400`/`403`. |
+| `PUT /api/shipping/{id}` | El registro debe ser visible para el cliente (regla del GET). |
+| `GET/POST /api/scheduled-shipments`, `PUT/DELETE /api/scheduled-shipments/{id}` | Solo programaciones cuya orden es del cliente; verificado antes de escribir. `weeks` (config del calendario, sin datos de cliente) viaja completo. |
+
+> Los generadores de documentos de packing (`POST /api/packing/export|preview|
+> pallet_label`) son de uso interno: la ruta oficial para Command es
+> `GET /api/packing-list`. Producción y el resto del WMS no son superficie de
+> API. Si Command necesita un endpoint fuera de esta tabla, es una
+> conversación de contrato (aditiva), no un hueco a explotar.
 
 ## Cantidades: `qty_ordered` vs `qty_shipped` (Tarea 4.1)
 

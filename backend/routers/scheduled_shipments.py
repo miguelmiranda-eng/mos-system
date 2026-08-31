@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException
 
-from deps import db, require_auth, log_activity
+from deps import db, require_auth, log_activity, require_api_customer
 from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
 
 # Extrae etiqueta|url de un comentario [file]etiqueta|url[/file] (packing_link_seed).
@@ -102,6 +102,16 @@ def _valid_shipment_no(v):
     return n
 
 
+def _orden_del_cliente(order: dict | None, filtro_cliente) -> bool:
+    """Tarea 2.3: ¿la orden unida pertenece al cliente de la llave? La
+    programación no trae cliente propio — lo hereda de su orden; sin orden
+    resoluble, para una llave de API la respuesta conservadora es NO."""
+    if not order:
+        return False
+    rx = filtro_cliente["client"]["$regex"]
+    return bool(re.match(rx, str(order.get("client") or ""), re.IGNORECASE))
+
+
 def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
          qty_shipped: int = 0) -> dict:
     o = order or {}
@@ -158,7 +168,11 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
 @router.get("")
 async def list_scheduled(request: Request, skip: int | None = None,
                          limit: int | None = None):
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: llaves de API solo ven programaciones de SU cliente. El
+    # cliente vive en la orden unida, así que se trae todo, se filtra ya
+    # unido y la paginación corta al final (volumen chico: es el calendario).
+    filtro_cliente = require_api_customer(user, request)
     # Tarea 5.3: paginación bajo demanda. Mandar `skip` (aunque sea 0) activa
     # el sobre {total, skip, limit, items, weeks}; sin `skip` la forma
     # histórica {items, weeks} no cambia (frontend interno intacto) y `limit`
@@ -166,8 +180,8 @@ async def list_scheduled(request: Request, skip: int | None = None,
     limit_v = max(1, min(limit if limit is not None else 5000, 5000))
     cursor = db.scheduled_shipments.find({}, {"_id": 0}).sort("created_at", -1)
     total = skip_v = None
-    if skip is None:
-        scheds = await cursor.to_list(limit_v)
+    if filtro_cliente or skip is None:
+        scheds = await cursor.to_list(5000 if filtro_cliente else limit_v)
     else:
         skip_v = max(0, skip)
         total = await db.scheduled_shipments.count_documents({})
@@ -200,14 +214,24 @@ async def list_scheduled(request: Request, skip: int | None = None,
     weeks = await db.scheduled_week_envios.find({}, {"_id": 0}).to_list(5000)
     # Tarea 4.1: unidades embarcadas por orden en un solo cálculo para toda la
     # lista (se piden por número aunque la orden ya no exista — la bitácora manda).
+    # Tarea 2.3: con llave de API se filtra ANTES de derivar cantidades — no
+    # se paga el cálculo de órdenes que no van a salir.
+    if filtro_cliente:
+        scheds = [s for s in scheds
+                  if _orden_del_cliente(by_num.get(s.get("order_number")), filtro_cliente)]
+        nums = [s.get("order_number") for s in scheds if s.get("order_number")]
     embarcado = await qty_embarcada_por_orden(db, [
         {"order_number": n, "order_id": by_num.get(n, {}).get("order_id")} for n in nums])
-    respuesta = {
-        "items": [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number")),
-                       qty_shipped=embarcado.get(s.get("order_number"), 0))
-                  for s in scheds],
-        "weeks": weeks,
-    }
+    items = [_row(s, by_num.get(s.get("order_number")), pl_by_num.get(s.get("order_number")),
+                  qty_shipped=embarcado.get(s.get("order_number"), 0))
+             for s in scheds]
+    if filtro_cliente:
+        if skip is not None:
+            skip_v, total = max(0, skip), len(items)
+            items = items[skip_v:skip_v + limit_v]
+        else:
+            items = items[:limit_v]
+    respuesta = {"items": items, "weeks": weeks}
     if total is not None:
         respuesta = {"total": total, "skip": skip_v, "limit": limit_v, **respuesta}
     return respuesta
@@ -266,6 +290,8 @@ async def set_envio_day(request: Request):
 @router.post("")
 async def schedule_shipment(request: Request):
     user = await require_auth(request)
+    # Tarea 2.3: con llave de API, la orden a programar debe ser del cliente.
+    filtro_cliente = require_api_customer(user, request)
     body = await request.json()
     order_number = str(body.get("order_number") or "").strip()
     if not order_number:
@@ -276,6 +302,8 @@ async def schedule_shipment(request: Request):
     )
     if not order:
         raise HTTPException(status_code=404, detail=f"Orden {order_number} no encontrada")
+    if filtro_cliente and not _orden_del_cliente(order, filtro_cliente):
+        raise HTTPException(status_code=403, detail="La orden no pertenece al cliente consultado.")
 
     # Slot obligatorio: mes (1..12) + semana del mes (1..5). Año default = actual.
     try:
@@ -329,6 +357,18 @@ async def schedule_shipment(request: Request):
 @router.put("/{shipment_id}")
 async def update_scheduled(shipment_id: str, request: Request):
     user = await require_auth(request)
+    # Tarea 2.3: con llave de API, la programación debe ser del cliente
+    # (verificado ANTES de escribir nada).
+    filtro_cliente = require_api_customer(user, request)
+    if filtro_cliente:
+        sched0 = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
+        if not sched0:
+            raise HTTPException(status_code=404, detail="Programación no encontrada")
+        orden0 = await db.orders.find_one(
+            {"order_number": sched0.get("order_number"), "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+            {"_id": 0, "client": 1})
+        if not _orden_del_cliente(orden0, filtro_cliente):
+            raise HTTPException(status_code=403, detail="La programación no pertenece al cliente consultado.")
     body = await request.json()
     allowed = {}
     for k in ("scheduled_export_date", "delivery_to", "pl_export", "status"):
@@ -363,9 +403,17 @@ async def update_scheduled(shipment_id: str, request: Request):
 @router.delete("/{shipment_id}")
 async def unschedule(shipment_id: str, request: Request):
     user = await require_auth(request)
+    # Tarea 2.3: con llave de API, solo se puede desprogramar lo del cliente.
+    filtro_cliente = require_api_customer(user, request)
     sched = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
     if not sched:
         raise HTTPException(status_code=404, detail="Programación no encontrada")
+    if filtro_cliente:
+        orden0 = await db.orders.find_one(
+            {"order_number": sched.get("order_number"), "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+            {"_id": 0, "client": 1})
+        if not _orden_del_cliente(orden0, filtro_cliente):
+            raise HTTPException(status_code=403, detail="La programación no pertenece al cliente consultado.")
     await db.scheduled_shipments.delete_one({"shipment_id": shipment_id})
     await log_activity(user, "unschedule_shipment", {"order_number": sched.get("order_number")})
     return {"message": "Envío desprogramado", "order_number": sched.get("order_number")}

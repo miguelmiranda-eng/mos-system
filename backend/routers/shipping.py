@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
 from typing import List, Optional
-from deps import db, require_auth, log_activity
+from deps import db, require_auth, log_activity, require_api_customer
 from services.qty_embarcada import qty_embarcada_por_orden, entero_o_none
 from datetime import datetime, timezone
 import os
+import re
 import uuid
 import shutil
 from pathlib import Path
@@ -40,6 +41,31 @@ def _valida_delay_code(valor):
         raise HTTPException(400, f"delay_code inválido: {str(valor).strip()!r}. "
                                  f"Catálogo: {', '.join(sorted(DELAY_CODES))}.")
     return v
+
+
+async def _registros_del_cliente(records, filtro_cliente):
+    """Tarea 2.3: el registro de envío no trae cliente propio — lo hereda de
+    sus órdenes. Con llave de API, un registro es visible solo si TODAS sus
+    órdenes resolubles pertenecen al cliente y al menos una resuelve.
+    Conservador: un registro mixto (órdenes de varios clientes) o de puros
+    números no resolubles NO sale."""
+    nums = sorted({str(n).strip() for r in records
+                   for n in (r.get("order_numbers") or []) if str(n).strip()})
+    if not nums:
+        return []
+    rx = filtro_cliente["client"]["$regex"]
+    ordenes = await db.orders.find(
+        {"order_number": {"$in": nums}, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0, "order_number": 1, "client": 1}).to_list(None)
+    cliente_por_num = {o.get("order_number"): str(o.get("client") or "") for o in ordenes}
+    visibles = []
+    for r in records:
+        clientes = [cliente_por_num[n]
+                    for n in (str(x).strip() for x in (r.get("order_numbers") or []))
+                    if n in cliente_por_num]
+        if clientes and all(re.match(rx, c, re.IGNORECASE) for c in clientes):
+            visibles.append(r)
+    return visibles
 
 
 async def _ordenes_desconocidas(numeros):
@@ -88,6 +114,10 @@ async def create_shipping_record(
     strict: bool = Form(False),
 ):
     user = await require_auth(request)
+    # Tarea 2.3: para llaves de API, customer obligatorio (?customer=) y TODAS
+    # las órdenes del registro deben pertenecerle; además la validación 6.1 es
+    # siempre estricta (una llave no registra envíos de números inventados).
+    filtro_cliente = require_api_customer(user, request)
     delay = _valida_delay_code(delay_code)
 
     # Process order numbers (comma or space separated)
@@ -97,6 +127,17 @@ async def create_shipping_record(
     # como foto en el registro y viaja en la respuesta); strict decide si es
     # muro o aviso.
     desconocidas = await _ordenes_desconocidas(orders)
+    if filtro_cliente:
+        strict = True
+        if orders:
+            rx = filtro_cliente["client"]["$regex"]
+            docs = await db.orders.find(
+                {"order_number": {"$in": orders}, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+                {"_id": 0, "order_number": 1, "client": 1}).to_list(None)
+            ajenas = sorted(d.get("order_number") for d in docs
+                            if not re.match(rx, str(d.get("client") or ""), re.IGNORECASE))
+            if ajenas:
+                raise HTTPException(403, "Órdenes de otro cliente: " + ", ".join(ajenas))
     if strict:
         if not orders:
             raise HTTPException(400, "order_numbers no trae ningún número de orden.")
@@ -201,6 +242,15 @@ async def update_shipping_timestamps(shipping_id: str, request: Request):
     (Tarea 6.2, catalogo cerrado; null lo limpia). Solo toca los campos que
     vienen en el body."""
     user = await require_auth(request)
+    # Tarea 2.3: con llave de API, el registro debe ser del cliente consultado
+    # (mismo criterio de visibilidad que el GET) antes de poder tocarlo.
+    filtro_cliente = require_api_customer(user, request)
+    if filtro_cliente:
+        doc0 = await db.shipping_records.find_one({"shipping_id": shipping_id}, {"_id": 0})
+        if not doc0:
+            raise HTTPException(404, f"No existe el registro de envío {shipping_id}.")
+        if not await _registros_del_cliente([doc0], filtro_cliente):
+            raise HTTPException(403, "El registro de envío no pertenece al cliente consultado.")
     body = await request.json()
     cambios = {}
     for campo in ("packed_at", "dispatched_at", "delivered_at"):
@@ -224,7 +274,11 @@ async def update_shipping_timestamps(shipping_id: str, request: Request):
 async def get_shipping_records(request: Request, date: Optional[str] = None,
                                skip: Optional[int] = None,
                                limit: Optional[int] = None):
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: llaves de API solo ven registros de SU cliente (customer
+    # obligatorio). El registro hereda el cliente de sus órdenes, así que el
+    # filtro se aplica ya resuelto en memoria y la paginación corta después.
+    filtro_cliente = require_api_customer(user, request)
 
     query = {}
     if date:
@@ -237,6 +291,14 @@ async def get_shipping_records(request: Request, date: Optional[str] = None,
     # `limit` solo ajusta su tamaño (default histórico: 100).
     limit_v = max(1, min(limit if limit is not None else 100, 5000))
     cursor = db.shipping_records.find(query, {"_id": 0}).sort("created_at", -1)
+    if filtro_cliente:
+        records = await cursor.to_list(5000)
+        records = await _registros_del_cliente(records, filtro_cliente)
+        if skip is None:
+            return await _con_detalle_de_ordenes(records[:limit_v])
+        skip_v = max(0, skip)
+        return {"total": len(records), "skip": skip_v, "limit": limit_v,
+                "items": await _con_detalle_de_ordenes(records[skip_v:skip_v + limit_v])}
     if skip is None:
         records = await cursor.to_list(limit_v)
         return await _con_detalle_de_ordenes(records)

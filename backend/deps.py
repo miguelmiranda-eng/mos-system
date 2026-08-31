@@ -593,6 +593,43 @@ def require_api_customer(user, request, campo: str = "client"):
     return {campo: {"$regex": f"^{re.escape(cust)}$", "$options": "i"}}
 
 
+# ── Tarea 2.3: superficie PERMITIDA para llaves de API (default-deny) ────────
+# Una llave externa (header X-API-Key) solo puede tocar la superficie
+# DOCUMENTADA de consumo (docs/api-command/CONTRATOS.md); todo lo demás
+# responde 403 desde el middleware `candado_superficie_api` de server.py,
+# ANTES de llegar al endpoint. Las sesiones internas y el INTERNAL_SYNC_TOKEN
+# no traen ese header y no pasan por aquí — el frontend y el piso no cambian.
+# Los bypass legados por query param (?api_key= en production.py) tampoco:
+# se retiran junto con la MASTER_API_KEY, como quedó acordado en 2.3.a.
+API_SURFACE_PERMITIDA = (
+    ("GET",    re.compile(r"^/api/packing-list$")),
+    ("GET",    re.compile(r"^/api/orders$")),
+    ("GET",    re.compile(r"^/api/orders/board-counts$")),
+    ("GET",    re.compile(r"^/api/orders/shipped$")),
+    ("GET",    re.compile(r"^/api/orders/available-to-ship$")),
+    # Orden puntual (guard de pertenencia dentro del handler). check-number
+    # queda fuera: es una ruta fija sin filtro por cliente.
+    ("GET",    re.compile(r"^/api/orders/(?!check-number$)[^/]+$")),
+    ("GET",    re.compile(r"^/api/wms/inventory/history$")),
+    ("GET",    re.compile(r"^/api/wms/pick-tickets$")),
+    ("GET",    re.compile(r"^/api/wms/allocations$")),
+    ("GET",    re.compile(r"^/api/wms/shipments$")),
+    ("GET",    re.compile(r"^/api/shipping$")),
+    ("GET",    re.compile(r"^/api/shipping/delay-codes$")),
+    ("POST",   re.compile(r"^/api/shipping$")),
+    ("PUT",    re.compile(r"^/api/shipping/[^/]+$")),
+    ("GET",    re.compile(r"^/api/scheduled-shipments$")),
+    ("POST",   re.compile(r"^/api/scheduled-shipments$")),
+    ("PUT",    re.compile(r"^/api/scheduled-shipments/[^/]+$")),
+    ("DELETE", re.compile(r"^/api/scheduled-shipments/[^/]+$")),
+)
+
+
+def api_surface_permitida(metodo: str, ruta: str) -> bool:
+    """¿Esta petición de llave de API cae dentro de la superficie documentada?"""
+    return any(m == metodo and rx.match(ruta) for m, rx in API_SURFACE_PERMITIDA)
+
+
 SUPER_ROLES = {"admin", "supersu"}
 
 async def require_supersu(request: Request) -> Dict:

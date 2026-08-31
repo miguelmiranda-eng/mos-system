@@ -5147,12 +5147,45 @@ async def create_allocation(request: Request):
     await log_movement(user, "allocation", {"allocation_id": allocation_id, "order_number": order.get("order_number"), "items": alloc_items})
     return alloc_doc
 
+async def _solo_ordenes_del_cliente(docs, filtro_cliente, campos=("order_number", "order_id")):
+    """Tarea 2.3: deja solo los docs cuya orden pertenece al cliente del
+    filtro (los docs de estas colecciones no traen cliente propio — se hereda
+    de la orden referida). Conservador: un doc cuya orden no se puede
+    resolver NO sale."""
+    if not docs:
+        return docs
+    refs = set()
+    for d in docs:
+        for c in campos:
+            v = str(d.get(c) or "").strip()
+            if v:
+                refs.add(v)
+    if not refs:
+        return []
+    rx = filtro_cliente["client"]["$regex"]
+    ordenes = await db.orders.find(
+        {"$or": [{"order_number": {"$in": list(refs)}}, {"order_id": {"$in": list(refs)}}],
+         "client": {"$regex": rx, "$options": "i"}},
+        {"_id": 0, "order_number": 1, "order_id": 1}).to_list(None)
+    del_cliente = set()
+    for o in ordenes:
+        for k in ("order_number", "order_id"):
+            if o.get(k):
+                del_cliente.add(str(o[k]))
+    return [d for d in docs
+            if any(str(d.get(c) or "").strip() in del_cliente for c in campos)]
+
+
 @router.get("/allocations")
 async def list_allocations(request: Request, order_id: str = ""):
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: las allocations no traen cliente — se hereda de su orden.
+    filtro_cliente = require_api_customer(user, request, campo="client")
     query = {}
     if order_id: query["$or"] = [{"order_id": order_id}, {"order_number": order_id}]
     allocs = await db.wms_allocations.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    if filtro_cliente:
+        allocs = await _solo_ordenes_del_cliente(allocs, filtro_cliente)
     return allocs
 
 @router.delete("/allocations/{allocation_id}")
@@ -5711,7 +5744,11 @@ async def list_pick_tickets(
         Virtual tickets (orders without a ticket) are only added when
         paginated=false OR when skip=0, to keep pagination semantics clean.
     """
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: llaves de API solo ven tickets de SU cliente (campo customer
+    # del ticket). Conservador: tickets viejos sin campo customer no salen
+    # para llaves — no se muestra lo que no se puede probar de quién es.
+    filtro_cliente = require_api_customer(user, request, campo="customer")
     query = {"status": status} if status else {}
     if exclude_completed and not status:
         # Default load skips finished picks (the Completed tab fetches them on
@@ -5720,6 +5757,8 @@ async def list_pick_tickets(
         # MISMO predicado que usa el guard de duplicados: lo que se ve aquí es
         # exactamente lo que bloquea crear un ticket nuevo.
         query = dict(TICKET_OPEN_QUERY)
+    if filtro_cliente:
+        query.update(filtro_cliente)
 
     skip = max(0, skip)
     limit = max(1, min(limit, 1000))
@@ -5766,7 +5805,9 @@ async def list_pick_tickets(
     # --- VIRTUAL TICKETS LOGIC ---
     # Synthesize a pre-ticket for every active order that doesn't have a real ticket yet.
     # When paginated, only include them on the first page (skip=0) to keep cursor semantics.
-    if (not status or status == "pending") and (not paginated or skip == 0):
+    # Tarea 2.3: los pre-tickets virtuales son un concepto de la UI interna
+    # (órdenes sin ticket real); para llaves de API no se sintetizan.
+    if filtro_cliente is None and (not status or status == "pending") and (not paginated or skip == 0):
         existing_order_numbers = {t.get("order_number") for t in real_tickets if t.get("order_number")}
 
         # Also exclude admin-dismissed pre-tickets
@@ -7315,8 +7356,13 @@ async def create_shipment(request: Request):
 
 @router.get("/shipments")
 async def list_shipments(request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
+    # Tarea 2.3: el embarque del WMS no trae cliente propio; su order_id (que
+    # a veces guarda el order_number) se resuelve contra la orden.
+    filtro_cliente = require_api_customer(user, request, campo="client")
     ships = await db.wms_shipments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    if filtro_cliente:
+        ships = await _solo_ordenes_del_cliente(ships, filtro_cliente, campos=("order_id",))
     return ships
 
 # ==================== MOVEMENTS (AUDIT) ====================
