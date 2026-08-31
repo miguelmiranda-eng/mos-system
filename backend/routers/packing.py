@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from deps import require_auth
+from deps import db, require_auth, require_api_customer
+from contracts import PackingListInfo, PackingLink
+import re as _re
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.drawing.image import Image as ExcelImage
@@ -11,6 +13,73 @@ import json
 
 router = APIRouter(prefix="/api/packing")
 templates = Jinja2Templates(directory="templates/packing")
+
+# ── Ruta ÚNICA del packing list como DATO (Tarea 1.2 del plan API) ───────────
+# Command intentaba varias rutas porque no existía una oficial: esta es.
+# El packing list de una orden hoy es un documento enlazado (Google Sheets);
+# esta ruta devuelve su metadato estructurado con la MISMA resolución que usa
+# el programador de envíos: campo packing_link de la orden, o el comentario
+# packing_link_seed más fresco — el más nuevo gana.
+router_packing_list = APIRouter(tags=["packing-list"])
+
+# [file]etiqueta|url[/file] dentro de un comentario packing_link_seed.
+_PL_FILE_RE = _re.compile(r"\[file\](.*?)\|(.*?)\[/file\]")
+
+
+@router_packing_list.get("/api/packing-list", response_model=PackingListInfo)
+async def get_packing_list(request: Request, order: str = ""):
+    """Contrato oficial (documentado en docs/api-command/CONTRATOS.md):
+      GET /api/packing-list?order=<numero>            (sesión interna)
+      GET /api/packing-list?order=<n>&customer=<c>    (llave de API: obligatorio)
+    packing_list = null cuando la orden aún no tiene packing cargado."""
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request)   # campo "client" en orders
+    if not order.strip():
+        raise HTTPException(400, "Falta el parámetro `order` (número de orden).")
+
+    o = await db.orders.find_one(
+        {"$or": [{"order_number": order.strip()}, {"order_id": order.strip()}],
+         "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "customer_po": 1,
+         "quantity": 1, "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1})
+    if not o:
+        raise HTTPException(404, f"No existe la orden {order}.")
+    if filtro_cliente:
+        # Pertenencia: para llaves de API, la orden debe ser del cliente pedido.
+        rx = filtro_cliente["client"]["$regex"]
+        if not _re.match(rx, str(o.get("client") or ""), _re.IGNORECASE):
+            raise HTTPException(403, "La orden no pertenece al cliente consultado.")
+
+    pl_url = o.get("packing_link")
+    pl_label = o.get("packing_link_label")
+    pl_at = str(o.get("packing_link_at") or "")
+    source = "order" if pl_url else None
+
+    # Comentario packing_link_seed más fresco (cronológico: el último gana).
+    seeds = await db.comments.find(
+        {"order_id": o.get("order_id"), "source": "packing_link_seed"},
+        {"_id": 0, "content": 1, "created_at": 1},
+    ).sort("created_at", 1).to_list(200)
+    for c in seeds:
+        m = _PL_FILE_RE.search(c.get("content") or "")
+        if m and (not pl_url or str(c.get("created_at") or "") >= pl_at):
+            pl_label, pl_url = m.group(1) or pl_label, m.group(2)
+            pl_at = str(c.get("created_at") or "")
+            source = "comment"
+
+    try:
+        qty = int(o.get("quantity"))
+    except (TypeError, ValueError):
+        qty = None
+
+    return PackingListInfo(
+        order_number=str(o.get("order_number") or order),
+        client=o.get("client"),
+        customer_po=o.get("customer_po"),
+        qty_ordered=qty,
+        packing_list=PackingLink(url=pl_url, label=pl_label, updated_at=pl_at or None) if pl_url else None,
+        source=source if pl_url else None,
+    )
 
 
 async def _parse_payload(request: Request):

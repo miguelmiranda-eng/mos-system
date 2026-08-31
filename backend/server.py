@@ -205,6 +205,7 @@ from routers.google_calendar import router as google_calendar_router
 from routers.gsheets import router as gsheets_router
 from routers.shipping import router as shipping_router
 from routers.packing import router as packing_router
+from routers.packing import router_packing_list
 from routers.report_scheduler import router as report_scheduler_router, start_report_scheduler
 from routers.printavo_scheduler import router as printavo_scheduler_router, start_printavo_scheduler
 from routers.blanks_sweep_scheduler import router as blanks_sweep_router, start_blanks_sweep_scheduler
@@ -238,6 +239,7 @@ app.include_router(google_calendar_router)
 app.include_router(gsheets_router)
 app.include_router(shipping_router)
 app.include_router(packing_router)
+app.include_router(router_packing_list)   # GET /api/packing-list (Tarea 1.2)
 app.include_router(scheduled_shipments_router)
 app.include_router(report_scheduler_router)
 app.include_router(printavo_scheduler_router)

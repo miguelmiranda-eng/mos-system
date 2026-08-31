@@ -8,8 +8,8 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | Tarea | Descripción corta | Estado |
 |---|---|---|
 | 0.1 | Auditoría técnica previa | ✅ Completa |
-| 1.1 | Esquemas JSON tipados | ⬜ Pendiente |
-| 1.2 | Ruta única de Packing List | ⬜ Pendiente |
+| 1.1 | Esquemas JSON tipados | ✅ Completa (ver nota de adopción) |
+| 1.2 | Ruta única de Packing List | ✅ Completa |
 | 2.1 | `customer` obligatorio en búsqueda de órdenes | ✅ Completa |
 | 2.2 | Contexto de cliente en historial de inventario | ✅ Completa |
 | 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
@@ -282,3 +282,49 @@ nombre de estilo, los movimientos antiguos sin cliente en sus detalles no son
 distinguibles al 100 %. El candado de pertenencia (paso 2) reduce el caso a
 estilos con nombre duplicado entre clientes; hoy el catálogo curado del WMS
 scopea styles por cliente, lo que hace ese choque improbable hacia adelante.
+
+---
+
+## Tarea 1.1 — Esquemas JSON tipados y estandarizados
+
+**Qué se hizo:**
+
+1. **`backend/contracts.py`** — la definición única de los contratos de la
+   superficie externa, como modelos Pydantic: `PackingListInfo`,
+   `PaginaOrdenesEmbarcables`, `PaginaOrdenesEmbarcadas`, `RegistroEnvio`,
+   `EnvioProgramado` (+ submodelos). Reglas fijadas: **snake_case siempre**,
+   sobre `{total, skip, limit, items}` para listas paginadas, fechas ISO 8601,
+   errores `{"detail": ...}`.
+2. **`docs/api-command/CONTRATOS.md`** — la lectura humana de esos contratos,
+   campo por campo, con ejemplos y las notas de evolución (qué cambiará cuando
+   lleguen 3.1 y 6.x). Es el documento que se le entrega a Command.
+
+**Nota de adopción (regla 0.1):** los modelos se aplican como `response_model`
+en los endpoints nuevos (la ruta de la 1.2 ya valida su salida). En los
+endpoints vivos NO se activó la validación en runtime todavía: los datos
+históricos traen tipos sucios (cantidades como texto, fechas heterogéneas) y
+un `ValidationError` tumbaría respuestas que hoy funcionan. La activación va
+endpoint por endpoint junto con las pruebas E2E del plan.
+
+---
+
+## Tarea 1.2 — Ruta única para Packing List
+
+**Nueva ruta oficial: `GET /api/packing-list?order=<numero>`** (en
+`backend/routers/packing.py`, router propio incluido en `server.py`). Command
+no debe intentar ninguna otra ruta.
+
+- Devuelve `PackingListInfo` **validado por contrato** (`response_model`):
+  orden, cliente, `customer_po`, `qty_ordered`, y `packing_list {url, label,
+  updated_at}` o `null` si aún no hay packing.
+- **Misma resolución que el programador de envíos** (cero lógica nueva
+  inventada): campo `packing_link` de la orden o el comentario
+  `packing_link_seed` más fresco — el más nuevo gana; `source` dice cuál fue.
+- Aislamiento heredado de la serie 2.x: con llave de API, `customer` es
+  obligatorio y la orden debe pertenecer a ese cliente (403 si no).
+- `qty_ordered` ya sale aquí (adelanto de la 4.1).
+
+**Límite documentado:** hoy el packing list es un documento enlazado (Google
+Sheets); esta ruta entrega su metadato. Si Command necesita el CONTENIDO
+(renglones/cajas), es la siguiente iteración sobre esta misma ruta y requiere
+decidir con qué credencial de Google lee el servidor.
