@@ -23,7 +23,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
 | 6.1-6.3 | Shipping estructurado + `delay_code` | ✅ Completa |
 | 7.1-7.3 | Documentación de API | ✅ Completa |
-| Pruebas | E2E con Command + regresión | ⬜ Pendiente |
+| Pruebas | E2E con Command + regresión | 🔄 Batería A verde en producción (28/28); B espera llave de prueba |
 
 ---
 
@@ -602,3 +602,58 @@ y la costura, no reescribió contratos.
 Con esto el plan queda completo salvo: **Pruebas E2E** (última fila de la
 tabla) y las **cirugías mayores 4.2 / 4.3 / 5.4**, que esperan aprobación
 explícita.
+
+---
+
+## Pruebas — E2E de la superficie externa + regresión
+
+**El script: `backend/tests/e2e_command_api.py`** — simula a Command contra
+un backend real (default: producción). Regla de oro: **no persiste nada** —
+las pruebas de escritura usan solo caminos que el backend debe rechazar
+(strict forzado con orden inexistente → 400, `delay_code` fuera de catálogo
+→ 400, registros inexistentes → 404). El POST feliz queda para la
+integración real de Command.
+
+### Batería A — compuertas y default-deny (sin llave real) ✅
+
+Corrida contra **producción** el 2026-08-31: **28/28 OK.**
+
+- Sin llave: 401 en toda la superficie (packing-list, shipping, delay-codes,
+  scheduled, orders).
+- Con llave FALSA (el middleware dispara con la sola presencia del header,
+  por eso una llave falsa basta para probarlo): 14 rutas fuera de la
+  superficie documentada respondieron **403 "superficie documentada"** antes
+  de llegar al endpoint (WMS boxes/movements/inventory/audit, producción,
+  packing/export, comments de órdenes, POST/DELETE de órdenes,
+  week-config...), y las 8 rutas permitidas respondieron **401** (el
+  middleware las deja pasar y la llave falsa muere en la autenticación —
+  nunca un 403 de superficie).
+- Confirmado también el hallazgo 7.1: `GET /docs` responde 200 sin sesión
+  (decisión pendiente de Miguel).
+
+### Batería B — superficie completa con llave real (lista, espera llave)
+
+Cubre: `customer` obligatorio y fuera-de-alcance (403), sobres de
+paginación, aislamiento por cliente en orders/scheduled/pick-tickets,
+contrato de packing-list, par `qty_ordered`/`qty_shipped`, `orders_detail`,
+catálogo de 7 `delay_codes`, y los rechazos de escritura. Para correrla,
+emitir una llave de PRUEBA (supersu, ver 2.3.a) y:
+
+```powershell
+$env:MOS_API_KEY = '<llave de prueba>'
+$env:MOS_API_CUSTOMER = '<cliente de la llave>'
+backend\venv\Scripts\python.exe backend\tests\e2e_command_api.py
+```
+
+Revocar la llave de prueba al terminar (`DELETE /api/auth/api-keys/{id}`).
+
+### Regresión de lo interno
+
+- **El frontend no se tocó en todo el plan** (cero commits en `frontend/`):
+  no hay regresión que correr ahí; todos los campos nuevos son aditivos y
+  los sobres de paginación son opt-in (el frontend no manda `skip`).
+- **El piso (PDA)**: ninguna de sus rutas (0.1.e) fue modificada; el
+  middleware es un no-op literal para sesiones (solo mira el header
+  `X-API-Key`, que el PDA no manda).
+- Los 401 de la batería A confirman que las compuertas de sesión internas
+  siguen exactamente como antes.
