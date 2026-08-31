@@ -235,6 +235,11 @@ class OrderCreate(BaseModel):
     customer_po: Optional[str] = None
     store_po: Optional[str] = None
     cancel_date: Optional[str] = None
+    # Tarea 3.1 (plan API): fecha LIMITE DE ENVIO, "YYYY-MM-DD", independiente
+    # de cancel_date (que es la fecha de cancelacion del cliente). Mientras
+    # este vacia, los calculos de envio (days_com) caen a cancel_date; en
+    # cuanto se captura, ship_by gana.
+    ship_by: Optional[str] = None
     client: Optional[str] = None
     branding: Optional[str] = None
     priority: Optional[str] = None
@@ -321,6 +326,8 @@ class OrderUpdate(BaseModel):
     design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     board: Optional[str] = None
+    # Fecha limite de envio (Tarea 3.1) — ver OrderCreate.ship_by.
+    ship_by: Optional[str] = None
     locked_by_qc: Optional[bool] = None
     art_sep_status: Optional[bool] = None
     art_neck_status: Optional[bool] = None

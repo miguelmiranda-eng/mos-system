@@ -13,7 +13,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 2.1 | `customer` obligatorio en búsqueda de órdenes | ✅ Completa |
 | 2.2 | Contexto de cliente en historial de inventario | ✅ Completa |
 | 2.3 | Auditoría multi-tenant global | 🔄 Parcial: llaves por cliente ✅ |
-| 3.1 | `ship_by` separado de `cancel_date` | ⬜ Pendiente |
+| 3.1 | `ship_by` separado de `cancel_date` | ✅ Completa |
 | 3.2 | `dispatched_at` ISO 8601 | ⬜ Pendiente |
 | 3.3/3.4 | `packed_at`, `delivered_at` + doc | ⬜ Pendiente |
 | 4.1 | `qty_ordered` vs `qty_shipped` | ⬜ Pendiente |
@@ -328,3 +328,32 @@ no debe intentar ninguna otra ruta.
 Sheets); esta ruta entrega su metadato. Si Command necesita el CONTENIDO
 (renglones/cajas), es la siguiente iteración sobre esta misma ruta y requiere
 decidir con qué credencial de Google lee el servidor.
+
+---
+
+## Tarea 3.1 — `ship_by` separado de `cancel_date`
+
+**Qué se hizo:**
+
+1. **`ship_by` como campo de primera clase de la orden** (`deps.py`:
+   `OrderCreate` y `OrderUpdate`): fecha límite de ENVÍO, formato `YYYY-MM-DD`,
+   independiente de `cancel_date` (que vuelve a significar solo la fecha de
+   cancelación del cliente). Entra por los mismos endpoints de crear/editar
+   orden que cualquier otro campo.
+2. **Semántica de despliegue sin ruptura (fallback):** todos los cálculos de
+   envío usan `ship_by` **cuando existe** y caen a `cancel_date` mientras no.
+   Con las órdenes actuales (todas sin `ship_by`) el comportamiento es
+   idéntico al de hoy; en cuanto se capture en una orden, `ship_by` gana en
+   esa orden. No hay backfill: no se inventa una fecha que nadie capturó.
+3. **Cableado donde se consumía la ambigüedad:**
+   - `scheduled_shipments.py`: "Days Com." ahora se calcula contra
+     `ship_by || cancel_date`, y la fila expone **ambas fechas por separado**.
+   - `GET /api/orders/available-to-ship`: expone `ship_by` en cada item.
+   - Contratos (`contracts.py` + `CONTRATOS.md`) actualizados: `ship_by` en
+     `OrdenEmbarcable` y `EnvioProgramado`, con la semántica de `days_com`
+     documentada para que Command no adivine qué fecha se usó.
+
+**Captura en UI:** los modelos de orden aceptan `ship_by` desde ya (los forms
+dinámicos pueden mandarlo). Agregar la columna/campo visible en el modal de
+edición y en el programador de envíos es iteración de UI aparte — el dato y su
+semántica ya están definidos y publicados en el contrato.

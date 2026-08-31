@@ -51,6 +51,9 @@ class OrdenEmbarcable(BaseModel):
     branding: Optional[str] = None
     quantity: Optional[int] = None
     cancel_date: Optional[str] = None
+    # Fecha limite de ENVIO (Tarea 3.1), independiente de cancel_date.
+    # Puede venir null mientras la orden no la tenga capturada.
+    ship_by: Optional[str] = None
     production_status: Optional[str] = None
     board: Optional[str] = None
 
@@ -120,6 +123,7 @@ class EnvioProgramado(BaseModel):
     customer_po: Optional[str] = None
     design_num: Optional[str] = None
     cancel_date: Optional[str] = None
+    ship_by: Optional[str] = None              # limite de envio; days_com lo usa si existe
     client: Optional[str] = None
     branding: Optional[str] = None
     quantity: Optional[int] = None

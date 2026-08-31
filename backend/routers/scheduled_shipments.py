@@ -6,7 +6,8 @@ exportación planeada y un destino. La programación vive en su propia colecció
 `db.scheduled_shipments` (no ensucia el modelo de orden); la tabla une esos datos
 con la info viva de la orden (cliente, qty, status, cancel_date…) al leer.
 
-'Days Com.' = días desde hoy hasta el cancel_date de la orden (negativo = vencida).
+'Days Com.' = días desde hoy hasta la fecha límite de envío: ship_by si la
+orden lo tiene (Tarea 3.1), si no cancel_date (negativo = vencida).
 
 Endpoints (prefijo /api/scheduled-shipments):
   GET    ""              → lista programados (unidos con datos de la orden)
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/api/scheduled-shipments", tags=["scheduled-shipments
 # Campos de la orden que la tabla necesita mostrar (unidos al leer).
 _ORDER_PROJ = {
     "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "design_#": 1, "design_num": 1,
-    "cancel_date": 1, "client": 1, "branding": 1, "quantity": 1,
+    "cancel_date": 1, "ship_by": 1, "client": 1, "branding": 1, "quantity": 1,
     "production_status": 1, "board": 1, "notes": 1,
     "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
 }
@@ -128,6 +129,8 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None) -> dict:
         "customer_po": o.get("customer_po"),
         "design_num": o.get("design_#") or o.get("design_num"),
         "cancel_date": o.get("cancel_date"),
+        # Tarea 3.1: fecha limite de ENVIO, independiente de cancel_date.
+        "ship_by": o.get("ship_by"),
         "client": o.get("client"),
         "branding": o.get("branding"),
         "quantity": o.get("quantity"),
@@ -136,7 +139,9 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None) -> dict:
         "notes": o.get("notes"),
         "packing_link": o.get("packing_link"),
         "packing_link_label": o.get("packing_link_label"),
-        "days_com": _days_com(o.get("cancel_date")),
+        # days_com: contra ship_by cuando existe; si no, cae a cancel_date
+        # (comportamiento historico intacto mientras ship_by no se capture).
+        "days_com": _days_com(o.get("ship_by") or o.get("cancel_date")),
         "order_exists": order is not None,
         "created_at": sched.get("created_at"),
         "updated_at": sched.get("updated_at"),

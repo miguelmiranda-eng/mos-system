@@ -335,7 +335,7 @@ async def list_available_to_ship(request: Request, skip: int = 0, limit: int = 5
         q["$or"] = [{"order_number": rx}, {"client": rx}, {"customer_po": rx}]
     proj = {
         "_id": 0, "order_number": 1, "client": 1, "customer_po": 1, "branding": 1,
-        "quantity": 1, "cancel_date": 1, "production_status": 1, "board": 1,
+        "quantity": 1, "cancel_date": 1, "ship_by": 1, "production_status": 1, "board": 1,
     }
     total = await db.orders.count_documents(q)
     items = await (db.orders.find(q, proj)

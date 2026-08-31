@@ -52,7 +52,11 @@ Command no debe intentar ninguna otra ruta para obtener el packing list.
 
 `skip`/`limit` (tope 5000) · `search` opcional · `customer` obligatorio con
 llave de API. Sobre paginado; `items[]`: `order_number, client, customer_po,
-branding, quantity, cancel_date, production_status, board`.
+branding, quantity, cancel_date, ship_by, production_status, board`.
+
+> `ship_by` (Tarea 3.1) es la **fecha límite de envío**, independiente de
+> `cancel_date` (fecha de cancelación del cliente). Puede venir `null` mientras
+> la orden no la tenga capturada.
 
 ## 3. `GET /api/orders/shipped` (`PaginaOrdenesEmbarcadas`)
 
@@ -77,12 +81,14 @@ evidence[] {id, filename, url, type}, created_by, created_by_name, created_at`.
 `shipment_id, order_number, scheduled_year, scheduled_month (1-12),
 scheduled_week (1-5), shipment_no, scheduled_export_date, delivery_to,
 pl_export, pl_number, pl_url, status, customer_po, design_num, cancel_date,
-client, branding, quantity, production_status, board, notes, packing_link,
-packing_link_label, days_com, order_exists, created_at, updated_at`.
+ship_by, client, branding, quantity, production_status, board, notes,
+packing_link, packing_link_label, days_com, order_exists, created_at,
+updated_at`.
 
-> `days_com` = días de hoy a `cancel_date` (negativo = vencida). Cuando la
-> tarea 3.1 introduzca `ship_by`, este cálculo migrará a ese campo y se
-> anunciará como cambio de contrato.
+> `days_com` = días de hoy a la **fecha límite de envío**: `ship_by` cuando la
+> orden lo tiene (Tarea 3.1), con fallback a `cancel_date` mientras no
+> (negativo = vencida). Ambas fechas viajan por separado para que Command no
+> tenga que adivinar cuál se usó.
 
 ## Adopción y validación en runtime
 
