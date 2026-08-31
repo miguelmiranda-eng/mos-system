@@ -107,16 +107,45 @@ Tarea 4.1, ver arriba).
 `GET` con filtro `?date=YYYY-MM-DD`. Lista simple por default; con `skip`
 responde el sobre paginado (ver "Paginación bajo demanda" — Tarea 5.2). Cada
 `RegistroEnvio`: `shipping_id,
-order_numbers[], orders_detail[], notes, evidence[] {id, filename, url, type},
-packed_at, dispatched_at, delivered_at, created_by, created_by_name,
-created_at`.
+order_numbers[], orders_detail[], unknown_orders[], delay_code, notes,
+evidence[] {id, filename, url, type}, packed_at, dispatched_at, delivered_at,
+created_by, created_by_name, created_at`.
 
 **`orders_detail[]` (Tarea 4.1)** — espejo de `order_numbers` con el par de
-cantidades por orden: `{order_number, qty_ordered, qty_shipped}`. Como
-`order_numbers` sigue siendo texto libre (hasta la 6.1), un número que no
-corresponde a una orden viva trae `qty_ordered: null`; `qty_shipped` se deriva
-de la bitácora del WMS por número, exista o no la orden. El `PUT` devuelve el
-registro ya enriquecido con `orders_detail`.
+cantidades por orden: `{order_number, qty_ordered, qty_shipped}`. Un número
+que no corresponde a una orden viva trae `qty_ordered: null`; `qty_shipped` se
+deriva de la bitácora del WMS por número, exista o no la orden. El `PUT`
+devuelve el registro ya enriquecido con `orders_detail`.
+
+**Validación de `order_numbers` (Tarea 6.1)** — el `POST` valida cada número
+contra las órdenes vivas (fuera de papelera):
+
+| Modo | Comportamiento |
+|---|---|
+| Default | Guarda igual y **avisa**: la respuesta del `POST` y el registro traen `unknown_orders[]` (foto al momento de registrar; no se recalcula sobre historia). |
+| `strict=true` (campo de form) | **Rechaza con `400`** si algún número no es orden viva o si no viene ningún número. **Command debe mandar siempre `strict=true`** — el modo aviso existe para no romper a los consumidores mientras adoptan la validación. |
+
+**`delay_code` (Tareas 6.2-6.3)** — causa de retraso, catálogo **CERRADO**
+(fuera de catálogo → `400`; el detalle libre va en `notes`; `null` = sin
+retraso declarado). Opcional en el `POST`; se captura o corrige después con
+`PUT /api/shipping/{shipping_id}` (`{"delay_code": "carrier_issue"}`; `null`
+lo limpia). El catálogo se enumera en **`GET /api/shipping/delay-codes`** →
+`{delay_codes: [{code, label}]}`:
+
+| `code` | Significado |
+|---|---|
+| `customer_request` | El cliente pidió mover la fecha |
+| `production_delay` | Producción no llegó a tiempo |
+| `materials_shortage` | Faltó material o insumo |
+| `carrier_issue` | Problema con el transportista |
+| `documentation` | Documentación (aduana, permisos, papeles) |
+| `weather` | Clima u otra fuerza mayor |
+| `other` | Otra causa (detallar en `notes`) |
+
+> Alcance fijado por regla del jefe: esto NO es un TMS. No hay carriers,
+> tracking por paquete ni eventos de ruta — un código de causa por registro y
+> el detalle en `notes`. Agregar una causa nueva es cambio aditivo del
+> catálogo, no texto libre.
 
 **Timestamps (Tareas 3.2-3.4)** — reglas:
 
@@ -125,12 +154,8 @@ registro ya enriquecido con `orders_detail`.
 | Formato | ISO 8601 **con zona horaria** (`2026-08-28T15:30:00-07:00` o `…Z`). Sin zona → `400`. Se normalizan a UTC al guardar. |
 | `dispatched_at` | Registrar el envío ES el despacho: el `POST` lo sella con el momento actual, salvo que venga explícito. |
 | `packed_at` | Opcional en el `POST`; no se inventa. |
-| `delivered_at` | Casi siempre llega días después: se captura con `PUT /api/shipping/{shipping_id}` mandando `{"delivered_at": "…"}` (acepta cualquiera de los tres campos; solo toca los que vienen). |
+| `delivered_at` | Casi siempre llega días después: se captura con `PUT /api/shipping/{shipping_id}` mandando `{"delivered_at": "…"}` (acepta los tres hitos y `delay_code`; solo toca los que vienen). |
 | Registros históricos | Anteriores a esta versión traen los tres en `null`: usar `created_at` como aproximación del despacho. |
-
-> Nota (tareas 6.x pendientes): `order_numbers` sigue siendo texto capturado
-> sin validar contra órdenes, y `delay_code` no existe aún. Ese endurecimiento
-> es la tarea 6.1-6.3.
 
 ## 5. `GET /api/scheduled-shipments` (`{items: EnvioProgramado[], weeks: […]}`)
 

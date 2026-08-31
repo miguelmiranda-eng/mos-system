@@ -123,6 +123,14 @@ class RegistroEnvio(BaseModel):
     order_numbers: List[str]
     # Tarea 4.1: espejo de order_numbers con su par de cantidades.
     orders_detail: List[DetalleOrdenEnvio] = []
+    # Tarea 6.1: FOTO al registrar — números capturados que NO eran órdenes
+    # vivas en ese momento (con strict=true el POST los rechaza con 400 en vez
+    # de guardarlos). Registros anteriores a esta versión no traen el campo.
+    unknown_orders: List[str] = []
+    # Tarea 6.2: causa de retraso del catálogo CERRADO (GET
+    # /api/shipping/delay-codes lo enumera); null = sin retraso declarado.
+    # Fuera del catálogo → 400. El detalle libre va en notes.
+    delay_code: Optional[str] = None
     notes: Optional[str] = None
     evidence: List[EvidenciaEnvio] = []
     # Hitos del envio (Tareas 3.2-3.4): ISO 8601 normalizado a UTC.

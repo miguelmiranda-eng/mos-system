@@ -21,7 +21,7 @@ se encontró y las decisiones tomadas. Se actualiza tarea por tarea.
 | 4.3 | Múltiples pick tickets por orden | ⬜ Pendiente |
 | 5.1-5.3 | Paginación estandarizada | ✅ Completa |
 | 5.4 | Enum de estados de orden | ⬜ Pendiente |
-| 6.1-6.3 | Shipping estructurado + `delay_code` | ⬜ Pendiente |
+| 6.1-6.3 | Shipping estructurado + `delay_code` | ✅ Completa |
 | 7.1-7.3 | Documentación de API | ⬜ Pendiente |
 | Pruebas | E2E con Command + regresión | ⬜ Pendiente |
 
@@ -461,3 +461,51 @@ completa de movimientos, es conversación aparte.
 Contratos: `PaginaRegistrosEnvio` y `PaginaEnviosProgramados` nuevos en
 `contracts.py`; CONTRATOS.md ganó la sección "Paginación bajo demanda" con la
 recomendación para Command: mandar **siempre** `skip` y `limit`.
+
+---
+
+## Tareas 6.1-6.3 — Shipping estructurado: validación de órdenes + `delay_code`
+
+**Tarea 6.1 — `order_numbers` validado contra órdenes reales.** El plan daba
+dos opciones (rechazar o avisar); se implementaron las dos, escalonadas para
+no romper a nadie (regla 0.1):
+
+- **Default (aviso):** el `POST /api/shipping` valida cada número contra las
+  órdenes vivas (fuera de papelera), guarda igual y devuelve
+  `unknown_orders[]` — que también queda como **foto** en el registro (lo que
+  no era orden viva AL registrar; no se recalcula sobre historia). El
+  frontend actual no cambia en nada.
+- **`strict=true` (muro):** rechaza con 400 si algún número no es orden viva
+  o si no viene ninguno. **Command debe mandarlo siempre** (documentado en
+  CONTRATOS.md); cuando confirme que lo manda, subir el default para llaves
+  de API es un cambio de una línea.
+
+La 4.1 ya hacía visible el problema en la lectura (`orders_detail` con
+`qty_ordered: null`); la 6.1 lo ataca en la escritura.
+
+**Tareas 6.2-6.3 — `delay_code` de catálogo cerrado.** Causa de retraso del
+envío, sin texto libre:
+
+- Catálogo CERRADO de 7 causas (`customer_request`, `production_delay`,
+  `materials_shortage`, `carrier_issue`, `documentation`, `weather`,
+  `other`) definido en `shipping.py` y enumerable en
+  **`GET /api/shipping/delay-codes`** (para que UI y Command pinten opciones
+  sin hardcodear). Fuera de catálogo → 400. `null` = sin retraso declarado
+  (no se inventa).
+- Entra por el `POST` (opcional) y se captura/corrige después por el
+  `PUT /api/shipping/{shipping_id}` (`{"delay_code": ...}`; `null` lo
+  limpia) — mismo canal auditado de los timestamps 3.2-3.4.
+- **Regla del jefe respetada (no-TMS):** un código de causa por registro y el
+  detalle libre en `notes`. Sin carriers, sin tracking por paquete, sin
+  eventos de ruta. Agregar una causa = cambio aditivo del dict (contrato
+  aditivo), no texto libre.
+
+**Sin ruptura:** POST del frontend intacto (campos nuevos opcionales, aviso en
+vez de muro por default); registros históricos sin `delay_code` ni
+`unknown_orders` se leen como `null`/ausente (documentado). Contratos
+actualizados en `contracts.py` (`RegistroEnvio` + `unknown_orders` +
+`delay_code`) y CONTRATOS.md sección 4 reescrita (la nota "6.x pendientes"
+quedó saldada).
+
+**Captura en UI:** el selector de `delay_code` en ShippingModule es iteración
+de UI aparte — el dato, el catálogo consultable y el contrato ya existen.

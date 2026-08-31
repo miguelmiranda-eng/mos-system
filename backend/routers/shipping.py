@@ -14,6 +14,46 @@ UPLOAD_DIR = Path("uploads/shipping")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# ── Catálogo de delay_code (Tarea 6.2) ───────────────────────────────────────
+# CERRADO y CORTO a propósito — regla del jefe: esto NO es un TMS. El código
+# existe para poder AGREGAR (contar retrasos por causa) sin parsear texto; el
+# detalle libre sigue viviendo en `notes`. Agregar una causa nueva es tocar
+# este dict (cambio aditivo de contrato), no aceptar texto libre.
+DELAY_CODES = {
+    "customer_request":   "El cliente pidió mover la fecha",
+    "production_delay":   "Producción no llegó a tiempo",
+    "materials_shortage": "Faltó material o insumo",
+    "carrier_issue":      "Problema con el transportista",
+    "documentation":      "Documentación (aduana, permisos, papeles)",
+    "weather":            "Clima u otra fuerza mayor",
+    "other":              "Otra causa (detallar en notes)",
+}
+
+
+def _valida_delay_code(valor):
+    """None/vacío = sin retraso declarado (no se inventa). Fuera del catálogo
+    → 400: el catálogo es cerrado (Tarea 6.2)."""
+    if valor is None or not str(valor).strip():
+        return None
+    v = str(valor).strip().lower()
+    if v not in DELAY_CODES:
+        raise HTTPException(400, f"delay_code inválido: {str(valor).strip()!r}. "
+                                 f"Catálogo: {', '.join(sorted(DELAY_CODES))}.")
+    return v
+
+
+async def _ordenes_desconocidas(numeros):
+    """Tarea 6.1: qué números capturados NO corresponden a una orden viva
+    (fuera de PAPELERA). Se valida contra órdenes reales, no contra un
+    catálogo aparte."""
+    if not numeros:
+        return []
+    existentes = set(await db.orders.distinct(
+        "order_number",
+        {"order_number": {"$in": numeros}, "board": {"$ne": "PAPELERA DE RECICLAJE"}}))
+    return [n for n in numeros if n not in existentes]
+
+
 def _parse_ts(nombre: str, valor: Optional[str]) -> Optional[str]:
     """Timestamps del envio (Tareas 3.2-3.4): ISO 8601 CON zona horaria,
     normalizados a UTC al guardar. Vacio/None = no capturado (no se inventa)."""
@@ -40,12 +80,30 @@ async def create_shipping_record(
     packed_at: Optional[str] = Form(None),
     dispatched_at: Optional[str] = Form(None),
     delivered_at: Optional[str] = Form(None),
+    # Tarea 6.2: causa de retraso del catálogo cerrado (400 fuera de él).
+    delay_code: Optional[str] = Form(None),
+    # Tarea 6.1: strict=true rechaza números que no son órdenes vivas (400).
+    # Default false: se guarda igual y se AVISA (unknown_orders) — así ni el
+    # frontend ni Command se rompen mientras adoptan la validación.
+    strict: bool = Form(False),
 ):
     user = await require_auth(request)
-    
+    delay = _valida_delay_code(delay_code)
+
     # Process order numbers (comma or space separated)
     orders = [o.strip() for o in order_numbers.replace(",", " ").split() if o.strip()]
-    
+
+    # Tarea 6.1: validación contra órdenes reales. Siempre se calcula (queda
+    # como foto en el registro y viaja en la respuesta); strict decide si es
+    # muro o aviso.
+    desconocidas = await _ordenes_desconocidas(orders)
+    if strict:
+        if not orders:
+            raise HTTPException(400, "order_numbers no trae ningún número de orden.")
+        if desconocidas:
+            raise HTTPException(400, "Órdenes inexistentes (o en papelera): "
+                                     + ", ".join(desconocidas))
+
     evidence = []
     for file in files:
         file_ext = Path(file.filename).suffix.lower()
@@ -80,6 +138,11 @@ async def create_shipping_record(
         "dispatched_at": _parse_ts("dispatched_at", dispatched_at)
                          or datetime.now(timezone.utc).isoformat(),
         "delivered_at": _parse_ts("delivered_at", delivered_at),
+        # Tarea 6.2: causa de retraso (catálogo cerrado); null = sin retraso.
+        "delay_code": delay,
+        # Tarea 6.1: FOTO al registrar — números que no eran órdenes vivas en
+        # ese momento. No se recalcula sobre historia.
+        "unknown_orders": desconocidas,
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name", user.get("email")),
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -87,7 +150,8 @@ async def create_shipping_record(
 
     await db.shipping_records.insert_one(record)
 
-    return {"message": "Envío registrado con éxito", "shipping_id": record["shipping_id"]}
+    return {"message": "Envío registrado con éxito", "shipping_id": record["shipping_id"],
+            "unknown_orders": desconocidas}
 
 
 async def _con_detalle_de_ordenes(records):
@@ -122,20 +186,31 @@ async def _con_detalle_de_ordenes(records):
     return records
 
 
+@router.get("/delay-codes")
+async def list_delay_codes(request: Request):
+    """Tarea 6.2: el catálogo cerrado de causas de retraso, consultable para
+    que el frontend y Command pinten opciones sin hardcodearlas."""
+    await require_auth(request)
+    return {"delay_codes": [{"code": c, "label": l} for c, l in DELAY_CODES.items()]}
+
+
 @router.put("/{shipping_id}")
 async def update_shipping_timestamps(shipping_id: str, request: Request):
-    """Completa los hitos de un envio ya registrado (Tareas 3.2-3.4): recibe
-    JSON con cualquiera de packed_at / dispatched_at / delivered_at (ISO 8601
-    con zona horaria). Pensado para capturar la ENTREGA cuando ocurre, dias
-    despues del despacho. Solo toca los campos que vienen en el body."""
+    """Completa un envio ya registrado: hitos packed_at / dispatched_at /
+    delivered_at (Tareas 3.2-3.4, ISO 8601 con zona horaria) y/o delay_code
+    (Tarea 6.2, catalogo cerrado; null lo limpia). Solo toca los campos que
+    vienen en el body."""
     user = await require_auth(request)
     body = await request.json()
     cambios = {}
     for campo in ("packed_at", "dispatched_at", "delivered_at"):
         if campo in body:
             cambios[campo] = _parse_ts(campo, body.get(campo))
+    if "delay_code" in body:
+        cambios["delay_code"] = _valida_delay_code(body.get("delay_code"))
     if not cambios:
-        raise HTTPException(400, "Manda al menos uno de: packed_at, dispatched_at, delivered_at.")
+        raise HTTPException(400, "Manda al menos uno de: packed_at, dispatched_at, "
+                                 "delivered_at, delay_code.")
 
     res = await db.shipping_records.update_one({"shipping_id": shipping_id}, {"$set": cambios})
     if not res.matched_count:
