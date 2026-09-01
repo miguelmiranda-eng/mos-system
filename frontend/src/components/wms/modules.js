@@ -16,7 +16,7 @@
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, FileDown, ScanLine, Settings,
-  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert,
+  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes,
 } from "lucide-react";
 
 export const WMS_GROUPS = [
@@ -93,6 +93,8 @@ export const buildModules = (t) => [
     desc: 'Material surtido en espera de corte' },
   { id: 'finished', group: 'out', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400',
     desc: t('wms_mod_finished_desc') },
+  { id: 'trazabilidad', group: 'out', label: 'Trazabilidad', icon: Boxes, color: 'text-violet-400',
+    desc: 'Dónde va el material surtido de cada orden, del surtido al embarque' },
 
   // ── Análisis ────────────────────────────────────────────────────────────
   { id: 'dashboard', group: 'an', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary',

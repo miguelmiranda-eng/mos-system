@@ -33,6 +33,7 @@ import { AsnModule } from "./wms/Asn";
 import { TransitModule } from "./wms/Transit";
 import { MoverModule } from "./wms/Mover";
 import { AuditModule } from "./wms/Audit";
+import { TrazabilidadModule } from "./wms/Trazabilidad";
 import { ReconciliationModule } from "./wms/Reconciliation";
 import IncidentsModule from "./wms/Incidents";
 import ReportsModule from "./wms/Reports";
@@ -57,6 +58,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'picking':      return <PickingModule currentUser={ctx.currentUser} />;
     case 'neck_cutting': return <NeckCuttingModule />;
     case 'finished':     return <FinishedGoodsModule />;
+    case 'trazabilidad': return <TrazabilidadModule />;
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
