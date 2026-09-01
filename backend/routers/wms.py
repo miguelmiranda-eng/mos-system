@@ -4186,6 +4186,12 @@ async def generate_box(request: Request):
     fabric = re.sub(r"\s+", " ", str(body.get("fabric_content") or "")).strip().upper()
     is_bpo = bool(body.get("is_bpo", False))
 
+    # País obligatorio: toda caja nace con su país de origen (misma regla que
+    # /receiving). Sin esto entraban cajas sin país que luego caían en "SIN PAÍS"
+    # en la tabla de surtido.
+    if not coo:
+        raise HTTPException(400, "País de origen (country_of_origin) es obligatorio")
+
     # El style ya se valido arriba, pero los OTROS 5 campos de identidad entraban
     # sin revisar: se podia generar una caja con un color/descripcion inventados y,
     # una vez en inventario, el escape "ya existe en inventario" de
@@ -11149,6 +11155,9 @@ async def add_inventory_manual(request: Request):
     # TODAS las demas puertas. Solo se valida al AGREGAR: una salida ("remove")
     # opera sobre material que ya esta, y bloquearla dejaria stock atorado.
     if operation != "remove":
+        # País obligatorio al dar de alta (misma regla que /receiving).
+        if not s("country_of_origin"):
+            raise HTTPException(400, "País de origen (country_of_origin) es obligatorio")
         await _assert_curated_identity(s("customer"), {
             "styles": style,
             "colors": color,
@@ -11235,6 +11244,11 @@ async def add_inventory_manual(request: Request):
         if clash:
             raise HTTPException(400, f"La caja {manual_box_id} ya existe; usa un número distinto")
         total_boxes = 1
+
+    # Prohibido crear saldo sin caja física (fuente del "SIN PAÍS"): en un alta,
+    # si no hay caja manual ni Total de cajas, no se cargan unidades sueltas.
+    if operation != "remove" and total_boxes <= 0:
+        raise HTTPException(400, "No se pueden cargar unidades sin cajas: indica un número de caja o Total de cajas ≥ 1")
 
     if existing:
         inventory_id = existing["inventory_id"]
@@ -11552,6 +11566,8 @@ async def bulk_adjust_inventory(request: Request):
                     "styles": style, "colors": color, "sizes": size,
                     "countries": coo, "fabrics": fab,
                 })
+                if not coo:
+                    _errs = (_errs or []) + ["País de origen (country_of_origin) es obligatorio"]
                 if _errs:
                     plan.append({"row": idx + 1, "label": label, "status": "error",
                                  "current": 0, "delta": delta,
@@ -11735,6 +11751,14 @@ async def import_inventory(request: Request, file: UploadFile = File(...), force
             "styles": style, "colors": color, "sizes": size,
             "descriptions": description, "countries": coo, "fabrics": fabric,
         })
+        # Endurecimiento (fuente del "SIN PAÍS"): país obligatorio, y prohibido
+        # cargar unidades sin cajas. Una fila con TotalUnits>0 y Total Boxes=0
+        # creaba saldo de inventario sin caja física, que el pick descontaba por
+        # la ruta no_box_units y terminaba sin país.
+        if not coo:
+            errs = (errs or []) + ["País de origen (CountryofOrigin) es obligatorio"]
+        if total_units > 0 and total_boxes <= 0:
+            errs = (errs or []) + ["Unidades sin cajas (Total Boxes = 0): cada unidad debe venir en una caja"]
         if errs:
             rejected.append({"row": row_no, "style": style, "color": color,
                              "size": size, "location": inv_loc,
