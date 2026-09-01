@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Loader2, X, Boxes, Package, Cog, Download } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { RefreshCw, Loader2, X, Boxes, Package, Cog, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -76,6 +76,8 @@ export function TrazabilidadModule() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
+  const scrollRef = useRef(null);
+  const scrollBy = (dx) => scrollRef.current?.scrollBy({ left: dx, behavior: "smooth" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,8 +148,17 @@ export function TrazabilidadModule() {
           No hay órdenes con blank status ni production status.
         </Card>
       ) : (
-        <div className="w-full overflow-x-auto pb-2">
-          <div className="flex gap-3 w-max">
+        <div className="relative">
+          <button onClick={() => scrollBy(-360)} aria-label="Desplazar a la izquierda"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-foreground hover:bg-secondary">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <button onClick={() => scrollBy(360)} aria-label="Desplazar a la derecha"
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-foreground hover:bg-secondary">
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          <div ref={scrollRef} className="w-full overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
+            <div className="flex gap-3 w-max px-11">
           {stages.map((st) => {
             const items = byStage(st);
             const ph = PHASE[phaseOf(st)];
@@ -178,6 +189,7 @@ export function TrazabilidadModule() {
               </div>
             );
           })}
+            </div>
           </div>
         </div>
       )}
