@@ -2898,7 +2898,7 @@ async def create_receiving(request: Request):
     box_docs = []
     if items:
         for item in items:
-            item_size = item.get("size", "").strip().upper()
+            item_size = (item.get("size") or "").strip().upper()
             boxes_count = int(item.get("boxes", 1))
             units_per_box = int(item.get("units_per_box", 1))
             for _ in range(boxes_count):
@@ -2971,7 +2971,7 @@ async def create_receiving(request: Request):
             urgent_order = await db.orders.find_one(demand_query)
             
             task_type = "cross_dock" if urgent_order else "putaway"
-            priority = "HOT" if urgent_order and urgent_order.get("priority", "").upper() == "HOT" else "NORMAL"
+            priority = "HOT" if urgent_order and (urgent_order.get("priority") or "").upper() == "HOT" else "NORMAL"
             suggested_zone = "ZONA PRODUCCION" if task_type == "cross_dock" else inv_location
             
             tasks_to_insert.append({
