@@ -3545,7 +3545,15 @@ async def adjust_box_count(box_id: str, request: Request):
     # corrige o elimina el renglón según lo que quede, y re-liga inventory_id
     # (antes: aritmética + recreación manual de la fila).
     if counted == 0:
-        await db.wms_boxes.delete_one({"box_id": real_box_id})
+        # La caja a 0 MUERE pero NO desaparece: se conserva como registro muerto
+        # (depleted), no se borra. Borrarla dejaba al pick histórico sin de dónde
+        # leer su país (box_id inexistente) -> "SIN PAÍS" en la tabla de surtido.
+        # El picker ya excluye las depleted, así que sale de las vistas activas.
+        await db.wms_boxes.update_one(
+            {"box_id": real_box_id},
+            {"$set": {"units": 0, "qty": 0, "status": "depleted",
+                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        )
     else:
         box_upd = {"units": counted, "qty": counted,
                    "updated_at": now_iso(), "updated_by": user.get("user_id")}
