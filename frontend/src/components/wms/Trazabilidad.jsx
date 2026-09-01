@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Loader2, X, Boxes, Package, Cog } from "lucide-react";
+import { RefreshCw, Loader2, X, Boxes, Package, Cog, Download } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { fetcher } from "./lib";
 import { Card } from "./ui";
 import { SurtidoTable } from "../dashboard/comments/SurtidoTable";
@@ -94,6 +96,25 @@ export function TrazabilidadModule() {
   const byStage = (st) => orders.filter((o) => o.stage === st);
   const phaseOf = (st) => (blankSet.has(st) ? "blank" : "produccion");
 
+  const exportXlsx = () => {
+    if (!orders.length) { toast.error("No hay nada que exportar"); return; }
+    const rows = orders.map((o) => ({
+      "Orden": o.order_number,
+      "Cliente": o.cliente || "",
+      "Descripción": o.descripcion || "",
+      "Etapa actual": o.stage || "",
+      "Fase": o.phase === "produccion" ? "Producción" : "Blanks",
+      "Blank Status": o.blank_status || "",
+      "Production Status": o.production_status || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Trazabilidad");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf], { type: "application/octet-stream" }), "trazabilidad_material.xlsx");
+    toast.success("Excel exportado");
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -106,9 +127,14 @@ export function TrazabilidadModule() {
             {" "}<span className="text-blue-400 font-semibold">production status</span> después.
           </p>
         </div>
-        <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-sm text-primary hover:underline disabled:opacity-50">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Refrescar
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          <button onClick={exportXlsx} disabled={!orders.length} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 disabled:opacity-40 font-semibold">
+            <Download className="w-4 h-4" /> Exportar Excel
+          </button>
+          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-sm text-primary hover:underline disabled:opacity-50">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Refrescar
+          </button>
+        </div>
       </div>
 
       {loading && !data ? (
@@ -120,7 +146,8 @@ export function TrazabilidadModule() {
           No hay órdenes con blank status ni production status.
         </Card>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2">
+        <div className="w-full overflow-x-auto pb-2">
+          <div className="flex gap-3 w-max">
           {stages.map((st) => {
             const items = byStage(st);
             const ph = PHASE[phaseOf(st)];
@@ -151,6 +178,7 @@ export function TrazabilidadModule() {
               </div>
             );
           })}
+          </div>
         </div>
       )}
 

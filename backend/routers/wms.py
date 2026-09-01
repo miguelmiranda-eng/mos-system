@@ -7249,6 +7249,8 @@ async def list_order_traces(request: Request, stage: str = ""):
             "descripcion": o.get("description", ""),
             "stage": current,
             "phase": "produccion" if prod else "blank",
+            "blank_status": blk,
+            "production_status": prod,
             "updated_at": o.get("updated_at") or "",
         })
 
