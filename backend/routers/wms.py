@@ -7080,6 +7080,111 @@ async def get_orders_with_tickets(request: Request):
         })
     return ticket_map
 
+@router.get("/pick-tickets/by-order/{order_number}/surtido")
+async def get_surtido_breakdown(order_number: str, request: Request):
+    """Desglose de surtido (talla x pais de origen) de una orden, para la tabla
+    del modal de comentarios del CRM. Reemplaza el comentario manual que los
+    pickers escribian con lo que surtieron.
+
+    Solo lectura, no toca ninguna ruta de escritura. Fuentes:
+      - Pedido por talla: wms_pick_tickets.sizes (un ticket = 1 estilo+color;
+        una orden puede tener varios tickets).
+      - Surtido por (talla, pais): la bitacora wms_movements (pick_deduction),
+        atribuyendo cada caja tocada a su pais de origen. El pais no se persiste
+        en el movimiento, asi que se resuelve por box_id -> wms_boxes (las cajas
+        se marcan 'depleted', no se borran, asi que el historico es confiable).
+        La porcion no_box_units (saldo sin caja) cae en 'SIN PAIS'.
+    """
+    await require_auth(request)
+    # order_number es la liga indexada orden->ticket (igual que los demas
+    # endpoints de pick-tickets); el CRM siempre manda el numero de orden.
+    tickets = await db.wms_pick_tickets.find(
+        {"order_number": order_number},
+        {"_id": 0},
+    ).to_list(50)
+    if not tickets:
+        return {"order_number": order_number, "tickets": []}
+
+    # Numeros a buscar en la bitacora: el order_number + cualquier order_id
+    # interno que traigan los tickets (algunos movimientos lo guardan asi).
+    onums = {order_number}
+    for t in tickets:
+        if t.get("order_id"):
+            onums.add(t["order_id"])
+
+    movements = await db.wms_movements.find(
+        {"type": "pick_deduction", "details.order_number": {"$in": list(onums)}},
+        {"_id": 0, "details": 1},
+    ).to_list(5000)
+
+    # Un solo lookup de paises para todas las cajas tocadas que no traigan coo
+    # persistido en el propio movimiento.
+    need_boxes = set()
+    for mv in movements:
+        for b in (mv.get("details", {}).get("boxes") or []):
+            if not b.get("coo") and b.get("box_id"):
+                need_boxes.add(b["box_id"])
+    box_coo, box_fabric = {}, {}
+    if need_boxes:
+        async for bx in db.wms_boxes.find(
+            {"box_id": {"$in": list(need_boxes)}},
+            {"_id": 0, "box_id": 1, "country_of_origin": 1, "coo": 1, "fabric_content": 1},
+        ):
+            box_coo[bx["box_id"]] = bx.get("country_of_origin") or bx.get("coo") or ""
+            box_fabric[bx["box_id"]] = bx.get("fabric_content") or ""
+
+    # Agrega surtido por (style, color, size, pais). style+color identifica el ticket.
+    picked = {}  # (style,color,size,country) -> qty
+    fabric_by_sc = {}  # (style,color) -> tela (primer no vacio visto)
+    for mv in movements:
+        d = mv.get("details", {})
+        style = d.get("style") or ""
+        color = d.get("color") or ""
+        size = d.get("size") or ""
+        for b in (d.get("boxes") or []):
+            taken = int(b.get("taken") or 0)
+            if taken <= 0:
+                continue
+            coo = b.get("coo") or box_coo.get(b.get("box_id"), "") or ""
+            country = ledger.canon_coo(coo) or "SIN PAIS"
+            key = (style, color, size, country)
+            picked[key] = picked.get(key, 0) + taken
+            fab = box_fabric.get(b.get("box_id"))
+            if fab and (style, color) not in fabric_by_sc:
+                fabric_by_sc[(style, color)] = fab
+        nb = int(d.get("no_box_units") or 0)
+        if nb > 0:
+            key = (style, color, size, "SIN PAIS")
+            picked[key] = picked.get(key, 0) + nb
+
+    # Un bloque por ticket (por style+color; la llave anti-duplicado del WMS es
+    # order+style+color, asi que hay 1 ticket por combo).
+    out = []
+    for t in tickets:
+        style = t.get("style") or ""
+        color = t.get("color") or ""
+        rows = [
+            {"size": size, "country": country, "qty": qty}
+            for (s, c, size, country), qty in picked.items()
+            if s == style and c == color
+        ]
+        out.append({
+            "ticket_id": t.get("ticket_id"),
+            "order_number": t.get("order_number"),
+            "customer": t.get("customer") or t.get("client") or "",
+            "style": style,
+            "color": color,
+            "fabric": fabric_by_sc.get((style, color), ""),
+            "picking_status": t.get("picking_status", "unassigned"),
+            "status": t.get("status", "pending"),
+            "assigned_to_name": t.get("assigned_to_name", ""),
+            "last_picked_at": t.get("last_picked_at"),
+            "total_pick_qty": t.get("total_pick_qty", 0),
+            "sizes_ordered": t.get("sizes", {}),
+            "picked": rows,
+        })
+    return {"order_number": order_number, "tickets": out}
+
 @router.get("/pick-tickets/stats")
 async def pick_ticket_stats(request: Request):
     """Dashboard stats for picker productivity."""
