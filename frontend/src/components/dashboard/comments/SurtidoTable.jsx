@@ -62,17 +62,22 @@ function buildPivot(ticket) {
     return (colTotal[b] || 0) - (colTotal[a] || 0);
   });
 
-  const rows = sizes.map((size) => {
-    const ord = Number(ordered[size] || 0);
-    const sur = countries.reduce((s, c) => s + (cell[`${size}|${c}`] || 0), 0);
-    return {
-      size,
-      ordered: ord,
-      picked: sur,
-      extra: Math.max(0, sur - ord),
-      byCountry: countries.map((c) => cell[`${size}|${c}`] || 0),
-    };
-  });
+  const rows = sizes
+    .map((size) => {
+      const ord = Number(ordered[size] || 0);
+      const sur = countries.reduce((s, c) => s + (cell[`${size}|${c}`] || 0), 0);
+      return {
+        size,
+        ordered: ord,
+        picked: sur,
+        extra: Math.max(0, sur - ord),
+        byCountry: countries.map((c) => cell[`${size}|${c}`] || 0),
+      };
+    })
+    // Solo tallas con algo (pedido o surtido). El ticket trae TODAS las tallas
+    // configuradas con 0, y renderizarlas hacia una tabla gigante que tapaba el
+    // modal y mataba el scroll.
+    .filter((r) => r.ordered > 0 || r.picked > 0);
 
   const totalOrdered = rows.reduce((s, r) => s + r.ordered, 0);
   const totalPicked = rows.reduce((s, r) => s + r.picked, 0);
@@ -109,30 +114,30 @@ function TicketBlock({ ticket }) {
 
       {/* Pivote */}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse">
+        <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              <th className="text-left font-bold px-3 py-1.5">Talla</th>
+              <th className="text-left font-bold px-3 py-1">Talla</th>
               {pivot.countries.map((c) => (
-                <th key={c} className="text-right font-bold px-2 py-1.5 whitespace-nowrap" title={c}>
+                <th key={c} className="text-right font-bold px-2 py-1 whitespace-nowrap" title={c}>
                   {countryFlag(c)} {countryLabel(c)}
                 </th>
               ))}
-              <th className="text-right font-bold px-2 py-1.5">Pedido</th>
-              <th className="text-right font-bold px-3 py-1.5">Surtido</th>
+              <th className="text-right font-bold px-2 py-1">Pedido</th>
+              <th className="text-right font-bold px-3 py-1">Surtido</th>
             </tr>
           </thead>
           <tbody>
             {pivot.rows.map((r) => (
               <tr key={r.size} className="border-t border-border/30">
-                <td className="px-3 py-1.5 font-bold text-foreground">{r.size}</td>
+                <td className="px-3 py-1 font-bold text-foreground">{r.size}</td>
                 {r.byCountry.map((q, i) => (
-                  <td key={i} className={`text-right px-2 py-1.5 font-mono ${q ? "text-foreground" : "text-muted-foreground/40"}`}>
+                  <td key={i} className={`text-right px-2 py-1 font-mono ${q ? "text-foreground" : "text-muted-foreground/40"}`}>
                     {q || "—"}
                   </td>
                 ))}
-                <td className="text-right px-2 py-1.5 font-mono text-muted-foreground">{r.ordered || "—"}</td>
-                <td className="text-right px-3 py-1.5 font-mono font-bold text-foreground">
+                <td className="text-right px-2 py-1 font-mono text-muted-foreground">{r.ordered || "—"}</td>
+                <td className="text-right px-3 py-1 font-mono font-bold text-foreground">
                   {r.picked || "—"}
                   {r.extra > 0 && (
                     <span className="ml-1 text-[10px] text-amber-500 font-bold" title="Sobrepick (surtido de más)">
@@ -145,21 +150,21 @@ function TicketBlock({ ticket }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border/60 bg-secondary/30 font-bold">
-              <td className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">Total</td>
+              <td className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">Total</td>
               {pivot.countries.map((c) => (
-                <td key={c} className="text-right px-2 py-1.5 font-mono text-foreground">
+                <td key={c} className="text-right px-2 py-1 font-mono text-foreground">
                   {pivot.colTotal[c] || "—"}
                 </td>
               ))}
-              <td className="text-right px-2 py-1.5 font-mono text-muted-foreground">{pivot.totalOrdered}</td>
-              <td className="text-right px-3 py-1.5 font-mono text-foreground">{pivot.totalPicked}</td>
+              <td className="text-right px-2 py-1 font-mono text-muted-foreground">{pivot.totalOrdered}</td>
+              <td className="text-right px-3 py-1 font-mono text-foreground">{pivot.totalPicked}</td>
             </tr>
           </tfoot>
         </table>
       </div>
 
       {hasExtras && (
-        <div className="px-3 py-1.5 text-[10px] text-amber-500/90 border-t border-border/30 flex items-center gap-1">
+        <div className="px-3 py-1 text-[10px] text-amber-500/90 border-t border-border/30 flex items-center gap-1">
           <span className="font-bold">+N</span> = piezas extras (se surtió más de lo pedido en esa talla)
         </div>
       )}
@@ -228,7 +233,7 @@ export function SurtidoTable({ order, isOpen }) {
           <Loader2 className="w-4 h-4 animate-spin" /> Cargando surtido…
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-[32vh] overflow-y-auto pr-1">
           {tickets.map((t) => (
             <TicketBlock key={t.ticket_id} ticket={t} />
           ))}
