@@ -7200,105 +7200,96 @@ async def get_surtido_breakdown(order_number: str, request: Request):
     return {"order_number": order_number, "tickets": out}
 
 # ── Trazabilidad de material por orden (SOLO LECTURA, 100% automática) ───────
-# Rastrea en qué ETAPA va el material ya surtido de cada orden, DERIVADO del
-# estado real del pick ticket y de la orden. NO hay avance manual ni etapas
-# inventadas: solo refleja lo que el WMS ya sabe (surtido -> corte -> producción
-# -> embarcado). Al embarcar, la orden sale del tablero (ya llegó a exportación).
-TRACE_STAGES = ["surtido", "corte", "produccion", "embarcado"]
-BOARD_STAGES = ["surtido", "corte", "produccion"]
-TRACE_STAGE_LABELS = {
-    "surtido": "Surtido",
-    "corte": "En corte",
-    "produccion": "En producción",
-    "embarcado": "Embarcado",
-}
+# La trazabilidad la llevan DOS campos reales de la orden, no el pick ticket:
+#   - blank_status:      estado de los blanks HASTA que se surten.
+#   - production_status: toma el relevo DESPUÉS del surtido, hasta el envío.
+# Etapa actual = production_status si existe; si no, blank_status. Se muestran
+# los estatus TAL CUAL (granular), en el orden del catálogo (config_options).
 
-def _trace_derive_from(statuses, wms_status):
-    """Etapa derivada SIN queries extra, a partir de los estados ya cargados."""
-    if wms_status == "shipped":
-        return "embarcado"
-    if "in_neck_cutting" in statuses:
-        return "corte"
-    if "confirmed" in statuses:
-        return "produccion"
-    return "surtido"
+async def _status_catalog():
+    """Orden real de los estatus (blank + production) desde la config, con
+    fallback a los defaults estáticos."""
+    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0}) or {}
+    blank = cfg.get("blank_statuses") or DEFAULT_OPTIONS["blank_statuses"]
+    prod = cfg.get("production_statuses") or DEFAULT_OPTIONS["production_statuses"]
+    return blank, prod
 
 @router.get("/trace")
 async def list_order_traces(request: Request, stage: str = ""):
-    """Tablero de trazabilidad: órdenes con material EN PROCESO (ya surtido, aún
-    no embarcado) y su etapa actual, DERIVADA del estado del ticket/orden. Las
-    embarcadas se ocultan (ya llegaron a exportación)."""
+    """Tablero de trazabilidad por el ESTADO REAL de la orden: blank_status antes
+    del surtido, production_status después (manda en cuanto existe). Columnas
+    granulares en el orden del catálogo. Excluye papelera y canceladas."""
     await require_auth(request)
-    tickets = await db.wms_pick_tickets.find(
-        {"$or": [{"status": {"$in": ["confirmed", "in_neck_cutting"]}}, {"picking_status": "completed"}]},
-        {"_id": 0, "order_number": 1, "style": 1, "color": 1, "status": 1,
-         "picking_status": 1, "last_picked_at": 1, "total_pick_qty": 1},
-    ).sort("last_picked_at", -1).to_list(1500)
+    blank_order, prod_order = await _status_catalog()
 
-    by_order = {}
-    for t in tickets:
-        on = t.get("order_number")
-        if not on:
-            continue
-        g = by_order.setdefault(on, {"order_number": on, "estilos": set(), "statuses": set(), "last": "", "piezas": 0})
-        if t.get("style"):
-            g["estilos"].add(f"{t['style']} {t.get('color', '')}".strip())
-        g["statuses"].add(t.get("status") or "")
-        g["piezas"] += int(t.get("total_pick_qty") or 0)
-        lp = t.get("last_picked_at") or ""
-        if lp > g["last"]:
-            g["last"] = lp
-
-    onums = list(by_order.keys())
-    orders = {}
-    if onums:
-        for o in await db.orders.find({"order_number": {"$in": onums}}, {"_id": 0, "order_number": 1, "wms_status": 1, "client": 1}).to_list(2000):
-            orders[o["order_number"]] = o
+    orders = await db.orders.find(
+        {"$and": [
+            {"$or": [{"production_status": {"$nin": [None, ""]}},
+                     {"blank_status": {"$nin": [None, ""]}}]},
+            {"board": {"$ne": "PAPELERA DE RECICLAJE"}},
+        ]},
+        {"_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
+         "blank_status": 1, "production_status": 1, "updated_at": 1},
+    ).to_list(6000)
 
     out = []
-    for on, g in by_order.items():
-        ordoc = orders.get(on) or {}
-        current = _trace_derive_from(g["statuses"], ordoc.get("wms_status"))
-        # Tablero de material EN PROCESO: al embarcar sale (ya llegó a exportación).
-        if current == "embarcado":
+    present = set()
+    for o in orders:
+        prod = (o.get("production_status") or "").strip()
+        blk = (o.get("blank_status") or "").strip()
+        current = prod or blk
+        if not current or current.upper() == "CANCELLED":
             continue
         if stage and current != stage:
             continue
+        present.add(current)
         out.append({
-            "order_number": on,
-            "cliente": ordoc.get("client", ""),
-            "estilos": sorted(g["estilos"])[:4],
-            "piezas": g["piezas"],
+            "order_number": o.get("order_number", ""),
+            "cliente": o.get("client") or o.get("customer") or "",
+            "descripcion": o.get("description", ""),
             "stage": current,
-            "stage_label": TRACE_STAGE_LABELS.get(current, current),
-            "updated_at": g["last"],
+            "phase": "produccion" if prod else "blank",
+            "updated_at": o.get("updated_at") or "",
         })
+
+    # Columnas: blank primero, luego production, cada uno en su orden de catálogo;
+    # solo las etapas con órdenes. Cualquier estatus fuera de catálogo va al final.
+    blank_stages = [s for s in blank_order if s in present]
+    prod_stages = [s for s in prod_order if s in present]
+    extras = sorted(present - set(blank_order) - set(prod_order))
     out.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-    return {"stages": BOARD_STAGES, "labels": TRACE_STAGE_LABELS, "orders": out}
+    return {
+        "stages": blank_stages + prod_stages + extras,
+        "blank_stages": blank_stages,
+        "prod_stages": prod_stages,
+        "orders": out,
+    }
 
 @router.get("/trace/{order_number}")
 async def get_order_trace(order_number: str, request: Request):
-    """Detalle de trazabilidad de UNA orden: etapa actual (manual o derivada),
-    ubicación, historial de avances y un resumen de sus tickets."""
+    """Detalle de UNA orden: su blank_status y production_status reales, más un
+    resumen de lo surtido (tickets)."""
     await require_auth(request)
+    order = await db.orders.find_one(
+        {"$or": [{"order_number": order_number}, {"order_id": order_number}]},
+        {"_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
+         "blank_status": 1, "production_status": 1},
+    ) or {}
     tickets = await db.wms_pick_tickets.find(
         {"order_number": order_number},
         {"_id": 0, "ticket_id": 1, "style": 1, "color": 1, "status": 1,
-         "picking_status": 1, "total_pick_qty": 1, "assigned_to_name": 1, "last_picked_at": 1},
+         "picking_status": 1, "total_pick_qty": 1, "assigned_to_name": 1},
     ).to_list(50)
-    order = await db.orders.find_one(
-        {"$or": [{"order_number": order_number}, {"order_id": order_number}]},
-        {"_id": 0, "wms_status": 1, "client": 1, "order_number": 1},
-    )
-    statuses = {(t.get("status") or "") for t in tickets}
-    current = _trace_derive_from(statuses, (order or {}).get("wms_status"))
+    prod = (order.get("production_status") or "").strip()
+    blk = (order.get("blank_status") or "").strip()
     return {
         "order_number": order_number,
-        "cliente": (order or {}).get("client", ""),
-        "stage": current,
-        "stage_label": TRACE_STAGE_LABELS.get(current, current),
-        "stages": TRACE_STAGES,
-        "labels": TRACE_STAGE_LABELS,
+        "cliente": order.get("client") or order.get("customer") or "",
+        "descripcion": order.get("description", ""),
+        "blank_status": blk,
+        "production_status": prod,
+        "stage": prod or blk,
+        "phase": "produccion" if prod else "blank",
         "tickets": tickets,
     }
 
