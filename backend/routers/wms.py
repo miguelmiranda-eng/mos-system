@@ -7199,18 +7199,17 @@ async def get_surtido_breakdown(order_number: str, request: Request):
         })
     return {"order_number": order_number, "tickets": out}
 
-# ── Trazabilidad de material por orden ──────────────────────────────────────
-# Capa ADITIVA: NO toca el picking. Rastrea en qué ETAPA va el material ya
-# surtido de cada orden (surtido -> producción -> corte -> terminado -> staging
-# -> embarcado). La etapa se DERIVA del estado del ticket/orden cuando nadie la
-# ha movido a mano; un avance manual (POST) la sobreescribe y queda en bitácora.
-TRACE_STAGES = ["surtido", "produccion", "corte", "terminado", "staging", "embarcado"]
+# ── Trazabilidad de material por orden (SOLO LECTURA, 100% automática) ───────
+# Rastrea en qué ETAPA va el material ya surtido de cada orden, DERIVADO del
+# estado real del pick ticket y de la orden. NO hay avance manual ni etapas
+# inventadas: solo refleja lo que el WMS ya sabe (surtido -> corte -> producción
+# -> embarcado). Al embarcar, la orden sale del tablero (ya llegó a exportación).
+TRACE_STAGES = ["surtido", "corte", "produccion", "embarcado"]
+BOARD_STAGES = ["surtido", "corte", "produccion"]
 TRACE_STAGE_LABELS = {
     "surtido": "Surtido",
-    "produccion": "En producción",
     "corte": "En corte",
-    "terminado": "Terminado",
-    "staging": "En staging",
+    "produccion": "En producción",
     "embarcado": "Embarcado",
 }
 
@@ -7227,8 +7226,8 @@ def _trace_derive_from(statuses, wms_status):
 @router.get("/trace")
 async def list_order_traces(request: Request, stage: str = ""):
     """Tablero de trazabilidad: órdenes con material EN PROCESO (ya surtido, aún
-    no embarcado) y su etapa actual. La etapa manual (wms_order_trace) gana sobre
-    la derivada. Las embarcadas se ocultan salvo que tengan traza manual viva."""
+    no embarcado) y su etapa actual, DERIVADA del estado del ticket/orden. Las
+    embarcadas se ocultan (ya llegaron a exportación)."""
     await require_auth(request)
     tickets = await db.wms_pick_tickets.find(
         {"$or": [{"status": {"$in": ["confirmed", "in_neck_cutting"]}}, {"picking_status": "completed"}]},
@@ -7252,21 +7251,16 @@ async def list_order_traces(request: Request, stage: str = ""):
 
     onums = list(by_order.keys())
     orders = {}
-    traces = {}
     if onums:
         for o in await db.orders.find({"order_number": {"$in": onums}}, {"_id": 0, "order_number": 1, "wms_status": 1, "client": 1}).to_list(2000):
             orders[o["order_number"]] = o
-        for tr in await db.wms_order_trace.find({"order_number": {"$in": onums}}, {"_id": 0}).to_list(2000):
-            traces[tr["order_number"]] = tr
 
     out = []
     for on, g in by_order.items():
         ordoc = orders.get(on) or {}
-        man = traces.get(on)
-        derived = _trace_derive_from(g["statuses"], ordoc.get("wms_status"))
-        current = (man or {}).get("stage") or derived
-        # El tablero es de material EN PROCESO: ocultar embarcadas sin traza manual.
-        if current == "embarcado" and not man:
+        current = _trace_derive_from(g["statuses"], ordoc.get("wms_status"))
+        # Tablero de material EN PROCESO: al embarcar sale (ya llegó a exportación).
+        if current == "embarcado":
             continue
         if stage and current != stage:
             continue
@@ -7277,13 +7271,10 @@ async def list_order_traces(request: Request, stage: str = ""):
             "piezas": g["piezas"],
             "stage": current,
             "stage_label": TRACE_STAGE_LABELS.get(current, current),
-            "derived_stage": derived,
-            "manual": bool(man),
-            "location": (man or {}).get("location", ""),
-            "updated_at": (man or {}).get("updated_at") or g["last"],
+            "updated_at": g["last"],
         })
     out.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-    return {"stages": TRACE_STAGES, "labels": TRACE_STAGE_LABELS, "orders": out}
+    return {"stages": BOARD_STAGES, "labels": TRACE_STAGE_LABELS, "orders": out}
 
 @router.get("/trace/{order_number}")
 async def get_order_trace(order_number: str, request: Request):
@@ -7300,50 +7291,16 @@ async def get_order_trace(order_number: str, request: Request):
         {"_id": 0, "wms_status": 1, "client": 1, "order_number": 1},
     )
     statuses = {(t.get("status") or "") for t in tickets}
-    derived = _trace_derive_from(statuses, (order or {}).get("wms_status"))
-    man = await db.wms_order_trace.find_one({"order_number": order_number}, {"_id": 0})
-    current = (man or {}).get("stage") or derived
+    current = _trace_derive_from(statuses, (order or {}).get("wms_status"))
     return {
         "order_number": order_number,
         "cliente": (order or {}).get("client", ""),
         "stage": current,
         "stage_label": TRACE_STAGE_LABELS.get(current, current),
-        "derived_stage": derived,
-        "manual": bool(man),
-        "location": (man or {}).get("location", ""),
-        "history": (man or {}).get("history", []),
         "stages": TRACE_STAGES,
         "labels": TRACE_STAGE_LABELS,
         "tickets": tickets,
     }
-
-@router.post("/trace/{order_number}")
-async def advance_order_trace(order_number: str, request: Request):
-    """Avanza (o corrige) la etapa del material de una orden. Body:
-    { stage, location?, note? }. Queda en historial con quién y cuándo."""
-    user = await require_auth(request)
-    body = await request.json()
-    stage = str(body.get("stage") or "").strip().lower()
-    if stage not in TRACE_STAGES:
-        raise HTTPException(400, f"Etapa inválida. Debe ser una de: {', '.join(TRACE_STAGES)}")
-    location = str(body.get("location") or "").strip()
-    note = str(body.get("note") or "").strip()
-    now = now_iso()
-    entry = {"stage": stage, "location": location, "note": note,
-             "at": now, "by": user.get("name") or user.get("email", "")}
-    await db.wms_order_trace.update_one(
-        {"order_number": order_number},
-        {"$set": {"stage": stage, "location": location, "updated_at": now,
-                  "updated_by": user.get("name") or user.get("email", "")},
-         "$push": {"history": entry},
-         "$setOnInsert": {"order_number": order_number}},
-        upsert=True,
-    )
-    await log_movement(user, "order_trace_advance",
-                       {"order_number": order_number, "stage": stage, "location": location})
-    await ws_manager.broadcast("order_change", {"action": "trace_advance", "order_number": order_number})
-    return {"ok": True, "order_number": order_number, "stage": stage,
-            "stage_label": TRACE_STAGE_LABELS.get(stage, stage), "location": location}
 
 @router.get("/pick-tickets/stats")
 async def pick_ticket_stats(request: Request):
