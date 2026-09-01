@@ -9885,6 +9885,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
                 "total_boxes": 0, "units_on_hand": 0,
                 "country_of_origin": "", "fabric_content": "",
                 "is_bpo": False,
+                "ordenes": set(),
             }
         g["total_boxes"] += 1
         g["units_on_hand"] += int(b.get("units") or b.get("qty") or 0)
@@ -9895,6 +9896,11 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
             g["country_of_origin"] = b.get("country_of_origin", b.get("coo", "")) or ""
         if b.get("is_bpo"):
             g["is_bpo"] = True
+        # Orden ligada al material: el order_number que el surtido estampó en la
+        # caja (o production_order). Una celda puede juntar varias órdenes.
+        _on = str(b.get("order_number") or b.get("production_order") or "").strip()
+        if _on:
+            g["ordenes"].add(_on)
     inventory = sorted(grupos.values(),
                        key=lambda g: (str(g["sku"] or g["style"]), str(g["location"])))
     # Last transfer INTO each location (date + user) from the movement log. The
@@ -9942,7 +9948,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     headers = ["Customer", "Style", "SKU", "UPC", "Color", "Size", "Description", "Category",
                "Manufacturer", "Location", "Total Boxes", "On Hand", "Allocated", "Available",
                "Country of Origin", "Fabric Content", "Is BPO",
-               "Última transferencia", "Transferido por"]
+               "Última transferencia", "Transferido por", "Órdenes"]
     bold = wb.add_format({"bold": True})
     for i, h in enumerate(headers):
         ws.write(0, i, h, bold)
@@ -9972,6 +9978,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
             "YES" if inv.get("is_bpo") else "NO",
             _tr_at,
             _tr_by,
+            ", ".join(sorted(inv.get("ordenes") or [])),
         ]
         for col, v in enumerate(values):
             ws.write(row, col, v)
@@ -9985,7 +9992,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     # la lista del cliente.
     box_headers = ["Box / LPN", "Customer", "Style", "SKU", "UPC", "Color", "Size", "Location",
                    "Units", "Status", "Country of Origin", "Fabric Content", "Description",
-                   "Última transferencia", "Transferido por"]
+                   "Última transferencia", "Transferido por", "Orden"]
     for i, h in enumerate(box_headers):
         ws2.write(0, i, h, bold)
     for row, b in enumerate(boxes, 1):
@@ -10005,6 +10012,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
             b.get("description", ""),
             (b.get("last_transferred_at") or "")[:19].replace("T", " "),
             b.get("last_transferred_by", ""),
+            b.get("order_number") or b.get("production_order") or "",
         ]
         for col, v in enumerate(values):
             ws2.write(row, col, v)
