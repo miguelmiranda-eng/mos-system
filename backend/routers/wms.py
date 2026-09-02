@@ -7206,6 +7206,11 @@ async def get_surtido_breakdown(order_number: str, request: Request):
 # Etapa actual = production_status si existe; si no, blank_status. Se muestran
 # los estatus TAL CUAL (granular), en el orden del catálogo (config_options).
 
+# Etapas que NO se muestran en el tablero de trazabilidad: terminales o
+# administrativas (el material ya salió del flujo activo). Comparación en
+# MAYÚSCULAS. Se suma a CANCELLED.
+_TRACE_EXCLUDE = {"CANCELLED", "LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "EDI"}
+
 async def _status_catalog():
     """Orden real de los estatus (blank + production) desde la config, con
     fallback a los defaults estáticos."""
@@ -7238,7 +7243,7 @@ async def list_order_traces(request: Request, stage: str = ""):
         prod = (o.get("production_status") or "").strip()
         blk = (o.get("blank_status") or "").strip()
         current = prod or blk
-        if not current or current.upper() == "CANCELLED":
+        if not current or current.upper() in _TRACE_EXCLUDE:
             continue
         if stage and current != stage:
             continue
