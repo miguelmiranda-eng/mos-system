@@ -10016,6 +10016,39 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
         for col, v in enumerate(values):
             ws2.write(row, col, v)
 
+    # ── Sheet 3: Trazabilidad — estado real de cada orden ────────────────────
+    # Mismo criterio que el tablero de Trazabilidad: etapa actual = production_
+    # status (si existe) o blank_status, excluyendo papelera, canceladas y las
+    # etapas terminales (_TRACE_EXCLUDE).
+    ws3 = wb.add_worksheet("Trazabilidad")
+    trace_headers = ["Orden", "Cliente", "Descripción", "Etapa actual", "Fase",
+                     "Blank Status", "Production Status"]
+    for i, h in enumerate(trace_headers):
+        ws3.write(0, i, h, bold)
+    trace_q = {"$and": [
+        {"$or": [{"production_status": {"$nin": [None, ""]}}, {"blank_status": {"$nin": [None, ""]}}]},
+        {"board": {"$ne": "PAPELERA DE RECICLAJE"}},
+    ]}
+    if cust:
+        trace_q["$and"].append({"$or": [{"client": cust_rx}, {"customer": cust_rx}]})
+    trow = 1
+    async for o in db.orders.find(trace_q, {
+            "_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
+            "blank_status": 1, "production_status": 1}):
+        prod = (o.get("production_status") or "").strip()
+        blk = (o.get("blank_status") or "").strip()
+        current = prod or blk
+        if not current or current.upper() in _TRACE_EXCLUDE:
+            continue
+        ws3.write(trow, 0, o.get("order_number", ""))
+        ws3.write(trow, 1, o.get("client") or o.get("customer") or "")
+        ws3.write(trow, 2, o.get("description", ""))
+        ws3.write(trow, 3, current)
+        ws3.write(trow, 4, "Producción" if prod else "Blanks")
+        ws3.write(trow, 5, blk)
+        ws3.write(trow, 6, prod)
+        trow += 1
+
     wb.close()
     buf.seek(0)
     # El nombre del archivo lleva el cliente para no encimar descargas.
