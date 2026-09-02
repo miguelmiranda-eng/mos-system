@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Loader2, X, Boxes, Package, Cog, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { RefreshCw, Loader2, X, Boxes, Cog, ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -7,14 +7,14 @@ import { fetcher } from "./lib";
 import { Card } from "./ui";
 import { SurtidoTable } from "../dashboard/comments/SurtidoTable";
 
-// Tono por FASE: blank (antes de surtir) vs producción (después). Los estatus
-// concretos vienen del catálogo real de la orden, no de una lista fija.
-const PHASE = {
-  blank:      { icon: Package, head: "text-amber-400 bg-amber-500/10 border-amber-500/40", dot: "bg-amber-400" },
-  produccion: { icon: Cog,     head: "text-blue-400 bg-blue-500/10 border-blue-500/40",   dot: "bg-blue-400" },
-};
+// SURTIDO (recién en piso, sin production_status) en índigo; el resto son
+// production_status reales, en azul.
+const stageMeta = (st) =>
+  st === "SURTIDO"
+    ? { icon: Boxes, cls: "text-indigo-400 bg-indigo-500/10 border-indigo-500/40" }
+    : { icon: Cog, cls: "text-blue-400 bg-blue-500/10 border-blue-500/40" };
 
-// Detalle SOLO LECTURA: los dos estatus reales de la orden + qué se surtió.
+// Detalle: etapa + piezas en piso + desglose de surtido (talla × país).
 function DetailModal({ orderNumber, onClose }) {
   const [detail, setDetail] = useState(null);
 
@@ -32,39 +32,25 @@ function DetailModal({ orderNumber, onClose }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card z-10">
           <div>
             <h3 className="font-bold text-lg text-foreground">Orden {orderNumber}</h3>
-            {detail?.cliente && <p className="text-xs text-muted-foreground">{detail.cliente}{detail.descripcion ? ` · ${detail.descripcion}` : ""}</p>}
+            {detail?.cliente && (
+              <p className="text-xs text-muted-foreground">{detail.cliente}{detail.descripcion ? ` · ${detail.descripcion}` : ""}</p>
+            )}
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
-
-        <div className="p-5 space-y-5">
-          {/* Los dos estatus reales, con el relevo (blank -> producción) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className={`rounded-lg border p-3 ${PHASE.blank.head} ${detail?.phase === "blank" ? "ring-2 ring-amber-400/40" : "opacity-70"}`}>
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold">
-                <Package className="w-3.5 h-3.5" /> Blank status
-              </div>
-              <p className="text-sm font-bold mt-1">{detail?.blank_status || "—"}</p>
-              <p className="text-[10px] opacity-70">antes del surtido</p>
+        <div className="p-5 space-y-4">
+          <div className="flex flex-wrap gap-3">
+            <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-blue-400">Etapa</p>
+              <p className="text-sm font-bold text-foreground">{detail?.stage || "—"}</p>
             </div>
-            <div className={`rounded-lg border p-3 ${PHASE.produccion.head} ${detail?.phase === "produccion" ? "ring-2 ring-blue-400/40" : "opacity-70"}`}>
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold">
-                <Cog className="w-3.5 h-3.5" /> Production status
-              </div>
-              <p className="text-sm font-bold mt-1">{detail?.production_status || "—"}</p>
-              <p className="text-[10px] opacity-70">después del surtido</p>
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-emerald-400">Piezas en piso</p>
+              <p className="text-sm font-bold text-foreground">{(detail?.piezas ?? 0).toLocaleString()}</p>
             </div>
           </div>
-          {detail && (
-            <p className="text-[11px] text-muted-foreground -mt-2">
-              Etapa actual: <span className="font-bold text-foreground">{detail.stage}</span>
-              {detail.phase === "produccion" ? " (producción)" : " (blanks)"}
-            </p>
-          )}
-
-          {/* Qué se surtió */}
           <SurtidoTable order={{ order_number: orderNumber }} isOpen={true} />
         </div>
       </div>
@@ -93,10 +79,9 @@ export function TrazabilidadModule() {
   useEffect(() => { load(); }, [load]);
 
   const stages = data?.stages || [];
-  const blankSet = new Set(data?.blank_stages || []);
   const orders = data?.orders || [];
   const byStage = (st) => orders.filter((o) => o.stage === st);
-  const phaseOf = (st) => (blankSet.has(st) ? "blank" : "produccion");
+  const totalPiezas = orders.reduce((s, o) => s + (o.piezas || 0), 0);
 
   const exportXlsx = () => {
     if (!orders.length) { toast.error("No hay nada que exportar"); return; }
@@ -104,36 +89,36 @@ export function TrazabilidadModule() {
       "Orden": o.order_number,
       "Cliente": o.cliente || "",
       "Descripción": o.descripcion || "",
-      "Etapa actual": o.stage || "",
-      "Fase": o.phase === "produccion" ? "Producción" : "Blanks",
-      "Blank Status": o.blank_status || "",
-      "Production Status": o.production_status || "",
+      "Etapa": o.stage || "",
+      "Piezas en piso": o.piezas || 0,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Trazabilidad");
+    XLSX.utils.book_append_sheet(wb, ws, "Material en piso");
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    saveAs(new Blob([buf], { type: "application/octet-stream" }), "trazabilidad_material.xlsx");
+    saveAs(new Blob([buf], { type: "application/octet-stream" }), "material_en_piso.xlsx");
     toast.success("Excel exportado");
   };
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
             <Boxes className="w-5 h-5" /> Trazabilidad de material
           </h2>
           <p className="text-sm text-muted-foreground">
-            Estado real de cada orden: <span className="text-amber-400 font-semibold">blank status</span> antes de surtir,
-            {" "}<span className="text-blue-400 font-semibold">production status</span> después.
+            Material ya surtido (salió del almacén) y aún en planta —{" "}
+            <span className="font-bold text-foreground">{totalPiezas.toLocaleString()} piezas</span> en {orders.length} órdenes.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <button onClick={exportXlsx} disabled={!orders.length} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 disabled:opacity-40 font-semibold">
+          <button onClick={exportXlsx} disabled={!orders.length}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 disabled:opacity-40 font-semibold">
             <Download className="w-4 h-4" /> Exportar Excel
           </button>
-          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-sm text-primary hover:underline disabled:opacity-50">
+          <button onClick={load} disabled={loading}
+            className="flex items-center gap-1.5 text-sm text-primary hover:underline disabled:opacity-50">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Refrescar
           </button>
         </div>
@@ -145,7 +130,7 @@ export function TrazabilidadModule() {
         </div>
       ) : orders.length === 0 ? (
         <Card className="p-8 text-center text-muted-foreground">
-          No hay órdenes con blank status ni production status.
+          No hay material en piso. Aquí aparece lo ya surtido que sigue en planta (aún sin enviar).
         </Card>
       ) : (
         <div className="relative">
@@ -159,36 +144,34 @@ export function TrazabilidadModule() {
           </button>
           <div ref={scrollRef} className="w-full overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
             <div className="flex gap-3 w-max px-11">
-          {stages.map((st) => {
-            const items = byStage(st);
-            const ph = PHASE[phaseOf(st)];
-            const Icon = ph.icon;
-            return (
-              <div key={st} className="shrink-0 w-60 flex flex-col">
-                <div className={`flex items-center gap-2 px-3 py-2 rounded-t-lg border-b-2 shrink-0 ${ph.head}`}>
-                  <Icon className="w-4 h-4" />
-                  <span className="text-[11px] font-black uppercase tracking-wide truncate" title={st}>{st}</span>
-                  <span className="ml-auto text-xs font-mono font-bold">{items.length}</span>
-                </div>
-                <div className="space-y-2 p-2 bg-secondary/10 rounded-b-lg min-h-[60px] overflow-y-auto max-h-[calc(100vh-19rem)]">
-                  {items.map((o) => (
-                    <button
-                      key={o.order_number}
-                      onClick={() => setSelected(o.order_number)}
-                      className="w-full text-left rounded-lg border border-border bg-card hover:border-primary/50 transition-colors p-2.5"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`w-1.5 h-1.5 rounded-full ${ph.dot}`} />
-                        <span className="font-bold text-sm text-foreground">{o.order_number}</span>
-                      </div>
-                      {o.cliente && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{o.cliente}</p>}
-                      {o.descripcion && <p className="text-[10px] text-muted-foreground truncate">{o.descripcion}</p>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+              {stages.map((st) => {
+                const items = byStage(st);
+                const m = stageMeta(st);
+                const Icon = m.icon;
+                const piezas = items.reduce((s, o) => s + (o.piezas || 0), 0);
+                return (
+                  <div key={st} className="shrink-0 w-60 flex flex-col">
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-t-lg border-b-2 shrink-0 ${m.cls}`}>
+                      <Icon className="w-4 h-4" />
+                      <span className="text-[11px] font-black uppercase tracking-wide truncate" title={st}>{st}</span>
+                      <span className="ml-auto text-[10px] font-mono font-bold whitespace-nowrap">{piezas.toLocaleString()} pz</span>
+                    </div>
+                    <div className="space-y-2 p-2 bg-secondary/10 rounded-b-lg min-h-[60px] overflow-y-auto max-h-[calc(100vh-19rem)]">
+                      {items.map((o) => (
+                        <button key={o.order_number} onClick={() => setSelected(o.order_number)}
+                          className="w-full text-left rounded-lg border border-border bg-card hover:border-primary/50 transition-colors p-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-foreground">{o.order_number}</span>
+                            <span className="text-[11px] font-mono font-bold text-emerald-500">{(o.piezas || 0).toLocaleString()} pz</span>
+                          </div>
+                          {o.cliente && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{o.cliente}</p>}
+                          {o.descripcion && <p className="text-[10px] text-muted-foreground truncate">{o.descripcion}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

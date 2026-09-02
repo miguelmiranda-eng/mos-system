@@ -7344,84 +7344,97 @@ async def _status_catalog():
     prod = cfg.get("production_statuses") or DEFAULT_OPTIONS["production_statuses"]
     return blank, prod
 
-@router.get("/trace")
-async def list_order_traces(request: Request, stage: str = ""):
-    """Tablero de trazabilidad por el ESTADO REAL de la orden: blank_status antes
-    del surtido, production_status después (manda en cuanto existe). Columnas
-    granulares en el orden del catálogo. Excluye papelera y canceladas."""
-    await require_auth(request)
-    blank_order, prod_order = await _status_catalog()
+async def _material_en_piso(customer=""):
+    """Material EN PISO: órdenes ya surtidas (salieron del almacén) y aún en
+    planta (no enviadas), con sus PIEZAS surtidas (de la bitácora real) y su
+    etapa (production_status, o 'SURTIDO' si no tiene). Excluye lo ya salido de
+    planta (_TRACE_EXCLUDE), canceladas, papelera y shipped. Devuelve (stages, out).
+    `customer` opcional filtra por client/customer (para el export)."""
+    _, prod_order = await _status_catalog()
+    surtido = {}
+    async for r in db.wms_movements.aggregate([
+        {"$match": {"type": "pick_deduction", "details.order_number": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$details.order_number", "piezas": {"$sum": "$details.qty"}}},
+    ]):
+        surtido[str(r["_id"])] = int(r.get("piezas") or 0)
+    if not surtido:
+        return [], []
 
-    orders = await db.orders.find(
-        {"$and": [
-            {"$or": [{"production_status": {"$nin": [None, ""]}},
-                     {"blank_status": {"$nin": [None, ""]}}]},
-            {"board": {"$ne": "PAPELERA DE RECICLAJE"}},
-        ]},
+    onums = list(surtido.keys())
+    orders = {}
+    for o in await db.orders.find(
+        {"order_number": {"$in": onums}},
         {"_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
-         "blank_status": 1, "production_status": 1, "updated_at": 1},
-    ).to_list(6000)
+         "production_status": 1, "wms_status": 1, "board": 1},
+    ).to_list(len(onums) + 100):
+        orders[str(o.get("order_number"))] = o
 
-    out = []
-    present = set()
-    for o in orders:
-        prod = (o.get("production_status") or "").strip()
-        blk = (o.get("blank_status") or "").strip()
-        current = prod or blk
-        if not current or current.upper() in _TRACE_EXCLUDE:
+    cust = (customer or "").strip().upper()
+    out, present = [], set()
+    for on, piezas in surtido.items():
+        o = orders.get(on)
+        if not o or (o.get("board") or "").strip().upper() == "PAPELERA DE RECICLAJE":
             continue
-        if stage and current != stage:
+        if cust and (o.get("client") or o.get("customer") or "").strip().upper() != cust:
+            continue
+        prod = (o.get("production_status") or "").strip()
+        current = prod or "SURTIDO"  # surtido sin production_status = recién en piso
+        if o.get("wms_status") == "shipped" or current.upper() in _TRACE_EXCLUDE:
             continue
         present.add(current)
         out.append({
-            "order_number": o.get("order_number", ""),
+            "order_number": on,
             "cliente": o.get("client") or o.get("customer") or "",
             "descripcion": o.get("description", ""),
             "stage": current,
-            "phase": "produccion" if prod else "blank",
-            "blank_status": blk,
-            "production_status": prod,
-            "updated_at": o.get("updated_at") or "",
+            "piezas": piezas,
         })
 
-    # Columnas: blank primero, luego production, cada uno en su orden de catálogo;
-    # solo las etapas con órdenes. Cualquier estatus fuera de catálogo va al final.
-    blank_stages = [s for s in blank_order if s in present]
-    prod_stages = [s for s in prod_order if s in present]
-    extras = sorted(present - set(blank_order) - set(prod_order))
-    out.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-    return {
-        "stages": blank_stages + prod_stages + extras,
-        "blank_stages": blank_stages,
-        "prod_stages": prod_stages,
-        "orders": out,
-    }
+    stages = (["SURTIDO"] if "SURTIDO" in present else [])
+    stages += [s for s in prod_order if s in present and s.upper() not in _TRACE_EXCLUDE]
+    stages += sorted(present - set(stages))
+    out.sort(key=lambda r: r.get("piezas") or 0, reverse=True)
+    return stages, out
+
+@router.get("/trace")
+async def list_order_traces(request: Request, stage: str = ""):
+    """Tablero de MATERIAL EN PISO (surtido, no enviado) con piezas. Ver
+    _material_en_piso. `stage` opcional filtra a una etapa."""
+    await require_auth(request)
+    stages, out = await _material_en_piso()
+    if stage:
+        out = [r for r in out if r["stage"] == stage]
+    return {"stages": stages, "orders": out}
 
 @router.get("/trace/{order_number}")
 async def get_order_trace(order_number: str, request: Request):
-    """Detalle de UNA orden: su blank_status y production_status reales, más un
-    resumen de lo surtido (tickets)."""
+    """Detalle de UNA orden en piso: production_status, piezas surtidas y un
+    resumen de sus tickets."""
     await require_auth(request)
     order = await db.orders.find_one(
         {"$or": [{"order_number": order_number}, {"order_id": order_number}]},
         {"_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
-         "blank_status": 1, "production_status": 1},
+         "production_status": 1},
     ) or {}
     tickets = await db.wms_pick_tickets.find(
         {"order_number": order_number},
         {"_id": 0, "ticket_id": 1, "style": 1, "color": 1, "status": 1,
          "picking_status": 1, "total_pick_qty": 1, "assigned_to_name": 1},
     ).to_list(50)
+    piezas = 0
+    async for r in db.wms_movements.aggregate([
+        {"$match": {"type": "pick_deduction", "details.order_number": order_number}},
+        {"$group": {"_id": None, "n": {"$sum": "$details.qty"}}},
+    ]):
+        piezas = int(r.get("n") or 0)
     prod = (order.get("production_status") or "").strip()
-    blk = (order.get("blank_status") or "").strip()
     return {
         "order_number": order_number,
         "cliente": order.get("client") or order.get("customer") or "",
         "descripcion": order.get("description", ""),
-        "blank_status": blk,
         "production_status": prod,
-        "stage": prod or blk,
-        "phase": "produccion" if prod else "blank",
+        "stage": prod or "SURTIDO",
+        "piezas": piezas,
         "tickets": tickets,
     }
 
@@ -10140,38 +10153,19 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
         for col, v in enumerate(values):
             ws2.write(row, col, v)
 
-    # ── Sheet 3: Trazabilidad — estado real de cada orden ────────────────────
-    # Mismo criterio que el tablero de Trazabilidad: etapa actual = production_
-    # status (si existe) o blank_status, excluyendo papelera, canceladas y las
-    # etapas terminales (_TRACE_EXCLUDE).
+    # ── Sheet 3: Trazabilidad — material EN PISO ─────────────────────────────
+    # Mismo criterio que el tablero de Trazabilidad: órdenes ya surtidas (salieron
+    # del almacén) y aún en planta (no enviadas), con sus piezas y su etapa.
     ws3 = wb.add_worksheet("Trazabilidad")
-    trace_headers = ["Orden", "Cliente", "Descripción", "Etapa actual", "Fase",
-                     "Blank Status", "Production Status"]
-    for i, h in enumerate(trace_headers):
+    for i, h in enumerate(["Orden", "Cliente", "Descripción", "Etapa", "Piezas en piso"]):
         ws3.write(0, i, h, bold)
-    trace_q = {"$and": [
-        {"$or": [{"production_status": {"$nin": [None, ""]}}, {"blank_status": {"$nin": [None, ""]}}]},
-        {"board": {"$ne": "PAPELERA DE RECICLAJE"}},
-    ]}
-    if cust:
-        trace_q["$and"].append({"$or": [{"client": cust_rx}, {"customer": cust_rx}]})
-    trow = 1
-    async for o in db.orders.find(trace_q, {
-            "_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
-            "blank_status": 1, "production_status": 1}):
-        prod = (o.get("production_status") or "").strip()
-        blk = (o.get("blank_status") or "").strip()
-        current = prod or blk
-        if not current or current.upper() in _TRACE_EXCLUDE:
-            continue
-        ws3.write(trow, 0, o.get("order_number", ""))
-        ws3.write(trow, 1, o.get("client") or o.get("customer") or "")
-        ws3.write(trow, 2, o.get("description", ""))
-        ws3.write(trow, 3, current)
-        ws3.write(trow, 4, "Producción" if prod else "Blanks")
-        ws3.write(trow, 5, blk)
-        ws3.write(trow, 6, prod)
-        trow += 1
+    _, piso = await _material_en_piso(cust)
+    for trow, o in enumerate(piso, 1):
+        ws3.write(trow, 0, o["order_number"])
+        ws3.write(trow, 1, o["cliente"])
+        ws3.write(trow, 2, o["descripcion"])
+        ws3.write(trow, 3, o["stage"])
+        ws3.write(trow, 4, o["piezas"])
 
     wb.close()
     buf.seek(0)
