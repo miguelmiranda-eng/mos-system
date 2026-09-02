@@ -164,13 +164,13 @@ export function TrazabilidadModule() {
             const ph = PHASE[phaseOf(st)];
             const Icon = ph.icon;
             return (
-              <div key={st} className="shrink-0 w-60">
-                <div className={`flex items-center gap-2 px-3 py-2 rounded-t-lg border-b-2 ${ph.head}`}>
+              <div key={st} className="shrink-0 w-60 flex flex-col">
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-t-lg border-b-2 shrink-0 ${ph.head}`}>
                   <Icon className="w-4 h-4" />
                   <span className="text-[11px] font-black uppercase tracking-wide truncate" title={st}>{st}</span>
                   <span className="ml-auto text-xs font-mono font-bold">{items.length}</span>
                 </div>
-                <div className="space-y-2 p-2 bg-secondary/10 rounded-b-lg min-h-[60px]">
+                <div className="space-y-2 p-2 bg-secondary/10 rounded-b-lg min-h-[60px] overflow-y-auto max-h-[calc(100vh-19rem)]">
                   {items.map((o) => (
                     <button
                       key={o.order_number}
