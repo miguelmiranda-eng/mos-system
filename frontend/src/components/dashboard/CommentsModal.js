@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useLang } from "../../contexts/LanguageContext";
-import { X, MessageSquare, Pin } from "lucide-react";
+import { X, MessageSquare, Pin, Boxes } from "lucide-react";
 import { Dialog, DialogPortal, DialogOverlay } from "../ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useComments } from "./comments/useComments";
@@ -35,6 +35,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const [newComment, setNewComment] = useState("");
   const [imagePreviews, setImagePreviews] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [showSurtido, setShowSurtido] = useState(false);
 
   const handleClose = () => {
     if (newComment.trim() || imagePreviews.length > 0) {
@@ -127,18 +128,25 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <div className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3 font-bold">
               <MessageSquare className="w-5 h-5" /> {t("comments")} - {order.order_number}
             </div>
-            <button
-              onClick={handleClose}
-              className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-              aria-label="Cerrar"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSurtido(true)}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"
+                data-testid="open-surtido"
+              >
+                <Boxes className="w-4 h-4" /> Surtido WMS
+              </button>
+              <button
+                onClick={handleClose}
+                className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                aria-label="Cerrar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           <PackingBanner packing={packing} />
-
-          <SurtidoTable order={order} isOpen={isOpen} />
 
           <LinksSection links={links} onAddLink={addLink} onDeleteLink={deleteLink} />
 
@@ -185,6 +193,37 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             onSend={handleSend}
           />
         </DialogPrimitive.Content>
+
+        {/* Surtido (WMS) — modal flotante, se abre con el botón para no invadir
+            el hilo de comentarios. */}
+        {showSurtido && (
+          <div
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setShowSurtido(false)}
+            data-testid="surtido-modal"
+          >
+            <div
+              className="w-full max-w-3xl max-h-[85vh] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
+                <div className="font-bold text-base flex items-center gap-2">
+                  <Boxes className="w-5 h-5 text-indigo-400" /> Surtido (WMS) — {order.order_number}
+                </div>
+                <button
+                  onClick={() => setShowSurtido(false)}
+                  className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
+                  aria-label="Cerrar"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="pb-4">
+                <SurtidoTable order={order} isOpen={showSurtido} />
+              </div>
+            </div>
+          </div>
+        )}
       </DialogPortal>
     </Dialog>
   );
