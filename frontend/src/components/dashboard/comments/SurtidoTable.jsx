@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Boxes, RefreshCw, Loader2, User } from "lucide-react";
+import { Boxes, RefreshCw, Loader2, User, AlertTriangle } from "lucide-react";
 import { API } from "../../../lib/constants";
 
 // Orden canónico de tallas (mismo que el WMS: components/wms/lib.js). Se inlinea
@@ -89,11 +89,12 @@ function TicketBlock({ ticket }) {
   const status = STATUS_META[ticket.picking_status] || STATUS_META.unassigned;
   const pct = pivot.totalOrdered ? Math.round((pivot.totalPicked / pivot.totalOrdered) * 100) : 0;
   const hasExtras = pivot.rows.some((r) => r.extra > 0);
+  const noSurtido = pivot.totalPicked === 0; // 0 surtido en el WMS = nunca se pickeó aquí
 
   if (pivot.rows.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-border/60 bg-secondary/20 overflow-hidden">
+    <div className={`rounded-lg border overflow-hidden ${noSurtido ? "border-amber-500/40 bg-amber-500/5" : "border-border/60 bg-secondary/20"}`}>
       {/* Encabezado del ticket */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-border/50 bg-secondary/30">
         <span className="font-bold text-sm text-foreground">
@@ -101,6 +102,11 @@ function TicketBlock({ ticket }) {
         </span>
         {ticket.fabric && <span className="text-[11px] text-muted-foreground uppercase">{ticket.fabric}</span>}
         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${status.cls}`}>{status.label}</span>
+        {noSurtido && (
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/25 text-amber-500 flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" /> SIN SURTIR EN WMS
+          </span>
+        )}
         {ticket.assigned_to_name && (
           <span className="text-[10px] text-muted-foreground flex items-center gap-1">
             <User className="w-3 h-3" /> {ticket.assigned_to_name}
@@ -112,6 +118,17 @@ function TicketBlock({ ticket }) {
         </span>
       </div>
 
+      {noSurtido ? (
+        <div className="px-3 py-3 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            Este material <b>no se ha surtido en el WMS</b> (0 de {pivot.totalOrdered} pz pedidas). Por eso
+            no aparece país ni contenido: el sistema no tiene registro de surtido. Si ya se surtió
+            físicamente en el piso, falta capturarlo en el WMS.
+          </span>
+        </div>
+      ) : (
+      <>
       {/* Pivote */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
@@ -167,6 +184,8 @@ function TicketBlock({ ticket }) {
         <div className="px-3 py-1 text-[10px] text-amber-500/90 border-t border-border/30 flex items-center gap-1">
           <span className="font-bold">+N</span> = piezas extras (se surtió más de lo pedido en esa talla)
         </div>
+      )}
+      </>
       )}
     </div>
   );
