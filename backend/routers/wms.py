@@ -1420,6 +1420,105 @@ async def catalog_similar_pairs(ctype: str, request: Request, max_dist: int = 2,
     return {"type": ctype, "max_dist": max_dist, "pairs": pairs}
 
 
+# Campos de la llave del indice unico uniq_inventory_material_lote. Renombrar
+# CUALQUIERA de estos puede volver dos filas de inventario identicas y disparar
+# E11000 (el 500 "Plan executor error" que registro monitoreo el 2026-09-01).
+# customer/description/manufacturer NO estan en la llave: sus renames no chocan.
+_INV_UNIQUE_KEY = ("style", "color", "size", "location",
+                   "country_of_origin", "fabric_content")
+
+
+def _inv_row_empty(r) -> bool:
+    """Fila fantasma: sin existencias ni apartados. Borrarla conserva el inventario."""
+    return int(r.get("units_on_hand") or 0) == 0 and int(r.get("units_allocated") or 0) == 0
+
+
+async def _resolve_inventory_rename_collisions(user, field, old, new_upper):
+    """Resuelve, ANTES de escribir, los choques de un rename contra el indice
+    unico de wms_inventory. Sin esto el `update_many` a ciegas del rename revienta
+    con E11000 y ademas puede dejar inventario a medio renombrar (wms_inventory va
+    primero en el barrido, y update_many no es transaccional).
+
+    Dos casos:
+      - Filas sobrantes VACIAS (0 on-hand y 0 apartadas) → fantasma: se respaldan
+        y se borran, dejando una sobreviviente. Es el caso del incidente y se
+        resuelve solo (borrar cero unidades no altera existencias).
+      - Dos o mas filas del choque CON existencias → fusionarlas es decidir una
+        cantidad fisica; un rename no puede hacerlo. Se aborta con 409 accionable
+        (no un 500 opaco) para consolidar/contar esos lotes primero.
+
+    Devuelve (filas_borradas, backup_coll). No hace nada si `field` no esta en la
+    llave del indice."""
+    if field not in _INV_UNIQUE_KEY:
+        return 0, None
+
+    old_ci = {"$regex": f"^{re.escape(old)}$", "$options": "i"}
+    new_ci = {"$regex": f"^{re.escape(new_upper)}$", "$options": "i"}
+    # Toda fila que terminaria con field==new_upper: las que hacen match con `old`
+    # (se van a renombrar) y las que YA valen `new` (quedan igual). Si dos de
+    # ellas comparten los otros 5 campos de la llave, colisionan.
+    candidatos = await db.wms_inventory.find(
+        {"$or": [{field: old_ci}, {field: new_ci}]}
+    ).to_list(None)
+
+    otros = [f for f in _INV_UNIQUE_KEY if f != field]
+    grupos: dict[tuple, list] = {}
+    for r in candidatos:
+        grupos.setdefault(tuple((r.get(f) or "") for f in otros), []).append(r)
+
+    conflictos_reales = []
+    a_borrar = []
+    relink = []  # (inventory_id_perdedor, inventory_id_sobreviviente)
+    for _k, filas in grupos.items():
+        if len(filas) < 2:
+            continue  # una sola fila aterriza en esta llave: sin choque
+        con_stock = [r for r in filas if not _inv_row_empty(r)]
+        if len(con_stock) > 1:
+            conflictos_reales.append((_k, filas))
+            continue
+        # <=1 con existencias: la sobreviviente es la que las tiene; si ninguna,
+        # se prefiere la que YA vale `new`, y entre iguales la mas reciente.
+        if con_stock:
+            survivor = con_stock[0]
+        else:
+            exactas = [r for r in filas if (r.get(field) or "").strip().upper() == new_upper]
+            survivor = max(exactas or filas, key=lambda r: r.get("updated_at") or "")
+        for r in filas:
+            if r["_id"] != survivor["_id"]:
+                a_borrar.append(r)
+                if r.get("inventory_id") and survivor.get("inventory_id"):
+                    relink.append((r["inventory_id"], survivor["inventory_id"]))
+
+    if conflictos_reales:
+        detalle = []
+        for _k, filas in conflictos_reales:
+            campos = dict(zip(otros, _k))
+            detalle.append(
+                f"{campos.get('style')}/{campos.get('size')} @ {campos.get('location')} "
+                f"[{campos.get('country_of_origin')} · {campos.get('fabric_content')}]: "
+                + ", ".join(f"'{r.get(field)}'={r.get('units_on_hand')}u" for r in filas)
+            )
+        raise HTTPException(409, {
+            "error": "rename_merge_conflict",
+            "message": (f"El rename '{old}'→'{new_upper}' fusionaria filas de inventario "
+                        f"CON existencias en el mismo lote. Consolida o cuenta primero esos "
+                        f"lotes: un rename no puede decidir la cantidad fisica."),
+            "lotes": detalle,
+        })
+
+    if not a_borrar:
+        return 0, None
+
+    batch = gen_id("rndup")
+    backup_coll = f"wms_inventory_bak_rename_{batch}"
+    await db[backup_coll].insert_many([dict(r) for r in a_borrar])
+    await db.wms_inventory.delete_many({"_id": {"$in": [r["_id"] for r in a_borrar]}})
+    for loser_inv, surv_inv in relink:
+        await db.wms_boxes.update_many(
+            {"inventory_id": loser_inv}, {"$set": {"inventory_id": surv_inv}})
+    return len(a_borrar), backup_coll
+
+
 @router.post("/catalogs/{ctype}/rename")
 async def rename_catalog_value(ctype: str, request: Request):
     """Bulk-rename a value across all source collections AND sync the curated
@@ -1428,6 +1527,10 @@ async def rename_catalog_value(ctype: str, request: Request):
     catalogo curado (si estaba) y agrega 'BLACK' (si no estaba). Sin el sync
     del catalogo el rechazo duro de Receiving (create_receiving/create_upc)
     rebota el nuevo valor porque no esta curado.
+
+    Antes del barrido resuelve los choques contra el indice unico de inventario
+    (ver _resolve_inventory_rename_collisions): borra filas fantasma que volverian
+    duplicado el lote, o aborta con 409 si el choque es entre filas con existencias.
     Restricted to lead/supervisor (catalog manager)."""
     user = await require_auth(request)
     _assert_catalog_manager(user)
@@ -1443,18 +1546,35 @@ async def rename_catalog_value(ctype: str, request: Request):
     field, collections = _CATALOG_FIELD_MAP[ctype]
     new_upper = new.upper()
 
+    # --- 0) Resolver choques contra el indice unico de inventario ANTES de tocar
+    # nada. Sin esto el update_many de abajo revienta con E11000 (500 opaco) y
+    # puede dejar inventario a medio renombrar. ---
+    inv_phantoms_removed, inv_backup_coll = await _resolve_inventory_rename_collisions(
+        user, field, old, new_upper)
+
     # --- 1) Sweep en las colecciones fuente ---
     total_matched = 0
     total_modified = 0
     old_ci = {"$regex": f"^{re.escape(old)}$", "$options": "i"}
-    for coll_name in collections:
-        coll = getattr(db, coll_name)
-        res = await coll.update_many(
-            {field: old_ci},
-            {"$set": {field: new_upper}},
-        )
-        total_matched += res.matched_count
-        total_modified += res.modified_count
+    try:
+        for coll_name in collections:
+            coll = getattr(db, coll_name)
+            res = await coll.update_many(
+                {field: old_ci},
+                {"$set": {field: new_upper}},
+            )
+            total_matched += res.matched_count
+            total_modified += res.modified_count
+    except DuplicateKeyError as e:
+        # Defensa: el paso 0 deberia haber limpiado todo choque. Si aun asi salta,
+        # devolvemos 409 accionable en vez del 500 crudo. El dato queda intacto.
+        raise HTTPException(409, {
+            "error": "rename_unique_conflict",
+            "message": (f"El rename '{old}'→'{new_upper}' choco con el indice unico de "
+                        f"inventario y se detuvo. El inventario quedo intacto; reporta "
+                        f"este lote a soporte para reconciliarlo."),
+            "detail": str(e),
+        }) from e
 
     # --- 2) Sync del catalogo curado ---
     # Styles se scopea por customer (cada cliente tiene su lista curada); el
@@ -1517,12 +1637,16 @@ async def rename_catalog_value(ctype: str, request: Request):
     await log_movement(user, "catalog_rename", {
         "type": ctype, "field": field, "old": old, "new": new_upper,
         "modified": total_modified,
+        "inventory_phantoms_removed": inv_phantoms_removed,
+        "inventory_backup_coll": inv_backup_coll,
         "catalog_removed": [c.get("catalog_id") for c in removed_catalog],
         "catalog_added": [c.get("catalog_id") for c in added_catalog],
     })
     return {
         "type": ctype, "old": old, "new": new_upper,
         "matched": total_matched, "modified": total_modified,
+        "inventory_phantoms_removed": inv_phantoms_removed,
+        "inventory_backup_coll": inv_backup_coll,
         "catalog_removed": len(removed_catalog),
         "catalog_added": len(added_catalog),
     }
