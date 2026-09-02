@@ -7209,7 +7209,8 @@ async def get_surtido_breakdown(order_number: str, request: Request):
 # Etapas que NO se muestran en el tablero de trazabilidad: terminales o
 # administrativas (el material ya salió del flujo activo). Comparación en
 # MAYÚSCULAS. Se suma a CANCELLED.
-_TRACE_EXCLUDE = {"CANCELLED", "LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "EDI"}
+_TRACE_EXCLUDE = {"CANCELLED", "LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "EDI",
+                  "LISTO PARA FULFILLMENT", "LISTO PARA FULLFILMENT"}
 
 async def _status_catalog():
     """Orden real de los estatus (blank + production) desde la config, con
