@@ -5082,16 +5082,31 @@ async def inventory_summary(request: Request, customer: str = ""):
     )
     agg = result[0] if result else {}
     total_locations = len(locations_raw) if customer else locations_raw
-    
+
+    # En tránsito: material esperado que aún NO se recibe, de las entradas
+    # (wms_asn: ASN o BPO). = suma de (qty_expected - qty_received) de las líneas
+    # de entradas no completadas.
+    asn_match = {"status": {"$ne": AsnStatus.RECEIVED}}
+    if customer:
+        asn_match["customer"] = {"$regex": customer, "$options": "i"}
+    in_transit = 0
+    async for a in db.wms_asn.find(asn_match, {"_id": 0, "items": 1}):
+        for it in a.get("items", []):
+            in_transit += max(0, int(it.get("qty_expected", 0) or 0) - int(it.get("qty_received", 0) or 0))
+
+    total_available = agg.get("total_available", 0)
     summary = {
         "total_on_hand": agg.get("total_on_hand", 0),
         "total_allocated": agg.get("total_allocated", 0),
-        "total_available": agg.get("total_available", 0),
+        "total_available": total_available,
         "total_skus": agg.get("total_skus", 0),
         "total_boxes": agg.get("total_boxes_sum", 0),
         "total_locations": total_locations,
         "low_stock_items": len(low_stock),
-        "low_stock": low_stock
+        "low_stock": low_stock,
+        # In-Transit y On Demand (disponibilidad proyectada = disponible + en tránsito).
+        "total_in_transit": in_transit,
+        "total_on_demand": total_available + in_transit,
     }
     return summary
 
@@ -10790,10 +10805,18 @@ async def create_asn(request: Request):
             "qty_received": 0,
             "country": str(it.get("country", "")).strip().upper(),
             "brand": str(it.get("brand", "")).strip().upper(),
+            # Alineado al formato de receiving: color/talla/fabric por línea para
+            # que receiving reciba/pre-llene directo desde la entrada.
+            "color": str(it.get("color", "")).strip().upper(),
+            "size": str(it.get("size", "")).strip().upper(),
+            "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
         })
 
     doc = {
         "asn_id": asn_id,
+        # Tipo de entrada: 'ASN' (aviso de llegada) o 'BPO' (blanket purchase
+        # order). Ambos entran por el mismo numero; receiving recibe igual.
+        "tipo": (str(body.get("tipo", "ASN")).strip().upper() or "ASN"),
         "po_number": str(body.get("po_number", "")).strip(),
         "vendor": str(body.get("vendor", "")).strip().upper(),
         "expected_date": body.get("expected_date", ""),
@@ -10990,10 +11013,10 @@ async def update_asn(asn_id: str, request: Request):
     body = await request.json()
 
     update = {}
-    for k in ("po_number", "vendor", "expected_date"):
+    for k in ("po_number", "vendor", "expected_date", "tipo"):
         if k in body:
             v = str(body.get(k) or "").strip()
-            update[k] = v.upper() if k == "vendor" else v
+            update[k] = v.upper() if k in ("vendor", "tipo") else v
 
     if "items" in body:
         incoming = body.get("items") or []
@@ -11025,6 +11048,9 @@ async def update_asn(asn_id: str, request: Request):
                 "qty_received": int(src.get("qty_received", 0) or 0),
                 "country": str(it.get("country", "")).strip().upper(),
                 "brand": str(it.get("brand", "")).strip().upper(),
+                "color": str(it.get("color", "")).strip().upper(),
+                "size": str(it.get("size", "")).strip().upper(),
+                "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
             })
         update["items"] = normalized
 

@@ -45,6 +45,36 @@ export const AsnModule = ({ currentUser }) => {
   const [traceQuery, setTraceQuery] = useState("");
   const [traceResults, setTraceResults] = useState(null);
   const [traceLoading, setTraceLoading] = useState(false);
+
+  // Captura MANUAL de una entrada (ASN o BPO) — tabla tipo Excel. Las columnas
+  // están alineadas al formato de receiving (style/color/talla/país/fabric/cant.)
+  // para que receiving reciba directo contra el número de entrada.
+  const NEW_LINE = () => ({ part_number: '', color: '', size: '', country: '', fabric: '', qty_expected: '' });
+  const [showCreate, setShowCreate] = useState(false);
+  const [savingCreate, setSavingCreate] = useState(false);
+  const [createDraft, setCreateDraft] = useState(null);
+  const openCreate = () => { setCreateDraft({ asn_id: '', tipo: 'ASN', vendor: '', po_number: '', expected_date: '', items: [NEW_LINE()] }); setShowCreate(true); };
+  const setCLine = (i, f, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [f]: v } : it) }));
+  const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
+  const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
+  const submitCreate = async () => {
+    const d = createDraft;
+    if (!d.asn_id.trim()) { toast.error("Número de entrada requerido"); return; }
+    const items = d.items.filter(it => (it.part_number || '').trim()).map(it => ({
+      part_number: it.part_number, color: it.color, size: it.size,
+      country: it.country, fabric: it.fabric, qty_expected: parseInt(it.qty_expected, 10) || 0,
+    }));
+    if (!items.length) { toast.error("Agrega al menos una línea con Style / Part Number"); return; }
+    setSavingCreate(true);
+    try {
+      const res = await poster('/asn', { asn_id: d.asn_id.trim(), tipo: d.tipo, vendor: d.vendor, po_number: d.po_number, expected_date: d.expected_date, items });
+      const r = await res.json().catch(() => ({}));
+      if (res.ok) { toast.success(`Entrada ${d.asn_id} creada`); setShowCreate(false); setCreateDraft(null); loadAsns(); }
+      else toast.error(r.detail || "No se pudo crear la entrada");
+    } catch (err) { logLoadError('create entry')(err); toast.error("Error de conexión"); }
+    finally { setSavingCreate(false); }
+  };
+
   const runTrace = async () => {
     const q = traceQuery.trim();
     if (!q) return;
@@ -117,7 +147,7 @@ export const AsnModule = ({ currentUser }) => {
   const setItem = (i, field, value) =>
     setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [field]: value } : it) }));
   const addItem = () =>
-    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', qty_expected: 0, qty_received: 0 }] }));
+    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0 }] }));
   const removeItem = (i) =>
     setEditDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
 
@@ -131,13 +161,17 @@ export const AsnModule = ({ currentUser }) => {
         description: it.description,
         country: it.country,
         brand: it.brand,
+        color: it.color || '',
+        size: it.size || '',
+        fabric: it.fabric || '',
         qty_expected: parseInt(it.qty_expected, 10) || 0,
       }));
     if (items.length === 0) { toast.error("El ASN debe tener al menos una línea con Part Number"); return; }
     setSavingEdit(true);
     try {
       const res = await putter(`/asn/${encodeURIComponent(detailFor)}`, {
-        vendor: editDraft.vendor, po_number: editDraft.po_number, expected_date: editDraft.expected_date, items,
+        vendor: editDraft.vendor, po_number: editDraft.po_number, expected_date: editDraft.expected_date,
+        tipo: editDraft.tipo, items,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -388,6 +422,11 @@ export const AsnModule = ({ currentUser }) => {
               <Search className="w-4 h-4" />
               Rastrear SKU
             </Btn>
+            {isSupersu && (
+              <Btn onClick={openCreate} title="Capturar una entrada nueva (ASN o BPO)" data-testid="asn-new">
+                <Plus className="w-4 h-4" /> Nueva entrada
+              </Btn>
+            )}
             <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls,.pdf" className="hidden" onChange={handleFilePick} />
             <label htmlFor="asn-import" className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground border border-transparent rounded-md cursor-pointer text-sm font-medium hover:opacity-90 transition-colors ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
@@ -396,6 +435,83 @@ export const AsnModule = ({ currentUser }) => {
           </>
         }
       />
+
+      {/* Nueva entrada — captura tipo Excel (ASN o BPO). El módulo NO es un
+          Radix Dialog, así que un overlay simple funciona sin bloquear clics. */}
+      {showCreate && createDraft && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !savingCreate && setShowCreate(false)}>
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-card border border-border rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
+              <h3 className="font-bold text-base flex items-center gap-2"><Plus className="w-5 h-5" /> Nueva entrada (ASN / BPO)</h3>
+              <button onClick={() => setShowCreate(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">Número de entrada *
+                  <input value={createDraft.asn_id} onChange={e => setCreateDraft(d => ({ ...d, asn_id: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" placeholder="p.ej. 155471" />
+                </label>
+                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">Tipo
+                  <select value={createDraft.tipo} onChange={e => setCreateDraft(d => ({ ...d, tipo: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm">
+                    <option value="ASN">ASN</option>
+                    <option value="BPO">BPO</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">Proveedor
+                  <input value={createDraft.vendor} onChange={e => setCreateDraft(d => ({ ...d, vendor: e.target.value.toUpperCase() }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
+                </label>
+                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">PO #
+                  <input value={createDraft.po_number} onChange={e => setCreateDraft(d => ({ ...d, po_number: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
+                </label>
+                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">ETA (llegada)
+                  <input type="date" value={createDraft.expected_date} onChange={e => setCreateDraft(d => ({ ...d, expected_date: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
+                </label>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground">Líneas (formato alineado a receiving)</h4>
+                  <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> Agregar línea</Btn>
+                </div>
+                <div className="border border-border rounded-lg overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 border-b border-border">
+                      <tr>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Style / Part #</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Color</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Talla</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">País</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Fabric</th>
+                        <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">Cantidad</th>
+                        <th className="px-2 py-2" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {createDraft.items.map((it, i) => (
+                        <tr key={i}>
+                          <td className="p-1.5"><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs font-mono" /></td>
+                          <td className="p-1.5"><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
+                          <td className="p-1.5"><input value={it.size} onChange={e => setCLine(i, 'size', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
+                          <td className="p-1.5"><input value={it.country} onChange={e => setCLine(i, 'country', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
+                          <td className="p-1.5"><input value={it.fabric} onChange={e => setCLine(i, 'fabric', e.target.value.toUpperCase())} className="w-28 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
+                          <td className="p-1.5"><input type="number" min="0" value={it.qty_expected} onChange={e => setCLine(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums" /></td>
+                          <td className="p-1.5 text-center"><button onClick={() => rmCLine(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">Cancelar</button>
+                <button onClick={submitCreate} disabled={savingCreate} className="px-4 py-1.5 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5">
+                  {savingCreate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Guardar entrada
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Status tabs */}
       <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg w-fit border border-border">

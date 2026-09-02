@@ -56,8 +56,8 @@ export const adminLevelOf = (u) => {
 
 export const buildModules = (t) => [
   // ── Entradas ────────────────────────────────────────────────────────────
-  { id: 'asn', group: 'in', label: 'ASN', icon: FileDown, color: 'text-orange-400',
-    desc: 'Avisos de llegada' },
+  { id: 'asn', group: 'in', label: 'Entradas', icon: FileDown, color: 'text-orange-400',
+    desc: 'Material por entrar: ASN o BPO. Receiving recibe contra este número.' },
   { id: 'receiving', group: 'in', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400',
     desc: t('wms_mod_receiving_desc') },
   { id: 'transit', group: 'in', label: 'Putaway 2.0', icon: Truck, color: 'text-amber-400',

@@ -770,15 +770,19 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         </SoftAlert>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
           { key: 'wms_total_skus', value: summary.total_skus || 0 },
           { key: 'wms_on_hand', value: summary.total_on_hand || 0 },
           { key: 'wms_allocated', value: summary.total_allocated || 0 },
           { key: 'wms_available', value: summary.total_available || 0 },
+          // Material que viene en camino (ASN/BPO no recibido) y disponibilidad
+          // proyectada (disponible + en tránsito).
+          { label: 'En Tránsito', value: summary.total_in_transit || 0 },
+          { label: 'On Demand', value: summary.total_on_demand || 0 },
           { key: 'wms_locations', value: summary.total_locations || 0 },
-        ].map(s => (
-          <StatCard key={s.key} label={t(s.key)} value={(s.value || 0).toLocaleString()} />
+        ].map((s, i) => (
+          <StatCard key={s.key || `x${i}`} label={s.label || t(s.key)} value={(s.value || 0).toLocaleString()} />
         ))}
       </div>
 
