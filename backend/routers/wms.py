@@ -7218,33 +7218,18 @@ async def get_orders_with_tickets(request: Request):
         })
     return ticket_map
 
-@router.get("/pick-tickets/by-order/{order_number}/surtido")
-async def get_surtido_breakdown(order_number: str, request: Request):
-    """Desglose de surtido (talla x pais de origen) de una orden, para la tabla
-    del modal de comentarios del CRM. Reemplaza el comentario manual que los
-    pickers escribian con lo que surtieron.
-
-    Solo lectura, no toca ninguna ruta de escritura. Fuentes:
-      - Pedido por talla: wms_pick_tickets.sizes (un ticket = 1 estilo+color;
-        una orden puede tener varios tickets).
-      - Surtido por (talla, pais): la bitacora wms_movements (pick_deduction),
-        atribuyendo cada caja tocada a su pais de origen. El pais no se persiste
-        en el movimiento, asi que se resuelve por box_id -> wms_boxes (las cajas
-        se marcan 'depleted', no se borran, asi que el historico es confiable).
-        La porcion no_box_units (saldo sin caja) cae en 'SIN PAIS'.
-    """
-    await require_auth(request)
-    # order_number es la liga indexada orden->ticket (igual que los demas
-    # endpoints de pick-tickets); el CRM siempre manda el numero de orden.
+async def _surtido_breakdown(order_number: str):
+    """Desglose de surtido (talla x pais) por ticket de una orden. Devuelve la
+    lista de tickets con sus renglones surtidos. Reutilizado por /surtido y /neck.
+    Solo lectura: pedido de wms_pick_tickets.sizes; surtido de la bitacora
+    pick_deduction, con pais por box_id -> wms_boxes (no_box_units -> 'SIN PAIS')."""
     tickets = await db.wms_pick_tickets.find(
         {"order_number": order_number},
         {"_id": 0},
     ).to_list(50)
     if not tickets:
-        return {"order_number": order_number, "tickets": []}
+        return []
 
-    # Numeros a buscar en la bitacora: el order_number + cualquier order_id
-    # interno que traigan los tickets (algunos movimientos lo guardan asi).
     onums = {order_number}
     for t in tickets:
         if t.get("order_id"):
@@ -7255,8 +7240,6 @@ async def get_surtido_breakdown(order_number: str, request: Request):
         {"_id": 0, "details": 1},
     ).to_list(5000)
 
-    # Un solo lookup de paises para todas las cajas tocadas que no traigan coo
-    # persistido en el propio movimiento.
     need_boxes = set()
     for mv in movements:
         for b in (mv.get("details", {}).get("boxes") or []):
@@ -7271,7 +7254,6 @@ async def get_surtido_breakdown(order_number: str, request: Request):
             box_coo[bx["box_id"]] = bx.get("country_of_origin") or bx.get("coo") or ""
             box_fabric[bx["box_id"]] = bx.get("fabric_content") or ""
 
-    # Agrega surtido por (style, color, size, pais). style+color identifica el ticket.
     picked = {}  # (style,color,size,country) -> qty
     fabric_by_sc = {}  # (style,color) -> tela (primer no vacio visto)
     for mv in movements:
@@ -7295,8 +7277,6 @@ async def get_surtido_breakdown(order_number: str, request: Request):
             key = (style, color, size, "SIN PAIS")
             picked[key] = picked.get(key, 0) + nb
 
-    # Un bloque por ticket (por style+color; la llave anti-duplicado del WMS es
-    # order+style+color, asi que hay 1 ticket por combo).
     out = []
     for t in tickets:
         style = t.get("style") or ""
@@ -7321,7 +7301,71 @@ async def get_surtido_breakdown(order_number: str, request: Request):
             "sizes_ordered": t.get("sizes", {}),
             "picked": rows,
         })
+    return out
+
+@router.get("/pick-tickets/by-order/{order_number}/surtido")
+async def get_surtido_breakdown(order_number: str, request: Request):
+    """Desglose de surtido (talla x pais) de una orden para la tabla del modal
+    de comentarios. Solo lectura."""
+    await require_auth(request)
+    return {"order_number": order_number, "tickets": await _surtido_breakdown(order_number)}
+
+@router.get("/pick-tickets/by-order/{order_number}/neck")
+async def get_neck_count(order_number: str, request: Request):
+    """Captura MANUAL de neck: misma estructura (tickets/tallas/paises) que el
+    surtido, pero para que el operador CUENTE. El sistema no mide neck. Devuelve
+    lo surtido (referencia para la discrepancia) + lo ya capturado en neck."""
+    await require_auth(request)
+    tickets = await _surtido_breakdown(order_number)
+    saved = {}
+    async for r in db.wms_neck_counts.find({"order_number": order_number}, {"_id": 0}):
+        saved[r.get("ticket_id")] = r
+    out = []
+    for t in tickets:
+        s = saved.get(t["ticket_id"]) or {}
+        counts = s.get("counts") or {}  # {"size|country": qty}
+        rows = [
+            {"size": r["size"], "country": r["country"], "surtido": r["qty"],
+             "neck": counts.get(f"{r['size']}|{r['country']}")}
+            for r in t["picked"]
+        ]
+        out.append({
+            "ticket_id": t["ticket_id"], "style": t["style"], "color": t["color"],
+            "fabric": t["fabric"], "picking_status": t["picking_status"],
+            "sizes_ordered": t["sizes_ordered"], "rows": rows,
+            "note": s.get("note", ""),
+            "counted_by": s.get("counted_by", ""), "counted_at": s.get("counted_at", ""),
+        })
     return {"order_number": order_number, "tickets": out}
+
+@router.post("/pick-tickets/by-order/{order_number}/neck")
+async def save_neck_count(order_number: str, request: Request):
+    """Guarda la captura de neck de un ticket. Body:
+    { ticket_id, counts: {"size|country": qty}, note? }."""
+    user = await require_auth(request)
+    body = await request.json()
+    ticket_id = str(body.get("ticket_id") or "").strip()
+    if not ticket_id:
+        raise HTTPException(400, "ticket_id requerido")
+    clean = {}
+    for k, v in (body.get("counts") or {}).items():
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n >= 0:
+            clean[str(k)] = n
+    now = now_iso()
+    await db.wms_neck_counts.update_one(
+        {"order_number": order_number, "ticket_id": ticket_id},
+        {"$set": {"counts": clean, "note": str(body.get("note") or "").strip(),
+                  "counted_by": user.get("name") or user.get("email", ""), "counted_at": now},
+         "$setOnInsert": {"order_number": order_number, "ticket_id": ticket_id}},
+        upsert=True,
+    )
+    await log_activity(user, "neck_count", {"order_number": order_number, "ticket_id": ticket_id})
+    await ws_manager.broadcast("order_change", {"action": "neck_count", "order_number": order_number})
+    return {"ok": True}
 
 # ── Trazabilidad de material por orden (SOLO LECTURA, 100% automática) ───────
 # La trazabilidad la llevan DOS campos reales de la orden, no el pick ticket:

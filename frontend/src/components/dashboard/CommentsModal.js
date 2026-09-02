@@ -1,12 +1,13 @@
 import { useState, useMemo } from "react";
 import { useLang } from "../../contexts/LanguageContext";
-import { X, MessageSquare, Pin, Boxes } from "lucide-react";
+import { X, MessageSquare, Pin, Boxes, Scissors } from "lucide-react";
 import { Dialog, DialogPortal, DialogOverlay } from "../ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useComments } from "./comments/useComments";
 import { canModerate } from "./comments/roles";
 import { PackingBanner } from "./comments/PackingBanner";
 import { SurtidoTable } from "./comments/SurtidoTable";
+import { NeckTable } from "./comments/NeckTable";
 import { LinksSection } from "./comments/LinksSection";
 import { CommentItem } from "./comments/CommentItem";
 import { CommentComposer } from "./comments/CommentComposer";
@@ -36,6 +37,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const [imagePreviews, setImagePreviews] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null);
   const [showSurtido, setShowSurtido] = useState(false);
+  const [showNeck, setShowNeck] = useState(false);
 
   const handleClose = () => {
     if (newComment.trim() || imagePreviews.length > 0) {
@@ -137,6 +139,13 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                 <Boxes className="w-4 h-4" /> Surtido WMS
               </button>
               <button
+                onClick={() => setShowNeck(true)}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/15 text-pink-400 hover:bg-pink-500/25 transition-colors"
+                data-testid="open-neck"
+              >
+                <Scissors className="w-4 h-4" /> Neck
+              </button>
+              <button
                 onClick={handleClose}
                 className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                 aria-label="Cerrar"
@@ -220,6 +229,36 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
               </div>
               <div className="pb-4">
                 <SurtidoTable order={order} isOpen={showSurtido} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Neck (captura manual) — modal flotante. */}
+        {showNeck && (
+          <div
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setShowNeck(false)}
+            data-testid="neck-modal"
+          >
+            <div
+              className="w-full max-w-3xl max-h-[85vh] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
+                <div className="font-bold text-base flex items-center gap-2">
+                  <Scissors className="w-5 h-5 text-pink-400" /> Neck — {order.order_number}
+                </div>
+                <button
+                  onClick={() => setShowNeck(false)}
+                  className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
+                  aria-label="Cerrar"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="pb-4">
+                <NeckTable order={order} isOpen={showNeck} />
               </div>
             </div>
           </div>
