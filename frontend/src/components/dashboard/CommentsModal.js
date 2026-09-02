@@ -119,6 +119,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   );
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogPortal>
         <DialogOverlay className="backdrop-blur-sm bg-black/20 z-[190]" />
@@ -202,68 +203,49 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             onSend={handleSend}
           />
         </DialogPrimitive.Content>
-
-        {/* Surtido (WMS) — modal flotante, se abre con el botón para no invadir
-            el hilo de comentarios. */}
-        {showSurtido && (
-          <div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-            onClick={() => setShowSurtido(false)}
-            data-testid="surtido-modal"
-          >
-            <div
-              className="w-full max-w-3xl max-h-[85vh] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
-                <div className="font-bold text-base flex items-center gap-2">
-                  <Boxes className="w-5 h-5 text-indigo-400" /> Surtido (WMS) — {order.order_number}
-                </div>
-                <button
-                  onClick={() => setShowSurtido(false)}
-                  className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
-                  aria-label="Cerrar"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="pb-4">
-                <SurtidoTable order={order} isOpen={showSurtido} />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Neck (captura manual) — modal flotante. */}
-        {showNeck && (
-          <div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-            onClick={() => setShowNeck(false)}
-            data-testid="neck-modal"
-          >
-            <div
-              className="w-full max-w-3xl max-h-[85vh] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
-                <div className="font-bold text-base flex items-center gap-2">
-                  <Scissors className="w-5 h-5 text-pink-400" /> Neck — {order.order_number}
-                </div>
-                <button
-                  onClick={() => setShowNeck(false)}
-                  className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
-                  aria-label="Cerrar"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="pb-4">
-                <NeckTable order={order} isOpen={showNeck} />
-              </div>
-            </div>
-          </div>
-        )}
       </DialogPortal>
     </Dialog>
+
+    {/* Surtido (WMS) — Dialog ANIDADO de Radix (maneja layering + pointer-events;
+        un div flotante dentro del portal del modal padre queda bloqueado). */}
+    <Dialog open={showSurtido} onOpenChange={setShowSurtido}>
+      <DialogPortal>
+        <DialogOverlay className="backdrop-blur-sm bg-black/60 z-[210]" />
+        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[220] w-full max-w-[95vw] md:max-w-3xl max-h-[85vh] translate-x-[-50%] translate-y-[-50%] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
+            <div className="font-bold text-base flex items-center gap-2">
+              <Boxes className="w-5 h-5 text-indigo-400" /> Surtido (WMS) - {order.order_number}
+            </div>
+            <button onClick={() => setShowSurtido(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="pb-4">
+            <SurtidoTable order={order} isOpen={showSurtido} />
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
+
+    {/* Neck (captura manual) — Dialog anidado. */}
+    <Dialog open={showNeck} onOpenChange={setShowNeck}>
+      <DialogPortal>
+        <DialogOverlay className="backdrop-blur-sm bg-black/60 z-[210]" />
+        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[220] w-full max-w-[95vw] md:max-w-3xl max-h-[85vh] translate-x-[-50%] translate-y-[-50%] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
+            <div className="font-bold text-base flex items-center gap-2">
+              <Scissors className="w-5 h-5 text-pink-400" /> Neck - {order.order_number}
+            </div>
+            <button onClick={() => setShowNeck(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="pb-4">
+            <NeckTable order={order} isOpen={showNeck} />
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
+    </>
   );
 };
