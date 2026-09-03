@@ -161,7 +161,8 @@ async def _tick():
 # Súbelo cada vez que MEJORE la lógica de detección de sample: el one-shot vuelve
 # a correr (sobre las órdenes aún sin marca) hasta que la versión guardada iguale
 # esta. v2 = agrega el formato B embebido ("TOPS NEEDED ... SAMPLE").
-SAMPLE_BACKFILL_VERSION = 2
+# v3 = busca el invoice por visualId (el id guardado no resolvía en muchas).
+SAMPLE_BACKFILL_VERSION = 3
 
 
 async def _backfill_samples_once():
@@ -376,7 +377,7 @@ async def inspect_invoice(request: Request):
     devuelve TODAS las líneas (description/color/itemNumber) más lo que detecta
     el motor de sample. Sirve para ver por qué una orden queda sin marca."""
     await require_admin(request)
-    from printavo_client import fetch_invoice_by_id
+    from printavo_client import fetch_invoice_by_id, fetch_invoice_by_visual_id
     from printavo_sync import _flatten_line_items, _detect_sample_requirement
     order_number = str(request.query_params.get("order_number") or "").strip()
     if not order_number:
@@ -389,18 +390,23 @@ async def inspect_invoice(request: Request):
     if not order:
         raise HTTPException(404, f"Orden {order_number} no encontrada")
     inv_id = order.get("printavo_invoice_id")
-    if not inv_id:
-        return {"order_number": order_number, "tiene_printavo_id": False,
-                "nota": "La orden no está enlazada a un invoice de Printavo.",
-                "orden": order}
-    inv = await fetch_invoice_by_id(inv_id)
+    base_vid = order_number.split("-")[0]
+    # Ruta principal: buscar por visualId. Fallback: id guardado.
+    inv = await fetch_invoice_by_visual_id(base_vid)
+    via = "visualId" if inv else None
+    if not inv and inv_id:
+        inv = await fetch_invoice_by_id(inv_id)
+        via = "id" if inv else None
     lineas = [{"description": li.get("description"),
                "color": li.get("color"),
                "itemNumber": li.get("itemNumber"),
                "items": li.get("items")}
               for li in _flatten_line_items(inv)]
-    return {"order_number": order_number, "tiene_printavo_id": True,
-            "visualId": inv.get("visualId"),
+    return {"order_number": order_number,
+            "printavo_invoice_id": inv_id,
+            "source": order.get("source"),
+            "fetch_via": via,
+            "visualId": inv.get("visualId") if inv else None,
             "deteccion": _detect_sample_requirement(inv),
             "en_bd": {"requires_sample": order.get("requires_sample"),
                       "sample_spec": order.get("sample_spec")},

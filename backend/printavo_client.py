@@ -226,6 +226,52 @@ query InvoiceById($id: ID!) {
 """
 
 
+# Buscar un invoice por su visualId (= número de orden). Ruta robusta para
+# releer un invoice específico: el id GraphQL guardado a veces no resuelve con
+# invoice(id:) (órdenes viejas), pero el visualId siempre identifica al invoice.
+INVOICE_SEARCH_QUERY = """
+query SearchInvoices($first: Int!, $q: String) {
+  invoices(first: $first, query: $q, sortOn: VISUAL_ID, sortDescending: true) {
+    nodes {
+      id
+      visualId
+      lineItemGroups(first: 10) {
+        nodes {
+          lineItems(first: 50) {
+            nodes {
+              description
+              color
+              itemNumber
+              items
+              sizes { count size }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_invoice_by_visual_id(visual_id: str) -> dict:
+    """Trae el invoice cuyo visualId == `visual_id` (número de orden), buscándolo
+    en Printavo. Devuelve el nodo del invoice o {} si no hay match exacto."""
+    vid = str(visual_id or "").strip()
+    if not vid:
+        return {}
+    try:
+        data = await _graphql(INVOICE_SEARCH_QUERY, {"first": 10, "q": vid})
+    except Exception as e:
+        logger.warning(f"[printavo] fetch_invoice_by_visual_id({vid}) failed: {e}")
+        return {}
+    nodes = ((data.get("invoices") or {}).get("nodes")) or []
+    for n in nodes:
+        if str(n.get("visualId") or "").strip() == vid:
+            return n
+    return {}
+
+
 async def fetch_invoice_by_id(invoice_id: str) -> dict:
     """Trae UN invoice por su id de Printavo (nodo GraphQL crudo).
 

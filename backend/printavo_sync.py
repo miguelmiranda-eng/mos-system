@@ -631,7 +631,8 @@ async def backfill_sample_flags(limit: int = 500, only_missing: bool = True,
                                 order_number: str = "") -> dict:
     """Rellena requires_sample/sample_spec en órdenes YA importadas de Printavo.
 
-    Relee el invoice de cada orden (por printavo_invoice_id) y le aplica
+    Relee el invoice de cada orden (BUSCÁNDOLO por número de orden = visualId,
+    que siempre resuelve; el id GraphQL guardado a veces no) y le aplica
     _detect_sample_requirement. SOLO escribe requires_sample/sample_spec — no
     toca ningún otro campo. Re-ejecutable e idempotente.
 
@@ -639,11 +640,13 @@ async def backfill_sample_flags(limit: int = 500, only_missing: bool = True,
       only_missing=False -> re-lee todas (corrige un dato viejo).
       order_number       -> limita a esa orden (ignora only_missing).
     """
-    from printavo_client import fetch_invoice_by_id
+    from printavo_client import fetch_invoice_by_id, fetch_invoice_by_visual_id
 
-    q = {"printavo_invoice_id": {"$nin": [None, ""]}}
+    # Órdenes que vienen de Printavo (por id enlazado o por origen del sync).
+    q = {"$or": [{"printavo_invoice_id": {"$nin": [None, ""]}},
+                 {"source": "printavo_auto"}]}
     if order_number:
-        q["order_number"] = order_number.strip()
+        q = {"order_number": order_number.strip()}
     elif only_missing:
         q["requires_sample"] = {"$exists": False}
 
@@ -652,18 +655,23 @@ async def backfill_sample_flags(limit: int = 500, only_missing: bool = True,
     ).to_list(max(1, min(int(limit or 500), 3000)))
 
     scanned = updated = no_sample_line = errors = 0
-    cache: dict = {}          # invoice_id -> info (órdenes hermanas comparten invoice)
+    cache: dict = {}          # base visualId -> info (órdenes hermanas comparten invoice)
     muestra = []
     for o in orders:
         scanned += 1
+        num = str(o.get("order_number") or "").strip()
+        base_vid = num.split("-")[0]      # "2833-2" -> "2833" (hermana, mismo invoice)
         inv_id = o.get("printavo_invoice_id")
+        key = base_vid or inv_id
         try:
-            if inv_id in cache:
-                info = cache[inv_id]
+            if key in cache:
+                info = cache[key]
             else:
-                inv = await fetch_invoice_by_id(inv_id)
+                inv = await fetch_invoice_by_visual_id(base_vid) if base_vid else {}
+                if not inv and inv_id:
+                    inv = await fetch_invoice_by_id(inv_id)   # fallback al id guardado
                 info = _detect_sample_requirement(inv) if inv else {}
-                cache[inv_id] = info
+                cache[key] = info
                 await asyncio.sleep(0.15)   # cortesía con el rate limit de Printavo
         except Exception as e:
             errors += 1
