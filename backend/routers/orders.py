@@ -572,6 +572,12 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
             and existing.get("production_status") != "NECESITA QC"):
         update_data["locked_by_qc"] = True
 
+    # Al pasar a un estatus de RESOLUCIÓN de QC se libera el candado
+    # automáticamente — reemplaza al botón "Liberar" del módulo de calidad.
+    _QC_EXIT_STATUSES = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "RECHAZADO POR QC"}
+    if str(update_data.get("production_status") or "").strip().upper() in _QC_EXIT_STATUSES:
+        update_data["locked_by_qc"] = False
+
     # Remove board=null check to allow clearing or moving via direct update if needed,
     # but ensure it exists if requested.
     if "board" in update_data and update_data["board"] is None:

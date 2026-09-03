@@ -935,7 +935,9 @@ export default function QCDashboard() {
   const [prefillOrder, setPrefillOrder] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [releasing, setReleasing] = useState(null);
-  const [productionStatuses, setProductionStatuses] = useState([]);
+  // Solo estos 3 estatus en QC (pedido). Guardar un estatus de resolución
+  // también libera el candado QC en el backend (reemplaza al botón "Liberar").
+  const productionStatuses = ['LISTO PARA ENVIO', 'LISTO PARA INVENTARIO', 'RECHAZADO POR QC'];
   const [statusEditOrder, setStatusEditOrder] = useState(null);
   const [newStatus, setNewStatus] = useState('');
   const [savingStatus, setSavingStatus] = useState(false);
@@ -988,13 +990,7 @@ export default function QCDashboard() {
       .catch(() => {});
   }, []);
 
-  // Fetch production_status options
-  useEffect(() => {
-    fetch(`${API}/config/options`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(opts => { if (opts?.production_statuses) setProductionStatuses(opts.production_statuses); })
-      .catch(() => {});
-  }, []);
+  // (Los estatus de QC son fijos: ver productionStatuses arriba.)
 
   const openStatusEditor = (order) => {
     setStatusEditOrder(order);
@@ -1564,20 +1560,6 @@ export default function QCDashboard() {
                                 <MessageSquare className="w-3.5 h-3.5" />
                                 {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full" />}
                               </button>
-                              {canRelease && (
-                                <button
-                                  onClick={() => handleRelease(order)}
-                                  disabled={releasing === order.order_id}
-                                  className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
-                                    isDark ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-yellow-500 hover:text-white" : "bg-yellow-50 text-yellow-600 border-yellow-200 hover:bg-yellow-500 hover:text-white")}
-                                  title="Liberar orden del candado QC"
-                                >
-                                  {releasing === order.order_id
-                                    ? <Loader2 className="w-3 h-3 animate-spin" />
-                                    : <LockOpen className="w-3 h-3" />}
-                                  Liberar
-                                </button>
-                              )}
                             </div>
                           </td>
                         </tr>
