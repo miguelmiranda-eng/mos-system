@@ -200,6 +200,48 @@ async def create_quote(quote_input: dict) -> dict:
     return (data.get("quoteCreate")) or {}
 
 
+# Un solo invoice por su id de Printavo (para backfills de órdenes ya
+# importadas). Misma selección de line items que INVOICES_QUERY, suficiente para
+# releer la línea SAMPLES.
+INVOICE_BY_ID_QUERY = """
+query InvoiceById($id: ID!) {
+  invoice(id: $id) {
+    id
+    visualId
+    lineItemGroups(first: 5) {
+      nodes {
+        lineItems(first: 20) {
+          nodes {
+            description
+            color
+            itemNumber
+            items
+            sizes { count size }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_invoice_by_id(invoice_id: str) -> dict:
+    """Trae UN invoice por su id de Printavo (nodo GraphQL crudo).
+
+    Devuelve el nodo del invoice, o {} si no existe / no se pudo leer. Se usa en
+    backfills que necesitan releer un invoice ya procesado (no está en la ventana
+    de `fetch_recent_invoices`)."""
+    if not invoice_id:
+        return {}
+    try:
+        data = await _graphql(INVOICE_BY_ID_QUERY, {"id": str(invoice_id)})
+    except Exception as e:
+        logger.warning(f"[printavo] fetch_invoice_by_id({invoice_id}) failed: {e}")
+        return {}
+    return (data.get("invoice") or {}) or {}
+
+
 async def fetch_recent_invoices(first: int = 25) -> list:
     """Return up to `first` most-recently-created invoices (raw GraphQL nodes).
 

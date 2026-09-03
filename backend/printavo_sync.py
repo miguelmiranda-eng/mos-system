@@ -22,6 +22,7 @@ Design decisions (see NewOrderForm / import_router for the manual analogue):
   * board         <- SCHEDULING (same default as the manual engine).
   * source        <- "printavo_auto" so these are distinguishable from manual/ceo.
 """
+import asyncio
 import re
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -605,6 +606,65 @@ async def process_invoice(invoice: dict) -> int:
         except Exception as e:
             logger.error(f"[printavo] failed to create order {order_number}: {e}")
     return created
+
+
+async def backfill_sample_flags(limit: int = 500, only_missing: bool = True,
+                                order_number: str = "") -> dict:
+    """Rellena requires_sample/sample_spec en órdenes YA importadas de Printavo.
+
+    Relee el invoice de cada orden (por printavo_invoice_id) y le aplica
+    _detect_sample_requirement. SOLO escribe requires_sample/sample_spec — no
+    toca ningún otro campo. Re-ejecutable e idempotente.
+
+      only_missing=True  -> solo órdenes sin el campo todavía (por defecto).
+      only_missing=False -> re-lee todas (corrige un dato viejo).
+      order_number       -> limita a esa orden (ignora only_missing).
+    """
+    from printavo_client import fetch_invoice_by_id
+
+    q = {"printavo_invoice_id": {"$nin": [None, ""]}}
+    if order_number:
+        q["order_number"] = order_number.strip()
+    elif only_missing:
+        q["requires_sample"] = {"$exists": False}
+
+    orders = await db.orders.find(
+        q, {"_id": 0, "order_id": 1, "order_number": 1, "printavo_invoice_id": 1}
+    ).to_list(max(1, min(int(limit or 500), 3000)))
+
+    scanned = updated = no_sample_line = errors = 0
+    cache: dict = {}          # invoice_id -> info (órdenes hermanas comparten invoice)
+    muestra = []
+    for o in orders:
+        scanned += 1
+        inv_id = o.get("printavo_invoice_id")
+        try:
+            if inv_id in cache:
+                info = cache[inv_id]
+            else:
+                inv = await fetch_invoice_by_id(inv_id)
+                info = _detect_sample_requirement(inv) if inv else {}
+                cache[inv_id] = info
+                await asyncio.sleep(0.15)   # cortesía con el rate limit de Printavo
+        except Exception as e:
+            errors += 1
+            logger.warning(f"[printavo] backfill sample {o.get('order_number')}: {e}")
+            continue
+        if not info:
+            no_sample_line += 1
+            continue
+        set_fields = {"requires_sample": info["requires_sample"]}
+        if info.get("sample_spec"):
+            set_fields["sample_spec"] = info["sample_spec"]
+        await db.orders.update_one({"order_id": o["order_id"]}, {"$set": set_fields})
+        updated += 1
+        if len(muestra) < 20:
+            muestra.append({"order_number": o.get("order_number"), **set_fields})
+
+    logger.info(f"[printavo] backfill samples: scanned={scanned} updated={updated} "
+                f"sin_linea={no_sample_line} errores={errors}")
+    return {"scanned": scanned, "updated": updated,
+            "no_sample_line": no_sample_line, "errors": errors, "muestra": muestra}
 
 
 def _max_visual_id(nodes) -> str:

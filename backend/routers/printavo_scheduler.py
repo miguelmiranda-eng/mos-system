@@ -19,6 +19,7 @@ from deps import db, require_auth, require_admin, log_activity, logger
 import printavo_client
 from printavo_sync import (
     sync_once, finalize_once, apply_final_bill_by_visual_id,
+    backfill_sample_flags,
     CONFIG_ID, DEFAULT_FINAL_BILL_STATUSES,
 )
 
@@ -282,4 +283,38 @@ async def finalize_printavo_now(request: Request):
                     }}, upsert=True,
                 )
     await log_activity(user, "printavo_finalize_now", {"visual_id": visual_id or None, "result": res})
+    return {"status": "ok", **res}
+
+
+@router.post("/printavo-sync/backfill-samples")
+async def backfill_samples_now(request: Request):
+    """Rellena requires_sample/sample_spec en órdenes YA importadas de Printavo,
+    releyendo la línea SAMPLES de cada invoice. SOLO escribe esos dos campos.
+
+    Body (opcional):
+      {"order_number": "2299"}          -> solo esa orden (re-ejecutable).
+      {"limit": 500, "only_missing": true} -> lote; only_missing (default true)
+        procesa solo las que aún no tienen el campo. only_missing=false re-lee todas.
+    """
+    user = await require_admin(request)
+    if not printavo_client.is_configured():
+        raise HTTPException(400, "Credenciales de Printavo no configuradas (PRINTAVO_API_EMAIL / PRINTAVO_API_TOKEN)")
+    if _sync_lock.locked():
+        raise HTTPException(409, "Ya hay una sincronización en curso. Espera unos segundos e intenta de nuevo.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    order_number = str((body or {}).get("order_number") or "").strip()
+    only_missing = bool((body or {}).get("only_missing", True))
+    try:
+        limit = int((body or {}).get("limit") or 500)
+    except (TypeError, ValueError):
+        limit = 500
+
+    async with _sync_lock:
+        res = await backfill_sample_flags(limit=limit, only_missing=only_missing,
+                                          order_number=order_number)
+    await log_activity(user, "printavo_backfill_samples",
+                       {"order_number": order_number or None, "result": res})
     return {"status": "ok", **res}
