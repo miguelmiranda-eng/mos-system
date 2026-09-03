@@ -208,9 +208,9 @@ query InvoiceById($id: ID!) {
   invoice(id: $id) {
     id
     visualId
-    lineItemGroups(first: 5) {
+    lineItemGroups(first: 10) {
       nodes {
-        lineItems(first: 20) {
+        lineItems(first: 50) {
           nodes {
             description
             color

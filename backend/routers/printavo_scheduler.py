@@ -359,3 +359,41 @@ async def backfill_samples_now(request: Request):
     await log_activity(user, "printavo_backfill_samples",
                        {"order_number": order_number or None, "result": res})
     return {"status": "ok", **res}
+
+
+@router.get("/printavo-sync/inspect-invoice")
+async def inspect_invoice(request: Request):
+    """DIAGNÓSTICO: dado ?order_number=NNNN, trae su invoice de Printavo y
+    devuelve TODAS las líneas (description/color/itemNumber) más lo que detecta
+    el motor de sample. Sirve para ver por qué una orden queda sin marca."""
+    await require_admin(request)
+    from printavo_client import fetch_invoice_by_id
+    from printavo_sync import _flatten_line_items, _detect_sample_requirement
+    order_number = str(request.query_params.get("order_number") or "").strip()
+    if not order_number:
+        raise HTTPException(400, "Falta ?order_number=")
+    order = await db.orders.find_one(
+        {"order_number": order_number},
+        {"_id": 0, "order_number": 1, "printavo_invoice_id": 1, "source": 1,
+         "requires_sample": 1, "sample_spec": 1},
+    )
+    if not order:
+        raise HTTPException(404, f"Orden {order_number} no encontrada")
+    inv_id = order.get("printavo_invoice_id")
+    if not inv_id:
+        return {"order_number": order_number, "tiene_printavo_id": False,
+                "nota": "La orden no está enlazada a un invoice de Printavo.",
+                "orden": order}
+    inv = await fetch_invoice_by_id(inv_id)
+    lineas = [{"description": li.get("description"),
+               "color": li.get("color"),
+               "itemNumber": li.get("itemNumber"),
+               "items": li.get("items")}
+              for li in _flatten_line_items(inv)]
+    return {"order_number": order_number, "tiene_printavo_id": True,
+            "visualId": inv.get("visualId"),
+            "deteccion": _detect_sample_requirement(inv),
+            "en_bd": {"requires_sample": order.get("requires_sample"),
+                      "sample_spec": order.get("sample_spec")},
+            "total_lineas": len(lineas),
+            "lineas": lineas}

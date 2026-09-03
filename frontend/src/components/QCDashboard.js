@@ -997,48 +997,25 @@ export default function QCDashboard() {
     setNewStatus(order.production_status || order.status || '');
   };
 
-  // Toggle manual de la marca de sample (para las órdenes que Printavo no puede
-  // detectar solo). Enciende/apaga requires_sample y persiste en la orden.
-  const toggleSampleFlag = async (order) => {
-    if (!canWrite) return;
-    const next = order.requires_sample === true ? false : true;
-    // Optimista
-    setUnauditedOrders(prev => prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: next } : o));
-    setGlobalResults(prev => prev ? prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: next } : o) : prev);
-    try {
-      const res = await fetch(`${API}/orders/${order.order_id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ requires_sample: next }),
-      });
-      if (!res.ok) throw new Error();
-      toast.success(next ? `Orden ${order.order_number}: marcada CON sample` : `Orden ${order.order_number}: marcada SIN sample`);
-    } catch {
-      // Revertir
-      setUnauditedOrders(prev => prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: order.requires_sample } : o));
-      setGlobalResults(prev => prev ? prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: order.requires_sample } : o) : prev);
-      toast.error('No se pudo cambiar la marca de sample');
-    }
+  // Pastilla de sample (solo lectura). El dato sale del invoice de Printavo
+  // (requires_sample). Se muestra únicamente cuando Printavo lo definió; si no
+  // hay dato todavía, no se pinta nada.
+  const SampleBadge = ({ order }) => {
+    if (order.requires_sample !== true && order.requires_sample !== false) return null;
+    return (
+      <span
+        title={order.requires_sample
+          ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample (Printavo)')
+          : 'Printavo: SAMPLES N/A'}
+        className={cn("self-start inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide",
+          order.requires_sample
+            ? "bg-amber-500/20 text-amber-400"
+            : (isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500"))}>
+        <Shirt className="w-2.5 h-2.5" />
+        {order.requires_sample ? 'SAMPLE' : 'SIN SAMPLE'}
+      </span>
+    );
   };
-
-  // Pastilla de sample reutilizable (lista General + búsqueda global). Siempre
-  // visible y clickeable: encendida = requiere sample; apagada = N/A / sin dato.
-  const SampleBadge = ({ order }) => (
-    <button
-      type="button"
-      disabled={!canWrite}
-      onClick={() => toggleSampleFlag(order)}
-      title={(order.requires_sample
-        ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample')
-        : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')) + (canWrite ? ' — clic para cambiar' : '')}
-      className={cn("self-start inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide transition-all",
-        canWrite && "hover:scale-105 active:scale-95",
-        order.requires_sample
-          ? "bg-amber-500/20 text-amber-400"
-          : (isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500"))}>
-      <Shirt className="w-2.5 h-2.5" />
-      {order.requires_sample ? 'SAMPLE' : (order.requires_sample === false ? 'SIN SAMPLE' : 'SAMPLE?')}
-    </button>
-  );
 
   const handleUpdateStatus = async () => {
     if (!statusEditOrder || !newStatus || newStatus === (statusEditOrder.production_status || statusEditOrder.status)) {
