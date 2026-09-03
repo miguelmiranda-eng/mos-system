@@ -1350,7 +1350,23 @@ export default function QCDashboard() {
                     <tbody className="divide-y divide-white/5">
                       {globalResults.map(order => (
                         <tr key={order.order_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
-                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
+                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
+                            <div className="flex flex-col gap-1">
+                              <span>{order.order_number || '—'}</span>
+                              {order.requires_sample === true && (
+                                <span className="self-start text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 tracking-wide"
+                                  title={order.sample_spec ? `Sample: ${order.sample_spec}` : 'Requiere sample (Printavo)'}>
+                                  SAMPLE
+                                </span>
+                              )}
+                              {order.requires_sample === false && (
+                                <span className={cn("self-start text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide", isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500")}
+                                  title="Printavo: SAMPLES N/A">
+                                  SIN SAMPLE
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
                           <td className="px-4 py-3">
                             <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
@@ -1519,7 +1535,23 @@ export default function QCDashboard() {
                           <td className="px-3 py-3">
                             <Lock className={cn("w-3.5 h-3.5", isDark ? "text-yellow-400/70" : "text-yellow-500/80")} title="Orden bloqueada por QC" />
                           </td>
-                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
+                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
+                            <div className="flex flex-col gap-1">
+                              <span>{order.order_number || '—'}</span>
+                              {order.requires_sample === true && (
+                                <span className="self-start text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 tracking-wide"
+                                  title={order.sample_spec ? `Sample: ${order.sample_spec}` : 'Requiere sample (Printavo)'}>
+                                  SAMPLE
+                                </span>
+                              )}
+                              {order.requires_sample === false && (
+                                <span className={cn("self-start text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide", isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500")}
+                                  title="Printavo: SAMPLES N/A">
+                                  SIN SAMPLE
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
                            <td className="px-4 py-3">
                             <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
