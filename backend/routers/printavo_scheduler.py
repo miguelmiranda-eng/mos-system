@@ -158,6 +158,39 @@ async def _tick():
         logger.error(f"[printavo-sync] tick error: {e}")
 
 
+async def _backfill_samples_once():
+    """One-shot: rellena requires_sample/sample_spec en las órdenes de Printavo
+    YA importadas, releyendo la línea SAMPLES de cada invoice. Corre UNA sola vez
+    (bandera en printavo_sync) unos segundos después del arranque, del lado del
+    servidor donde SÍ hay credenciales de Printavo y Mongo local.
+
+    Idempotente y reanudable: la bandera solo se marca tras una corrida completa;
+    si Printavo aún no está configurado, o si truena a medias, NO se marca y el
+    siguiente arranque lo reintenta (only_missing retoma lo que falte)."""
+    try:
+        cfg = await db.printavo_sync.find_one({"config_id": CONFIG_ID}, {"_id": 0}) or {}
+        if cfg.get("sample_backfill_done"):
+            return
+        if not printavo_client.is_configured():
+            logger.info("[printavo-sync] backfill samples pospuesto: Printavo sin credenciales")
+            return
+        if _sync_lock.locked():
+            return
+        async with _sync_lock:
+            res = await backfill_sample_flags(limit=3000, only_missing=True)
+        await db.printavo_sync.update_one(
+            {"config_id": CONFIG_ID},
+            {"$set": {"sample_backfill_done": True,
+                      "sample_backfill_at": datetime.now(timezone.utc).isoformat(),
+                      "sample_backfill_result": res}},
+            upsert=True,
+        )
+        logger.info(f"[printavo-sync] backfill samples one-shot: {res.get('updated')} marcadas de "
+                    f"{res.get('scanned')} (sin_linea={res.get('no_sample_line')}, errores={res.get('errors')})")
+    except Exception as e:
+        logger.error(f"[printavo-sync] backfill samples one-shot error: {e}")
+
+
 _scheduler = None
 
 
@@ -170,10 +203,18 @@ def start_printavo_scheduler():
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.interval import IntervalTrigger
+        from apscheduler.triggers.date import DateTrigger
+        from datetime import timedelta
         minutes = int(os.environ.get("PRINTAVO_POLL_MINUTES", "5"))
         _scheduler = AsyncIOScheduler(timezone="America/Tijuana")
         _scheduler.add_job(_tick, IntervalTrigger(minutes=max(1, minutes)), id="printavo_sync_tick",
                            replace_existing=True, max_instances=1, coalesce=True)
+        # One-shot: marca las órdenes ya existentes que llevan sample. Se agenda
+        # ~45s tras el arranque para no pelear con el boot; se auto-guarda con una
+        # bandera para no repetirse.
+        _scheduler.add_job(_backfill_samples_once,
+                           DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=45)),
+                           id="printavo_sample_backfill_once", replace_existing=True, max_instances=1)
         _scheduler.start()
         logger.info(f"[printavo-sync] started (checks every {minutes} min)")
     except Exception as e:
