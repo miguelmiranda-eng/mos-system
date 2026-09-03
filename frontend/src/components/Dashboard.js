@@ -1215,17 +1215,27 @@ const Dashboard = () => {
               <Truck className="w-2.5 h-2.5" />
             </span>
 
-            {/* SAMPLE — camisita que se enciende cuando la orden REQUIERE ejemplo
-                (leído de la línea SAMPLES de Printavo). Apagada = N/A o sin dato. */}
-            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.requires_sample
-              ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
-              }`} title={order.requires_sample
-                ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample')
-                : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')}
+            {/* SAMPLE — camisita: se enciende cuando la orden REQUIERE ejemplo.
+                Se prellena de la línea SAMPLES de Printavo cuando existe, y el
+                operador la puede prender/apagar a mano (clic) para las que
+                Printavo no puede decir. Apagada = N/A o sin dato. */}
+            <button
+              type="button"
+              disabled={!canEditBoard}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canEditBoard) return;
+                handleCellUpdate(order.order_id, 'requires_sample', order.requires_sample === true ? false : true);
+              }}
+              className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${canEditBoard ? 'cursor-pointer hover:scale-110 active:scale-95' : 'cursor-default'} ${order.requires_sample
+                ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
+                : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+                }`} title={(order.requires_sample
+                  ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample')
+                  : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')) + (canEditBoard ? ' — clic para cambiar' : '')}
               data-testid={`order-sample-badge-${order.order_id}`}>
               <Shirt className="w-2.5 h-2.5" />
-            </span>
+            </button>
 
             {/* ENVÍO programado — reloj + fecha (dd/mm). Se enciende cuando la
                 orden está programada en el módulo de Envíos (scheduled_shipments). */}

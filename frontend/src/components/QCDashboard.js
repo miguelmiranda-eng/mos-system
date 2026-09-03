@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
   ClipboardList, BadgeX, Camera, Image as ImageIcon,
   Link2, Bell, Download, BarChart2, ChevronLeft, ChevronRight,
-  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut,
+  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut, Shirt,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -997,6 +997,49 @@ export default function QCDashboard() {
     setNewStatus(order.production_status || order.status || '');
   };
 
+  // Toggle manual de la marca de sample (para las órdenes que Printavo no puede
+  // detectar solo). Enciende/apaga requires_sample y persiste en la orden.
+  const toggleSampleFlag = async (order) => {
+    if (!canWrite) return;
+    const next = order.requires_sample === true ? false : true;
+    // Optimista
+    setUnauditedOrders(prev => prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: next } : o));
+    setGlobalResults(prev => prev ? prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: next } : o) : prev);
+    try {
+      const res = await fetch(`${API}/orders/${order.order_id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ requires_sample: next }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(next ? `Orden ${order.order_number}: marcada CON sample` : `Orden ${order.order_number}: marcada SIN sample`);
+    } catch {
+      // Revertir
+      setUnauditedOrders(prev => prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: order.requires_sample } : o));
+      setGlobalResults(prev => prev ? prev.map(o => o.order_id === order.order_id ? { ...o, requires_sample: order.requires_sample } : o) : prev);
+      toast.error('No se pudo cambiar la marca de sample');
+    }
+  };
+
+  // Pastilla de sample reutilizable (lista General + búsqueda global). Siempre
+  // visible y clickeable: encendida = requiere sample; apagada = N/A / sin dato.
+  const SampleBadge = ({ order }) => (
+    <button
+      type="button"
+      disabled={!canWrite}
+      onClick={() => toggleSampleFlag(order)}
+      title={(order.requires_sample
+        ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample')
+        : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')) + (canWrite ? ' — clic para cambiar' : '')}
+      className={cn("self-start inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide transition-all",
+        canWrite && "hover:scale-105 active:scale-95",
+        order.requires_sample
+          ? "bg-amber-500/20 text-amber-400"
+          : (isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500"))}>
+      <Shirt className="w-2.5 h-2.5" />
+      {order.requires_sample ? 'SAMPLE' : (order.requires_sample === false ? 'SIN SAMPLE' : 'SAMPLE?')}
+    </button>
+  );
+
   const handleUpdateStatus = async () => {
     if (!statusEditOrder || !newStatus || newStatus === (statusEditOrder.production_status || statusEditOrder.status)) {
       setStatusEditOrder(null);
@@ -1353,18 +1396,7 @@ export default function QCDashboard() {
                           <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
                             <div className="flex flex-col gap-1">
                               <span>{order.order_number || '—'}</span>
-                              {order.requires_sample === true && (
-                                <span className="self-start text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 tracking-wide"
-                                  title={order.sample_spec ? `Sample: ${order.sample_spec}` : 'Requiere sample (Printavo)'}>
-                                  SAMPLE
-                                </span>
-                              )}
-                              {order.requires_sample === false && (
-                                <span className={cn("self-start text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide", isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500")}
-                                  title="Printavo: SAMPLES N/A">
-                                  SIN SAMPLE
-                                </span>
-                              )}
+                              <SampleBadge order={order} />
                             </div>
                           </td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
@@ -1538,18 +1570,7 @@ export default function QCDashboard() {
                           <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
                             <div className="flex flex-col gap-1">
                               <span>{order.order_number || '—'}</span>
-                              {order.requires_sample === true && (
-                                <span className="self-start text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 tracking-wide"
-                                  title={order.sample_spec ? `Sample: ${order.sample_spec}` : 'Requiere sample (Printavo)'}>
-                                  SAMPLE
-                                </span>
-                              )}
-                              {order.requires_sample === false && (
-                                <span className={cn("self-start text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide", isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500")}
-                                  title="Printavo: SAMPLES N/A">
-                                  SIN SAMPLE
-                                </span>
-                              )}
+                              <SampleBadge order={order} />
                             </div>
                           </td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
