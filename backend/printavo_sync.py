@@ -248,6 +248,38 @@ def _real_line_items(invoice: dict) -> list:
     return real
 
 
+# La orden de Printavo trae una línea DEDICADA "SAMPLES" cuyo texto dice si el
+# trabajo lleva ejemplos: "N/A" (o vacío) = NO lleva; cualquier otra cosa = sí,
+# y ese texto es el spec del sample. _real_line_items la descarta (no es prenda,
+# qty 0), así que la leemos aquí. OJO: solo cuenta la línea cuyo ENCABEZADO es
+# exactamente "SAMPLES"; menciones sueltas como "APPROVED SAMPLE" en la nota de
+# aprobación o "ECOM SAMPLE" en un desglose NO son el requerimiento y darían
+# falsos positivos.
+_SAMPLE_NEGATIVE = {"", "N/A", "NA", "N.A", "NONE", "NO", "0", "-", "--", "X"}
+
+
+def _detect_sample_requirement(invoice: dict) -> dict:
+    """Lee la línea SAMPLES del invoice.
+
+    Devuelve {"requires_sample": bool, "sample_spec": str} cuando la línea
+    existe, o {} cuando el invoice no trae línea SAMPLES (indeterminado).
+    """
+    for li in _flatten_line_items(invoice):
+        desc = str(li.get("description") or "")
+        lines = [ln.strip() for ln in desc.replace("\r", "\n").split("\n")]
+        lines = [ln for ln in lines if ln]          # quita líneas en blanco
+        if not lines:
+            continue
+        if lines[0].upper().rstrip(":").strip() != "SAMPLES":
+            continue
+        rest = lines[1:]
+        spec = " ".join(rest).strip()
+        norm = spec.upper().strip().rstrip(".").rstrip("/")
+        requires = bool(rest) and norm not in _SAMPLE_NEGATIVE
+        return {"requires_sample": requires, "sample_spec": spec if requires else ""}
+    return {}
+
+
 def _billed_qty(line_item: dict, sizes_qty: int) -> int:
     """Piece count of one garment line FOR BILLING (columna Total Quantity).
 
@@ -366,6 +398,11 @@ def invoice_to_orders(invoice: dict) -> list:
     # orders from department headers / notes / sample specs.
     real = _real_line_items(invoice)
 
+    # ¿La orden lleva ejemplos? Se lee de la línea dedicada "SAMPLES" del invoice
+    # (N/A = no lleva). Es una propiedad del invoice, así que aplica a todas las
+    # órdenes hermanas que salgan de él.
+    sample_info = _detect_sample_requirement(invoice)
+
     # Consolidación POR COLOR: un invoice trae varios estilos (tipo de prenda:
     # tee / long sleeve / hoodie) del MISMO color y la nave lo opera como UNA
     # orden con cantidad y tallas sumadas (antes cada línea era una orden
@@ -435,6 +472,12 @@ def invoice_to_orders(invoice: dict) -> list:
         if workorder_url:
             order["job_title_a"] = {"url": workorder_url, "desc": nickname[:120] or "Printavo WO"}
         order = {k: v for k, v in order.items() if v not in (None, "", {})}
+        # Requerimiento de sample leído del invoice (se conserva False explícito:
+        # "el sistema revisó y NO lleva sample", distinto de indeterminado).
+        if sample_info:
+            order["requires_sample"] = sample_info["requires_sample"]
+            if sample_info.get("sample_spec"):
+                order["sample_spec"] = sample_info["sample_spec"]
         # Customer-note link -> the order's links section (shown in the comments modal).
         if note_url:
             order["links"] = [{

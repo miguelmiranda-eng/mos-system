@@ -130,6 +130,22 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
           <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
             <div className="font-barlow text-xl uppercase tracking-wide flex items-center gap-3 font-bold">
               <MessageSquare className="w-5 h-5" /> {t("comments")} - {order.order_number}
+              {order.requires_sample === true && (
+                <span
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tracking-wide normal-case"
+                  title={order.sample_spec ? `Sample: ${order.sample_spec}` : "Requiere sample (Printavo)"}
+                >
+                  REQUIERE SAMPLE
+                </span>
+              )}
+              {order.requires_sample === false && (
+                <span
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-secondary text-muted-foreground tracking-wide normal-case"
+                  title="Printavo: SAMPLES N/A"
+                >
+                  SIN SAMPLE
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
