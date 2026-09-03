@@ -22,7 +22,6 @@ Design decisions (see NewOrderForm / import_router for the manual analogue):
   * board         <- SCHEDULING (same default as the manual engine).
   * source        <- "printavo_auto" so these are distinguishable from manual/ceo.
 """
-import asyncio
 import re
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -249,57 +248,6 @@ def _real_line_items(invoice: dict) -> list:
     return real
 
 
-# Cómo trae Printavo el requerimiento de sample — hay DOS formatos según cómo se
-# capturó la cotización:
-#   Formato A: una línea DEDICADA cuyo encabezado es "SAMPLES" y abajo dice el
-#              estado: "N/A"/vacío = NO lleva; cualquier otra cosa = sí (+ spec).
-#              Es la señal LIMPIA (da sí y no).
-#   Formato B: sin línea SAMPLES; el sample viene EMBEBIDO, p.ej.
-#              "TOPS NEEDED ... ECOM SAMPLE ...". Solo da POSITIVOS.
-# _real_line_items descarta ambas (no son prenda), así que se leen aquí.
-_SAMPLE_NEGATIVE = {"", "N/A", "NA", "N.A", "NONE", "NO", "0", "-", "--", "X"}
-# Se excluye el boilerplate de aprobación que sale en CASI TODAS las órdenes
-# ("Please follow APPROVED SAMPLE and send picture for REFERENCE") — mencionar
-# "SAMPLE" ahí NO significa que el trabajo lleve ejemplos.
-_SAMPLE_EMBED_EXCLUDE = ("APPROV", "REFERENCE", "FOLLOW")
-_SAMPLE_HEADERS = {"SAMPLES", "SAMPLE"}
-
-
-def _detect_sample_requirement(invoice: dict) -> dict:
-    """Determina si la orden requiere sample leyendo el invoice de Printavo.
-
-    Devuelve {"requires_sample": bool, "sample_spec": str} cuando hay señal, o
-    {} cuando el invoice no dice nada del sample (indeterminado).
-
-    Prioridad: la línea DEDICADA "SAMPLES" (formato A) gana sobre todo — es la
-    única que puede afirmar "NO lleva" (N/A). Si no existe, se busca el sample
-    EMBEBIDO (formato B), que solo puede afirmar "sí lleva".
-    """
-    embedded = None
-    for li in _flatten_line_items(invoice):
-        desc = str(li.get("description") or "")
-        lines = [ln.strip() for ln in desc.replace("\r", "\n").split("\n")]
-        lines = [ln for ln in lines if ln]          # quita líneas en blanco
-        if not lines:
-            continue
-        # Formato A — línea dedicada SAMPLES / SAMPLE.
-        if lines[0].upper().rstrip(":").strip() in _SAMPLE_HEADERS:
-            rest = lines[1:]
-            spec = " ".join(rest).strip()
-            norm = spec.upper().strip().rstrip(".").rstrip("/")
-            requires = bool(rest) and norm not in _SAMPLE_NEGATIVE
-            return {"requires_sample": requires, "sample_spec": spec if requires else ""}
-        # Formato B — sample embebido (solo positivos, sin el boilerplate de
-        # aprobación). Se recuerda el primero por si no aparece un formato A.
-        if embedded is None:
-            full = " ".join(lines).upper()
-            if "SAMPLE" in full and not any(x in full for x in _SAMPLE_EMBED_EXCLUDE):
-                embedded = " ".join(lines).strip()
-    if embedded is not None:
-        return {"requires_sample": True, "sample_spec": embedded[:200]}
-    return {}
-
-
 def _billed_qty(line_item: dict, sizes_qty: int) -> int:
     """Piece count of one garment line FOR BILLING (columna Total Quantity).
 
@@ -418,11 +366,6 @@ def invoice_to_orders(invoice: dict) -> list:
     # orders from department headers / notes / sample specs.
     real = _real_line_items(invoice)
 
-    # ¿La orden lleva ejemplos? Se lee de la línea dedicada "SAMPLES" del invoice
-    # (N/A = no lleva). Es una propiedad del invoice, así que aplica a todas las
-    # órdenes hermanas que salgan de él.
-    sample_info = _detect_sample_requirement(invoice)
-
     # Consolidación POR COLOR: un invoice trae varios estilos (tipo de prenda:
     # tee / long sleeve / hoodie) del MISMO color y la nave lo opera como UNA
     # orden con cantidad y tallas sumadas (antes cada línea era una orden
@@ -492,12 +435,6 @@ def invoice_to_orders(invoice: dict) -> list:
         if workorder_url:
             order["job_title_a"] = {"url": workorder_url, "desc": nickname[:120] or "Printavo WO"}
         order = {k: v for k, v in order.items() if v not in (None, "", {})}
-        # Requerimiento de sample leído del invoice (se conserva False explícito:
-        # "el sistema revisó y NO lleva sample", distinto de indeterminado).
-        if sample_info:
-            order["requires_sample"] = sample_info["requires_sample"]
-            if sample_info.get("sample_spec"):
-                order["sample_spec"] = sample_info["sample_spec"]
         # Customer-note link -> the order's links section (shown in the comments modal).
         if note_url:
             order["links"] = [{
@@ -625,73 +562,6 @@ async def process_invoice(invoice: dict) -> int:
         except Exception as e:
             logger.error(f"[printavo] failed to create order {order_number}: {e}")
     return created
-
-
-async def backfill_sample_flags(limit: int = 500, only_missing: bool = True,
-                                order_number: str = "") -> dict:
-    """Rellena requires_sample/sample_spec en órdenes YA importadas de Printavo.
-
-    Relee el invoice de cada orden (BUSCÁNDOLO por número de orden = visualId,
-    que siempre resuelve; el id GraphQL guardado a veces no) y le aplica
-    _detect_sample_requirement. SOLO escribe requires_sample/sample_spec — no
-    toca ningún otro campo. Re-ejecutable e idempotente.
-
-      only_missing=True  -> solo órdenes sin el campo todavía (por defecto).
-      only_missing=False -> re-lee todas (corrige un dato viejo).
-      order_number       -> limita a esa orden (ignora only_missing).
-    """
-    from printavo_client import fetch_invoice_by_id, fetch_invoice_by_visual_id
-
-    # Órdenes que vienen de Printavo (por id enlazado o por origen del sync).
-    q = {"$or": [{"printavo_invoice_id": {"$nin": [None, ""]}},
-                 {"source": "printavo_auto"}]}
-    if order_number:
-        q = {"order_number": order_number.strip()}
-    elif only_missing:
-        q["requires_sample"] = {"$exists": False}
-
-    orders = await db.orders.find(
-        q, {"_id": 0, "order_id": 1, "order_number": 1, "printavo_invoice_id": 1}
-    ).to_list(max(1, min(int(limit or 500), 3000)))
-
-    scanned = updated = no_sample_line = errors = 0
-    cache: dict = {}          # base visualId -> info (órdenes hermanas comparten invoice)
-    muestra = []
-    for o in orders:
-        scanned += 1
-        num = str(o.get("order_number") or "").strip()
-        base_vid = num.split("-")[0]      # "2833-2" -> "2833" (hermana, mismo invoice)
-        inv_id = o.get("printavo_invoice_id")
-        key = base_vid or inv_id
-        try:
-            if key in cache:
-                info = cache[key]
-            else:
-                inv = await fetch_invoice_by_visual_id(base_vid) if base_vid else {}
-                if not inv and inv_id:
-                    inv = await fetch_invoice_by_id(inv_id)   # fallback al id guardado
-                info = _detect_sample_requirement(inv) if inv else {}
-                cache[key] = info
-                await asyncio.sleep(0.15)   # cortesía con el rate limit de Printavo
-        except Exception as e:
-            errors += 1
-            logger.warning(f"[printavo] backfill sample {o.get('order_number')}: {e}")
-            continue
-        if not info:
-            no_sample_line += 1
-            continue
-        set_fields = {"requires_sample": info["requires_sample"]}
-        if info.get("sample_spec"):
-            set_fields["sample_spec"] = info["sample_spec"]
-        await db.orders.update_one({"order_id": o["order_id"]}, {"$set": set_fields})
-        updated += 1
-        if len(muestra) < 20:
-            muestra.append({"order_number": o.get("order_number"), **set_fields})
-
-    logger.info(f"[printavo] backfill samples: scanned={scanned} updated={updated} "
-                f"sin_linea={no_sample_line} errores={errors}")
-    return {"scanned": scanned, "updated": updated,
-            "no_sample_line": no_sample_line, "errors": errors, "muestra": muestra}
 
 
 def _max_visual_id(nodes) -> str:

@@ -19,7 +19,6 @@ from deps import db, require_auth, require_admin, log_activity, logger
 import printavo_client
 from printavo_sync import (
     sync_once, finalize_once, apply_final_bill_by_visual_id,
-    backfill_sample_flags,
     CONFIG_ID, DEFAULT_FINAL_BILL_STATUSES,
 )
 
@@ -158,49 +157,6 @@ async def _tick():
         logger.error(f"[printavo-sync] tick error: {e}")
 
 
-# Súbelo cada vez que MEJORE la lógica de detección de sample: el one-shot vuelve
-# a correr (sobre las órdenes aún sin marca) hasta que la versión guardada iguale
-# esta. v2 = agrega el formato B embebido ("TOPS NEEDED ... SAMPLE").
-# v3 = busca el invoice por visualId (el id guardado no resolvía en muchas).
-SAMPLE_BACKFILL_VERSION = 3
-
-
-async def _backfill_samples_once():
-    """One-shot: rellena requires_sample/sample_spec en las órdenes de Printavo
-    YA importadas, releyendo la línea SAMPLES de cada invoice. Corre del lado del
-    servidor (donde hay credenciales de Printavo y Mongo local) unos segundos tras
-    el arranque, y SOLO cuando la versión de detección guardada es menor que la
-    actual — así una mejora de la detección se re-aplica sola al desplegar.
-
-    Idempotente y reanudable: la versión solo se guarda tras una corrida completa;
-    si Printavo aún no está configurado, o si truena a medias, NO se guarda y el
-    siguiente arranque lo reintenta (only_missing retoma lo que falte)."""
-    try:
-        cfg = await db.printavo_sync.find_one({"config_id": CONFIG_ID}, {"_id": 0}) or {}
-        if int(cfg.get("sample_backfill_version") or 0) >= SAMPLE_BACKFILL_VERSION:
-            return
-        if not printavo_client.is_configured():
-            logger.info("[printavo-sync] backfill samples pospuesto: Printavo sin credenciales")
-            return
-        if _sync_lock.locked():
-            return
-        async with _sync_lock:
-            res = await backfill_sample_flags(limit=3000, only_missing=True)
-        await db.printavo_sync.update_one(
-            {"config_id": CONFIG_ID},
-            {"$set": {"sample_backfill_version": SAMPLE_BACKFILL_VERSION,
-                      "sample_backfill_done": True,
-                      "sample_backfill_at": datetime.now(timezone.utc).isoformat(),
-                      "sample_backfill_result": res}},
-            upsert=True,
-        )
-        logger.info(f"[printavo-sync] backfill samples one-shot v{SAMPLE_BACKFILL_VERSION}: "
-                    f"{res.get('updated')} marcadas de {res.get('scanned')} "
-                    f"(sin_señal={res.get('no_sample_line')}, errores={res.get('errors')})")
-    except Exception as e:
-        logger.error(f"[printavo-sync] backfill samples one-shot error: {e}")
-
-
 _scheduler = None
 
 
@@ -213,18 +169,10 @@ def start_printavo_scheduler():
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.interval import IntervalTrigger
-        from apscheduler.triggers.date import DateTrigger
-        from datetime import timedelta
         minutes = int(os.environ.get("PRINTAVO_POLL_MINUTES", "5"))
         _scheduler = AsyncIOScheduler(timezone="America/Tijuana")
         _scheduler.add_job(_tick, IntervalTrigger(minutes=max(1, minutes)), id="printavo_sync_tick",
                            replace_existing=True, max_instances=1, coalesce=True)
-        # One-shot: marca las órdenes ya existentes que llevan sample. Se agenda
-        # ~45s tras el arranque para no pelear con el boot; se auto-guarda con una
-        # bandera para no repetirse.
-        _scheduler.add_job(_backfill_samples_once,
-                           DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=45)),
-                           id="printavo_sample_backfill_once", replace_existing=True, max_instances=1)
         _scheduler.start()
         logger.info(f"[printavo-sync] started (checks every {minutes} min)")
     except Exception as e:
@@ -335,80 +283,3 @@ async def finalize_printavo_now(request: Request):
                 )
     await log_activity(user, "printavo_finalize_now", {"visual_id": visual_id or None, "result": res})
     return {"status": "ok", **res}
-
-
-@router.post("/printavo-sync/backfill-samples")
-async def backfill_samples_now(request: Request):
-    """Rellena requires_sample/sample_spec en órdenes YA importadas de Printavo,
-    releyendo la línea SAMPLES de cada invoice. SOLO escribe esos dos campos.
-
-    Body (opcional):
-      {"order_number": "2299"}          -> solo esa orden (re-ejecutable).
-      {"limit": 500, "only_missing": true} -> lote; only_missing (default true)
-        procesa solo las que aún no tienen el campo. only_missing=false re-lee todas.
-    """
-    user = await require_admin(request)
-    if not printavo_client.is_configured():
-        raise HTTPException(400, "Credenciales de Printavo no configuradas (PRINTAVO_API_EMAIL / PRINTAVO_API_TOKEN)")
-    if _sync_lock.locked():
-        raise HTTPException(409, "Ya hay una sincronización en curso. Espera unos segundos e intenta de nuevo.")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    order_number = str((body or {}).get("order_number") or "").strip()
-    only_missing = bool((body or {}).get("only_missing", True))
-    try:
-        limit = int((body or {}).get("limit") or 500)
-    except (TypeError, ValueError):
-        limit = 500
-
-    async with _sync_lock:
-        res = await backfill_sample_flags(limit=limit, only_missing=only_missing,
-                                          order_number=order_number)
-    await log_activity(user, "printavo_backfill_samples",
-                       {"order_number": order_number or None, "result": res})
-    return {"status": "ok", **res}
-
-
-@router.get("/printavo-sync/inspect-invoice")
-async def inspect_invoice(request: Request):
-    """DIAGNÓSTICO: dado ?order_number=NNNN, trae su invoice de Printavo y
-    devuelve TODAS las líneas (description/color/itemNumber) más lo que detecta
-    el motor de sample. Sirve para ver por qué una orden queda sin marca."""
-    await require_admin(request)
-    from printavo_client import fetch_invoice_by_id, fetch_invoice_by_visual_id
-    from printavo_sync import _flatten_line_items, _detect_sample_requirement
-    order_number = str(request.query_params.get("order_number") or "").strip()
-    if not order_number:
-        raise HTTPException(400, "Falta ?order_number=")
-    order = await db.orders.find_one(
-        {"order_number": order_number},
-        {"_id": 0, "order_number": 1, "printavo_invoice_id": 1, "source": 1,
-         "requires_sample": 1, "sample_spec": 1},
-    )
-    if not order:
-        raise HTTPException(404, f"Orden {order_number} no encontrada")
-    inv_id = order.get("printavo_invoice_id")
-    base_vid = order_number.split("-")[0]
-    # Ruta principal: buscar por visualId. Fallback: id guardado.
-    inv = await fetch_invoice_by_visual_id(base_vid)
-    via = "visualId" if inv else None
-    if not inv and inv_id:
-        inv = await fetch_invoice_by_id(inv_id)
-        via = "id" if inv else None
-    lineas = [{"description": li.get("description"),
-               "color": li.get("color"),
-               "itemNumber": li.get("itemNumber"),
-               "items": li.get("items")}
-              for li in _flatten_line_items(inv)]
-    return {"order_number": order_number,
-            "printavo_invoice_id": inv_id,
-            "source": order.get("source"),
-            "fetch_via": via,
-            "visualId": inv.get("visualId") if inv else None,
-            "deteccion": _detect_sample_requirement(inv),
-            "en_bd": {"requires_sample": order.get("requires_sample"),
-                      "sample_spec": order.get("sample_spec")},
-            "total_lineas": len(lineas),
-            "lineas": lineas}

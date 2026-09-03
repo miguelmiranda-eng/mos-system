@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
   ClipboardList, BadgeX, Camera, Image as ImageIcon,
   Link2, Bell, Download, BarChart2, ChevronLeft, ChevronRight,
-  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut, Shirt,
+  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -997,26 +997,6 @@ export default function QCDashboard() {
     setNewStatus(order.production_status || order.status || '');
   };
 
-  // Pastilla de sample (solo lectura). El dato sale del invoice de Printavo
-  // (requires_sample). Se muestra únicamente cuando Printavo lo definió; si no
-  // hay dato todavía, no se pinta nada.
-  const SampleBadge = ({ order }) => {
-    if (order.requires_sample !== true && order.requires_sample !== false) return null;
-    return (
-      <span
-        title={order.requires_sample
-          ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample (Printavo)')
-          : 'Printavo: SAMPLES N/A'}
-        className={cn("self-start inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide",
-          order.requires_sample
-            ? "bg-amber-500/20 text-amber-400"
-            : (isDark ? "bg-white/8 text-white/40" : "bg-slate-100 text-slate-500"))}>
-        <Shirt className="w-2.5 h-2.5" />
-        {order.requires_sample ? 'SAMPLE' : 'SIN SAMPLE'}
-      </span>
-    );
-  };
-
   const handleUpdateStatus = async () => {
     if (!statusEditOrder || !newStatus || newStatus === (statusEditOrder.production_status || statusEditOrder.status)) {
       setStatusEditOrder(null);
@@ -1370,12 +1350,7 @@ export default function QCDashboard() {
                     <tbody className="divide-y divide-white/5">
                       {globalResults.map(order => (
                         <tr key={order.order_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
-                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
-                            <div className="flex flex-col gap-1">
-                              <span>{order.order_number || '—'}</span>
-                              <SampleBadge order={order} />
-                            </div>
-                          </td>
+                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
                           <td className="px-4 py-3">
                             <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>
@@ -1544,12 +1519,7 @@ export default function QCDashboard() {
                           <td className="px-3 py-3">
                             <Lock className={cn("w-3.5 h-3.5", isDark ? "text-yellow-400/70" : "text-yellow-500/80")} title="Orden bloqueada por QC" />
                           </td>
-                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>
-                            <div className="flex flex-col gap-1">
-                              <span>{order.order_number || '—'}</span>
-                              <SampleBadge order={order} />
-                            </div>
-                          </td>
+                          <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
                            <td className="px-4 py-3">
                             <span className={cn("px-2 py-0.5 rounded text-[11px] font-semibold", isDark ? "bg-white/8 text-white/60" : "bg-slate-100 text-slate-600")}>

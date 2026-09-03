@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -1215,19 +1215,6 @@ const Dashboard = () => {
               <Truck className="w-2.5 h-2.5" />
             </span>
 
-            {/* SAMPLE — camisita: se enciende cuando la orden REQUIERE ejemplo,
-                leído de la línea SAMPLES del invoice de Printavo. Apagada = N/A
-                o sin dato. Solo indicador (no editable): el dato viene de Printavo. */}
-            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.requires_sample
-              ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
-              }`} title={order.requires_sample
-                ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample')
-                : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')}
-              data-testid={`order-sample-badge-${order.order_id}`}>
-              <Shirt className="w-2.5 h-2.5" />
-            </span>
-
             {/* ENVÍO programado — reloj + fecha (dd/mm). Se enciende cuando la
                 orden está programada en el módulo de Envíos (scheduled_shipments). */}
             {order.order_number && shipMap[order.order_number] !== undefined && (() => {
@@ -1410,10 +1397,6 @@ const Dashboard = () => {
           <div className="flex items-center gap-1.5 mb-3 flex-wrap">
             <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border tracking-wider ${order.art_sep_status ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-secondary/40 text-muted-foreground/40 border-transparent'}`}>SEP</span>
             <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border tracking-wider ${order.art_neck_status ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-secondary/40 text-muted-foreground/40 border-transparent'}`}>NECK</span>
-            <span className={`px-1.5 py-0.5 rounded-md border inline-flex items-center ${order.requires_sample ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-secondary/40 text-muted-foreground/40 border-transparent'}`}
-              title={order.requires_sample ? (order.sample_spec ? `Requiere sample: ${order.sample_spec}` : 'Requiere sample') : (order.requires_sample === false ? 'Sin sample (N/A)' : 'Sample: sin dato')}>
-              <Shirt className="w-2.5 h-2.5" />
-            </span>
             {order.scheduled_day && (
               <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20 uppercase tracking-wider">{order.scheduled_day}</span>
             )}
