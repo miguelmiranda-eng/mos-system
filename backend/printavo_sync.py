@@ -249,35 +249,54 @@ def _real_line_items(invoice: dict) -> list:
     return real
 
 
-# La orden de Printavo trae una línea DEDICADA "SAMPLES" cuyo texto dice si el
-# trabajo lleva ejemplos: "N/A" (o vacío) = NO lleva; cualquier otra cosa = sí,
-# y ese texto es el spec del sample. _real_line_items la descarta (no es prenda,
-# qty 0), así que la leemos aquí. OJO: solo cuenta la línea cuyo ENCABEZADO es
-# exactamente "SAMPLES"; menciones sueltas como "APPROVED SAMPLE" en la nota de
-# aprobación o "ECOM SAMPLE" en un desglose NO son el requerimiento y darían
-# falsos positivos.
+# Cómo trae Printavo el requerimiento de sample — hay DOS formatos según cómo se
+# capturó la cotización:
+#   Formato A: una línea DEDICADA cuyo encabezado es "SAMPLES" y abajo dice el
+#              estado: "N/A"/vacío = NO lleva; cualquier otra cosa = sí (+ spec).
+#              Es la señal LIMPIA (da sí y no).
+#   Formato B: sin línea SAMPLES; el sample viene EMBEBIDO, p.ej.
+#              "TOPS NEEDED ... ECOM SAMPLE ...". Solo da POSITIVOS.
+# _real_line_items descarta ambas (no son prenda), así que se leen aquí.
 _SAMPLE_NEGATIVE = {"", "N/A", "NA", "N.A", "NONE", "NO", "0", "-", "--", "X"}
+# Se excluye el boilerplate de aprobación que sale en CASI TODAS las órdenes
+# ("Please follow APPROVED SAMPLE and send picture for REFERENCE") — mencionar
+# "SAMPLE" ahí NO significa que el trabajo lleve ejemplos.
+_SAMPLE_EMBED_EXCLUDE = ("APPROV", "REFERENCE", "FOLLOW")
+_SAMPLE_HEADERS = {"SAMPLES", "SAMPLE"}
 
 
 def _detect_sample_requirement(invoice: dict) -> dict:
-    """Lee la línea SAMPLES del invoice.
+    """Determina si la orden requiere sample leyendo el invoice de Printavo.
 
-    Devuelve {"requires_sample": bool, "sample_spec": str} cuando la línea
-    existe, o {} cuando el invoice no trae línea SAMPLES (indeterminado).
+    Devuelve {"requires_sample": bool, "sample_spec": str} cuando hay señal, o
+    {} cuando el invoice no dice nada del sample (indeterminado).
+
+    Prioridad: la línea DEDICADA "SAMPLES" (formato A) gana sobre todo — es la
+    única que puede afirmar "NO lleva" (N/A). Si no existe, se busca el sample
+    EMBEBIDO (formato B), que solo puede afirmar "sí lleva".
     """
+    embedded = None
     for li in _flatten_line_items(invoice):
         desc = str(li.get("description") or "")
         lines = [ln.strip() for ln in desc.replace("\r", "\n").split("\n")]
         lines = [ln for ln in lines if ln]          # quita líneas en blanco
         if not lines:
             continue
-        if lines[0].upper().rstrip(":").strip() != "SAMPLES":
-            continue
-        rest = lines[1:]
-        spec = " ".join(rest).strip()
-        norm = spec.upper().strip().rstrip(".").rstrip("/")
-        requires = bool(rest) and norm not in _SAMPLE_NEGATIVE
-        return {"requires_sample": requires, "sample_spec": spec if requires else ""}
+        # Formato A — línea dedicada SAMPLES / SAMPLE.
+        if lines[0].upper().rstrip(":").strip() in _SAMPLE_HEADERS:
+            rest = lines[1:]
+            spec = " ".join(rest).strip()
+            norm = spec.upper().strip().rstrip(".").rstrip("/")
+            requires = bool(rest) and norm not in _SAMPLE_NEGATIVE
+            return {"requires_sample": requires, "sample_spec": spec if requires else ""}
+        # Formato B — sample embebido (solo positivos, sin el boilerplate de
+        # aprobación). Se recuerda el primero por si no aparece un formato A.
+        if embedded is None:
+            full = " ".join(lines).upper()
+            if "SAMPLE" in full and not any(x in full for x in _SAMPLE_EMBED_EXCLUDE):
+                embedded = " ".join(lines).strip()
+    if embedded is not None:
+        return {"requires_sample": True, "sample_spec": embedded[:200]}
     return {}
 
 

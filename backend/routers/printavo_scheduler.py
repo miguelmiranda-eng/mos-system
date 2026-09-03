@@ -158,18 +158,25 @@ async def _tick():
         logger.error(f"[printavo-sync] tick error: {e}")
 
 
+# Súbelo cada vez que MEJORE la lógica de detección de sample: el one-shot vuelve
+# a correr (sobre las órdenes aún sin marca) hasta que la versión guardada iguale
+# esta. v2 = agrega el formato B embebido ("TOPS NEEDED ... SAMPLE").
+SAMPLE_BACKFILL_VERSION = 2
+
+
 async def _backfill_samples_once():
     """One-shot: rellena requires_sample/sample_spec en las órdenes de Printavo
-    YA importadas, releyendo la línea SAMPLES de cada invoice. Corre UNA sola vez
-    (bandera en printavo_sync) unos segundos después del arranque, del lado del
-    servidor donde SÍ hay credenciales de Printavo y Mongo local.
+    YA importadas, releyendo la línea SAMPLES de cada invoice. Corre del lado del
+    servidor (donde hay credenciales de Printavo y Mongo local) unos segundos tras
+    el arranque, y SOLO cuando la versión de detección guardada es menor que la
+    actual — así una mejora de la detección se re-aplica sola al desplegar.
 
-    Idempotente y reanudable: la bandera solo se marca tras una corrida completa;
-    si Printavo aún no está configurado, o si truena a medias, NO se marca y el
+    Idempotente y reanudable: la versión solo se guarda tras una corrida completa;
+    si Printavo aún no está configurado, o si truena a medias, NO se guarda y el
     siguiente arranque lo reintenta (only_missing retoma lo que falte)."""
     try:
         cfg = await db.printavo_sync.find_one({"config_id": CONFIG_ID}, {"_id": 0}) or {}
-        if cfg.get("sample_backfill_done"):
+        if int(cfg.get("sample_backfill_version") or 0) >= SAMPLE_BACKFILL_VERSION:
             return
         if not printavo_client.is_configured():
             logger.info("[printavo-sync] backfill samples pospuesto: Printavo sin credenciales")
@@ -180,13 +187,15 @@ async def _backfill_samples_once():
             res = await backfill_sample_flags(limit=3000, only_missing=True)
         await db.printavo_sync.update_one(
             {"config_id": CONFIG_ID},
-            {"$set": {"sample_backfill_done": True,
+            {"$set": {"sample_backfill_version": SAMPLE_BACKFILL_VERSION,
+                      "sample_backfill_done": True,
                       "sample_backfill_at": datetime.now(timezone.utc).isoformat(),
                       "sample_backfill_result": res}},
             upsert=True,
         )
-        logger.info(f"[printavo-sync] backfill samples one-shot: {res.get('updated')} marcadas de "
-                    f"{res.get('scanned')} (sin_linea={res.get('no_sample_line')}, errores={res.get('errors')})")
+        logger.info(f"[printavo-sync] backfill samples one-shot v{SAMPLE_BACKFILL_VERSION}: "
+                    f"{res.get('updated')} marcadas de {res.get('scanned')} "
+                    f"(sin_señal={res.get('no_sample_line')}, errores={res.get('errors')})")
     except Exception as e:
         logger.error(f"[printavo-sync] backfill samples one-shot error: {e}")
 
