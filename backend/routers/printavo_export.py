@@ -26,10 +26,11 @@ async def parse_po(request: Request, file: UploadFile = File(...)):
     try:
         records = parse_pdf(data)                         # Goodie text-based (Spencers/Tractor)
         if not records:
-            # Image-based PO (Culture Kings/Spektrum) -> Gemini vision.
-            from printavo_export import extract_spektrum
-            records = await extract_spektrum(data)
-            engine = "gemini"
+            # Culture Kings/Spektrum con capa de texto -> parser DETERMINISTA (sin IA).
+            from printavo_export import parse_culturekings_pdf
+            records = parse_culturekings_pdf(data)
+            if records:
+                engine = "text-ck"
     except Exception as e:
         logger.error(f"[printavo-export] parse error: {e}")
         raise HTTPException(500, f"No se pudo leer el PDF: {e}")

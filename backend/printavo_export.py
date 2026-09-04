@@ -12,8 +12,6 @@ Currently supports the Goodie Two Sleeves format; add more retailers by writing
 another _parse_<retailer> and registering it in detect_and_parse().
 """
 import io
-import os
-import json
 import re
 from datetime import date
 import pdfplumber
@@ -63,6 +61,28 @@ PACK_REFERENCES = (
     "Bag Size (if specified)\nFolding Type\nFolding Size (if specified)\n"
     "Box Type\nBox Size (if specified)"
 )
+
+# ── Culture Kings / Spektrum: boilerplate calcado al quote maestro #3182 ──────
+# Texto verbatim del #3182. Los precios de estas líneas van en 0.0 (no vienen en
+# el PO): Viviana los completa en la revisión, igual que en Goodie.
+CK_FRONT_PRINT_DEFAULT = "FRONT PRINT\nNECK LABEL\nFINISHING"   # placeholder editable
+CK_PRINTED_NECK_LABEL = "PRINTED NECK LABEL"                     # solo si el PO lo pide
+CK_APPROVAL_DEFAULT = "APPROVAL METHOD:\nPHOTO FOR APPROVAL"
+CK_SETUP_FEE = "SETUP FEE (Applies when order quantity is less than 1,500 pcs)"
+CK_BULK_PACK = "BULK PACK\nRECYCLED BOXES / CAJA RECICLADA\nINCLUDE # ON QUANTITY COLUMN"
+CK_TRANSPORT = "Transportation Charges - SHIPPING (40 dlls per pallet)"
+CK_PACKING_SPECIAL_NOTES = (
+    "SPECIAL NOTES:\n"
+    "Para empaquetar estos pedidos utilizamos cajas recicladas, las mismas cajas "
+    "en las que se enviaron originalmente las piezas en blanco.\n"
+    "- Coloca la etiqueta de la caja en el lado más corto de la caja.\n"
+    "- Coloque la etiqueta UPC junto a la etiqueta de la caja.\n"
+    "- Cada caja contiene 50 unidades.\n"
+    "- Para unidades parciales, puede combinar tamaños dentro del mismo estilo/gráfico "
+    "para completar la cantidad de la caja."
+)
+# El setup fee del #3182 aplica cuando la cantidad es menor a este umbral.
+CK_SETUP_FEE_THRESHOLD = 1500
 
 # design color [colorfull] ln wh ref cloth  description...  qty price extn
 _STYLE_RE = re.compile(
@@ -333,6 +353,11 @@ def _iso(d):
     if not d:
         return None
     d = d.strip()
+    # Ya-ISO 'YYYY-MM-DD' (el PO de Culture Kings trae la fecha así en 'Due Date').
+    # Sin este passthrough _iso devolvía None y la quote quedaba sin due date.
+    m_iso = re.match(r"(\d{4})-(\d{2})-(\d{2})\b", d)
+    if m_iso:
+        return f"{m_iso.group(1)}-{m_iso.group(2)}-{m_iso.group(3)}"
     m2 = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", d)   # M/D/YYYY (Culture Kings)
     if m2:
         y = m2.group(3)
@@ -346,36 +371,11 @@ def _iso(d):
     return f"20{m.group(3)}-{months.get(m.group(2), '01')}-{int(m.group(1)):02d}"
 
 
-# ── Spektrum / Culture Kings: image-based PO read with Claude vision ──────────
-_VISION_PROMPT = """You are reading a Culture Kings / Spektrum apparel "cut ticket" purchase order (mostly images).
-Return ONLY valid JSON (no markdown fences) with exactly these keys:
-{"retailer": string, "range_name": string, "po_number": string, "name": string,
- "color": string, "blank": string, "units": integer, "due_date": string,
- "sizes": {"<SIZE>": integer}}
-Sizes labels are like XS, S, M, L, XL, 2XL, 3XL. Use the sizes summary line. Null for missing fields."""
-
-
-async def _gemini_key() -> str:
-    from deps import db
-    from cryptography.fernet import Fernet
-    config = await db.insights_config.find_one({"config_id": "main"}, {"_id": 0})
-    if not config or not config.get("encrypted_gemini_key"):
-        raise RuntimeError("Gemini API key no configurada (modulo Insights).")
-    enc = os.environ.get("MOS_ENCRYPTION_KEY")
-    return Fernet(enc.encode()).decrypt(config["encrypted_gemini_key"].encode()).decode()
-
-
-def _json_from_text(txt: str):
-    t = (txt or "").strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\n?", "", t).rstrip("`").strip()
-    try:
-        return json.loads(t)
-    except Exception:
-        m = re.search(r"\{.*\}", t, re.S)
-        return json.loads(m.group(0)) if m else None
-
-
+# ── Spektrum / Culture Kings: mapeo del record ───────────────────────────────
+# El PO de Culture Kings se lee determinista de la capa de texto
+# (_parse_culturekings_text más abajo). _spektrum_record recibe ese dict —
+# mismas llaves que se documentan ahí — y arma el record que consume
+# build_quote_input.
 def _spektrum_record(data: dict) -> dict:
     sizes, pack_lines, total = {}, [], 0
     for sz, q in (data.get("sizes") or {}).items():
@@ -407,35 +407,119 @@ def _spektrum_record(data: dict) -> dict:
         "qty": units, "qty_from_sizes": total, "unit_price": 0.0,
         "cancel_date": data.get("due_date"), "ship_date": data.get("due_date"), "issue_date": None,
         "sizes_match": units == total, "po_discrepancy": False,
+        # Molde #3182: pasos de empaque (1 line item c/u) y etiqueta de cuello.
+        "packing_instructions": data.get("packing_instructions") or [],
+        "neck_print": (data.get("neck_print") or "").strip(),
     }
 
 
-async def extract_spektrum(pdf_bytes: bytes) -> list:
-    """Extract an image-based Culture Kings/Spektrum PO via Claude vision (one page = one style)."""
-    import base64
-    from claude_client import get_client, json_from_text, text_of, VISION_MODEL
-    client = await get_client()
-    # Render each page to PNG bytes for Claude's image input.
-    pngs = []
+# ── Culture Kings / Spektrum: lectura DETERMINISTA de la capa de texto ────────
+# El PO de Culture Kings viene como un formulario con capa de texto (campos
+# etiquetados 'Name:', 'Color:', 'Blank:', 'Units:', 'RANGE NAME:', 'PO #:', y
+# una línea de tallas 'XS: 5, S: 35, ... Total: N'). No hace falta visión: se
+# parsea igual que el motor de Goodie (parse_pdf) y se arma el MISMO record que
+# devuelve _spektrum_record, así build_quote_input no cambia.
+# Etiquetas ancladas a inicio de línea: 'Name:' NO debe matchear dentro de
+# 'RANGE NAME:', por eso ^ (re.M) en vez de \b.
+_CK_LABEL_RES = {
+    "range_name": re.compile(r"^\s*RANGE NAME:\s*(.+)", re.I | re.M),
+    "name":       re.compile(r"^\s*Name:\s*(.+)", re.I | re.M),
+    "color":      re.compile(r"^\s*Color:\s*(.+)", re.I | re.M),
+    "blank":      re.compile(r"^\s*Blank:\s*(.+)", re.I | re.M),
+}
+_CK_UNITS_RE = re.compile(r"^\s*Units:\s*(\d+)", re.I | re.M)
+_CK_DUE_RE = re.compile(r"Due Date\s+(\d{4}-\d{2}-\d{2})", re.I)
+# El número de PO cae en la línea ANTERIOR a la etiqueta ('4004681\nPO #:'); se
+# intenta primero número-antes-de-etiqueta y luego el orden natural.
+_CK_PO_BEFORE_RE = re.compile(r"(\d{4,})\s*\n\s*PO\s*#\s*:", re.I)
+_CK_PO_AFTER_RE = re.compile(r"PO\s*#\s*:\s*(\d+)", re.I)
+# Tallas 'TOK: n'. El \b inicial impide partir 'Total' en 'otal' (el {1,4} sin
+# ancla capturaba los últimos 4 chars de una palabra larga).
+_CK_SIZE_LINE_RE = re.compile(r"\b([A-Za-z0-9]{1,4})\s*:\s*(\d+)")
+
+
+def _ck_first(rx, text):
+    m = rx.search(text)
+    return m.group(1).strip() if m else ""
+
+
+def _parse_culturekings_text(text: str) -> dict:
+    """Parse one Culture Kings/Spektrum PO page's text into the SAME dict shape
+    that extract_spektrum's vision returns (retailer/range_name/po_number/name/
+    color/blank/units/due_date/sizes), or None if the page isn't a CK PO."""
+    if not text:
+        return None
+    name = _ck_first(_CK_LABEL_RES["name"], text)
+    # Línea de tallas: la que trae varios 'TOK: n' (la del desglose), no la de un
+    # solo campo. Se toma la primera línea con 2+ pares.
+    sizes = {}
+    for ln in text.splitlines():
+        pairs = _CK_SIZE_LINE_RE.findall(ln)
+        pairs = [(t, n) for t, n in pairs if t.upper() != "TOTAL"]
+        if len(pairs) >= 2:
+            for tok, n in pairs:
+                sizes[tok.upper()] = sizes.get(tok.upper(), 0) + int(n)
+            break
+    # Firma de un PO de Culture Kings: nombre + desglose de tallas presentes.
+    if not name or not sizes:
+        return None
+
+    po = ""
+    mb = _CK_PO_BEFORE_RE.search(text)
+    if mb:
+        po = mb.group(1)
+    else:
+        ma = _CK_PO_AFTER_RE.search(text)
+        po = ma.group(1) if ma else ""
+
+    up = text.upper()
+    retailer = "CULTURE KINGS" if "CULTURE KINGS" in up else ("SPEKTRUM" if "SPEKTRUM" in up else "")
+    units = _ck_first(_CK_UNITS_RE, text)
+    return {
+        "retailer": retailer or None,
+        "range_name": _ck_first(_CK_LABEL_RES["range_name"], text) or None,
+        "po_number": po or None,
+        "name": name,
+        "color": _ck_first(_CK_LABEL_RES["color"], text) or None,
+        "blank": _ck_first(_CK_LABEL_RES["blank"], text) or None,
+        "units": int(units) if units else None,
+        "due_date": _ck_first(_CK_DUE_RE, text) or None,
+        "sizes": sizes,
+        # Pasos de empaque y etiqueta de cuello: el molde #3182 los baja del PO.
+        "packing_instructions": _ck_packing_instructions(text),
+        "neck_print": _ck_first(_CK_NECK_RE, text),
+    }
+
+
+# PACKAGING INSTRUCTIONS: bloque de pasos numerados ('1)... 2)...'); en el quote
+# #3182 cada paso es su propio line item en el PACKING DEPARTMENT.
+_CK_PACK_INSTR_RE = re.compile(
+    r"PACKAGING INSTRUCTIONS\s*(.+?)(?=\n\s*AGREGAR\b|\n\s*Name:|\Z)", re.I | re.S)
+# 'AGREGAR WOVEN LABEL NECK PRINT' seguido de su valor (No/Yes/Sí) en la línea sig.
+_CK_NECK_RE = re.compile(r"AGREGAR WOVEN LABEL NECK PRINT\s*\n?\s*(\S+)", re.I)
+
+
+def _ck_packing_instructions(text: str) -> list:
+    """Lista de pasos de empaque del PO (uno por número), desenvolviendo los
+    saltos de línea con los que el PDF parte cada oración."""
+    m = _CK_PACK_INSTR_RE.search(text or "")
+    if not m:
+        return []
+    block = re.sub(r"\s+", " ", m.group(1)).strip()
+    parts = re.split(r"(?=\b\d+\s*\))", block)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def parse_culturekings_pdf(pdf_bytes: bytes) -> list:
+    """Parse a Culture Kings/Spektrum PO PDF (text layer) into one record per
+    page/style, mirroring parse_pdf for the Goodie formats. Deterministic — no AI."""
+    out = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for p in pdf.pages:
-            buf = io.BytesIO()
-            p.to_image(resolution=150).original.save(buf, format="PNG")
-            pngs.append(buf.getvalue())
-    records = []
-    for png in pngs:
-        b64 = base64.standard_b64encode(png).decode("utf-8")
-        msg = await client.messages.create(
-            model=VISION_MODEL, max_tokens=1024,
-            messages=[{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
-                {"type": "text", "text": _VISION_PROMPT},
-            ]}],
-        )
-        data = json_from_text(text_of(msg))
-        if data and data.get("po_number"):
-            records.append(_spektrum_record(data))
-    return records
+        for page in pdf.pages:
+            data = _parse_culturekings_text(page.extract_text() or "")
+            if data and data.get("po_number"):
+                out.append(_spektrum_record(data))
+    return out
 
 
 def _garment_description(r):
@@ -543,22 +627,53 @@ def _tractor_groups(r, sizes_input, category_id=None):
     return [g1, g2, g3]
 
 
+def _ck_neck_requested(r) -> bool:
+    """True cuando el PO pide etiqueta de cuello impresa ('AGREGAR WOVEN LABEL
+    NECK PRINT: Yes/Sí'). 'No'/vacío -> no se agrega la línea PRINTED NECK LABEL."""
+    return str(r.get("neck_print", "")).strip().lower() in ("yes", "si", "sí", "y", "true")
+
+
 def _spektrum_groups(r, sizes_input, category_id=None):
-    """First-pass CULTURE KINGS / SPEKTRUM template (2 groups). No reference quote
-    yet — meant to be reviewed and perfected, then aligned like the others."""
-    size_lines = "\n".join(r["pack_lines"])
-    garment = "\n".join(p for p in [r["description"], r["color"], r["blank"], size_lines] if p)
+    """Plantilla CULTURE KINGS / SPEKTRUM calcada al quote maestro #3182.
+
+    El motor RELLENA del PO: la prenda (color/tallas/nombre/blank), los pasos de
+    PACKAGING INSTRUCTIONS (un line item por paso) y la etiqueta de cuello si el
+    PO la pide. Todo lo demás es boilerplate verbatim del #3182. Los PRECIOS van
+    en 0.0 a propósito — no vienen en el PO; Viviana los completa en la revisión,
+    igual que en Goodie. El garment lleva el desglose de tallas como texto con
+    formato ':' ('XS: 5') para reproducir el #3182."""
+    # Desglose de tallas como texto (formato ':' del #3182), preservando la
+    # etiqueta original del PO ('2XL', no '2X').
+    size_lines = "\n".join(pl.replace(" - ", ": ") for pl in r["pack_lines"])
+    garment = "\n".join(p for p in [r["description"], r["blank"]] if p)
+    if size_lines:
+        garment += "\n" + size_lines
+
     g1 = [
         _li(PRODUCTION_DEPT),
-        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"], category_id=category_id),
-        _li(SPECIAL_NOTES_HEADER),
+        # La prenda NO lleva categoría (en el #3182 el garment va sin Screen Printing).
+        _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
+        _li(SAMPLES_DEFAULT),
+        _li(CK_FRONT_PRINT_DEFAULT, category_id=category_id),
     ]
-    g2 = [
-        _li(PACKING_DEPT),
-        _li("\n" + PACK_REFERENCES),
-        _li(NEW_BOXES, price=2.50),
-        _li(SPECIAL_NOTES_HEADER),
-    ]
+    if _ck_neck_requested(r):
+        g1.append(_li(CK_PRINTED_NECK_LABEL, category_id=category_id))
+    g1.append(_li(CK_APPROVAL_DEFAULT))
+    g1.append(_li(ALLOWED_SHORTAGE_DEFAULT))
+    try:
+        units = int(r.get("qty") or 0)
+    except (TypeError, ValueError):
+        units = 0
+    if 0 < units < CK_SETUP_FEE_THRESHOLD:
+        g1.append(_li(CK_SETUP_FEE))
+
+    g2 = [_li(PACKING_DEPT)]
+    # Un line item por paso de empaque del PO (el #3182 los trae así, 1/1/1).
+    for step in (r.get("packing_instructions") or []):
+        g2.append(_li(step))
+    g2.append(_li(CK_BULK_PACK))
+    g2.append(_li(CK_TRANSPORT))
+    g2.append(_li(CK_PACKING_SPECIAL_NOTES))
     return [g1, g2]
 
 
@@ -593,7 +708,9 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         # Matches the corrected quote #2127 header: "TRACTOR SUPPLY PO#21649 - AER0154J1358 - N/A"
         nickname = f"{brand} PO#{r['po_number']} - {r['design_num']} - {r['store_po'] or 'N/A'}"
     elif is_spektrum:
-        nickname = f"{brand} PO#{r['po_number']} - {r.get('range_name') or ''} - {r['description']}".replace(" -  - ", " - ")
+        # Calcado al #3182: "CULTURE KINGS - PO#4004615 - DOOM VERSUS AVENGERS TEE - NEW".
+        # El status ('NEW'/'REORDER') lo agrega Viviana en la revisión (el PO no lo trae).
+        nickname = f"{brand} - PO#{r['po_number']} - {r['description']}"
     else:
         # Nickname alineado con master invoice #2406: "PO#21767" (sin espacio).
         nickname = f"{brand} PO#{r['po_number']} - {r['store_po']} - {r['design_num']}"
