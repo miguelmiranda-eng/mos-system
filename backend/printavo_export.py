@@ -66,7 +66,7 @@ PACK_REFERENCES = (
 # Texto verbatim del #3182. Los precios de estas líneas van en 0.0 (no vienen en
 # el PO): Viviana los completa en la revisión, igual que en Goodie.
 CK_FRONT_PRINT_DEFAULT = "FRONT PRINT\nNECK LABEL\nFINISHING"   # placeholder editable
-CK_PRINTED_NECK_LABEL = "PRINTED NECK LABEL"                     # solo si el PO lo pide
+CK_PRINTED_NECK_LABEL = "PRINTED NECK LABEL"                     # línea estándar (siempre)
 CK_APPROVAL_DEFAULT = "APPROVAL METHOD:\nPHOTO FOR APPROVAL"
 CK_SETUP_FEE = "SETUP FEE (Applies when order quantity is less than 1,500 pcs)"
 CK_BULK_PACK = "BULK PACK\nRECYCLED BOXES / CAJA RECICLADA\nINCLUDE # ON QUANTITY COLUMN"
@@ -407,9 +407,8 @@ def _spektrum_record(data: dict) -> dict:
         "qty": units, "qty_from_sizes": total, "unit_price": 0.0,
         "cancel_date": data.get("due_date"), "ship_date": data.get("due_date"), "issue_date": None,
         "sizes_match": units == total, "po_discrepancy": False,
-        # Molde #3182: pasos de empaque (1 line item c/u) y etiqueta de cuello.
+        # Molde #3182: pasos de empaque, un line item c/u.
         "packing_instructions": data.get("packing_instructions") or [],
-        "neck_print": (data.get("neck_print") or "").strip(),
     }
 
 
@@ -485,9 +484,8 @@ def _parse_culturekings_text(text: str) -> dict:
         "units": int(units) if units else None,
         "due_date": _ck_first(_CK_DUE_RE, text) or None,
         "sizes": sizes,
-        # Pasos de empaque y etiqueta de cuello: el molde #3182 los baja del PO.
+        # Pasos de empaque: el molde #3182 los baja del PO (un line item c/u).
         "packing_instructions": _ck_packing_instructions(text),
-        "neck_print": _ck_first(_CK_NECK_RE, text),
     }
 
 
@@ -495,8 +493,6 @@ def _parse_culturekings_text(text: str) -> dict:
 # #3182 cada paso es su propio line item en el PACKING DEPARTMENT.
 _CK_PACK_INSTR_RE = re.compile(
     r"PACKAGING INSTRUCTIONS\s*(.+?)(?=\n\s*AGREGAR\b|\n\s*Name:|\Z)", re.I | re.S)
-# 'AGREGAR WOVEN LABEL NECK PRINT' seguido de su valor (No/Yes/Sí) en la línea sig.
-_CK_NECK_RE = re.compile(r"AGREGAR WOVEN LABEL NECK PRINT\s*\n?\s*(\S+)", re.I)
 
 
 def _ck_packing_instructions(text: str) -> list:
@@ -627,12 +623,6 @@ def _tractor_groups(r, sizes_input, category_id=None):
     return [g1, g2, g3]
 
 
-def _ck_neck_requested(r) -> bool:
-    """True cuando el PO pide etiqueta de cuello impresa ('AGREGAR WOVEN LABEL
-    NECK PRINT: Yes/Sí'). 'No'/vacío -> no se agrega la línea PRINTED NECK LABEL."""
-    return str(r.get("neck_print", "")).strip().lower() in ("yes", "si", "sí", "y", "true")
-
-
 def _spektrum_groups(r, sizes_input, category_id=None):
     """Plantilla CULTURE KINGS / SPEKTRUM calcada al quote maestro #3182.
 
@@ -655,9 +645,10 @@ def _spektrum_groups(r, sizes_input, category_id=None):
         _li(garment, color=r["color"], sizes=sizes_input, price=r["unit_price"]),
         _li(SAMPLES_DEFAULT),
         _li(CK_FRONT_PRINT_DEFAULT, category_id=category_id),
+        # PRINTED NECK LABEL va SIEMPRE en Culture Kings (decisión de negocio
+        # 2026-09): es una línea estándar del quote, no depende del PO.
+        _li(CK_PRINTED_NECK_LABEL, category_id=category_id),
     ]
-    if _ck_neck_requested(r):
-        g1.append(_li(CK_PRINTED_NECK_LABEL, category_id=category_id))
     g1.append(_li(CK_APPROVAL_DEFAULT))
     g1.append(_li(ALLOWED_SHORTAGE_DEFAULT))
     try:

@@ -87,7 +87,6 @@ check("tallas crudas (excluye Total)",
       d["sizes"] == {"XS": 5, "S": 35, "M": 55, "L": 80, "XL": 70, "2XL": 45, "3XL": 15}, f"{d['sizes']}")
 check("packing_instructions = 4 pasos", len(d["packing_instructions"]) == 4, f"{d['packing_instructions']}")
 check("primer paso empieza en '1)'", d["packing_instructions"][0].startswith("1)"), f"{d['packing_instructions'][0]!r}")
-check("neck_print = No", d["neck_print"] == "No", f"{d['neck_print']!r}")
 
 print("\n2) _spektrum_record: mapea tallas y marca la discrepancia del PO")
 r = _spektrum_record(d)
@@ -126,10 +125,11 @@ check("G1[0] PRODUCTION DEPARTMENT", g1[0].startswith("PRODUCTION DEPARTMENT"))
 check("G1 tiene SAMPLES N/A", "SAMPLES\nN/A" in g1)
 check("G1 tiene FRONT PRINT con Screen Printing",
       any(desc.startswith("FRONT PRINT") and it.get("category") for desc, it in zip(g1, g1items)))
+check("G1 tiene PRINTED NECK LABEL con Screen Printing (línea estándar, siempre)",
+      any(desc == "PRINTED NECK LABEL" and it.get("category") for desc, it in zip(g1, g1items)), f"{g1}")
 check("G1 tiene APPROVAL METHOD PHOTO FOR APPROVAL", "APPROVAL METHOD:\nPHOTO FOR APPROVAL" in g1)
 check("G1 tiene ALLOWED SHORTAGE 0%", any(x.startswith("ALLOWED SHORTAGE") for x in g1))
 check("G1 tiene SETUP FEE (301 < 1500)", any(x.startswith("SETUP FEE") for x in g1))
-check("G1 SIN PRINTED NECK LABEL (el PO dice No)", "PRINTED NECK LABEL" not in g1)
 check("G2[0] PACKING DEPARTMENT", g2[0].startswith("PACKING DEPARTMENT"))
 check("G2 trae los 4 pasos de empaque del PO",
       sum(1 for x in g2 if re.match(r"^\d+\)", x)) == 4, f"{g2}")
@@ -140,16 +140,14 @@ check("G2 termina en SPECIAL NOTES (cajas recicladas)",
 check("todos los precios en 0.0 (los pone Viviana en la revisión)",
       all(it["price"] == 0.0 for grp in groups for it in grp["lineItems"]))
 
-print("\n3c) condicionales: etiqueta de cuello y setup fee")
-r_yes = _spektrum_record(dict(d, neck_print="Yes"))
-g1_yes = [it["description"] for it in build_quote_input(r_yes, "CID", category_id="CAT")["lineItemGroups"][0]["lineItems"]]
-check("neck_print=Yes -> PRINTED NECK LABEL presente", "PRINTED NECK LABEL" in g1_yes, f"{g1_yes}")
+print("\n3c) condicional del setup fee por cantidad")
 big = {"retailer": "CULTURE KINGS", "po_number": "9", "name": "BIG TEE", "color": "Black",
        "blank": "CK BLANK", "units": 1500, "due_date": "2026-10-01",
-       "sizes": {"M": 1500}, "packing_instructions": ["1)Doblar"], "neck_print": "No"}
+       "sizes": {"M": 1500}, "packing_instructions": ["1)Doblar"]}
 r_big = _spektrum_record(big)
 g1_big = [it["description"] for it in build_quote_input(r_big, "CID", category_id="CAT")["lineItemGroups"][0]["lineItems"]]
 check("units>=1500 -> sin SETUP FEE", not any(x.startswith("SETUP FEE") for x in g1_big), f"{g1_big}")
+check("PRINTED NECK LABEL igual presente con qty grande", "PRINTED NECK LABEL" in g1_big, f"{g1_big}")
 
 print("\n4) _iso: ISO passthrough sin romper los formatos de Goodie")
 check("2026-09-30 -> 2026-09-30", _iso("2026-09-30") == "2026-09-30", f"{_iso('2026-09-30')!r}")
