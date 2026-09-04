@@ -4,6 +4,7 @@ import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLef
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, deleter, logLoadError } from "./lib";
 import { Btn, cls, EmptyState, ModuleToolbar } from "./ui";
+import { adminLevelOf } from "./modules";
 
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
@@ -15,11 +16,11 @@ const SYSTEM_TRANSIT_NAMES = new Set([
 export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
   // Managing a location's contents — empty it, delete a line/box, HOLD/SAT —
-  // requires admin level 2+ (supersu counts as the max level). Mirrors the
-  // backend require_admin_level(2) on those endpoints.
-  const adminLevel = currentUser?.role === 'supersu'
-    ? 5
-    : (currentUser?.role === 'admin' ? (parseInt(currentUser?.admin_level, 10) || 1) : 0);
+  // requires admin level 2+. Se usa el MISMO cálculo canónico que el menú
+  // (adminLevelOf: supersu=5, admin=su nivel, ceo=3, inventory≥3=3), así que el
+  // botón se muestra a cualquier usuario que el backend ya autoriza con
+  // require_admin_level(2) — no solo a supersu/admin.
+  const adminLevel = adminLevelOf(currentUser);
   const canManageLocations = adminLevel >= 2;
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
