@@ -26,50 +26,52 @@ const ACCENTS = {
   quality:    { chip: 'bg-emerald-50 text-emerald-600', bar: 'bg-emerald-500' },
 };
 
+// Tabla a nivel de módulo: no puede usar hooks, así que guarda CLAVES del
+// diccionario (titleKey/nameKey/descKey) y el componente las traduce al render.
 const SECTIONS_DEFS = [
   {
     id: 'inventory',
-    title: 'Gestión de Inventario',
+    titleKey: 'home_sec_inventory',
     items: [
-      { name: 'WMS Central', path: '/wms', desc: 'Gestión completa de almacén y ubicaciones.', icon: 'Warehouse' },
+      { nameKey: 'home_wms', path: '/wms', descKey: 'home_wms_desc', icon: 'Warehouse' },
     ]
   },
   {
     id: 'production',
-    title: 'Producción & Muestras',
+    titleKey: 'home_sec_production',
     items: [
-      { name: 'Calendario de Ejemplos', path: '/samples', desc: 'Programa muestras por día con recursos y operadores.', icon: 'Beaker' },
-      { name: 'Depto. de Pinturas', path: '/paint', desc: 'Calendarización de mezcla de tinta.', icon: 'Brush' },
-      { name: 'Calculadora de Blocker', path: '/blocker-tool', desc: 'Proyecta consumo por impresiones y cobertura del backlog.', icon: 'Droplets' },
-      { name: 'Módulo de Final Bill', path: '/final-bill', desc: 'Órdenes listas para envío e inventario, y su revisión.', icon: 'ClipboardList' },
-      { name: 'Seguimiento de Órdenes', path: '/order-components', desc: 'Todas las órdenes abiertas y en qué parte del proceso van.', icon: 'Boxes' },
+      { nameKey: 'home_samples', path: '/samples', descKey: 'home_samples_desc', icon: 'Beaker' },
+      { nameKey: 'home_paint', path: '/paint', descKey: 'home_paint_desc', icon: 'Brush' },
+      { nameKey: 'home_blocker', path: '/blocker-tool', descKey: 'home_blocker_desc', icon: 'Droplets' },
+      { nameKey: 'home_final_bill', path: '/final-bill', descKey: 'home_final_bill_desc', icon: 'ClipboardList' },
+      { nameKey: 'home_order_tracking', path: '/order-components', descKey: 'home_order_tracking_desc', icon: 'Boxes' },
     ]
   },
   {
     id: 'config',
-    title: 'Configuraciones & Logs',
+    titleKey: 'home_sec_config',
     items: [
-      { name: 'Activity Log', path: '/activity-log', desc: 'Historial detallado de cambios y acciones.', icon: 'History' },
-      { name: 'Automatizaciones', path: '/automation-center', desc: 'Configuración de reglas inteligentes.', icon: 'Zap' },
-      { name: 'Usuarios', path: '/users', desc: 'Gestión de permisos y accesos del equipo.', icon: 'Users' },
-      { name: 'Centro de Respaldos', path: '/backups', desc: 'Descarga reportes PDF o respaldos JSON.', icon: 'ShieldCheck' },
-      { name: 'Gestor Formulario', action: 'manageFormFields', desc: 'Configura campos del modal.', icon: 'ClipboardList' },
-      { name: 'Columnas Globales', action: 'manageColumns', desc: 'Configura visibilidad global.', icon: 'Columns', roles: ['supersu'] },
+      { nameKey: 'home_activity_log', path: '/activity-log', descKey: 'home_activity_log_desc', icon: 'History' },
+      { nameKey: 'home_automations', path: '/automation-center', descKey: 'home_automations_desc', icon: 'Zap' },
+      { nameKey: 'home_users', path: '/users', descKey: 'home_users_desc', icon: 'Users' },
+      { nameKey: 'home_backups', path: '/backups', descKey: 'home_backups_desc', icon: 'ShieldCheck' },
+      { nameKey: 'home_form_manager', action: 'manageFormFields', descKey: 'home_form_manager_desc', icon: 'ClipboardList' },
+      { nameKey: 'home_global_columns', action: 'manageColumns', descKey: 'home_global_columns_desc', icon: 'Columns', roles: ['supersu'] },
     ]
   },
   {
     id: 'catalogs',
-    title: 'Catálogos del Sistema',
+    titleKey: 'home_sec_catalogs',
     items: [
-      { name: 'Operadores', path: '/operators-center', desc: 'Gestión de operadores para producción.', icon: 'UserSquare' },
-      { name: 'Mos-atlas', path: '/ceo-dashboard', desc: 'Seguimiento de órdenes y facturación.', icon: 'TrendingUp', roles: ['admin'] },
+      { nameKey: 'home_operators', path: '/operators-center', descKey: 'home_operators_desc', icon: 'UserSquare' },
+      { nameKey: 'home_atlas', path: '/ceo-dashboard', descKey: 'home_atlas_desc', icon: 'TrendingUp', roles: ['admin'] },
     ]
   },
   {
     id: 'quality',
-    title: 'Calidad (QC)',
+    titleKey: 'home_sec_quality',
     items: [
-      { name: 'Puntos de Inspección QC', path: '/qc-settings', desc: 'Checklist de auditoría: foto, sí/no, pass/fail, lista.', icon: 'ShieldCheck' },
+      { nameKey: 'home_qc_points', path: '/qc-settings', descKey: 'home_qc_points_desc', icon: 'ShieldCheck' },
     ]
   }
 ];
@@ -88,9 +90,12 @@ const HomeDashboard = () => {
     else if (item.path) navigate(item.path);
   };
 
+  // Traduce la tabla al idioma activo ANTES de filtrar, para que el buscador
+  // encuentre por el texto que el usuario ve (no por la clave ni por el español).
   const filteredSections = SECTIONS_DEFS.map(s => ({
     ...s,
-    items: s.items.filter(item => {
+    title: t(s.titleKey),
+    items: s.items.map(item => ({ ...item, name: t(item.nameKey), desc: t(item.descKey) })).filter(item => {
       const hasRole = !item.roles || item.roles.includes(user?.role) || user?.role === 'supersu';
       const matchesSearch = !search ||
         item.name.toLowerCase().includes(search.toLowerCase()) ||
