@@ -157,7 +157,7 @@ export default function ScheduledReports() {
           <button
             onClick={() => navigate("/home")}
             className="w-10 h-10 flex flex-shrink-0 items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5 transition-all text-muted-foreground hover:text-foreground hover:shadow-lg hover:-translate-x-0.5"
-            title="Volver a MOS Home"
+            title={t('admin_back_mos_home')}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>

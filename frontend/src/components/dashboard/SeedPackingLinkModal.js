@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
+import { useLang } from "../../contexts/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +15,7 @@ import { Link2, Loader2, Check, AlertCircle, CircleSlash } from "lucide-react";
 // packing), una etiqueta y el enlace; la herramienta los busca por order_number y
 // agrega el comentario con el link clickeable. Idempotente en el backend.
 export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
+  const { t } = useLang();
   const [numbersText, setNumbersText] = useState("");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
@@ -39,8 +41,8 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
   const close = () => { if (!loading) { reset(); onClose(); } };
 
   const seed = async () => {
-    if (!url.trim()) { toast.error("Pega el enlace del packing"); return; }
-    if (numbers.length === 0) { toast.error("Pega los números de orden (columna A)"); return; }
+    if (!url.trim()) { toast.error(t('ship_seed_paste_link')); return; }
+    if (numbers.length === 0) { toast.error(t('ship_seed_paste_numbers')); return; }
     setLoading(true); setResult(null);
     try {
       const res = await fetch(`${API}/orders/seed-packing-link`, {
@@ -51,14 +53,14 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo sembrar el enlace");
+        toast.error(err.detail || t('ship_seed_err'));
         return;
       }
       const data = await res.json();
       setResult(data);
-      toast.success(`Enlace sembrado en ${data.seeded_count} orden(es)`);
+      toast.success(t('ship_seed_ok', { n: data.seeded_count }));
       if (onSeeded) onSeeded();
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setLoading(false); }
   };
 
@@ -67,14 +69,14 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Link2 className="w-5 h-5 text-indigo-500" /> Sembrar enlace de packing en órdenes
+            <Link2 className="w-5 h-5 text-indigo-500" /> {t('ship_seed_title')}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           <div>
             <label className="text-[11px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-              Etiqueta (nombre del packing)
+              {t('ship_seed_label')}
             </label>
             <input
               value={label}
@@ -87,7 +89,7 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
 
           <div>
             <label className="text-[11px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-              Enlace del packing (URL) *
+              {t('ship_seed_url')}
             </label>
             <input
               value={url}
@@ -100,37 +102,37 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
 
           <div>
             <label className="text-[11px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-              Números de orden (columna A) *
+              {t('ship_seed_numbers')}
             </label>
             <textarea
               value={numbersText}
               onChange={(e) => setNumbersText(e.target.value)}
-              placeholder={"Pega aquí la columna A del packing\n1848\n2016\n2049\n…"}
+              placeholder={t('ship_seed_numbers_placeholder')}
               rows={6}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono resize-y"
               data-testid="seed-numbers"
             />
             <p className="text-[10px] text-muted-foreground mt-1">
               {numbers.length > 0
-                ? <>Se detectaron <b>{numbers.length}</b> orden(es) únicas: <span className="font-mono">{numbers.slice(0, 12).join(", ")}{numbers.length > 12 ? "…" : ""}</span></>
-                : "Un número por línea. Se ignoran los repetidos."}
+                ? <>{t('ship_seed_detected_1')} <b>{numbers.length}</b> {t('ship_seed_detected_2')} <span className="font-mono">{numbers.slice(0, 12).join(", ")}{numbers.length > 12 ? "…" : ""}</span></>
+                : t('ship_seed_hint')}
             </p>
           </div>
 
           {result && (
             <div className="rounded-lg border border-border/50 bg-secondary/20 p-3 space-y-1.5 text-xs" data-testid="seed-result">
               <div className="flex items-center gap-2 text-emerald-500 font-bold">
-                <Check className="w-4 h-4" /> Sembrado en {result.seeded_count} de {result.total}
+                <Check className="w-4 h-4" /> {t('ship_seed_result', { a: result.seeded_count, b: result.total })}
               </div>
               {result.skipped_count > 0 && (
                 <div className="flex items-center gap-2 text-amber-500">
-                  <CircleSlash className="w-3.5 h-3.5" /> {result.skipped_count} ya tenían este enlace (omitidas)
+                  <CircleSlash className="w-3.5 h-3.5" /> {t('ship_seed_skipped', { n: result.skipped_count })}
                 </div>
               )}
               {result.not_found_count > 0 && (
                 <div className="flex items-start gap-2 text-red-500">
                   <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                  <span>{result.not_found_count} no se encontraron en el CRM: <span className="font-mono">{result.not_found.join(", ")}</span></span>
+                  <span>{t('ship_seed_not_found', { n: result.not_found_count })} <span className="font-mono">{result.not_found.join(", ")}</span></span>
                 </div>
               )}
             </div>
@@ -139,7 +141,7 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
 
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={close} disabled={loading} className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold disabled:opacity-50">
-            Cerrar
+            {t('close')}
           </button>
           <button
             onClick={seed}
@@ -148,7 +150,7 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
             data-testid="seed-submit"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-            Sembrar en {numbers.length || 0} orden(es)
+            {t('ship_seed_submit', { n: numbers.length || 0 })}
           </button>
         </div>
       </DialogContent>

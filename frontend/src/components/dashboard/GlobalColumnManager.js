@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
 import { FormulaEditor } from "./FormulaEditor";
 import { validateFormula } from "../../lib/formula";
+import { useLang } from "../../contexts/LanguageContext";
 
 // Type catalog shared by the add form and the per-row type editor. `estado`
 // is the UI label for a colored select; it persists as type 'select'.
@@ -33,6 +34,7 @@ const slugify = (name) =>
   name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
 
 export const GlobalColumnManager = ({ isOpen, onClose }) => {
+  const { t } = useLang();
   // cols: full defs in display order, each tagged { custom: true|false }.
   const [cols, setCols] = useState([]);
   const [hidden, setHidden] = useState([]);
@@ -168,7 +170,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     setCols(prev => prev.map(c => c.key === key ? { ...c, type } : c));
 
   const removeColumn = (col) => {
-    if (!window.confirm(`¿Quitar la columna "${col.label}"? Podés volver a agregarla luego.`)) return;
+    if (!window.confirm(t('dash_remove_column_confirm', { label: col.label }))) return;
     setCols(prev => prev.filter(c => c.key !== col.key));
     setHidden(prev => prev.filter(k => k !== col.key));
     if (!col.custom) setRemovedDefaults(prev => prev.includes(col.key) ? prev : [...prev, col.key]);
@@ -187,9 +189,9 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
 
   const openFxEditor = (col) => { setFxEditorKey(col.key); setFxDraft(col.formula || ""); };
   const applyFxEditor = () => {
-    if (!fxCheck?.ok) { toast.error(fxCheck?.message || "La fórmula no es válida"); return; }
+    if (!fxCheck?.ok) { toast.error(fxCheck?.message || t('dash_formula_invalid')); return; }
     setCols(prev => prev.map(c => c.key === fxEditorKey ? { ...c, formula: fxDraft.trim() } : c));
-    toast.success(`Fórmula de "${fxCol?.label || fxEditorKey}" actualizada`);
+    toast.success(t('dash_formula_updated', { label: fxCol?.label || fxEditorKey }));
     setFxEditorKey(null);
   };
   const setRowValue = (i, value) => setEditorRows(prev => prev.map((r, j) => j === i ? { ...r, value } : r));
@@ -198,7 +200,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
   const addRow = () => {
     const v = addVal.trim();
     if (!v) return;
-    if (editorRows.some(r => r.value.trim().toLowerCase() === v.toLowerCase())) { toast.error("Ese estado ya existe"); return; }
+    if (editorRows.some(r => r.value.trim().toLowerCase() === v.toLowerCase())) { toast.error(t('dash_status_exists')); return; }
     setEditorRows(prev => [...prev, { value: v, color: addColor }]);
     setAddVal("");
   };
@@ -233,7 +235,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
         ? { ...c, statusOptions: rows.map(r => ({ value: r.value, color: r.color })) }
         : c));
     }
-    toast.success(`Opciones de "${col.label}" actualizadas`);
+    toast.success(t('dash_options_updated', { label: col.label }));
     setOptEditorKey(null);
   };
 
@@ -246,9 +248,9 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     const name = newName.trim();
     if (!name) return;
     const key = slugify(name);
-    if (!key) { toast.error("Nombre inválido"); return; }
+    if (!key) { toast.error(t('dash_invalid_name')); return; }
     if (cols.some(c => c.key === key) || removedDefaults.includes(key)) {
-      toast.error("Ya existe una columna con ese nombre"); return;
+      toast.error(t('dash_column_name_exists')); return;
     }
     if (newType === "formula") {
       const check = validateFormula(newFormula, cols);
@@ -272,7 +274,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
     }
     setCols(prev => [...prev, def]);
     resetAddForm(); setShowAdd(false);
-    toast.success(`Columna "${name}" agregada`);
+    toast.success(t('dash_column_added_named', { name }));
   };
   const addStatusOption = () => {
     const v = newStatusVal.trim();
@@ -333,10 +335,10 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
         }));
       }
       const results = await Promise.all(reqs);
-      if (results.every(r => r.ok)) { toast.success("Columnas guardadas"); onClose(); }
-      else toast.error("Error al guardar algunos cambios");
+      if (results.every(r => r.ok)) { toast.success(t('dash_columns_saved')); onClose(); }
+      else toast.error(t('dash_save_partial_err'));
     } catch {
-      toast.error("Error de red al guardar");
+      toast.error(t('dash_network_save_err'));
     } finally { setSaving(false); }
   };
 
@@ -347,10 +349,10 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
         <DialogHeader className="px-6 py-4 border-b border-border">
           <DialogTitle className="font-barlow text-lg font-black uppercase tracking-tight flex items-center gap-2.5">
             <Columns className="w-5 h-5 text-primary" />
-            Gestor de Columnas
+            {t('dash_column_manager')}
           </DialogTitle>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            Arrastra para reordenar · ojo para ocultar · lápiz para renombrar · controles para editar estados · ƒ para editar la fórmula · aplica a todos los tableros.
+            {t('dash_column_manager_hint')}
           </p>
         </DialogHeader>
 
@@ -358,18 +360,18 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
           /* ===== Status content editor ===== */
           <>
             <div className="px-6 py-3 border-b border-border flex items-center gap-3">
-              <button onClick={() => setOptEditorKey(null)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" title="Volver">
+              <button onClick={() => setOptEditorKey(null)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" title={t('dash_back')}>
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-black uppercase tracking-tight truncate">{editorCol.label}</div>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Opciones del estado</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">{t('dash_status_options')}</div>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2 custom-scrollbar">
               {editorRows.length === 0 && (
-                <div className="text-[12px] text-muted-foreground italic py-6 text-center">Sin opciones todavía. Agrega la primera abajo.</div>
+                <div className="text-[12px] text-muted-foreground italic py-6 text-center">{t('dash_no_options_yet')}</div>
               )}
               {editorRows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -384,7 +386,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                   <span className="px-2.5 py-1 rounded text-[11px] font-bold text-white whitespace-nowrap hidden sm:inline" style={{ backgroundColor: row.color }}>
                     {row.value || "—"}
                   </span>
-                  <button onClick={() => removeRow(i)} className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" title="Quitar opción">
+                  <button onClick={() => removeRow(i)} className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" title={t('dash_remove_option')}>
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -398,7 +400,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                   value={addVal}
                   onChange={(e) => setAddVal(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") addRow(); }}
-                  placeholder="Nueva opción de estado"
+                  placeholder={t('dash_new_status_option')}
                   className="flex-1 h-9 px-3 bg-card border border-border rounded-lg text-sm focus:outline-none focus:border-primary"
                 />
                 <button onClick={addRow} className="h-9 px-3 bg-secondary border border-border rounded-lg hover:bg-secondary/80 flex items-center"><Plus className="w-4 h-4" /></button>
@@ -411,11 +413,11 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
             </div>
 
             <div className="px-6 py-4 border-t border-border flex justify-between items-center">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{editorRows.length} opciones</span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{t('dash_options_count', { n: editorRows.length })}</span>
               <div className="flex gap-2">
-                <button onClick={() => setOptEditorKey(null)} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary">Cancelar</button>
+                <button onClick={() => setOptEditorKey(null)} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary">{t('cancel')}</button>
                 <button onClick={applyOptEditor} className="px-6 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-                  <Check className="w-4 h-4" /> Aplicar
+                  <Check className="w-4 h-4" /> {t('dash_apply')}
                 </button>
               </div>
             </div>
@@ -424,12 +426,12 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
           /* ===== Formula editor ===== */
           <>
             <div className="px-6 py-3 border-b border-border flex items-center gap-3">
-              <button onClick={() => setFxEditorKey(null)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" title="Volver">
+              <button onClick={() => setFxEditorKey(null)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" title={t('dash_back')}>
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-black uppercase tracking-tight truncate">{fxCol.label}</div>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Fórmula de la columna</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">{t('dash_column_formula')}</div>
               </div>
             </div>
 
@@ -438,13 +440,13 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
             </div>
 
             <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
-              <button onClick={() => setFxEditorKey(null)} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary">Cancelar</button>
+              <button onClick={() => setFxEditorKey(null)} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary">{t('cancel')}</button>
               <button
                 onClick={applyFxEditor}
                 disabled={!fxCheck?.ok}
                 className="px-6 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
               >
-                <Check className="w-4 h-4" /> Aplicar
+                <Check className="w-4 h-4" /> {t('dash_apply')}
               </button>
             </div>
           </>
@@ -458,7 +460,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar columna…"
+                  placeholder={t('dash_search_column')}
                   className="w-full h-9 pl-9 pr-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary"
                 />
               </div>
@@ -466,7 +468,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                 onClick={() => setShowAdd(v => !v)}
                 className="h-9 px-4 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 hover:opacity-90 transition-all"
               >
-                <Plus className="w-4 h-4" /> Agregar
+                <Plus className="w-4 h-4" /> {t('add')}
               </button>
             </div>
 
@@ -479,7 +481,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && newType !== "estado" && newType !== "formula") addColumn(); }}
-                    placeholder="Nombre de la columna"
+                    placeholder={t('dash_column_name_ph')}
                     className="flex-1 h-9 px-3 bg-card border border-border rounded-lg text-sm focus:outline-none focus:border-primary"
                   />
                   <select
@@ -506,7 +508,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                           <button onClick={() => setStatusOptions(statusOptions.filter((_, j) => j !== i))} className="hover:opacity-70"><X className="w-3 h-3" /></button>
                         </span>
                       ))}
-                      {statusOptions.length === 0 && <span className="text-[11px] text-muted-foreground italic">Agrega al menos un estado…</span>}
+                      {statusOptions.length === 0 && <span className="text-[11px] text-muted-foreground italic">{t('dash_add_at_least_one_status')}</span>}
                     </div>
                     <div className="flex gap-2">
                       <input type="color" value={newStatusColor} onChange={(e) => setNewStatusColor(e.target.value)} className="w-9 h-8 rounded border border-border bg-card cursor-pointer" />
@@ -514,7 +516,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                         value={newStatusVal}
                         onChange={(e) => setNewStatusVal(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") addStatusOption(); }}
-                        placeholder="Nuevo estado"
+                        placeholder={t('dash_new_status')}
                         className="flex-1 h-8 px-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary"
                       />
                       <button onClick={addStatusOption} className="px-3 bg-secondary border border-border rounded-lg hover:bg-secondary/80"><Plus className="w-4 h-4" /></button>
@@ -528,13 +530,13 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                 )}
 
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => { setShowAdd(false); resetAddForm(); }} className="px-4 py-1.5 text-[11px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground">Cancelar</button>
+                  <button onClick={() => { setShowAdd(false); resetAddForm(); }} className="px-4 py-1.5 text-[11px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground">{t('cancel')}</button>
                   <button
                     onClick={addColumn}
                     disabled={!newName.trim() || (newType === "formula" && !newFormula.trim()) || (newType === "estado" && statusOptions.length === 0)}
                     className="px-5 py-1.5 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-50"
                   >
-                    Agregar columna
+                    {t('dash_add_column_lower')}
                   </button>
                 </div>
               </div>
@@ -545,11 +547,11 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-48 gap-3">
                   <Loader2 className="w-7 h-7 animate-spin text-primary" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Cargando columnas…</span>
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{t('dash_loading_columns')}</span>
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="flex items-center justify-center h-48 text-[12px] font-bold uppercase tracking-widest text-muted-foreground/60">
-                  Sin columnas que coincidan
+                  {t('dash_no_matching_columns')}
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -604,7 +606,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                               value={col.type}
                               onChange={(e) => changeType(col.key, e.target.value)}
                               className="h-7 px-2 bg-secondary/60 border border-border rounded text-[11px] font-bold focus:outline-none focus:border-primary"
-                              title="Cambiar tipo"
+                              title={t('dash_change_type')}
                             >
                               {[...SIMPLE_TYPES].map(tp => <option key={tp} value={tp}>{TYPE_LABEL[tp]}</option>)}
                             </select>
@@ -620,7 +622,7 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap border ${
                             col.custom ? "bg-primary/10 text-primary border-primary/20" : "bg-muted/40 text-muted-foreground border-border/50"
                           }`}>
-                            {col.custom ? "Custom" : "Sistema"}
+                            {col.custom ? "Custom" : t('wms_cc_system')}
                           </span>
                         )}
 
@@ -628,30 +630,30 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
                         {!isEditing && (
                           <div className="flex items-center gap-0.5">
                             {isStatus && (
-                              <button onClick={() => openOptEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Editar opciones del estado">
+                              <button onClick={() => openOptEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={t('dash_edit_status_options')}>
                                 <SlidersHorizontal className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {col.type === "formula" && (
-                              <button onClick={() => openFxEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={`Editar fórmula: ${col.formula || "(vacía)"}`}>
+                              <button onClick={() => openFxEditor(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={t('dash_edit_formula', { formula: col.formula || t('dash_empty_paren') })}>
                                 <FunctionSquare className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {col.custom ? (
-                              <button onClick={() => startEdit(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all" title="Renombrar">
+                              <button onClick={() => startEdit(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all" title={t('dash_rename')}>
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
                             ) : (
-                              <span className="p-1.5 text-muted-foreground/30" title="Columna del sistema (nombre y tipo fijos)"><Lock className="w-3.5 h-3.5" /></span>
+                              <span className="p-1.5 text-muted-foreground/30" title={t('dash_system_column_locked')}><Lock className="w-3.5 h-3.5" /></span>
                             )}
                             <button
                               onClick={() => toggleVisibility(col.key)}
                               className={`p-1.5 rounded-lg transition-all ${isHidden ? "text-muted-foreground hover:text-foreground hover:bg-secondary" : "text-primary hover:bg-primary/10"}`}
-                              title={isHidden ? "Mostrar" : "Ocultar"}
+                              title={isHidden ? t('dash_show') : t('dash_hide')}
                             >
                               {isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
-                            <button onClick={() => removeColumn(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all" title="Quitar">
+                            <button onClick={() => removeColumn(col)} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all" title={t('dash_remove')}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
@@ -666,17 +668,17 @@ export const GlobalColumnManager = ({ isOpen, onClose }) => {
             {/* Footer */}
             <div className="px-6 py-4 border-t border-border flex justify-between items-center">
               <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                {cols.length} columnas · {visibleCount} visibles · {hidden.length} ocultas
+                {t('dash_columns_summary', { n: cols.length, v: visibleCount, h: hidden.length })}
               </div>
               <div className="flex gap-2">
-                <button onClick={onClose} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary transition-all">Cancelar</button>
+                <button onClick={onClose} className="px-5 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:bg-secondary transition-all">{t('cancel')}</button>
                 <button
                   onClick={handleSave}
                   disabled={saving || loading}
                   className="px-6 py-2 bg-primary text-black rounded-lg text-[11px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:opacity-90 transition-all flex items-center gap-2 disabled:opacity-50"
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Guardar
+                  {t('save')}
                 </button>
               </div>
             </div>

@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { History, ArrowLeft, Search, CornerDownLeft } from 'lucide-react';
 import OrderHistoryModal from './OrderHistoryModal';
+import { useLang } from '../contexts/LanguageContext';
 
 const ActivityLogCenter = () => {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [term, setTerm] = useState('');
   const [query, setQuery] = useState(null);
   const [open, setOpen] = useState(false);
@@ -24,7 +26,7 @@ const ActivityLogCenter = () => {
       {/* Top bar */}
       <header className="relative z-10 px-6 md:px-10 pt-8">
         <button onClick={() => navigate('/home')} className="text-muted-foreground hover:text-foreground flex items-center text-sm transition-colors group mb-8">
-          <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> Volver al Home
+          <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> {t('admin_back_home')}
         </button>
       </header>
 
@@ -37,7 +39,7 @@ const ActivityLogCenter = () => {
           ACTIVITY <span className="text-primary">LOG</span>
         </h1>
         <p className="text-muted-foreground text-sm mt-2 mb-10">
-          Escribe un número de orden para ver toda su historia: creación, movimientos, cambios de columna, comentarios y más.
+          {t('admin_activity_log_desc')}
         </p>
 
         <div className="relative">
@@ -48,7 +50,7 @@ const ActivityLogCenter = () => {
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            placeholder="Número de orden (ej. 1558 o #1558)…"
+            placeholder={t('admin_activity_search_placeholder')}
             className="w-full h-16 pl-14 pr-32 bg-card border-2 border-border rounded-2xl text-lg font-bold focus:outline-none focus:border-primary shadow-xl transition-all"
           />
           <button
@@ -56,12 +58,12 @@ const ActivityLogCenter = () => {
             disabled={!term.trim()}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 h-11 px-5 bg-primary text-black rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-40 hover:opacity-90 transition-all"
           >
-            Buscar <CornerDownLeft className="w-4 h-4" />
+            {t('search')} <CornerDownLeft className="w-4 h-4" />
           </button>
         </div>
 
         <p className="text-[11px] text-muted-foreground/60 mt-4 uppercase tracking-widest font-bold">
-          Enter para abrir la historia completa
+          {t('admin_activity_enter_hint')}
         </p>
       </main>
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../App";
+import { useLang } from "../contexts/LanguageContext";
 import { Toaster, toast } from "sonner";
 import MachineOperatorView from "./MachineOperatorView";
 import {
@@ -19,6 +20,7 @@ const putter = (url, body) => fetch(`${API}${url}`, { method: 'PUT', headers: { 
 // ticket carries — standard or admin-configured extra — surfaces automatically.
 
 const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
+  const { t } = useLang();
   const sizes = ticket.sizes || {};
   const totalQty = Object.values(sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
   const pickedSizes = ticket.picked_sizes || {};
@@ -41,7 +43,7 @@ const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
         <div className="flex items-center gap-1.5">
           <span className={`text-xs px-2 py-0.5 rounded-full ${statusColor}`}>{ticket.picking_status}</span>
           <button onClick={(e) => { e.stopPropagation(); onComments?.(ticket.order_number); }}
-            className="p-1.5 -my-1 rounded-lg text-sky-400 hover:bg-sky-500/10" title="Comentarios">
+            className="p-1.5 -my-1 rounded-lg text-sky-400 hover:bg-sky-500/10" title={t("comments")}>
             <MessageSquare className="w-4 h-4" />
           </button>
         </div>
@@ -52,7 +54,7 @@ const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
       </div>
       <div className="mt-2">
         <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-muted-foreground">Progreso</span>
+          <span className="text-muted-foreground">{t("progress")}</span>
           <span className="font-bold">{totalPicked}/{totalQty} ({progress}%)</span>
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
@@ -64,6 +66,7 @@ const TicketCard = ({ ticket, onSelect, isActive, onComments }) => {
 };
 
 const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
+  const { t } = useLang();
   const [pickedSizes, setPickedSizes] = useState({});
   const [expandedSize, setExpandedSize] = useState(null);
 
@@ -97,7 +100,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
   }, []);
 
   const updateBlankStatus = async (val) => {
-    if (!orderId) { toast.error("Orden aún no carga, intenta de nuevo"); return; }
+    if (!orderId) { toast.error(t("prod_pick_order_not_loaded")); return; }
     const prev = blankStatus;
     setBlankStatus(val);
     setSavingStatus(true);
@@ -106,9 +109,9 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
         method: "PUT", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ blank_status: val }),
       });
-      if (r.ok) { toast.success("Blank status actualizado"); }
-      else { setBlankStatus(prev); toast.error("No se pudo actualizar el status"); }
-    } catch { setBlankStatus(prev); toast.error("Error de conexión"); }
+      if (r.ok) { toast.success(t("prod_pick_blank_updated")); }
+      else { setBlankStatus(prev); toast.error(t("prod_pick_blank_err")); }
+    } catch { setBlankStatus(prev); toast.error(t("ceo_err_connection")); }
     finally { setSavingStatus(false); }
   };
 
@@ -132,7 +135,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
       // Prevent exceeding required amount across all locations for this size
       const required = parseInt(sizes[sz]) || 0;
       if (newTotal > required) {
-        toast.error(`No puedes surtir más de lo requerido (${required})`);
+        toast.error(t("prod_pick_exceed", { n: required }));
         return p;
       }
 
@@ -159,7 +162,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
               <div className="text-xs text-muted-foreground">{ticket.manufacturer}</div>
             </div>
             <button onClick={() => onComments?.(ticket.order_number)}
-              className="p-2 rounded-lg text-sky-400 hover:bg-sky-500/10 border border-sky-500/30" title="Comentarios de la orden">
+              className="p-2 rounded-lg text-sky-400 hover:bg-sky-500/10 border border-sky-500/30" title={t("prod_pick_order_comments")}>
               <MessageSquare className="w-5 h-5" />
             </button>
           </div>
@@ -183,7 +186,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
             disabled={savingStatus || !orderId}
             className="w-full sm:w-72 h-11 bg-secondary/30 border border-border rounded-lg px-3 text-sm font-bold focus:outline-none focus:border-primary disabled:opacity-50"
           >
-            <option value="">— Sin status —</option>
+            <option value="">{t("prod_pick_no_status")}</option>
             {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
             {blankStatus && !blankOptions.includes(blankStatus) && (
               <option value={blankStatus}>{blankStatus}</option>
@@ -195,9 +198,9 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
       {/* Progress Bar */}
       <div className="bg-card border border-border rounded-lg p-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-bold">Progreso Total</span>
+          <span className="text-sm font-bold">{t("prod_pick_total_progress")}</span>
           <span className={`text-sm font-bold ${isComplete ? 'text-green-400' : 'text-yellow-400'}`}>
-            {totalPicked} / {totalRequired} piezas
+            {t("prod_pick_x_of_y_pieces", { a: totalPicked, b: totalRequired })}
           </span>
         </div>
         <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
@@ -229,7 +232,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold">{sz}</span>
-                    <span className="text-sm text-muted-foreground">Requerido: {required}</span>
+                    <span className="text-sm text-muted-foreground">{t("prod_pick_required", { n: required })}</span>
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {Object.entries(sizeData.details).map(([loc, q]) => q > 0 && (
@@ -265,9 +268,9 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
                   <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-secondary/10">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-xs uppercase tracking-wider text-muted-foreground font-black">
-                        <MapPin className="w-3 h-3 inline mr-1" />Desglose por Ubicación
+                        <MapPin className="w-3 h-3 inline mr-1" />{t("prod_pick_location_breakdown")}
                       </div>
-                      <span className="text-[10px] text-muted-foreground italic">Ingresa cuánto sacaste de cada estante</span>
+                      <span className="text-[10px] text-muted-foreground italic">{t("prod_pick_enter_hint")}</span>
                     </div>
                     <div className="space-y-3">
                       {groupKeys.map(origin => (
@@ -275,7 +278,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
                           <div className="flex items-center gap-2 mb-1.5">
                             <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 font-mono">{origin}</span>
                             <div className="flex-1 h-px bg-border/50" />
-                            <span className="text-[10px] text-muted-foreground/50">{grouped[origin].length} ubic.</span>
+                            <span className="text-[10px] text-muted-foreground/50">{t("prod_pick_n_locs", { n: grouped[origin].length })}</span>
                           </div>
                           <div className="space-y-2">
                             {grouped[origin].map((l, i) => {
@@ -284,7 +287,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
                                 <div key={i} className="flex items-center justify-between px-3 py-2 bg-background border border-border/50 rounded-xl hover:border-primary/40 transition-all group">
                                   <div className="flex flex-col">
                                     <span className="font-mono font-black text-primary text-sm">{l.location}</span>
-                                    <span className="text-[10px] text-muted-foreground">Disponible: <strong className="text-green-500">{l.available}</strong></span>
+                                    <span className="text-[10px] text-muted-foreground">{t("prod_pick_available_label")} <strong className="text-green-500">{l.available}</strong></span>
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                       {l.customer && <span className="text-[10px] text-blue-400/80 font-mono truncate max-w-[120px]">{l.customer}</span>}
                                       {l.percentage !== undefined && <span className="text-[10px] text-yellow-400 font-black">{l.percentage}%</span>}
@@ -326,10 +329,10 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
                 <div className="px-3 pb-3 border-t border-border/50 pt-3 bg-amber-500/5">
                   <div className="flex items-center gap-2 text-amber-500">
                     <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-xs font-bold">Sin stock disponible para surtir esta talla en este color.</span>
+                    <span className="text-xs font-bold">{t("prod_pick_no_stock")}</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    No hay inventario de <strong>{ticket.style}</strong> · <strong>{ticket.color}</strong> · talla <strong>{sz}</strong>. Verifica si el material ya se recibió/ubicó o si el color está mal etiquetado.
+                    {t("prod_pick_no_inv_pre")} <strong>{ticket.style}</strong> · <strong>{ticket.color}</strong> · {t("prod_pick_size_word")} <strong>{sz}</strong>. {t("prod_pick_no_inv_post")}
                   </p>
                 </div>
               )}
@@ -347,12 +350,12 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
           data-testid="operator-save-partial"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Guardar Progreso
+          {t("prod_pick_save_progress")}
         </button>
         <button
           onClick={() => {
             if (!isComplete) {
-              if (window.confirm("Faltan tallas por surtir. ¿Estás seguro que deseas completar este surtido PARCIALMENTE?")) {
+              if (window.confirm(t("prod_pick_partial_confirm"))) {
                 onSave(ticket.ticket_id, pickedSizes, true);
               }
             } else {
@@ -364,7 +367,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
           data-testid="operator-complete-pick"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-          {isComplete ? 'Completar Surtido' : 'Completar Parcial'}
+          {isComplete ? t("prod_pick_complete") : t("prod_pick_complete_partial")}
         </button>
       </div>
     </div>
@@ -375,6 +378,7 @@ const PickingInterface = ({ ticket, onSave, saving, onComments }) => {
 // component is renamed only at the export level so hooks aren't called after
 // a conditional return (React rules-of-hooks).
 function PickerView() {
+  const { t } = useLang();
   const { user, logout } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [selectedTicket, setSelectedTicket] = useState(null);
@@ -390,8 +394,8 @@ function PickerView() {
     try {
       const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}`, { credentials: 'include' });
       if (r.ok) setCommentsOrder(await r.json());
-      else toast.error('No se encontró la orden');
-    } catch { toast.error('Error de conexión'); }
+      else toast.error(t("prod_pick_order_missing"));
+    } catch { toast.error(t("ceo_err_connection")); }
   };
 
   const loadTickets = useCallback(async () => {
@@ -404,11 +408,11 @@ function PickerView() {
         else setSelectedTicket(null);
       }
     } catch {
-      toast.error('Error al cargar tickets');
+      toast.error(t("prod_pick_load_err"));
     } finally {
       setLoading(false);
     }
-  }, [selectedTicket]);
+  }, [selectedTicket, t]);
 
   useEffect(() => { loadTickets(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -429,7 +433,7 @@ function PickerView() {
               if (data.assigned_to === userId || data.assigned_to === user.email) {
                 setNewTicketAlert(true);
                 toast.success(
-                  `Nuevo ticket asignado: ${data.order_number || data.ticket_id}`,
+                  t("prod_pick_new_ticket_assigned", { ticket: data.order_number || data.ticket_id }),
                   { duration: 8000, icon: <Bell className="w-4 h-4" /> }
                 );
                 // Play notification sound
@@ -458,17 +462,17 @@ function PickerView() {
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success(isComplete ? 'Surtido completado!' : 'Progreso guardado');
+        toast.success(isComplete ? t("prod_pick_completed_toast") : t("prod_pick_progress_saved"));
         if (isComplete) {
           setSelectedTicket(null);
         }
         await loadTickets();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al guardar');
+        toast.error(err.detail || t("options_save_err"));
       }
     } catch {
-      toast.error('Error de conexion');
+      toast.error(t("ceo_err_connection"));
     } finally {
       setSaving(false);
     }
@@ -486,18 +490,18 @@ function PickerView() {
         <div className="flex items-center gap-3">
           <ClipboardCheck className="w-6 h-6 text-primary" />
           <div>
-            <h1 className="text-base font-bold text-foreground">Surtido de Pedidos</h1>
+            <h1 className="text-base font-bold text-foreground">{t("prod_pick_title")}</h1>
             <p className="text-xs text-muted-foreground">{user?.name || user?.email}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           {newTicketAlert && (
             <span className="flex items-center gap-1 text-xs bg-green-500/15 text-green-400 px-2 py-1 rounded-full animate-pulse font-bold" data-testid="operator-new-ticket-alert">
-              <Bell className="w-3 h-3" /> Nuevo ticket!
+              <Bell className="w-3 h-3" /> {t("prod_pick_new_ticket")}
             </span>
           )}
           <span className="text-xs bg-primary/15 text-primary px-2 py-1 rounded-full font-bold">
-            {pendingTickets.length} pendiente{pendingTickets.length !== 1 ? 's' : ''}
+            {pendingTickets.length !== 1 ? t("prod_pick_n_pending_plural", { n: pendingTickets.length }) : t("prod_pick_n_pending", { n: pendingTickets.length })}
           </span>
           <button onClick={logout} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary" data-testid="operator-logout">
             <LogOut className="w-5 h-5" />
@@ -514,15 +518,15 @@ function PickerView() {
           ) : pendingTickets.length === 0 ? (
             <div className="text-center py-12">
               <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
-              <p className="text-sm font-bold text-foreground">Todo al dia!</p>
-              <p className="text-xs text-muted-foreground mt-1">No tienes tickets pendientes</p>
+              <p className="text-sm font-bold text-foreground">{t("prod_pick_all_done")}</p>
+              <p className="text-xs text-muted-foreground mt-1">{t("prod_pick_no_pending")}</p>
             </div>
           ) : (
             <div className="space-y-4">
               {inProgressTickets.length > 0 && (
                 <div>
                   <h3 className="text-xs uppercase tracking-wider text-yellow-400 font-bold mb-2 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" /> En Progreso ({inProgressTickets.length})
+                    <AlertTriangle className="w-3 h-3" /> {t("prod_pick_in_progress_n", { n: inProgressTickets.length })}
                   </h3>
                   <div className="space-y-2">
                     {inProgressTickets.map(t => (
@@ -534,7 +538,7 @@ function PickerView() {
               {assignedTickets.length > 0 && (
                 <div>
                   <h3 className="text-xs uppercase tracking-wider text-blue-400 font-bold mb-2 flex items-center gap-1">
-                    <ClipboardCheck className="w-3 h-3" /> Asignados ({assignedTickets.length})
+                    <ClipboardCheck className="w-3 h-3" /> {t("prod_pick_assigned_n", { n: assignedTickets.length })}
                   </h3>
                   <div className="space-y-2">
                     {assignedTickets.map(t => (
@@ -556,15 +560,15 @@ function PickerView() {
                  onClick={() => setSelectedTicket(null)}
                  className="md:hidden mb-6 flex items-center gap-2 text-primary font-bold text-sm bg-primary/10 px-5 py-3 rounded-2xl active:scale-95 transition-transform"
                >
-                 <LogOut className="w-4 h-4 rotate-180" /> Volver a la lista de pedidos
+                 <LogOut className="w-4 h-4 rotate-180" /> {t("prod_pick_back_list")}
                </button>
                <PickingInterface ticket={selectedTicket} onSave={handleSave} saving={saving} onComments={openComments} />
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center p-8">
               <ClipboardCheck className="w-20 h-20 text-muted-foreground/20 mb-6" />
-              <h2 className="text-xl font-bold text-foreground mb-2">Selecciona un ticket</h2>
-              <p className="text-sm text-muted-foreground max-w-xs mx-auto">Elige un pedido de la lista de la izquierda para comenzar el surtido en el almacén</p>
+              <h2 className="text-xl font-bold text-foreground mb-2">{t("prod_pick_select_ticket")}</h2>
+              <p className="text-sm text-muted-foreground max-w-xs mx-auto">{t("prod_pick_select_hint")}</p>
             </div>
           )}
         </main>

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { Check, X, AlertTriangle } from "lucide-react";
 import { useWmsSizes } from "../wms/lib";
+import { useLang } from "../../contexts/LanguageContext";
 
 /**
  * Celda de tallas del tablero: mini-tabla legible de un vistazo, editable al clic.
@@ -65,6 +66,7 @@ const avanceDeTalla = (pedidas, posiciones, producido) => {
 
 export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpdate, readOnly = false }) => {
   const { adult: CATALOGO } = useWmsSizes();
+  const { t } = useLang();
   const [abierto, setAbierto] = useState(false);
   const [borrador, setBorrador] = useState({});
 
@@ -129,20 +131,20 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
 
   const desglose = conValor.map(sz => {
     const a = avances[sz];
-    if (!a) return `${sz}: ${num(sizes[sz])} pedidas`;
+    if (!a) return t('dash_sizes_ordered', { sz, n: num(sizes[sz]) });
     const detalle = a.porPosicion.map(x => `${x.p} ${x.n}`).join(" · ");
-    return `${sz}: ${num(sizes[sz])} pedidas — ${detalle}${a.completa ? "  ✓ lista" : ""}`;
+    return t('dash_sizes_ordered_detail', { sz, n: num(sizes[sz]), detail: detalle, done: a.completa ? t('dash_sizes_done_mark') : "" });
   }).join("\n");
 
   const nota = !positions || positions.length === 0
-    ? "\nSin posiciones de impresión capturadas: no se puede calcular el avance."
+    ? t('dash_sizes_no_positions_note')
     : "";
 
   const tituloCelda = conValor.length === 0
     ? undefined
     : (descuadra
-        ? `${desglose}\n\nSuma ${total} — no coincide con Qty ${qty}`
-        : `${desglose}\n\nTotal ${total}`) + nota;
+        ? `${desglose}\n\n${t('dash_sizes_sum_mismatch', { total, qty })}`
+        : `${desglose}\n\n${t('total')} ${total}`) + nota;
 
   const Resumen = (
     <div
@@ -152,7 +154,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
     >
       {conValor.length === 0 ? (
         <span className="text-xs text-muted-foreground/50 italic">
-          {readOnly ? "—" : "sin tallas"}
+          {readOnly ? "—" : t('dash_no_sizes')}
         </span>
       ) : (
         <>
@@ -231,7 +233,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
         <button
           type="button"
           className="w-full text-left hover:bg-primary/5 rounded transition-colors"
-          title="Clic para editar las tallas"
+          title={t('dash_click_edit_sizes')}
         >
           {Resumen}
         </button>
@@ -260,10 +262,10 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
         >
           <div className="flex items-center justify-between mb-2 gap-6">
             <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-              Tallas
+              {t('dash_sizes')}
             </span>
             <span className="text-[10px] text-muted-foreground">
-              Total{" "}
+              {t('total')}{" "}
               <b className={`tabular-nums text-sm ${totalBorrador !== qty && qty > 0 ? "text-destructive" : "text-primary"}`}>
                 {totalBorrador}
               </b>
@@ -279,7 +281,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
                     className={`text-[9px] font-black uppercase tracking-wider ${
                       fueraDeCatalogo ? "text-amber-500" : "text-muted-foreground/70"
                     }`}
-                    title={fueraDeCatalogo ? `"${sz}" no está en el catálogo de tallas — la notación del sistema es 2X/3X/4X` : undefined}
+                    title={fueraDeCatalogo ? t('dash_size_not_in_catalog', { sz }) : undefined}
                   >
                     {sz}
                   </label>
@@ -305,7 +307,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
           {qty > 0 && totalBorrador !== qty && (
             <p className="mt-2 text-[10px] text-destructive flex items-start gap-1">
               <AlertTriangle className="w-3 h-3 mt-px flex-shrink-0" />
-              <span>Qty quedará en <b>{totalBorrador}</b> (hoy dice {qty}).</span>
+              <span>{t('dash_qty_will_be')} <b>{totalBorrador}</b> {t('dash_qty_today', { qty })}</span>
             </p>
           )}
 
@@ -315,7 +317,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
               onClick={() => setAbierto(false)}
               className="px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wide text-muted-foreground hover:bg-secondary flex items-center gap-1"
             >
-              <X className="w-3 h-3" />Cancelar
+              <X className="w-3 h-3" />{t('cancel')}
             </button>
             <button
               type="button"
@@ -323,7 +325,7 @@ export const SizesCell = ({ value, orderId, quantity, positions, produced, onUpd
               className="px-3 py-1 rounded bg-primary text-primary-foreground text-[10px] font-black uppercase tracking-wide hover:bg-primary/90 flex items-center gap-1"
               data-testid="sizes-save"
             >
-              <Check className="w-3 h-3" />Guardar
+              <Check className="w-3 h-3" />{t('save')}
             </button>
           </div>
         </Popover.Content>

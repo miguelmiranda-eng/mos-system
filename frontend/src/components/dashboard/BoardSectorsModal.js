@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Loader2, RotateCcw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { SECTOR_META, DEFAULT_SECTORS, boardKey } from "../../lib/boardSectors";
+import { useLang } from "../../contexts/LanguageContext";
 
 const SUELTO = '__suelto__';
 
@@ -16,6 +17,7 @@ const SUELTO = '__suelto__';
  * Ojo: esto cambia el menú de TODOS los usuarios, no el de quien lo edita.
  */
 export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSave }) => {
+  const { t } = useLang();
   // asignacion: { NOMBRE_TABLERO: sector_id | SUELTO }
   const [asignacion, setAsignacion] = useState({});
   const [saving, setSaving] = useState(false);
@@ -56,10 +58,10 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
     const resultado = await onSave(aplicar(asignacion));
     setSaving(false);
     if (resultado?.ok) {
-      toast.success("Sectores actualizados para todos los usuarios");
+      toast.success(t('dash_sectors_updated'));
       onClose();
     } else {
-      toast.error(resultado?.error || "No se pudo guardar");
+      toast.error(resultado?.error || t('dash_could_not_save'));
     }
   };
 
@@ -81,12 +83,12 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
     <Dialog open={isOpen} onOpenChange={(abierto) => { if (!abierto) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Sectores del menú</DialogTitle>
+          <DialogTitle>{t('dash_menu_sectors')}</DialogTitle>
         </DialogHeader>
 
         <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-700 dark:text-amber-400">
           <ShieldAlert size={15} className="mt-0.5 flex-shrink-0" />
-          <span>Esto cambia el menú lateral de <strong>todos los usuarios</strong>, no solo el tuyo.</span>
+          <span>{t('dash_sectors_warn_1')} <strong>{t('dash_all_users')}</strong>{t('dash_sectors_warn_2')}</span>
         </div>
 
         <div className="space-y-1 mt-2">
@@ -98,7 +100,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
                 onChange={(e) => setAsignacion(prev => ({ ...prev, [tablero]: e.target.value }))}
                 className="w-44 rounded-md border border-border bg-background px-2 py-1.5 text-[13px]"
               >
-                <option value={SUELTO}>Sin sector (suelto)</option>
+                <option value={SUELTO}>{t('dash_no_sector')}</option>
                 {SECTOR_META.map(meta => (
                   <option key={meta.id} value={meta.id}>{meta.label}</option>
                 ))}
@@ -106,13 +108,12 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
             </div>
           ))}
           {tableros.length === 0 && (
-            <p className="py-4 text-center text-[13px] text-muted-foreground">No hay tableros que repartir.</p>
+            <p className="py-4 text-center text-[13px] text-muted-foreground">{t('dash_no_boards_to_assign')}</p>
           )}
         </div>
 
         <p className="text-[12px] text-muted-foreground">
-          Los tableros «sueltos» salen arriba del menú, fuera de cualquier desplegable.
-          Un sector sin tableros no se dibuja.
+          {t('dash_sectors_hint')}
           {' '}
           {SECTOR_META.map(meta => `${meta.label}: ${contarEn(meta.id)}`).join(' · ')}
         </p>
@@ -124,7 +125,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
             className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw size={14} />
-            Restaurar
+            {t('restore')}
           </button>
           <div className="flex items-center gap-2">
             <button
@@ -132,7 +133,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
               disabled={saving}
               className="px-3 py-1.5 text-[13px] text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
-              Cancelar
+              {t('cancel')}
             </button>
             <button
               onClick={guardar}
@@ -140,7 +141,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
               className="flex items-center gap-1.5 rounded-md bg-royal px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
             >
               {saving && <Loader2 size={14} className="animate-spin" />}
-              Guardar
+              {t('save')}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API } from "../lib/constants";
+import { useLang } from "../contexts/LanguageContext";
 import {
   ArrowLeft, Upload, Loader2, CheckCircle2, AlertTriangle,
   Search, FileText, Send, X, Package,
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 
 export default function PrintavoExport() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [styles, setStyles] = useState([]);        // parsed records (full, editable)
@@ -24,17 +26,17 @@ export default function PrintavoExport() {
   const [results, setResults] = useState(null);
 
   const handleParse = async () => {
-    if (!file) { toast.error("Selecciona un PDF"); return; }
+    if (!file) { toast.error(t('admin_pexport_select_pdf')); return; }
     setParsing(true); setStyles([]); setResults(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch(`${API}/printavo-export/parse`, { method: "POST", credentials: "include", body: fd });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Error al leer el PDF");
+      if (!res.ok) throw new Error(data.detail || t('admin_pexport_err_read_pdf'));
       setStyles(data.styles);
       setSelected(Object.fromEntries(data.styles.map((_, i) => [i, true])));
-      toast.success(`${data.count} estilo(s) detectado(s)`);
+      toast.success(t('admin_pexport_styles_detected', { n: data.count }));
     } catch (e) { toast.error(e.message); }
     finally { setParsing(false); }
   };
@@ -56,8 +58,8 @@ export default function PrintavoExport() {
 
   const handleCreate = async () => {
     const chosen = styles.filter((_, i) => selected[i]);
-    if (!contact) { toast.error("Elige el cliente/contacto de Printavo"); return; }
-    if (!chosen.length) { toast.error("Selecciona al menos un estilo"); return; }
+    if (!contact) { toast.error(t('admin_pexport_choose_contact')); return; }
+    if (!chosen.length) { toast.error(t('admin_pexport_select_style')); return; }
     setCreating(true); setResults(null);
     try {
       const res = await fetch(`${API}/printavo-export/create`, {
@@ -65,9 +67,9 @@ export default function PrintavoExport() {
         body: JSON.stringify({ contact_id: contact.id, styles: chosen }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Error al crear las quotes");
+      if (!res.ok) throw new Error(data.detail || t('admin_pexport_err_create'));
       setResults(data);
-      toast[data.failed ? "warning" : "success"](`${data.created} quote(s) creada(s)${data.failed ? `, ${data.failed} con error` : ""}`);
+      toast[data.failed ? "warning" : "success"](`${t('admin_pexport_quotes_created', { n: data.created })}${data.failed ? `, ${t('admin_pexport_with_error', { n: data.failed })}` : ""}`);
     } catch (e) { toast.error(e.message); }
     finally { setCreating(false); }
   };
@@ -87,7 +89,7 @@ export default function PrintavoExport() {
             <h1 className="text-xl font-black uppercase tracking-widest text-foreground flex items-center gap-2">
               <Package className="w-5 h-5 text-primary" /> PO → Quote Printavo
             </h1>
-            <p className="text-xs text-muted-foreground font-mono leading-none mt-1">Sube un PO de cliente y crea las quotes en Printavo</p>
+            <p className="text-xs text-muted-foreground font-mono leading-none mt-1">{t('admin_pexport_subtitle')}</p>
           </div>
         </div>
       </header>
@@ -96,17 +98,17 @@ export default function PrintavoExport() {
         {/* 1. Upload */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
           <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            <Upload className="w-4 h-4 text-primary" /> 1. Sube el PDF del PO
+            <Upload className="w-4 h-4 text-primary" /> {t('admin_pexport_step1')}
           </h2>
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
             <label className="flex-1 flex items-center gap-3 bg-secondary/40 border border-dashed border-border rounded-xl px-4 py-3 cursor-pointer hover:border-primary/50 transition-all">
               <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
-              <span className="text-sm truncate">{file ? file.name : "Seleccionar archivo PDF…"}</span>
+              <span className="text-sm truncate">{file ? file.name : t('admin_pexport_select_file')}</span>
               <input type="file" accept="application/pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
             </label>
             <button onClick={handleParse} disabled={parsing || !file}
               className="px-6 py-3 bg-primary text-black rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2">
-              {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Analizar
+              {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} {t('admin_pexport_analyze')}
             </button>
           </div>
         </section>
@@ -115,7 +117,7 @@ export default function PrintavoExport() {
         {styles.length > 0 && (
           <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
             <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-primary" /> 2. Revisa los estilos ({selCount}/{styles.length} seleccionados)
+              <CheckCircle2 className="w-4 h-4 text-primary" /> {t('admin_pexport_step2', { sel: selCount, total: styles.length })}
             </h2>
             <div className="space-y-3">
               {styles.map((r, i) => (
@@ -125,18 +127,18 @@ export default function PrintavoExport() {
                     <div className="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-4 gap-3">
                       <Field label="Design #" value={r.design_num} onChange={(v) => editStyle(i, "design_num", v)} />
                       <Field label="Blank" value={r.blank} onChange={(v) => editStyle(i, "blank", v)} />
-                      <Field label="Color" value={r.color} onChange={(v) => editStyle(i, "color", v)} />
-                      <Field label="Cantidad" value={r.qty} readOnly />
+                      <Field label={t('wms_label_color')} value={r.color} onChange={(v) => editStyle(i, "color", v)} />
+                      <Field label={t('quantity')} value={r.qty} readOnly />
                       <div className="col-span-2 md:col-span-4">
-                        <Field label="Descripción" value={r.description} onChange={(v) => editStyle(i, "description", v)} />
+                        <Field label={t('description')} value={r.description} onChange={(v) => editStyle(i, "description", v)} />
                       </div>
                       <div className="col-span-2 md:col-span-4 flex flex-wrap gap-2 items-center">
-                        <span className="text-[10px] uppercase font-black text-muted-foreground/60">Tallas:</span>
+                        <span className="text-[10px] uppercase font-black text-muted-foreground/60">{t('admin_pexport_sizes')}</span>
                         {Object.entries(r.sizes || {}).map(([sz, q]) => (
                           <span key={sz} className="text-[11px] font-mono bg-secondary px-2 py-0.5 rounded">{sz}:{q}</span>
                         ))}
-                        {!r.sizes_match && <Flag text="Tallas ≠ cantidad" />}
-                        {r.po_discrepancy && <Flag text={`PO tabla ${r.store_po} ≠ notas ${r.store_po_notes}`} />}
+                        {!r.sizes_match && <Flag text={t('admin_pexport_sizes_mismatch')} />}
+                        {r.po_discrepancy && <Flag text={t('admin_pexport_po_discrepancy', { table: r.store_po, notes: r.store_po_notes })} />}
                       </div>
                     </div>
                   </div>
@@ -150,7 +152,7 @@ export default function PrintavoExport() {
         {styles.length > 0 && (
           <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
             <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-              <Search className="w-4 h-4 text-primary" /> 3. Cliente en Printavo
+              <Search className="w-4 h-4 text-primary" /> {t('admin_pexport_step3')}
             </h2>
             {contact ? (
               <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3">
@@ -162,7 +164,7 @@ export default function PrintavoExport() {
               </div>
             ) : (
               <div className="relative">
-                <input value={contactQuery} onChange={(e) => searchContacts(e.target.value)} placeholder="Buscar cliente (ej. GOODIE)…"
+                <input value={contactQuery} onChange={(e) => searchContacts(e.target.value)} placeholder={t('admin_pexport_search_customer')}
                   className="w-full bg-secondary/50 border border-border p-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 {searching && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3 text-muted-foreground" />}
                 {contacts.length > 0 && (
@@ -180,7 +182,7 @@ export default function PrintavoExport() {
             <button onClick={handleCreate} disabled={creating || !contact || selCount === 0}
               className="px-6 py-3 bg-gradient-to-r from-primary to-orange-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:from-primary/90 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2">
               {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              Crear {selCount} quote(s) en Printavo
+              {t('admin_pexport_create_btn', { n: selCount })}
             </button>
           </section>
         )}
@@ -188,17 +190,17 @@ export default function PrintavoExport() {
         {/* Results */}
         {results && (
           <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-3">
-            <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground">Resultado</h2>
+            <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground">{t('admin_pexport_result')}</h2>
             <p className={`text-xs ${results.owner_matched ? "text-muted-foreground" : "text-amber-600 font-semibold"}`}>
               {results.owner_matched
-                ? `Quotes creadas a nombre de: ${results.owner_email}`
-                : `⚠ Tu email (${results.owner_email}) no coincide con un usuario de Printavo — quedaron con el owner por defecto.`}
+                ? t('admin_pexport_owner_matched', { email: results.owner_email })
+                : t('admin_pexport_owner_unmatched', { email: results.owner_email })}
             </p>
             {results.results.map((r, i) => (
               <div key={i} className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${r.ok ? "bg-emerald-500/10 text-emerald-600" : "bg-destructive/10 text-destructive"}`}>
                 {r.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
                 <span className="font-mono">{r.design_num}</span>
-                <span>{r.ok ? `→ Quote #${r.visual_id} creada` : `→ ${r.error}`}</span>
+                <span>{r.ok ? t('admin_pexport_quote_created', { id: r.visual_id }) : `→ ${r.error}`}</span>
               </div>
             ))}
           </section>

@@ -10,6 +10,7 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { useAuth } from '../App';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
+import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
 import { Toaster } from './ui/sonner';
 import { cn } from '../lib/utils';
@@ -173,6 +174,7 @@ const blankForm = () => {
 // ─── EventModal ────────────────────────────────────────────────────────────
 
 const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
+  const { t } = useLang();
   const [form, setForm] = useState(blankForm);
 
   useEffect(() => {
@@ -184,9 +186,9 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.title.trim()) { toast.error('El título es requerido'); return; }
+    if (!form.title.trim()) { toast.error(t('agenda_title_req')); return; }
     if (form.end_dt <= form.start_dt && !form.all_day) {
-      toast.error('La hora de fin debe ser posterior al inicio'); return;
+      toast.error(t('agenda_end_after_start')); return;
     }
     onSave(form);
   };
@@ -217,7 +219,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
         <DialogHeader className="p-6 pb-3 border-b border-border/10 flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
             <span>{cat.emoji}</span>
-            {initialData?.event_id ? 'Editar Evento' : 'Nuevo Evento'}
+            {initialData?.event_id ? t('agenda_edit_event') : t('agenda_new_event')}
           </DialogTitle>
         </DialogHeader>
 
@@ -226,11 +228,11 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {/* Title */}
             <div>
-              <label className={labelCls}>Título *</label>
+              <label className={labelCls}>{t('agenda_title_label')}</label>
               <input
                 value={form.title}
                 onChange={e => set('title', e.target.value)}
-                placeholder="¿Qué tienes planeado?"
+                placeholder={t('agenda_title_placeholder')}
                 required
                 className={cn(inputCls, 'font-medium')}
               />
@@ -251,14 +253,14 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                 )}
               >
                 <CalendarDays size={12} />
-                Todo el día
+                {t('agenda_all_day')}
               </button>
             </div>
 
             {/* Start / End */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={labelCls}>Inicio</label>
+                <label className={labelCls}>{t('agenda_start')}</label>
                 <input
                   type={form.all_day ? 'date' : 'datetime-local'}
                   value={form.all_day ? form.start_dt.slice(0, 10) : form.start_dt}
@@ -267,7 +269,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                 />
               </div>
               <div>
-                <label className={labelCls}>Fin</label>
+                <label className={labelCls}>{t('agenda_end')}</label>
                 <input
                   type={form.all_day ? 'date' : 'datetime-local'}
                   value={form.all_day ? form.end_dt.slice(0, 10) : form.end_dt}
@@ -280,7 +282,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
             {/* Category / Priority */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={labelCls}>Categoría</label>
+                <label className={labelCls}>{t('agenda_category')}</label>
                 <select value={form.category} onChange={e => set('category', e.target.value)} className={inputCls}>
                   {CATEGORIES.map(c => (
                     <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
@@ -288,7 +290,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                 </select>
               </div>
               <div>
-                <label className={labelCls}>Prioridad</label>
+                <label className={labelCls}>{t('priority')}</label>
                 <select value={form.priority} onChange={e => set('priority', e.target.value)} className={inputCls}>
                   {PRIORITIES.map(p => (
                     <option key={p.id} value={p.id}>{p.label}</option>
@@ -300,7 +302,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
             {/* Status (only on edit) */}
             {initialData?.event_id && (
               <div>
-                <label className={labelCls}>Estado</label>
+                <label className={labelCls}>{t('status')}</label>
                 <select value={form.status} onChange={e => set('status', e.target.value)} className={inputCls}>
                   {STATUS_OPTIONS.map(s => (
                     <option key={s.id} value={s.id}>{s.label}</option>
@@ -311,33 +313,33 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
 
             {/* Location */}
             <div>
-              <label className={labelCls}><MapPin size={9} className="inline mr-1" />Ubicación</label>
+              <label className={labelCls}><MapPin size={9} className="inline mr-1" />{t('location')}</label>
               <input
                 value={form.location}
                 onChange={e => set('location', e.target.value)}
-                placeholder="Sala de juntas, Zoom, Planta 2…"
+                placeholder={t('agenda_location_placeholder')}
                 className={inputCls}
               />
             </div>
 
             {/* Assigned to */}
             <div>
-              <label className={labelCls}><Users size={9} className="inline mr-1" />Asignado a</label>
+              <label className={labelCls}><Users size={9} className="inline mr-1" />{t('agenda_assigned_to')}</label>
               <input
                 value={form.assigned_to}
                 onChange={e => set('assigned_to', e.target.value)}
-                placeholder="Nombre o email del responsable"
+                placeholder={t('agenda_assigned_placeholder')}
                 className={inputCls}
               />
             </div>
 
             {/* Description */}
             <div>
-              <label className={labelCls}><AlignLeft size={9} className="inline mr-1" />Descripción</label>
+              <label className={labelCls}><AlignLeft size={9} className="inline mr-1" />{t('description')}</label>
               <textarea
                 value={form.description}
                 onChange={e => set('description', e.target.value)}
-                placeholder="Detalles, agenda, notas previas…"
+                placeholder={t('agenda_description_placeholder')}
                 rows={3}
                 className={cn(inputCls, 'resize-none')}
               />
@@ -345,7 +347,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
 
             {/* Recurrence */}
             <div>
-              <label className={labelCls}><Repeat size={9} className="inline mr-1" />Repetición</label>
+              <label className={labelCls}><Repeat size={9} className="inline mr-1" />{t('agenda_recurrence')}</label>
               <select value={form.recurrence} onChange={e => set('recurrence', e.target.value)} className={inputCls}>
                 {RECURRENCE_OPTIONS.map(r => (
                   <option key={r.id} value={r.id}>{r.label}</option>
@@ -355,7 +357,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
 
             {/* Visibility toggle */}
             <div>
-              <label className={labelCls}>Visibilidad</label>
+              <label className={labelCls}>{t('agenda_visibility')}</label>
               <div className={cn('flex rounded-lg border overflow-hidden', isDark ? 'border-white/10' : 'border-neutral-200')}>
                 <button
                   type="button"
@@ -367,7 +369,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                       : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50',
                   )}
                 >
-                  <Globe size={12} /> Equipo
+                  <Globe size={12} /> {t('agenda_team')}
                 </button>
                 <button
                   type="button"
@@ -379,13 +381,13 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                       : isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5 border-white/10' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50 border-neutral-200',
                   )}
                 >
-                  <Lock size={12} /> Privado
+                  <Lock size={12} /> {t('agenda_private')}
                 </button>
               </div>
               <p className={cn('text-[10px] mt-1', isDark ? 'text-white/25' : 'text-neutral-400')}>
                 {form.visibility === 'private'
-                  ? 'Solo tú y los administradores pueden ver este evento.'
-                  : 'Visible para todos los miembros del equipo.'}
+                  ? t('agenda_private_hint')
+                  : t('agenda_team_hint')}
               </p>
             </div>
           </div>
@@ -402,7 +404,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
                   : 'border-neutral-200 text-neutral-500 hover:text-neutral-800',
               )}
             >
-              Cancelar
+              {t('cancel')}
             </button>
             <button
               type="submit"
@@ -410,7 +412,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
               className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg shadow-blue-600/25 disabled:opacity-50"
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              {initialData?.event_id ? 'Guardar' : 'Crear Evento'}
+              {initialData?.event_id ? t('save') : t('agenda_create_event')}
             </button>
           </div>
         </form>
@@ -422,6 +424,7 @@ const EventModal = ({ open, onClose, onSave, initialData, isDark, saving }) => {
 // ─── EventDetailPanel ──────────────────────────────────────────────────────
 
 const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUser }) => {
+  const { t } = useLang();
   const cat        = getCatMeta(event.category);
   const prio       = getPrioMeta(event.priority);
   const recLabel   = RECURRENCE_OPTIONS.find(r => r.id === event.recurrence)?.label || '';
@@ -471,7 +474,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
                 ? isDark ? 'text-white/35 hover:text-white hover:bg-white/8' : 'text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100'
                 : 'opacity-25 cursor-not-allowed',
             )}
-            title={canEdit ? 'Editar' : 'No tienes permiso para editar este evento'}
+            title={canEdit ? t('edit') : t('agenda_no_edit_perm')}
           >
             <Edit2 size={14} />
           </button>
@@ -484,7 +487,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
                 ? isDark ? 'text-white/35 hover:text-red-400 hover:bg-red-500/10' : 'text-neutral-400 hover:text-red-500 hover:bg-red-50'
                 : 'opacity-25 cursor-not-allowed',
             )}
-            title={canEdit ? 'Eliminar' : 'No tienes permiso para eliminar este evento'}
+            title={canEdit ? t('delete') : t('agenda_no_delete_perm')}
           >
             <Trash2 size={14} />
           </button>
@@ -517,11 +520,11 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
           </span>
           {isPrivate ? (
             <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400">
-              <Lock size={9} /> Privado
+              <Lock size={9} /> {t('agenda_private')}
             </span>
           ) : (
             <span className={cn('flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full', isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-500')}>
-              <Globe size={9} /> Equipo
+              <Globe size={9} /> {t('agenda_team')}
             </span>
           )}
         </div>
@@ -534,7 +537,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
               {fmtDate(event.start_dt)}
             </p>
             {event.all_day ? (
-              <p className={cn('text-xs', isDark ? 'text-white/35' : 'text-neutral-400')}>Todo el día</p>
+              <p className={cn('text-xs', isDark ? 'text-white/35' : 'text-neutral-400')}>{t('agenda_all_day')}</p>
             ) : (
               <p className={cn('text-xs', isDark ? 'text-white/35' : 'text-neutral-400')}>
                 {fmtTime(event.start_dt)} → {fmtTime(event.end_dt)}
@@ -577,7 +580,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
         {event.description && (
           <div className={cn('p-3 rounded-xl text-sm leading-relaxed', isDark ? 'bg-slate-800/80' : 'bg-neutral-50')}>
             <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-1.5', isDark ? 'text-white/25' : 'text-neutral-400')}>
-              Descripción
+              {t('description')}
             </p>
             <p className={isDark ? 'text-white/65' : 'text-neutral-600'}>{event.description}</p>
           </div>
@@ -587,7 +590,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
         {event.notes && (
           <div className={cn('p-3 rounded-xl text-sm leading-relaxed', isDark ? 'bg-slate-800/80' : 'bg-neutral-50')}>
             <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-1.5', isDark ? 'text-white/25' : 'text-neutral-400')}>
-              Notas
+              {t('samples_notes')}
             </p>
             <p className={isDark ? 'text-white/65' : 'text-neutral-600'}>{event.notes}</p>
           </div>
@@ -597,7 +600,7 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
         <div
           className={cn('pt-3 border-t text-[10px]', isDark ? 'border-white/5 text-white/20' : 'border-neutral-100 text-neutral-400')}
         >
-          Creado por {event.created_by_name || 'Sistema'}
+          {t('agenda_created_by')} {event.created_by_name || t('agenda_system')}
         </div>
       </div>
     </aside>
@@ -607,13 +610,14 @@ const EventDetailPanel = ({ event, onClose, onEdit, onDelete, isDark, currentUse
 // ─── Custom calendar event renderer ───────────────────────────────────────
 
 const AgendaEventBlock = ({ event }) => {
+  const { t } = useLang();
   const cat = getCatMeta(event.category);
   return (
     <div className="flex items-center gap-1 h-full w-full overflow-hidden px-0.5">
       <span className="text-[11px] leading-none flex-shrink-0" aria-hidden>{cat.emoji}</span>
       <span className="text-[11px] font-semibold truncate leading-tight flex-1">{event.title}</span>
       {event.visibility === 'private' && (
-        <Lock size={9} className="flex-shrink-0 opacity-70" aria-label="Privado" />
+        <Lock size={9} className="flex-shrink-0 opacity-70" aria-label={t('agenda_private')} />
       )}
     </div>
   );
@@ -625,6 +629,7 @@ const SmartAgenda = () => {
   const { user }  = useAuth();
   const navigate  = useNavigate();
   const { theme } = useTheme();
+  const { t }     = useLang();
   const isDark    = theme === 'dark';
 
   const [events,         setEvents]         = useState([]);
@@ -656,8 +661,8 @@ const SmartAgenda = () => {
     try {
       const res = await fetch(`${API}/agenda/events`, { credentials: 'include' });
       if (res.ok) setEvents(await res.json());
-      else toast.error('Error al cargar eventos');
-    } catch { toast.error('Error de conexión'); }
+      else toast.error(t('agenda_load_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setLoading(false); }
   }, []);
 
@@ -679,11 +684,11 @@ const SmartAgenda = () => {
         }
       } else {
         const errData = await res.json().catch(() => ({}));
-        toast.error(`Error de sincronización (${res.status}): ${errData.detail || 'Fallo en el servidor'}`);
+        toast.error(t('agenda_sync_err', { status: res.status, detail: errData.detail || t('agenda_server_fail') }));
       }
-    } catch (err) { 
+    } catch (err) {
       console.error("Google Sync Error:", err);
-      toast.error('Error de conexión al sincronizar con Google'); 
+      toast.error(t('agenda_google_conn_err'));
     }
     finally { setSyncingGoogle(false); }
   }, []);
@@ -712,7 +717,7 @@ const SmartAgenda = () => {
     // Check if we just came back from a redirect
     const params = new URLSearchParams(window.location.search);
     if (params.get('google_connected')) {
-      toast.success('¡Google Calendar conectado con éxito!');
+      toast.success(t('agenda_google_connected'));
       // Clean URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -727,7 +732,7 @@ const SmartAgenda = () => {
         const { url } = await res.json();
         window.location.href = url;
       }
-    } catch { toast.error('Error al iniciar conexión con Google'); }
+    } catch { toast.error(t('agenda_google_init_err')); }
   };
 
   // ── Alert / notification system ────────────────────────────────────────
@@ -746,13 +751,13 @@ const SmartAgenda = () => {
         if (mins > 15) {
           const delay = (mins - 15) * 60_000;
           alertTimers.current.push(setTimeout(() =>
-            toast(`🔔 En 15 min: ${evt.title}`, { duration: 8000, description: evt.location || undefined }),
+            toast(t('agenda_in_15', { title: evt.title }), { duration: 8000, description: evt.location || undefined }),
           delay));
         }
         if (mins > 5) {
           const delay = (mins - 5) * 60_000;
           alertTimers.current.push(setTimeout(() =>
-            toast.warning(`⏰ En 5 min: ${evt.title}`, { duration: 12000, description: evt.location || undefined }),
+            toast.warning(t('agenda_in_5', { title: evt.title }), { duration: 12000, description: evt.location || undefined }),
           delay));
         }
       } catch { /* skip events with invalid dates */ }
@@ -816,13 +821,13 @@ const SmartAgenda = () => {
       if (res.ok) {
         const created = await res.json();
         setEvents(prev => [...prev, created]);
-        toast.success('Evento creado');
+        toast.success(t('agenda_event_created'));
         setShowModal(false);
         setEditingEvent(null);
       } else {
-        toast.error('Error al crear evento');
+        toast.error(t('agenda_create_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSaving(false); }
   };
 
@@ -839,19 +844,19 @@ const SmartAgenda = () => {
       if (res.ok) {
         const updated = await res.json();
         setEvents(prev => prev.map(e => e.event_id === updated.event_id ? updated : e));
-        toast.success('Evento actualizado');
+        toast.success(t('agenda_event_updated'));
         setShowModal(false);
         setSelectedEvent(updated);
         setEditingEvent(null);
       } else {
-        toast.error('Error al actualizar');
+        toast.error(t('update_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSaving(false); }
   };
 
   const deleteEvent = async (eventId) => {
-    if (!window.confirm('¿Eliminar este evento permanentemente?')) return;
+    if (!window.confirm(t('agenda_delete_confirm'))) return;
     try {
       const res = await fetch(`${API}/agenda/events/${eventId}`, {
         method: 'DELETE', credentials: 'include',
@@ -859,9 +864,9 @@ const SmartAgenda = () => {
       if (res.ok) {
         setEvents(prev => prev.filter(e => e.event_id !== eventId));
         setSelectedEvent(null);
-        toast.success('Evento eliminado');
-      } else { toast.error('Error al eliminar'); }
-    } catch { toast.error('Error de conexión'); }
+        toast.success(t('agenda_event_deleted'));
+      } else { toast.error(t('perm_del_err')); }
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const handleSave = (form) => {
@@ -950,7 +955,7 @@ const SmartAgenda = () => {
       >
         {/* Left: back + logo */}
         <div className="flex items-center gap-3 min-w-0">
-          <button onClick={() => navigate(-1)} className={navBtnCls} title="Volver">
+          <button onClick={() => navigate(-1)} className={navBtnCls} title={t('comp_back')}>
             <ArrowLeft size={16} />
           </button>
           <div className="flex items-center gap-2">
@@ -969,7 +974,7 @@ const SmartAgenda = () => {
             onClick={navToday}
             className={cn('px-3 py-1 rounded-lg text-xs font-bold transition-colors', isDark ? 'bg-white/6 text-white/60 hover:bg-white/12' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200')}
           >
-            Hoy
+            {t('today')}
           </button>
           <button onClick={navNext} className={navBtnCls}><ChevronRight size={16} /></button>
           <span className={cn('text-sm font-semibold ml-2 capitalize min-w-[160px] hidden sm:block', isDark ? 'text-white/75' : 'text-neutral-700')}>
@@ -985,7 +990,7 @@ const SmartAgenda = () => {
                 autoFocus
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Buscar…"
+                placeholder={t('agenda_search_placeholder')}
                 className={cn(
                   'w-40 px-3 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40',
                   isDark ? 'bg-slate-800 border-white/10 text-white placeholder:text-white/25' : 'bg-neutral-50 border-neutral-200',
@@ -994,7 +999,7 @@ const SmartAgenda = () => {
               <button onClick={() => { setShowSearch(false); setSearchQuery(''); }} className={navBtnCls}><X size={13} /></button>
             </div>
           ) : (
-            <button onClick={() => setShowSearch(true)} className={navBtnCls} title="Buscar"><Search size={15} /></button>
+            <button onClick={() => setShowSearch(true)} className={navBtnCls} title={t('search')}><Search size={15} /></button>
           )}
 
           {/* Category filter */}
@@ -1006,16 +1011,16 @@ const SmartAgenda = () => {
               isDark ? 'bg-slate-800 border-white/10 text-white/60' : 'bg-neutral-50 border-neutral-200 text-neutral-600',
             )}
           >
-            <option value="all">Todas</option>
+            <option value="all">{t('all')}</option>
             {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
           </select>
 
           {/* View switcher */}
           <div className={cn('flex rounded-lg border overflow-hidden', isDark ? 'border-white/10' : 'border-neutral-200')}>
             {[
-              { v: Views.MONTH, label: 'Mes' },
-              { v: Views.WEEK,  label: 'Semana' },
-              { v: Views.DAY,   label: 'Día' },
+              { v: Views.MONTH, label: t('month') },
+              { v: Views.WEEK,  label: t('week') },
+              { v: Views.DAY,   label: t('samples_day') },
             ].map(({ v, label }) => (
               <button key={v} onClick={() => setView(v)} className={viewBtnCls(view === v)}>
                 {label}
@@ -1034,10 +1039,10 @@ const SmartAgenda = () => {
                   ? 'border-blue-500/30 text-blue-400 hover:bg-blue-500/10' 
                   : 'border-blue-200 text-blue-600 hover:bg-blue-50'
               )}
-              title="Sincronizar con Google"
+              title={t('agenda_sync_google')}
             >
               <RefreshCw size={13} className={cn(syncingGoogle && 'animate-spin')} />
-              <span className="hidden lg:inline">{syncingGoogle ? 'Sincronizando...' : 'Google'}</span>
+              <span className="hidden lg:inline">{syncingGoogle ? t('agenda_syncing') : 'Google'}</span>
             </button>
           ) : (
             <button
@@ -1047,7 +1052,7 @@ const SmartAgenda = () => {
               )}
             >
               <Globe size={13} />
-              <span className="hidden lg:inline">Conectar Google</span>
+              <span className="hidden lg:inline">{t('agenda_connect_google')}</span>
             </button>
           )}
 
@@ -1056,7 +1061,7 @@ const SmartAgenda = () => {
             onClick={() => { setEditingEvent(null); setShowModal(true); }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30"
           >
-            <Plus size={14} /> Nuevo
+            <Plus size={14} /> {t('agenda_new')}
           </button>
         </div>
       </header>
@@ -1072,10 +1077,10 @@ const SmartAgenda = () => {
           {/* Upcoming events */}
           <div className="p-3 flex-1 overflow-y-auto">
             <p className={cn('text-[9px] font-black uppercase tracking-[0.18em] mb-2', isDark ? 'text-white/25' : 'text-neutral-400')}>
-              Próximos eventos
+              {t('agenda_upcoming')}
             </p>
             {upcomingEvents.length === 0 ? (
-              <p className={cn('text-xs', isDark ? 'text-white/20' : 'text-neutral-400')}>Sin eventos próximos</p>
+              <p className={cn('text-xs', isDark ? 'text-white/20' : 'text-neutral-400')}>{t('agenda_no_upcoming')}</p>
             ) : (
               <div className="space-y-1">
                 {upcomingEvents.map(evt => {
@@ -1093,7 +1098,7 @@ const SmartAgenda = () => {
                         </span>
                       </div>
                       <p className={cn('text-[10px] ml-3', isDark ? 'text-white/28' : 'text-neutral-400')}>
-                        {evt.all_day ? 'Todo el día' : format(evt.start, 'HH:mm') + ' · ' + format(evt.start, 'd MMM', { locale: es })}
+                        {evt.all_day ? t('agenda_all_day') : format(evt.start, 'HH:mm') + ' · ' + format(evt.start, 'd MMM', { locale: es })}
                       </p>
                     </button>
                   );
@@ -1105,7 +1110,7 @@ const SmartAgenda = () => {
           {/* Category filter legend */}
           <div className="p-3 border-t" style={{ borderColor }}>
             <p className={cn('text-[9px] font-black uppercase tracking-[0.18em] mb-2', isDark ? 'text-white/25' : 'text-neutral-400')}>
-              Categorías
+              {t('agenda_categories')}
             </p>
             <div className="space-y-0.5">
               {CATEGORIES.map(cat => (
@@ -1133,7 +1138,7 @@ const SmartAgenda = () => {
             <div className="absolute inset-0 z-20 flex items-center justify-center rounded-xl" style={{ background: isDark ? 'rgba(15,23,42,0.7)' : 'rgba(248,250,252,0.75)', backdropFilter: 'blur(4px)' }}>
               <div className="flex items-center gap-2">
                 <Loader2 size={18} className="animate-spin text-blue-500" />
-                <span className={cn('text-sm font-medium', isDark ? 'text-white/60' : 'text-neutral-500')}>Cargando agenda…</span>
+                <span className={cn('text-sm font-medium', isDark ? 'text-white/60' : 'text-neutral-500')}>{t('agenda_loading')}</span>
               </div>
             </div>
           )}
@@ -1160,12 +1165,12 @@ const SmartAgenda = () => {
               event: AgendaEventBlock,
             }}
             messages={{
-              noEventsInRange: 'Sin eventos en este período',
-              showMore: n => `+${n} más`,
-              allDay: 'Todo el día',
-              date: 'Fecha',
-              time: 'Hora',
-              event: 'Evento',
+              noEventsInRange: t('agenda_no_events_range'),
+              showMore: n => t('agenda_show_more', { n }),
+              allDay: t('agenda_all_day'),
+              date: t('date'),
+              time: t('rs_hour'),
+              event: t('agenda_event'),
             }}
             min={new Date(0, 0, 0, 5, 0, 0)}
             max={new Date(0, 0, 0, 22, 30, 0)}

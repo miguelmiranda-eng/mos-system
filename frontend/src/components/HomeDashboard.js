@@ -7,6 +7,7 @@ import {
   ArrowLeft, Palette, Beaker, Brush, Droplets,
 } from 'lucide-react';
 import { useAuth } from '../App';
+import { useLang } from '../contexts/LanguageContext';
 import { GlobalColumnManager } from './dashboard/GlobalColumnManager';
 import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
 
@@ -76,6 +77,7 @@ const SECTIONS_DEFS = [
 const HomeDashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLang();
   const [showColumnManager, setShowColumnManager] = useState(false);
   const [showFormFieldsManager, setShowFormFieldsManager] = useState(false);
   const [search, setSearch] = useState('');
@@ -123,7 +125,7 @@ const HomeDashboard = () => {
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Filtrar herramientas..."
+                placeholder={t('home_filter_placeholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full h-11 pl-10 pr-4 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all"
@@ -133,7 +135,7 @@ const HomeDashboard = () => {
               onClick={() => navigate('/dashboard')}
               className="h-11 px-5 rounded-xl bg-white border border-slate-200 text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center gap-2 whitespace-nowrap transition-all"
             >
-              <ArrowLeft className="w-4 h-4" /> Volver al CRM
+              <ArrowLeft className="w-4 h-4" /> {t('home_back_crm')}
             </button>
           </div>
         </div>
@@ -142,7 +144,7 @@ const HomeDashboard = () => {
       <main className="max-w-7xl mx-auto px-4 md:px-8 pt-10 space-y-12">
         {filteredSections.length === 0 ? (
           <div className="py-24 text-center text-slate-400 text-sm font-bold uppercase tracking-widest">
-            Sin herramientas que coincidan con “{search}”
+            {t('home_no_match', { q: search })}
           </div>
         ) : (
           filteredSections.map(section => {

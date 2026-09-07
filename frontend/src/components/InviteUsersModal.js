@@ -8,10 +8,11 @@ import { toast } from "sonner";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Tabla a nivel de módulo: no puede usar hooks, guarda la CLAVE y se traduce al render.
 const PERM_OPTIONS = [
-  { value: 'edit', label: 'Editar', icon: Pencil, color: 'text-green-500' },
-  { value: 'view', label: 'Solo ver', icon: Eye, color: 'text-blue-400' },
-  { value: 'none', label: 'Sin acceso', icon: Ban, color: 'text-red-400' },
+  { value: 'edit', labelKey: 'edit', icon: Pencil, color: 'text-green-500' },
+  { value: 'view', labelKey: 'users_perm_view_only', icon: Eye, color: 'text-blue-400' },
+  { value: 'none', labelKey: 'users_perm_no_access', icon: Ban, color: 'text-red-400' },
 ];
 
 const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
@@ -39,7 +40,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
   const [savingPw, setSavingPw] = useState(false);
 
   const handleCreateUser = async () => {
-    if (!newEmail.trim() || !newPassword) { toast.error('Email y contrasena requeridos'); return; }
+    if (!newEmail.trim() || !newPassword) { toast.error(t('users_email_pw_required')); return; }
     setCreating(true);
     try {
       const res = await fetch(`${API}/auth/create-user`, {
@@ -47,14 +48,14 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
         body: JSON.stringify({ email: newEmail.trim(), password: newPassword, name: newName.trim(), role: newRole })
       });
       if (res.ok) {
-        toast.success('Usuario ' + newEmail + ' creado');
+        toast.success(t('users_user_created', { email: newEmail }));
         setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('general');
         fetchUsers();
       } else {
         const err = await res.json().catch(function() { return {}; });
-        toast.error(err.detail || 'Error al crear usuario');
+        toast.error(err.detail || t('users_err_create'));
       }
-    } catch (e) { toast.error('Error de conexion'); }
+    } catch (e) { toast.error(t('ceo_err_connection')); }
     finally { setCreating(false); }
   };
 
@@ -65,23 +66,23 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ name: editName, email: editEmail })
       });
-      if (res.ok) { toast.success('Usuario actualizado'); setEditingUser(null); fetchUsers(); }
+      if (res.ok) { toast.success(t('users_user_updated')); setEditingUser(null); fetchUsers(); }
       else { const err = await res.json().catch(function() { return {}; }); toast.error(err.detail || 'Error'); }
-    } catch (e) { toast.error('Error de conexion'); }
+    } catch (e) { toast.error(t('ceo_err_connection')); }
     finally { setSavingProfile(false); }
   };
 
   const handleChangePassword = async (email) => {
-    if (!newPw || newPw.length < 6) { toast.error('Minimo 6 caracteres'); return; }
+    if (!newPw || newPw.length < 6) { toast.error(t('users_pw_min_6')); return; }
     setSavingPw(true);
     try {
       const res = await fetch(`${API}/users/${encodeURIComponent(email)}/password`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ password: newPw })
       });
-      if (res.ok) { toast.success('Contrasena actualizada'); setChangingPwUser(null); setNewPw(''); }
+      if (res.ok) { toast.success(t('users_pw_updated')); setChangingPwUser(null); setNewPw(''); }
       else { const err = await res.json().catch(function() { return {}; }); toast.error(err.detail || 'Error'); }
-    } catch (e) { toast.error('Error de conexion'); }
+    } catch (e) { toast.error(t('ceo_err_connection')); }
     finally { setSavingPw(false); }
   };
 
@@ -126,9 +127,9 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify(perms)
       });
-      if (res.ok) toast.success('Permisos guardados');
-      else toast.error('Error guardando permisos');
-    } catch { toast.error('Error guardando permisos'); } finally { setSavingPerms(null); }
+      if (res.ok) toast.success(t('users_perms_saved'));
+      else toast.error(t('users_err_saving_perms'));
+    } catch { toast.error(t('users_err_saving_perms')); } finally { setSavingPerms(null); }
   };
 
   const handleInvite = async () => {
@@ -180,10 +181,10 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
         <div className="border-b border-border pb-4 space-y-3">
           <div className="flex gap-1 mb-2">
             <button onClick={() => setCreateTab('google')} className={`px-3 py-1.5 rounded text-xs font-medium transition-all ${createTab === 'google' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'}`} data-testid="tab-google-invite">
-              Invitar (Google)
+              {t('users_invite_google')}
             </button>
             <button onClick={() => setCreateTab('email')} className={`px-3 py-1.5 rounded text-xs font-medium transition-all flex items-center gap-1 ${createTab === 'email' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'}`} data-testid="tab-email-create">
-              <KeyRound className="w-3 h-3" /> Crear con email
+              <KeyRound className="w-3 h-3" /> {t('users_create_with_email')}
             </button>
           </div>
 
@@ -199,8 +200,8 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                     <SelectItem value="general">{t('user_role')}</SelectItem>
                     <SelectItem value="admin">{t('admin')}</SelectItem>
                     <SelectItem value="picker">Picker</SelectItem>
-                    <SelectItem value="operator">Operador</SelectItem>
-                    <SelectItem value="user">Usuario</SelectItem>
+                    <SelectItem value="operator">{t('operator')}</SelectItem>
+                    <SelectItem value="user">{t('user')}</SelectItem>
                     <SelectItem value="ceo">CEO</SelectItem>
                   </SelectContent>
                 </Select>
@@ -212,12 +213,12 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
             </>
           ) : (
             <>
-              <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">Crear usuario con email y contrasena</label>
+              <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">{t('users_create_email_label')}</label>
               <div className="grid grid-cols-2 gap-2">
                 <div className="relative col-span-2 sm:col-span-1">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Nombre" className="w-full pl-9 pr-3 py-2 bg-secondary border border-border rounded text-sm text-foreground" data-testid="create-name-input" />
+                    placeholder={t('name')} className="w-full pl-9 pr-3 py-2 bg-secondary border border-border rounded text-sm text-foreground" data-testid="create-name-input" />
                 </div>
                 <div className="relative col-span-2 sm:col-span-1">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -227,7 +228,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                 <div className="relative col-span-2 sm:col-span-1">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Contrasena (min. 6)" required className="w-full pl-9 pr-3 py-2 bg-secondary border border-border rounded text-sm text-foreground" data-testid="create-password-input" />
+                    placeholder={t('users_pw_placeholder')} required className="w-full pl-9 pr-3 py-2 bg-secondary border border-border rounded text-sm text-foreground" data-testid="create-password-input" />
                 </div>
                 <div className="col-span-2 sm:col-span-1 flex gap-2">
                   <Select value={newRole} onValueChange={setNewRole}>
@@ -236,14 +237,14 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                       <SelectItem value="general">{t('user_role')}</SelectItem>
                       <SelectItem value="admin">{t('admin')}</SelectItem>
                       <SelectItem value="picker">Picker</SelectItem>
-                      <SelectItem value="operator">Operador</SelectItem>
-                      <SelectItem value="user">Usuario</SelectItem>
+                      <SelectItem value="operator">{t('operator')}</SelectItem>
+                      <SelectItem value="user">{t('user')}</SelectItem>
                       <SelectItem value="ceo">CEO</SelectItem>
                     </SelectContent>
                   </Select>
                   <button onClick={handleCreateUser} disabled={creating || !newEmail.trim() || !newPassword}
                     className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2" data-testid="create-user-submit-btn">
-                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Crear
+                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} {t('users_create')}
                   </button>
                 </div>
               </div>
@@ -281,7 +282,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                           <SelectItem value="general"><span className="flex items-center gap-1"><User className="w-3 h-3" /> {t('user_role')}</span></SelectItem>
                           <SelectItem value="admin"><span className="flex items-center gap-1"><Shield className="w-3 h-3" /> {t('admin')}</span></SelectItem>
                           <SelectItem value="picker">Picker</SelectItem>
-                          <SelectItem value="operator">Operador</SelectItem>
+                          <SelectItem value="operator">{t('operator')}</SelectItem>
                           <SelectItem value="ceo">CEO</SelectItem>
                         </SelectContent>
                       </Select>
@@ -289,12 +290,12 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                         <>
                           <button onClick={() => { setEditingUser(editingUser === u.email ? null : u.email); setEditName(u.name || ''); setEditEmail(u.email); setChangingPwUser(null); }}
                             className={`p-1.5 rounded transition-colors ${editingUser === u.email ? 'bg-primary/20 text-primary' : 'hover:bg-secondary'}`}
-                            title="Editar perfil" data-testid={`edit-user-${u.email}`}>
+                            title={t('users_edit_profile')} data-testid={`edit-user-${u.email}`}>
                             <Pencil className="w-4 h-4" />
                           </button>
                           <button onClick={() => { setChangingPwUser(changingPwUser === u.email ? null : u.email); setNewPw(''); setEditingUser(null); }}
                             className={`p-1.5 rounded transition-colors ${changingPwUser === u.email ? 'bg-orange-500/20 text-orange-400' : 'hover:bg-secondary'}`}
-                            title="Cambiar contrasena" data-testid={`change-pw-${u.email}`}>
+                            title={t('users_change_password')} data-testid={`change-pw-${u.email}`}>
                             <KeyRound className="w-4 h-4" />
                           </button>
                         </>
@@ -302,7 +303,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                       {u.role !== 'admin' && filteredBoards.length > 0 && (
                         <button onClick={() => handleToggleExpand(u.email)}
                           className={`p-1.5 rounded transition-colors ${isExpanded ? 'bg-primary/20 text-primary' : 'hover:bg-secondary'}`}
-                          title="Permisos por tablero" data-testid={`toggle-perms-${u.email}`}>
+                          title={t('users_perms_by_board')} data-testid={`toggle-perms-${u.email}`}>
                           {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </button>
                       )}
@@ -313,15 +314,15 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                     {/* Edit profile panel */}
                     {editingUser === u.email && u.auth_type === 'email' && (
                       <div className="border-t border-border bg-secondary/10 p-3 space-y-2" data-testid={`edit-panel-${u.email}`}>
-                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Editar perfil</div>
+                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">{t('users_edit_profile')}</div>
                         <div className="flex gap-2">
-                          <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Nombre"
+                          <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder={t('name')}
                             className="flex-1 bg-secondary border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid={`edit-name-${u.email}`} />
-                          <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Email"
+                          <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder={t('email')}
                             className="flex-1 bg-secondary border border-border rounded px-3 py-1.5 text-sm text-foreground" data-testid={`edit-email-${u.email}`} />
                           <button onClick={() => handleSaveProfile(u.email)} disabled={savingProfile}
                             className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1" data-testid={`save-profile-${u.email}`}>
-                            {savingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Guardar
+                            {savingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {t('save')}
                           </button>
                           <button onClick={() => setEditingUser(null)} className="px-2 py-1.5 rounded text-muted-foreground hover:bg-secondary">
                             <X className="w-3.5 h-3.5" />
@@ -332,16 +333,16 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                     {/* Change password panel */}
                     {changingPwUser === u.email && u.auth_type === 'email' && (
                       <div className="border-t border-border bg-secondary/10 p-3 space-y-2" data-testid={`pw-panel-${u.email}`}>
-                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Cambiar contrasena</div>
+                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">{t('users_change_password')}</div>
                         <div className="flex gap-2">
                           <div className="relative flex-1">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <input type="text" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Nueva contrasena (min. 6)"
+                            <input type="text" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder={t('users_new_password')}
                               className="w-full pl-9 pr-3 py-1.5 bg-secondary border border-border rounded text-sm text-foreground" data-testid={`new-pw-${u.email}`} />
                           </div>
                           <button onClick={() => handleChangePassword(u.email)} disabled={savingPw || !newPw}
                             className="px-3 py-1.5 bg-orange-600 text-white rounded text-sm hover:bg-orange-700 disabled:opacity-50 flex items-center gap-1" data-testid={`save-pw-${u.email}`}>
-                            {savingPw ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Cambiar
+                            {savingPw ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {t('users_change')}
                           </button>
                           <button onClick={() => { setChangingPwUser(null); setNewPw(''); }} className="px-2 py-1.5 rounded text-muted-foreground hover:bg-secondary">
                             <X className="w-3.5 h-3.5" />
@@ -352,7 +353,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                     {/* Board permissions panel */}
                     {isExpanded && u.role !== 'admin' && (
                       <div className="border-t border-border bg-secondary/10 p-3 space-y-2" data-testid={`perms-panel-${u.email}`}>
-                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Permisos por tablero</div>
+                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">{t('users_perms_by_board')}</div>
                         <div className="grid gap-1.5">
                           {filteredBoards.map(board => {
                             const perm = perms[board] || 'edit';
@@ -366,8 +367,8 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                                     return (
                                       <button key={opt.value} onClick={() => handlePermChange(u.email, board, opt.value)}
                                         className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition-all ${isActive ? `${opt.color} bg-secondary border border-border font-medium` : 'text-muted-foreground hover:bg-secondary/50'}`}
-                                        title={opt.label} data-testid={`perm-${board}-${opt.value}`}>
-                                        <Icon className="w-3 h-3" /> {opt.label}
+                                        title={t(opt.labelKey)} data-testid={`perm-${board}-${opt.value}`}>
+                                        <Icon className="w-3 h-3" /> {t(opt.labelKey)}
                                       </button>
                                     );
                                   })}
@@ -379,7 +380,7 @@ const InviteUsersModal = ({ isOpen, onClose, boards = [] }) => {
                         <div className="flex justify-end pt-2 border-t border-border">
                           <button onClick={() => handleSavePermissions(u.email)} disabled={savingPerms === u.email}
                             className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1" data-testid={`save-perms-${u.email}`}>
-                            {savingPerms === u.email ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Guardar permisos
+                            {savingPerms === u.email ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {t('users_save_perms')}
                           </button>
                         </div>
                       </div>

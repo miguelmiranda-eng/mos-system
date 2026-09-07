@@ -7,12 +7,14 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
+import { useLang } from '../contexts/LanguageContext';
 
 // We rely on React Markdown if available, otherwise just basic rendering
 // In this project we might not have react-markdown installed. We'll use simple text rendering.
 
 const InsightsDashboard = ({ isAdmin }) => {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [insights, setInsights] = useState("");
@@ -46,7 +48,7 @@ const InsightsDashboard = ({ isAdmin }) => {
 
   const handleSaveConfig = async () => {
     if (!apiKey.trim()) {
-      toast.error('La clave API no puede estar vacía');
+      toast.error(t('insights_api_key_empty'));
       return;
     }
     try {
@@ -57,16 +59,16 @@ const InsightsDashboard = ({ isAdmin }) => {
         body: JSON.stringify({ gemini_api_key: apiKey.trim() })
       });
       if (res.ok) {
-        toast.success('Clave API guardada exitosamente de forma encriptada.');
+        toast.success(t('insights_api_key_saved'));
         setApiKey("");
         setIsConfigured(true);
         setShowConfig(false);
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Error al guardar la clave API');
+        toast.error(err.detail || t('insights_err_save_key'));
       }
     } catch (err) {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     }
   };
 
@@ -111,7 +113,7 @@ const InsightsDashboard = ({ isAdmin }) => {
       <header className="mb-8 relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <button onClick={() => navigate('/home')} className="mb-4 text-muted-foreground hover:text-foreground flex items-center text-sm transition-colors group">
-             <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> Volver al Home
+             <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> {t('admin_back_home')}
           </button>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30 shadow-[0_0_20px_rgba(220,38,38,0.3)]">
@@ -122,7 +124,7 @@ const InsightsDashboard = ({ isAdmin }) => {
                  AI <span className="text-primary">INSIGHTS</span>
                </h1>
                <p className="text-muted-foreground font-medium text-sm">
-                 Análisis inteligente de rendimiento, cuellos de botella y métricas de usuarios.
+                 {t('insights_subtitle')}
                </p>
             </div>
           </div>
@@ -132,7 +134,7 @@ const InsightsDashboard = ({ isAdmin }) => {
           <button 
              onClick={() => setShowConfig(!showConfig)}
              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${showConfig ? 'bg-secondary text-foreground' : 'bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground border border-border'}`}>
-             <Settings className="w-4 h-4" /> Configuración API
+             <Settings className="w-4 h-4" /> {t('insights_api_config')}
           </button>
         )}
       </header>
@@ -146,20 +148,20 @@ const InsightsDashboard = ({ isAdmin }) => {
             {loading ? (
               <div className="flex flex-col items-center gap-4">
                 <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                <p className="text-muted-foreground font-bold uppercase tracking-widest text-[10px]">Cargando estado...</p>
+                <p className="text-muted-foreground font-bold uppercase tracking-widest text-[10px]">{t('insights_loading_status')}</p>
               </div>
             ) : !isConfigured ? (
               <div className="text-center space-y-4 max-w-sm">
                 <div className="w-20 h-20 bg-secondary/50 rounded-full flex items-center justify-center mx-auto border border-border">
                   <Lock className="w-8 h-8 text-muted-foreground opacity-50" />
                 </div>
-                <h3 className="text-xl font-black uppercase text-foreground">Módulo Bloqueado</h3>
+                <h3 className="text-xl font-black uppercase text-foreground">{t('insights_locked')}</h3>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  Para utilizar el motor de inteligencia artificial, un administrador debe configurar una clave de API válida.
+                  {t('insights_locked_desc')}
                 </p>
                 {isAdmin && (
                   <button onClick={() => setShowConfig(true)} className="mt-4 bg-primary text-primary-foreground px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-primary/20">
-                    Configurar Ahora
+                    {t('insights_configure_now')}
                   </button>
                 )}
               </div>
@@ -172,15 +174,15 @@ const InsightsDashboard = ({ isAdmin }) => {
                       <Sparkles className="w-10 h-10 text-primary relative z-10" />
                     </div>
                     <div>
-                      <h2 className="text-2xl font-black uppercase text-foreground mb-2">Motor de Análisis Listo</h2>
+                      <h2 className="text-2xl font-black uppercase text-foreground mb-2">{t('insights_engine_ready')}</h2>
                       <p className="text-sm text-muted-foreground leading-relaxed">
-                        El sistema recopilará datos de la actividad reciente, cuellos de botella en tableros y participación de usuarios para generar un reporte inteligente.
+                        {t('insights_engine_desc')}
                       </p>
                     </div>
                     <button 
                       onClick={runAnalysis}
                       className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-4 rounded-xl text-sm font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/30 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 w-full max-w-xs mx-auto">
-                      <Activity className="w-5 h-5" /> Iniciar Análisis
+                      <Activity className="w-5 h-5" /> {t('insights_start')}
                     </button>
                   </div>
                 )}
@@ -244,19 +246,19 @@ const InsightsDashboard = ({ isAdmin }) => {
           <div className="xl:col-span-4 space-y-6 animate-in slide-in-from-right-4 duration-300">
             <div className="bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl p-6 shadow-xl sticky top-6">
                <h2 className="text-sm font-black uppercase tracking-widest text-foreground mb-6 flex items-center gap-2">
-                 <ShieldCheck className="w-5 h-5 text-primary" /> Seguridad de API
+                 <ShieldCheck className="w-5 h-5 text-primary" /> {t('insights_api_security')}
                </h2>
 
                <div className="space-y-6">
                  <div className="bg-primary/10 border border-primary/20 p-4 rounded-xl flex gap-3">
                     <Lock className="w-5 h-5 text-primary flex-shrink-0" />
                     <p className="text-[10px] text-primary/80 font-bold uppercase leading-relaxed tracking-widest">
-                      Tu clave de Gemini se almacenará utilizando encriptación Fernet AES de 128-bit. Nunca será visible ni expuesta en texto plano.
+                      {t('insights_encryption_note')}
                     </p>
                  </div>
 
                  <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Clave de API de Gemini</label>
+                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('insights_gemini_key')}</label>
                    <div className="relative">
                      <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                      <input 
@@ -273,23 +275,23 @@ const InsightsDashboard = ({ isAdmin }) => {
                    onClick={handleSaveConfig} 
                    disabled={!apiKey.trim()}
                    className="w-full py-4 bg-primary text-primary-foreground rounded-xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50">
-                   Guardar Clave Encriptada
+                   {t('insights_save_encrypted')}
                  </button>
                </div>
             </div>
             
             {/* Legend / Info Box */}
             <div className="bg-secondary/30 border border-border/50 rounded-2xl p-6">
-               <h3 className="text-xs font-black uppercase tracking-widest text-foreground mb-4">¿Qué analiza este módulo?</h3>
+               <h3 className="text-xs font-black uppercase tracking-widest text-foreground mb-4">{t('insights_what_analyzes')}</h3>
                <ul className="space-y-3">
                  <li className="flex gap-3 text-xs text-muted-foreground">
-                   <TrendingUp className="w-4 h-4 text-green-500 flex-shrink-0" /> Evaluamos la productividad del equipo basándonos en la velocidad de cierre de tareas.
+                   <TrendingUp className="w-4 h-4 text-green-500 flex-shrink-0" /> {t('insights_bullet_1')}
                  </li>
                  <li className="flex gap-3 text-xs text-muted-foreground">
-                   <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0" /> Detectamos cuellos de botella comparando la distribución de órdenes en cada tablero.
+                   <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0" /> {t('insights_bullet_2')}
                  </li>
                  <li className="flex gap-3 text-xs text-muted-foreground">
-                   <Lightbulb className="w-4 h-4 text-primary flex-shrink-0" /> Generamos recomendaciones accionables fundamentadas en datos reales.
+                   <Lightbulb className="w-4 h-4 text-primary flex-shrink-0" /> {t('insights_bullet_3')}
                  </li>
                </ul>
             </div>

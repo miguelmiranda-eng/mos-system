@@ -43,13 +43,13 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
     const allWatchFields = [...selectFields, ...dateFields, ...textFields].filter(f => f.options.length > 0);
 
     const conditionFields = [
-      { key: 'board', label: 'Tablero', options: activeBoards },
+      { key: 'board', label: t('board'), options: activeBoards },
       ...selectFields.filter(f => f.options.length > 0)
     ];
     const actionFields = selectFields.filter(f => f.options.length > 0);
 
     return { WATCH_FIELDS: allWatchFields, CONDITION_FIELDS: conditionFields, ACTION_FIELDS: actionFields };
-  }, [columns, options, activeBoards]);
+  }, [columns, options, activeBoards, t]);
 
   const handleSave = async () => {
     if (!editingRule) return;
@@ -100,27 +100,32 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
 
   const buildSummary = () => {
     if (!editingRule) return '';
+    // La frase se arma con plantillas del diccionario ({x}) para que el orden de
+    // las palabras sea el del idioma activo y no una concatenación en español.
+    const and = t('auto_sum_and');
     let parts = [];
     const ruleBoards = editingRule.boards || [];
     if (ruleBoards.length > 0) {
-      parts.push(`en tablero(s) [${ruleBoards.join(', ')}]`);
+      parts.push(t('auto_sum_in_boards', { boards: ruleBoards.join(', ') }));
     }
     if (editingRule._watch_field && editingRule._watch_value) {
       const label = WATCH_FIELDS.find(f => f.key === editingRule._watch_field)?.label || editingRule._watch_field;
-      const valLabel = editingRule._watch_value === 'date_updated' ? 'se actualice la fecha' : editingRule._watch_value === 'is_empty' ? 'este vacia' : editingRule._watch_value === 'not_empty' ? 'NO este vacia' : `"${editingRule._watch_value}"`;
+      const wv = editingRule._watch_value;
+      const valLabel = wv === 'date_updated' ? t('auto_sum_date_updated') : wv === 'is_empty' ? t('auto_sum_is_empty') : wv === 'not_empty' ? t('auto_sum_not_empty') : `"${wv}"`;
       parts.push(`"${label}" ${valLabel}`);
     } else {
-      parts.push('cualquier estado cambie');
+      parts.push(t('auto_sum_any_status'));
     }
     if (conditionEntries.length > 0) {
-      parts.push(conditionEntries.map(([f, v]) => `${CONDITION_FIELDS.find(c => c.key === f)?.label || f} sea "${v}"`).join(' y '));
+      parts.push(conditionEntries.map(([f, v]) => t('auto_sum_field_is', { field: CONDITION_FIELDS.find(c => c.key === f)?.label || f, value: v })).join(and));
     }
+    const p = editingRule.action_params || {};
     let action = '';
-    if (editingRule.action_type === 'move_board') action = `mover a ${editingRule.action_params?.target_board || '...'}`;
-    else if (editingRule.action_type === 'assign_field') action = `asignar ${editingRule.action_params?.field || '...'} = ${editingRule.action_params?.value || '...'}`;
-    else if (editingRule.action_type === 'send_email') action = `enviar email a ${editingRule.action_params?.to_email || '...'}`;
-    else action = 'notificar Slack';
-    return `Cuando ${parts.join(' y ')}, entonces ${action}.`;
+    if (editingRule.action_type === 'move_board') action = t('auto_sum_move', { board: p.target_board || '...' });
+    else if (editingRule.action_type === 'assign_field') action = t('auto_sum_assign', { field: p.field || '...', value: p.value || '...' });
+    else if (editingRule.action_type === 'send_email') action = t('auto_sum_email', { to: p.to_email || '...' });
+    else action = t('auto_sum_slack');
+    return t('auto_sum_sentence', { parts: parts.join(and), action });
   };
 
   return (
@@ -133,7 +138,7 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
           <div className="flex-1 overflow-y-auto py-4 space-y-5">
             {/* Board scope */}
             <div className="space-y-2 bg-orange-500/5 border border-orange-500/20 rounded-lg p-4">
-              <label className="text-xs uppercase tracking-wide text-orange-400 font-bold">Tableros donde aplica esta regla</label>
+              <label className="text-xs uppercase tracking-wide text-orange-400 font-bold">{t('auto_boards_scope')}</label>
               <div className="flex flex-wrap gap-2">
                 {activeBoards.map(board => {
                   const selected = (editingRule.boards || []).includes(board);
@@ -153,8 +158,8 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
               </div>
               <p className="text-[10px] text-muted-foreground">
                 {(editingRule.boards || []).length === 0
-                  ? 'Sin seleccion = aplica en TODOS los tableros.'
-                  : `Activa en ${editingRule.boards.length} tablero(s). Solo se ejecutara para ordenes en estos tableros.`}
+                  ? t('auto_no_selection_all')
+                  : t('auto_active_in_boards', { n: editingRule.boards.length })}
               </p>
             </div>
 
@@ -175,36 +180,36 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
 
             {/* Step 1: Watch Field */}
             <div className="space-y-2 bg-primary/5 border border-primary/20 rounded-lg p-4">
-              <label className="text-xs uppercase tracking-wide text-primary font-bold">1. Cuando esta columna cambie a este valor... <span className="text-muted-foreground font-normal">(opcional)</span></label>
+              <label className="text-xs uppercase tracking-wide text-primary font-bold">1. {t('auto_step1')} <span className="text-muted-foreground font-normal">{t('auto_optional')}</span></label>
               <div className="grid grid-cols-2 gap-3">
                 <Select value={editingRule._watch_field || 'any'} onValueChange={(v) => setEditingRule({ ...editingRule, _watch_field: v === 'any' ? '' : v, _watch_value: '' })}>
-                  <SelectTrigger className="bg-secondary border-border" data-testid="watch-field-select"><SelectValue placeholder="Cualquier columna" /></SelectTrigger>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="watch-field-select"><SelectValue placeholder={t('auto_any_column')} /></SelectTrigger>
                   <SelectContent className="bg-popover border-border z-[300] max-h-[250px]">
-                    <SelectItem value="any">Cualquier columna</SelectItem>
+                    <SelectItem value="any">{t('auto_any_column')}</SelectItem>
                     {WATCH_FIELDS.map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 {editingRule._watch_field ? (
                   <Select value={editingRule._watch_value || 'any'} onValueChange={(v) => setEditingRule({ ...editingRule, _watch_value: v === 'any' ? '' : v })}>
-                    <SelectTrigger className="bg-secondary border-border" data-testid="watch-value-select"><SelectValue placeholder="Cualquier valor" /></SelectTrigger>
+                    <SelectTrigger className="bg-secondary border-border" data-testid="watch-value-select"><SelectValue placeholder={t('auto_any_value')} /></SelectTrigger>
                     <SelectContent className="bg-popover border-border z-[300] max-h-[250px]">
-                      <SelectItem value="any">Cualquier valor</SelectItem>
-                      {(watchFieldDef?.options || []).map(opt => <SelectItem key={opt} value={opt}>{opt === 'date_updated' ? 'Cuando se actualice la fecha' : opt === 'is_empty' ? 'Celda vacia' : opt === 'not_empty' ? 'Celda NO vacia' : opt}</SelectItem>)}
+                      <SelectItem value="any">{t('auto_any_value')}</SelectItem>
+                      {(watchFieldDef?.options || []).map(opt => <SelectItem key={opt} value={opt}>{opt === 'date_updated' ? t('auto_opt_date_updated') : opt === 'is_empty' ? t('auto_opt_is_empty') : opt === 'not_empty' ? t('auto_opt_not_empty') : opt}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <div className="h-10 bg-secondary/50 border border-border rounded flex items-center px-3 text-sm text-muted-foreground">Selecciona columna primero</div>
+                  <div className="h-10 bg-secondary/50 border border-border rounded flex items-center px-3 text-sm text-muted-foreground">{t('auto_select_column_first')}</div>
                 )}
               </div>
-              <p className="text-[10px] text-muted-foreground">Si no seleccionas columna/valor, la regla se activara con cualquier cambio de estado.</p>
+              <p className="text-[10px] text-muted-foreground">{t('auto_step1_help')}</p>
             </div>
 
             {/* Step 2: Additional Conditions */}
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">2. Condiciones adicionales <span className="text-muted-foreground font-normal">(opcional)</span></label>
+              <label className="text-xs uppercase tracking-wide text-muted-foreground font-bold">2. {t('auto_step2')} <span className="text-muted-foreground font-normal">{t('auto_optional')}</span></label>
               <div className="bg-secondary/30 border border-dashed border-border rounded-lg p-3 space-y-2">
                 {conditionEntries.length === 0 && (
-                  <p className="text-xs text-muted-foreground text-center py-1">Sin condiciones adicionales — la regla aplica a todas las ordenes</p>
+                  <p className="text-xs text-muted-foreground text-center py-1">{t('auto_no_extra_conditions')}</p>
                 )}
                 {conditionEntries.map(([field, value]) => {
                   const fieldDef = CONDITION_FIELDS.find(f => f.key === field);
@@ -221,7 +226,7 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
                   );
                 })}
                 <Select value="" onValueChange={(field) => { if (field) updateCondition(field, CONDITION_FIELDS.find(f => f.key === field)?.options?.[0] || ''); }}>
-                  <SelectTrigger className="w-full border-dashed border-border bg-transparent text-muted-foreground h-8 text-sm" data-testid="add-condition-btn"><SelectValue placeholder="+ Agregar condicion (opcional)" /></SelectTrigger>
+                  <SelectTrigger className="w-full border-dashed border-border bg-transparent text-muted-foreground h-8 text-sm" data-testid="add-condition-btn"><SelectValue placeholder={t('add_condition')} /></SelectTrigger>
                   <SelectContent className="bg-popover border-border z-[300]">{CONDITION_FIELDS.filter(f => !conditions[f.key]).map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
@@ -266,25 +271,25 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
 
             {/* Summary */}
             <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 text-sm">
-              <span className="font-bold text-primary">Resumen:</span> {buildSummary()}
+              <span className="font-bold text-primary">{t('auto_summary')}</span> {buildSummary()}
             </div>
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={() => setEditingRule(null)} className="px-4 py-2 text-muted-foreground hover:text-foreground">Cancelar</button>
-              <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2" data-testid="save-rule-btn">{loading && <Loader2 className="w-4 h-4 animate-spin" />} Guardar</button>
+              <button onClick={() => setEditingRule(null)} className="px-4 py-2 text-muted-foreground hover:text-foreground">{t('cancel')}</button>
+              <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2" data-testid="save-rule-btn">{loading && <Loader2 className="w-4 h-4 animate-spin" />} {t('save')}</button>
             </div>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto py-4">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-border">
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Nombre</th>
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Tableros</th>
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Activa</th>
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Columna/Valor</th>
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Condiciones</th>
-                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">Entonces</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('name')}</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('auto_th_boards')}</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('active')}</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('auto_th_column_value')}</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('auto_th_conditions')}</th>
+                <th className="text-left py-2 px-3 font-barlow uppercase text-xs text-muted-foreground">{t('auto_th_then')}</th>
                 <th className="text-right py-2 px-3"></th>
               </tr></thead>
               <tbody>{automations.map(auto => {
@@ -295,9 +300,9 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
                 return (
                   <tr key={auto.automation_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`automation-row-${auto.automation_id}`}>
                     <td className="py-2 px-3 text-foreground font-medium">{auto.name}</td>
-                    <td className="py-2 px-3 text-xs">{(auto.boards || []).length > 0 ? auto.boards.map(b => <span key={b} className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 bg-orange-500/15 text-orange-400 rounded text-[10px] font-medium">{b}</span>) : <span className="text-muted-foreground">Todos</span>}</td>
-                    <td className="py-2 px-3"><span className={`px-2 py-0.5 rounded text-xs ${auto.is_active ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400'}`}>{auto.is_active ? 'Si' : 'No'}</span></td>
-                    <td className="py-2 px-3 text-xs">{wf && wv ? <span className="px-1.5 py-0.5 bg-primary/15 text-primary rounded text-[10px]">{wf}={wv}</span> : <span className="text-muted-foreground">Cualquiera</span>}</td>
+                    <td className="py-2 px-3 text-xs">{(auto.boards || []).length > 0 ? auto.boards.map(b => <span key={b} className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 bg-orange-500/15 text-orange-400 rounded text-[10px] font-medium">{b}</span>) : <span className="text-muted-foreground">{t('all_boards')}</span>}</td>
+                    <td className="py-2 px-3"><span className={`px-2 py-0.5 rounded text-xs ${auto.is_active ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400'}`}>{auto.is_active ? t('yes') : t('no')}</span></td>
+                    <td className="py-2 px-3 text-xs">{wf && wv ? <span className="px-1.5 py-0.5 bg-primary/15 text-primary rounded text-[10px]">{wf}={wv}</span> : <span className="text-muted-foreground">{t('auto_any')}</span>}</td>
                     <td className="py-2 px-3 text-xs">{otherConds.length > 0 ? otherConds.map(([k, v]) => <span key={k} className="inline-block mr-1 px-1.5 py-0.5 bg-secondary text-muted-foreground rounded text-[10px]">{k}={v}</span>) : <span className="text-muted-foreground">—</span>}</td>
                     <td className="py-2 px-3 text-muted-foreground text-xs">{auto.action_type === 'move_board' ? `→ ${auto.action_params?.target_board || ''}` : auto.action_type === 'assign_field' ? `${auto.action_params?.field}=${auto.action_params?.value}` : auto.action_type}</td>
                     <td className="py-2 px-3 text-right">
@@ -308,8 +313,8 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
                 );
               })}</tbody>
             </table>
-            {automations.length === 0 && <p className="text-center text-muted-foreground py-8">Sin automatizaciones</p>}
-            <button onClick={() => setEditingRule(newRule())} className="mt-4 w-full py-3 border border-dashed border-border rounded text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors flex items-center justify-center gap-2" data-testid="new-rule-btn"><Plus className="w-4 h-4" /> Nueva Regla</button>
+            {automations.length === 0 && <p className="text-center text-muted-foreground py-8">{t('auto_none')}</p>}
+            <button onClick={() => setEditingRule(newRule())} className="mt-4 w-full py-3 border border-dashed border-border rounded text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors flex items-center justify-center gap-2" data-testid="new-rule-btn"><Plus className="w-4 h-4" /> {t('new_rule')}</button>
           </div>
         )}
       </DialogContent>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Boxes, RefreshCw, Loader2, User, AlertTriangle } from "lucide-react";
 import { API } from "../../../lib/constants";
+import { useLang } from "../../../contexts/LanguageContext";
 
 // Orden canónico de tallas (mismo que el WMS: components/wms/lib.js). Se inlinea
 // para no acoplar el modal de comentarios al módulo WMS.
@@ -31,11 +32,12 @@ const COUNTRY_META = {
 const countryLabel = (c) => COUNTRY_META[c]?.short || c;
 const countryFlag = (c) => COUNTRY_META[c]?.flag || "";
 
+// `key` es la clave i18n de la etiqueta; se resuelve con t() en el componente.
 const STATUS_META = {
-  unassigned: { label: "Sin asignar", cls: "bg-secondary/60 text-muted-foreground" },
-  pending: { label: "Pendiente", cls: "bg-amber-500/15 text-amber-500" },
-  in_progress: { label: "Surtiendo", cls: "bg-blue-500/15 text-blue-400" },
-  completed: { label: "Completado", cls: "bg-emerald-500/15 text-emerald-500" },
+  unassigned: { key: "unassigned", cls: "bg-secondary/60 text-muted-foreground" },
+  pending: { key: "pending", cls: "bg-amber-500/15 text-amber-500" },
+  in_progress: { key: "comment_picking_in_progress", cls: "bg-blue-500/15 text-blue-400" },
+  completed: { key: "completed", cls: "bg-emerald-500/15 text-emerald-500" },
 };
 
 // Pivote talla × país de un ticket, con pedido/surtido/extra por talla.
@@ -85,6 +87,7 @@ function buildPivot(ticket) {
 }
 
 function TicketBlock({ ticket }) {
+  const { t } = useLang();
   const pivot = useMemo(() => buildPivot(ticket), [ticket]);
   const status = STATUS_META[ticket.picking_status] || STATUS_META.unassigned;
   const pct = pivot.totalOrdered ? Math.round((pivot.totalPicked / pivot.totalOrdered) * 100) : 0;
@@ -101,10 +104,10 @@ function TicketBlock({ ticket }) {
           {ticket.style} {ticket.color}
         </span>
         {ticket.fabric && <span className="text-[11px] text-muted-foreground uppercase">{ticket.fabric}</span>}
-        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${status.cls}`}>{status.label}</span>
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${status.cls}`}>{t(status.key)}</span>
         {noSurtido && (
           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/25 text-amber-500 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" /> SIN SURTIR EN WMS
+            <AlertTriangle className="w-3 h-3" /> {t('comment_not_picked_wms')}
           </span>
         )}
         {ticket.assigned_to_name && (
@@ -122,9 +125,7 @@ function TicketBlock({ ticket }) {
         <div className="px-3 py-3 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>
-            Este material <b>no se ha surtido en el WMS</b> (0 de {pivot.totalOrdered} pz pedidas). Por eso
-            no aparece país ni contenido: el sistema no tiene registro de surtido. Si ya se surtió
-            físicamente en el piso, falta capturarlo en el WMS.
+            {t('comment_not_picked_1')} <b>{t('comment_not_picked_b')}</b> {t('comment_not_picked_2', { n: pivot.totalOrdered })}
           </span>
         </div>
       ) : (
@@ -134,14 +135,14 @@ function TicketBlock({ ticket }) {
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              <th className="text-left font-bold px-3 py-1">Talla</th>
+              <th className="text-left font-bold px-3 py-1">{t('wms_label_size')}</th>
               {pivot.countries.map((c) => (
                 <th key={c} className="text-right font-bold px-2 py-1 whitespace-nowrap" title={c}>
                   {countryFlag(c)} {countryLabel(c)}
                 </th>
               ))}
-              <th className="text-right font-bold px-2 py-1">Pedido</th>
-              <th className="text-right font-bold px-3 py-1">Surtido</th>
+              <th className="text-right font-bold px-2 py-1">{t('comment_ordered_col')}</th>
+              <th className="text-right font-bold px-3 py-1">{t('comment_picked_col')}</th>
             </tr>
           </thead>
           <tbody>
@@ -157,7 +158,7 @@ function TicketBlock({ ticket }) {
                 <td className="text-right px-3 py-1 font-mono font-bold text-foreground">
                   {r.picked || "—"}
                   {r.extra > 0 && (
-                    <span className="ml-1 text-[10px] text-amber-500 font-bold" title="Sobrepick (surtido de más)">
+                    <span className="ml-1 text-[10px] text-amber-500 font-bold" title={t('comment_overpick_title')}>
                       +{r.extra}
                     </span>
                   )}
@@ -167,7 +168,7 @@ function TicketBlock({ ticket }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border/60 bg-secondary/30 font-bold">
-              <td className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">Total</td>
+              <td className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t('total')}</td>
               {pivot.countries.map((c) => (
                 <td key={c} className="text-right px-2 py-1 font-mono text-foreground">
                   {pivot.colTotal[c] || "—"}
@@ -182,7 +183,7 @@ function TicketBlock({ ticket }) {
 
       {hasExtras && (
         <div className="px-3 py-1 text-[10px] text-amber-500/90 border-t border-border/30 flex items-center gap-1">
-          <span className="font-bold">+N</span> = piezas extras (se surtió más de lo pedido en esa talla)
+          <span className="font-bold">+N</span> {t('comment_extras_note')}
         </div>
       )}
       </>
@@ -196,6 +197,7 @@ function TicketBlock({ ticket }) {
 // el WMS ya sabe que se surtió para la orden. Carga al abrir; botón para
 // refrescar. Si la orden no tiene tickets de picking, no renderiza nada.
 export function SurtidoTable({ order, isOpen }) {
+  const { t } = useLang();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -236,20 +238,20 @@ export function SurtidoTable({ order, isOpen }) {
     <div className="mx-6 mt-3 space-y-2" data-testid="surtido-table">
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-          <Boxes className="w-3.5 h-3.5" /> Surtido (WMS)
+          <Boxes className="w-3.5 h-3.5" /> {t('comment_picking_wms_paren')}
         </span>
         <button
           onClick={fetchSurtido}
           disabled={loading}
           className="text-[11px] text-primary hover:underline flex items-center gap-1 disabled:opacity-50"
-          title="Refrescar surtido"
+          title={t('comment_refresh_picking')}
         >
-          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refrescar
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} {t('comment_refresh')}
         </button>
       </div>
       {loading && tickets.length === 0 ? (
         <div className="flex items-center justify-center py-4 text-muted-foreground text-xs gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" /> Cargando surtido…
+          <Loader2 className="w-4 h-4 animate-spin" /> {t('comment_loading_picking')}
         </div>
       ) : (
         <div className="space-y-2 max-h-[32vh] overflow-y-auto pr-1">

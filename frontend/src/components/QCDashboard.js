@@ -13,6 +13,7 @@ import {
 import { API } from '../lib/constants';
 import { useAuth } from '../App';
 import { useTheme } from '../contexts/ThemeContext';
+import { useLang } from '../contexts/LanguageContext';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { Toaster } from 'sonner';
@@ -24,25 +25,27 @@ import { mapPool } from '../lib/uploadPool';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const FINDING_TYPES = [
-  { value: 'COSTURA',    label: 'Costura / Seam' },
-  { value: 'SERIGRAFIA', label: 'Serigrafía / Print' },
-  { value: 'TELA',       label: 'Tela / Blank' },
-  { value: 'MEDIDAS',    label: 'Medidas / Measurements' },
-  { value: 'ETIQUETA',   label: 'Etiqueta / Label' },
-  { value: 'EMPAQUE',    label: 'Empaque / Packaging' },
-  { value: 'OTHER',      label: 'Otro / Other' },
+  { value: 'COSTURA',    labelKey: 'qc_ft_costura' },
+  { value: 'SERIGRAFIA', labelKey: 'qc_ft_serigrafia' },
+  { value: 'TELA',       labelKey: 'qc_ft_tela' },
+  { value: 'MEDIDAS',    labelKey: 'qc_ft_medidas' },
+  { value: 'ETIQUETA',   labelKey: 'qc_ft_etiqueta' },
+  { value: 'EMPAQUE',    labelKey: 'qc_ft_empaque' },
+  { value: 'OTHER',      labelKey: 'qc_ft_other' },
 ];
+// Short form (first half of "Costura / Seam") is resolved inside components via t().
+const findingTypeKey = (v) => FINDING_TYPES.find(f => f.value === v)?.labelKey;
 
 const SEVERITIES = [
-  { value: 'CRITICAL', label: 'Crítico',  color: 'text-red-500',    bg: 'bg-red-500/10 border-red-500/30' },
-  { value: 'MAJOR',    label: 'Mayor',    color: 'text-orange-500', bg: 'bg-orange-500/10 border-orange-500/30' },
-  { value: 'MINOR',    label: 'Menor',    color: 'text-yellow-500', bg: 'bg-yellow-500/10 border-yellow-500/30' },
+  { value: 'CRITICAL', labelKey: 'qc_sev_critical',    color: 'text-red-500',    bg: 'bg-red-500/10 border-red-500/30' },
+  { value: 'MAJOR',    labelKey: 'qc_sev_major',       color: 'text-orange-500', bg: 'bg-orange-500/10 border-orange-500/30' },
+  { value: 'MINOR',    labelKey: 'qc_sev_minor',       color: 'text-yellow-500', bg: 'bg-yellow-500/10 border-yellow-500/30' },
 ];
 
 const RESULTS = [
-  { value: 'PASS',        label: 'Aprobado',    icon: CheckCircle2, color: 'text-green-500',  activeBg: 'bg-green-500 text-white',   inactiveBg: 'bg-green-500/10 text-green-600 border border-green-500/30' },
-  { value: 'CONDITIONAL', label: 'Condicional', icon: AlertCircle,  color: 'text-yellow-500', activeBg: 'bg-yellow-500 text-white',  inactiveBg: 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/30' },
-  { value: 'FAIL',        label: 'Rechazado',   icon: XCircle,      color: 'text-red-500',    activeBg: 'bg-red-500 text-white',     inactiveBg: 'bg-red-500/10 text-red-600 border border-red-500/30' },
+  { value: 'PASS',        labelKey: 'qc_res_pass',        icon: CheckCircle2, color: 'text-green-500',  activeBg: 'bg-green-500 text-white',   inactiveBg: 'bg-green-500/10 text-green-600 border border-green-500/30' },
+  { value: 'CONDITIONAL', labelKey: 'qc_res_conditional', icon: AlertCircle,  color: 'text-yellow-500', activeBg: 'bg-yellow-500 text-white',  inactiveBg: 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/30' },
+  { value: 'FAIL',        labelKey: 'qc_res_fail',        icon: XCircle,      color: 'text-red-500',    activeBg: 'bg-red-500 text-white',     inactiveBg: 'bg-red-500/10 text-red-600 border border-red-500/30' },
 ];
 
 const WRITE_ROLES = ['supersu', 'inspector_qc', 'qc'];
@@ -78,20 +81,22 @@ function StatCard({ icon: Icon, label, value, sub, color, isDark }) {
 }
 
 function SeverityBadge({ value }) {
+  const { t } = useLang();
   const s = SEVERITIES.find(x => x.value === value) || SEVERITIES[2];
   return (
     <span className={cn("px-2 py-0.5 rounded text-[11px] font-bold border", s.bg, s.color)}>
-      {s.label}
+      {t(s.labelKey)}
     </span>
   );
 }
 
 function ResultBadge({ value }) {
+  const { t } = useLang();
   const r = RESULTS.find(x => x.value === value) || RESULTS[0];
   const Icon = r.icon;
   return (
     <span className={cn("flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold", r.inactiveBg)}>
-      <Icon className="w-3 h-3" />{r.label}
+      <Icon className="w-3 h-3" />{t(r.labelKey)}
     </span>
   );
 }
@@ -121,6 +126,7 @@ function renderRichContent(content, isDark) {
 // ─── Notifications Panel ──────────────────────────────────────────────────────
 
 function NotificationsPanel({ notifications, unread, onMarkRead, onMarkAllRead, isDark, onClose }) {
+  const { t } = useLang();
   return (
     <div className={cn(
       "absolute right-0 top-12 z-[300] w-80 rounded-xl border shadow-2xl overflow-hidden",
@@ -128,18 +134,18 @@ function NotificationsPanel({ notifications, unread, onMarkRead, onMarkAllRead, 
     )}>
       <div className={cn("flex items-center justify-between px-4 py-3 border-b", isDark ? "border-white/8" : "border-slate-100")}>
         <span className={cn("font-bold text-sm", isDark ? "text-white" : "text-navy")}>
-          Notificaciones QC {unread > 0 && <span className="ml-1 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{unread}</span>}
+          {t('qc_notifications_title')} {unread > 0 && <span className="ml-1 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{unread}</span>}
         </span>
         {unread > 0 && (
           <button onClick={onMarkAllRead} className="text-[11px] text-royal hover:underline font-semibold">
-            Marcar todas
+            {t('qc_mark_all_read')}
           </button>
         )}
       </div>
       <div className="max-h-72 overflow-y-auto">
         {notifications.length === 0 ? (
           <div className={cn("py-8 text-center text-xs", isDark ? "text-white/30" : "text-slate-400")}>
-            Sin notificaciones
+            {t('qc_no_notifications')}
           </div>
         ) : (
           notifications.map(n => {
@@ -159,10 +165,10 @@ function NotificationsPanel({ notifications, unread, onMarkRead, onMarkAllRead, 
                   <div className={cn("mt-0.5 w-2 h-2 rounded-full flex-shrink-0", isFail ? "bg-red-500" : "bg-yellow-500")} />
                   <div className="flex-1 min-w-0">
                     <p className={cn("text-xs font-bold truncate", isDark ? "text-white" : "text-navy")}>
-                      Orden {n.order_number} — {n.client || '—'}
+                      {t('order')} {n.order_number} — {n.client || '—'}
                     </p>
                     <p className={cn("text-[11px] mt-0.5", isDark ? "text-white/50" : "text-slate-500")}>
-                      Resultado: <span className={isFail ? "text-red-500 font-bold" : "text-yellow-500 font-bold"}>{n.result}</span>
+                      {t('qc_result')}: <span className={isFail ? "text-red-500 font-bold" : "text-yellow-500 font-bold"}>{n.result}</span>
                       {' · '}{n.inspector}
                     </p>
                     <p className={cn("text-[10px] mt-0.5", isDark ? "text-white/30" : "text-slate-400")}>
@@ -183,6 +189,7 @@ function NotificationsPanel({ notifications, unread, onMarkRead, onMarkAllRead, 
 // ─── History Panel (inside detail modal) ─────────────────────────────────────
 
 function QCHistoryPanel({ qcId, isDark }) {
+  const { t } = useLang();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -195,11 +202,11 @@ function QCHistoryPanel({ qcId, isDark }) {
   }, [qcId]);
 
   const FIELD_LABELS = {
-    finding_type: 'Tipo de Defecto', severity: 'Severidad', result: 'Resultado',
-    quantity_inspected: 'Cant. Inspeccionada', quantity_rejected: 'Cant. Rechazada',
-    findings: 'Hallazgos', corrective_action: 'Acción Correctiva',
-    client: 'Cliente', request_date: 'Fecha Creación',
-    inspection_date: 'Fecha Inspección', quantity: 'Cantidad', job_title_a: 'Job Title',
+    finding_type: t('qc_defect_type'), severity: t('qc_severity'), result: t('qc_result'),
+    quantity_inspected: t('qc_qty_inspected_short'), quantity_rejected: t('qc_qty_rejected_short'),
+    findings: t('qc_findings'), corrective_action: t('qc_corrective_action'),
+    client: t('client'), request_date: t('qc_creation_date_short'),
+    inspection_date: t('qc_inspection_date'), quantity: t('quantity'), job_title_a: 'Job Title',
   };
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-royal" /></div>;
@@ -214,7 +221,7 @@ function QCHistoryPanel({ qcId, isDark }) {
           <Plus className="w-3.5 h-3.5 text-royal" />
         </div>
         <div>
-          <p className={cn("text-xs font-bold", isDark ? "text-white" : "text-navy")}>Registro creado por {data?.created_by || '—'}</p>
+          <p className={cn("text-xs font-bold", isDark ? "text-white" : "text-navy")}>{t('qc_created_by', { user: data?.created_by || '—' })}</p>
           <p className={cn("text-[10px] mt-0.5", isDark ? "text-white/40" : "text-slate-400")}>
             {data?.created_at ? data.created_at.split('T')[0] : '—'}
           </p>
@@ -223,7 +230,7 @@ function QCHistoryPanel({ qcId, isDark }) {
 
       {entries.length === 0 && (
         <p className={cn("text-xs text-center py-4", isDark ? "text-white/30" : "text-slate-400")}>
-          Sin modificaciones registradas
+          {t('qc_no_changes')}
         </p>
       )}
 
@@ -263,6 +270,7 @@ function QCHistoryPanel({ qcId, isDark }) {
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
 function QCDetailModal({ open, onClose, record, isDark }) {
+  const { t } = useLang();
   const [tab, setTab] = useState('details');
 
   useEffect(() => { if (open) setTab('details'); }, [open]);
@@ -283,9 +291,9 @@ function QCDetailModal({ open, onClose, record, isDark }) {
               <ClipboardList className="w-5 h-5 text-royal" />
             </div>
             <div>
-              <h2 className={cn("font-bold text-base", isDark ? "text-white" : "text-navy")}>Detalles de Inspección</h2>
+              <h2 className={cn("font-bold text-base", isDark ? "text-white" : "text-navy")}>{t('qc_inspection_details')}</h2>
               <p className={cn("text-[11px] uppercase tracking-wider font-bold", isDark ? "text-white/40" : "text-slate-400")}>
-                Orden {record.order_number} — {record.client}
+                {t('order')} {record.order_number} — {record.client}
               </p>
             </div>
           </div>
@@ -297,8 +305,8 @@ function QCDetailModal({ open, onClose, record, isDark }) {
         {/* Tab bar */}
         <div className={cn("flex border-b", isDark ? "border-white/8" : "border-slate-100")}>
           {[
-            { id: 'details', label: 'Detalles', icon: ClipboardList },
-            { id: 'history', label: 'Historial', icon: History },
+            { id: 'details', label: t('details'), icon: ClipboardList },
+            { id: 'history', label: t('qc_history'), icon: History },
           ].map(t => {
             const Icon = t.icon;
             return (
@@ -323,10 +331,10 @@ function QCDetailModal({ open, onClose, record, isDark }) {
             <div className="space-y-5">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: 'Fecha', value: record.inspection_date },
-                  { label: 'Inspector', value: record.inspector },
-                  { label: 'Resultado', value: <ResultBadge value={record.result} /> },
-                  { label: 'Severidad', value: <SeverityBadge value={record.severity} /> },
+                  { label: t('date'), value: record.inspection_date },
+                  { label: t('qc_inspector'), value: record.inspector },
+                  { label: t('qc_result'), value: <ResultBadge value={record.result} /> },
+                  { label: t('qc_severity'), value: <SeverityBadge value={record.severity} /> },
                 ].map(item => (
                   <div key={item.label} className={cn("p-3 rounded-xl border", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                     <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>{item.label}</p>
@@ -339,7 +347,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className={cn("p-3 rounded-xl border", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
-                  <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>Insp. / Rechazadas</p>
+                  <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>{t('qc_insp_rejected_short')}</p>
                   <p className="text-sm font-bold">
                     {record.quantity_inspected ?? '—'}
                     <span className="text-white/30 mx-1">/</span>
@@ -347,14 +355,14 @@ function QCDetailModal({ open, onClose, record, isDark }) {
                   </p>
                 </div>
                 <div className={cn("p-3 rounded-xl border", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
-                  <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>Cantidad Total</p>
+                  <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>{t('total_quantity')}</p>
                   <p className="text-sm font-bold text-royal">{record.quantity || '—'}</p>
                 </div>
                 <div className={cn("p-3 rounded-xl border overflow-hidden", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                   <p className={cn("text-[10px] font-bold uppercase mb-1", isDark ? "text-white/40" : "text-slate-400")}>Job Title / Printavo</p>
                   {(() => {
                     const val = record.job_title_a;
-                    if (!val) return <p className="text-sm italic opacity-40">Sin enlace</p>;
+                    if (!val) return <p className="text-sm italic opacity-40">{t('qc_no_link')}</p>;
                     const url = typeof val === 'object' ? val.url : val;
                     const desc = typeof val === 'object' ? val.desc : val;
                     if (!url?.startsWith('http')) return <p className="text-sm font-medium truncate">{desc}</p>;
@@ -368,7 +376,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
               </div>
 
               <div>
-                <h3 className="text-xs font-bold uppercase tracking-widest text-royal mb-2">Hallazgos e Imágenes</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest text-royal mb-2">{t('qc_findings_images')}</h3>
                 <div className={cn("p-4 rounded-xl border", isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200")}>
                   <div className="text-sm leading-relaxed">
                     {renderRichContent(record.findings, isDark)}
@@ -378,7 +386,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
 
               {record.corrective_action && (
                 <div>
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-green-500 mb-2">Acción Correctiva</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-green-500 mb-2">{t('qc_corrective_action')}</h3>
                   <div className={cn("p-4 rounded-xl border", isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200")}>
                     <p className="text-sm italic opacity-80">{record.corrective_action}</p>
                   </div>
@@ -392,7 +400,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
 
         <div className={cn("px-6 py-4 border-t flex justify-end", isDark ? "border-white/8" : "border-slate-100")}>
           <button onClick={onClose} className="px-6 py-2 bg-royal text-white rounded-xl font-bold text-sm shadow-lg shadow-royal/20 active:scale-95 transition-all">
-            Cerrar
+            {t('close')}
           </button>
         </div>
       </div>
@@ -403,6 +411,7 @@ function QCDetailModal({ open, onClose, record, isDark }) {
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 
 function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark }) {
+  const { t } = useLang();
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
@@ -506,9 +515,9 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
           const o = orders[0];
           setForm(f => ({ ...f, client: o.client || '', quantity: o.quantity || '', job_title_a: o.job_title_a || '' }));
           setResolvedOrderId(o.order_id || '');
-          toast.success(`Orden encontrada: ${o.client || ''}`);
+          toast.success(t('qc_order_found', { client: o.client || '' }));
         } else {
-          toast.warning('Orden no encontrada');
+          toast.warning(t('order_not_found'));
           setResolvedOrderId('');
         }
       }
@@ -518,12 +527,12 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.findings.trim()) { toast.error('Escribe los hallazgos'); return; }
+    if (!form.findings.trim()) { toast.error(t('qc_findings_required')); return; }
     setSaving(true);
     try {
       let finalFindings = form.findings.trim();
       if (imagePreviews.length > 0) {
-        if (!resolvedOrderId) { toast.error("Se necesita una orden válida para subir imágenes"); setSaving(false); return; }
+        if (!resolvedOrderId) { toast.error(t('qc_order_required_images')); setSaving(false); return; }
         // Upload photos in parallel (capped) instead of one-by-one.
         const keys = await mapPool(imagePreviews, async (img) => {
           try {
@@ -535,8 +544,8 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
               const imgData = await imgRes.json();
               return imgData.storage_key || imgData.url;
             }
-            toast.error(`Error subiendo ${img.name}`);
-          } catch { toast.error(`Error de conexion subiendo ${img.name}`); }
+            toast.error(t('qc_upload_error', { name: img.name }));
+          } catch { toast.error(t('qc_upload_conn_error', { name: img.name })); }
           return null;
         });
         for (const key of keys) {
@@ -554,14 +563,14 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
         }),
       });
       if (res.ok) {
-        toast.success(editRecord ? 'Inspección actualizada' : 'Inspección registrada');
+        toast.success(editRecord ? t('qc_inspection_updated') : t('qc_inspection_saved'));
         onSaved(await res.json());
         onClose();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al guardar');
+        toast.error(err.detail || t('options_save_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSaving(false); }
   };
 
@@ -584,9 +593,9 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
             </div>
             <div>
               <h2 className={cn("font-bold text-base", isDark ? "text-white" : "text-navy")}>
-                {editRecord ? 'Editar Inspección' : 'Nueva Inspección QC'}
+                {editRecord ? t('qc_edit_inspection') : t('qc_new_inspection_qc')}
               </h2>
-              <p className={cn("text-[11px]", isDark ? "text-white/40" : "text-slate-400")}>Registro de hallazgo de calidad</p>
+              <p className={cn("text-[11px]", isDark ? "text-white/40" : "text-slate-400")}>{t('qc_form_subtitle')}</p>
             </div>
           </div>
           <button onClick={onClose} className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/60" : "hover:bg-slate-100 text-slate-400")}>
@@ -598,38 +607,38 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
           {isDragging && (
             <div className="absolute inset-x-6 top-[72px] bottom-[80px] z-50 border-2 border-dashed border-royal rounded-xl bg-royal/5 flex flex-col items-center justify-center backdrop-blur-[2px]">
               <Camera className="w-10 h-10 mb-2 text-royal animate-bounce" />
-              <p className="text-sm text-royal font-bold uppercase tracking-widest">Suelta las imágenes aquí</p>
+              <p className="text-sm text-royal font-bold uppercase tracking-widest">{t('qc_drop_images')}</p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Orden #</label>
+              <label className={labelCls}>{t('qc_order_hash')}</label>
               <div className="relative">
-                <input className={cn(inputCls, "pr-8")} value={form.order_number} onChange={e => set('order_number', e.target.value)} onBlur={lookupOrder} placeholder="Ej: 1091" />
+                <input className={cn(inputCls, "pr-8")} value={form.order_number} onChange={e => set('order_number', e.target.value)} onBlur={lookupOrder} placeholder={t('qc_order_placeholder')} />
                 {lookingUp && <Loader2 className="absolute right-2 top-2.5 w-4 h-4 animate-spin text-royal" />}
               </div>
             </div>
             <div>
-              <label className={labelCls}>Cliente</label>
-              <input className={inputCls} value={form.client} onChange={e => set('client', e.target.value)} placeholder="Nombre del cliente" />
+              <label className={labelCls}>{t('client')}</label>
+              <input className={inputCls} value={form.client} onChange={e => set('client', e.target.value)} placeholder={t('qc_client_placeholder')} />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Fecha de Creación</label>
+              <label className={labelCls}>{t('created_at')}</label>
               <input type="date" className={cn(inputCls, "bg-secondary/30")} value={form.request_date} readOnly />
             </div>
             <div>
-              <label className={labelCls}>Fecha Inspección</label>
+              <label className={labelCls}>{t('qc_inspection_date')}</label>
               <input type="date" className={inputCls} value={form.inspection_date} onChange={e => set('inspection_date', e.target.value)} />
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className={labelCls}>Cantidad Total</label>
+              <label className={labelCls}>{t('total_quantity')}</label>
               <input className={cn(inputCls, "bg-secondary/30")} value={form.quantity} readOnly placeholder="—" />
             </div>
             <div className="col-span-2">
@@ -637,7 +646,7 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
               <div className={cn(inputCls, "bg-secondary/30 flex items-center gap-2 truncate")}>
                 {(() => {
                   const val = form.job_title_a;
-                  if (!val) return <span className="opacity-40 italic">Sin enlace</span>;
+                  if (!val) return <span className="opacity-40 italic">{t('qc_no_link')}</span>;
                   const url = typeof val === 'object' ? val.url : val;
                   const desc = typeof val === 'object' ? val.desc : val;
                   if (!url?.startsWith('http')) return <span className="truncate">{desc}</span>;
@@ -649,21 +658,21 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Tipo de Defecto</label>
+              <label className={labelCls}>{t('qc_defect_type')}</label>
               <select className={inputCls} value={form.finding_type} onChange={e => set('finding_type', e.target.value)}>
-                {FINDING_TYPES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                {FINDING_TYPES.map(f => <option key={f.value} value={f.value}>{t(f.labelKey)}</option>)}
               </select>
             </div>
             <div>
-              <label className={labelCls}>Severidad</label>
+              <label className={labelCls}>{t('qc_severity')}</label>
               <select className={inputCls} value={form.severity} onChange={e => set('severity', e.target.value)}>
-                {SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                {SEVERITIES.map(s => <option key={s.value} value={s.value}>{t(s.labelKey)}</option>)}
               </select>
             </div>
           </div>
 
           <div>
-            <label className={labelCls}>Resultado</label>
+            <label className={labelCls}>{t('qc_result')}</label>
             <div className="flex gap-2 mt-1">
               {RESULTS.map(r => {
                 const Icon = r.icon;
@@ -672,7 +681,7 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
                   <button type="button" key={r.value} onClick={() => set('result', r.value)}
                     className={cn("flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-sm transition-all border",
                       active ? r.activeBg + " border-transparent" : (isDark ? "border-white/10 text-white/50 hover:border-white/20" : "border-slate-200 text-slate-400 hover:border-slate-300"))}>
-                    <Icon className="w-4 h-4" />{r.label}
+                    <Icon className="w-4 h-4" />{t(r.labelKey)}
                   </button>
                 );
               })}
@@ -681,25 +690,25 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Cantidad Inspeccionada</label>
+              <label className={labelCls}>{t('qc_qty_inspected')}</label>
               <input type="number" min="0" className={inputCls} value={form.quantity_inspected} onChange={e => set('quantity_inspected', e.target.value)} placeholder="0" />
             </div>
             <div>
-              <label className={labelCls}>Cantidad Rechazada</label>
+              <label className={labelCls}>{t('qc_qty_rejected')}</label>
               <input type="number" min="0" className={inputCls} value={form.quantity_rejected} onChange={e => set('quantity_rejected', e.target.value)} placeholder="0" />
             </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className={labelCls}>Descripción del Hallazgo <span className="text-red-500">*</span></label>
+              <label className={labelCls}>{t('qc_finding_description')} <span className="text-red-500">*</span></label>
               <button type="button" onClick={() => fileInputRef.current?.click()}
                 className={cn("flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors", isDark ? "bg-white/10 text-white/70 hover:bg-white/20" : "bg-slate-100 text-slate-500 hover:bg-slate-200")}>
-                <Camera className="w-3 h-3" /> Agregar Evidencia
+                <Camera className="w-3 h-3" /> {t('qc_add_evidence')}
               </button>
               <input key={fileInputKey} ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileUpload} className="hidden" />
             </div>
-            <textarea className={cn(inputCls, "resize-none")} rows={3} value={form.findings} onChange={e => set('findings', e.target.value)} placeholder="Describe el defecto o hallazgo encontrado..." />
+            <textarea className={cn(inputCls, "resize-none")} rows={3} value={form.findings} onChange={e => set('findings', e.target.value)} placeholder={t('qc_findings_placeholder')} />
           </div>
 
           {imagePreviews.length > 0 && (
@@ -717,17 +726,17 @@ function QCFormModal({ open, onClose, onSaved, editRecord, prefillOrder, isDark 
           )}
 
           <div>
-            <label className={labelCls}>Acción Correctiva</label>
-            <textarea className={cn(inputCls, "resize-none")} rows={2} value={form.corrective_action} onChange={e => set('corrective_action', e.target.value)} placeholder="Acción tomada o recomendada..." />
+            <label className={labelCls}>{t('qc_corrective_action')}</label>
+            <textarea className={cn(inputCls, "resize-none")} rows={2} value={form.corrective_action} onChange={e => set('corrective_action', e.target.value)} placeholder={t('qc_corrective_placeholder')} />
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-colors", isDark ? "bg-white/8 text-white/70 hover:bg-white/12" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}>
-              Cancelar
+              {t('cancel')}
             </button>
             <button type="submit" disabled={saving} className="px-5 py-2 rounded-lg text-sm font-bold bg-royal text-white hover:bg-royal/90 transition-colors flex items-center gap-2 disabled:opacity-50">
               {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {editRecord ? 'Guardar Cambios' : 'Registrar Inspección'}
+              {editRecord ? t('qc_save_changes') : t('qc_register_inspection')}
             </button>
           </div>
         </form>
@@ -745,9 +754,9 @@ const CHART_COLORS = {
   total: '#3b82f6',
 };
 
-const TYPE_LABELS = Object.fromEntries(FINDING_TYPES.map(f => [f.value, f.label.split(' / ')[0]]));
-
 function QCMetricsTab({ isDark }) {
+  const { t } = useLang();
+  const typeShort = (v) => { const k = findingTypeKey(v); return k ? t(k).split(' / ')[0] : v; };
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -763,9 +772,9 @@ function QCMetricsTab({ isDark }) {
     : { backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 8 };
 
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-royal" /></div>;
-  if (!metrics) return <div className="text-center py-20 text-sm opacity-40">No hay datos de métricas</div>;
+  if (!metrics) return <div className="text-center py-20 text-sm opacity-40">{t('qc_no_metrics')}</div>;
 
-  const byType = (metrics.by_type || []).map(d => ({ ...d, name: TYPE_LABELS[d.name] || d.name }));
+  const byType = (metrics.by_type || []).map(d => ({ ...d, name: typeShort(d.name) }));
   const byInspector = metrics.by_inspector || [];
   const byMonth = metrics.by_month || [];
 
@@ -774,10 +783,10 @@ function QCMetricsTab({ isDark }) {
       {/* Monthly trend */}
       <div>
         <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-4", isDark ? "text-white/50" : "text-slate-400")}>
-          Tendencia Mensual
+          {t('qc_monthly_trend')}
         </h3>
         {byMonth.length === 0 ? (
-          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>Sin datos mensuales</p>
+          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>{t('qc_no_monthly_data')}</p>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={byMonth} barCategoryGap="30%">
@@ -785,9 +794,9 @@ function QCMetricsTab({ isDark }) {
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: isDark ? 'rgba(255,255,255,0.4)' : '#94a3b8' }} axisLine={false} tickLine={false} width={28} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="pass" name="Aprobado" fill={CHART_COLORS.pass} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="conditional" name="Condicional" fill={CHART_COLORS.conditional} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="fail" name="Rechazado" fill={CHART_COLORS.fail} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="pass" name={t('qc_res_pass')} fill={CHART_COLORS.pass} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="conditional" name={t('qc_res_conditional')} fill={CHART_COLORS.conditional} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="fail" name={t('qc_res_fail')} fill={CHART_COLORS.fail} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -796,10 +805,10 @@ function QCMetricsTab({ isDark }) {
       {/* By defect type */}
       <div>
         <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-4", isDark ? "text-white/50" : "text-slate-400")}>
-          Por Tipo de Defecto
+          {t('qc_by_defect_type')}
         </h3>
         {byType.length === 0 ? (
-          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>Sin datos</p>
+          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>{t('no_data')}</p>
         ) : (
           <div className="space-y-2">
             {byType.map(item => {
@@ -808,7 +817,7 @@ function QCMetricsTab({ isDark }) {
                 <div key={item.name} className={cn("p-3 rounded-xl border", isDark ? "bg-white/3 border-white/5" : "bg-slate-50 border-slate-100")}>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className={cn("text-xs font-bold", isDark ? "text-white" : "text-navy")}>{item.name}</span>
-                    <span className={cn("text-xs font-mono", isDark ? "text-white/50" : "text-slate-500")}>{item.total} inspecciones</span>
+                    <span className={cn("text-xs font-mono", isDark ? "text-white/50" : "text-slate-500")}>{t('qc_n_inspections', { n: item.total })}</span>
                   </div>
                   <div className="flex h-2 rounded-full overflow-hidden gap-px">
                     {item.pass > 0 && <div style={{ width: `${(item.pass / total) * 100}%`, background: CHART_COLORS.pass }} />}
@@ -816,7 +825,7 @@ function QCMetricsTab({ isDark }) {
                     {item.fail > 0 && <div style={{ width: `${(item.fail / total) * 100}%`, background: CHART_COLORS.fail }} />}
                   </div>
                   <div className="flex gap-3 mt-1.5">
-                    {[['pass', 'Aprob.', CHART_COLORS.pass], ['conditional', 'Cond.', CHART_COLORS.conditional], ['fail', 'Rech.', CHART_COLORS.fail]].map(([k, lbl, color]) => (
+                    {[['pass', t('qc_pass_short'), CHART_COLORS.pass], ['conditional', t('qc_cond_short'), CHART_COLORS.conditional], ['fail', t('qc_fail_short'), CHART_COLORS.fail]].map(([k, lbl, color]) => (
                       <span key={k} className="flex items-center gap-1 text-[10px]" style={{ color }}>
                         <span className="w-2 h-2 rounded-full" style={{ background: color }} />
                         {lbl}: {item[k]}
@@ -833,10 +842,10 @@ function QCMetricsTab({ isDark }) {
       {/* By inspector */}
       <div>
         <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-4", isDark ? "text-white/50" : "text-slate-400")}>
-          Por Inspector
+          {t('qc_by_inspector')}
         </h3>
         {byInspector.length === 0 ? (
-          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>Sin datos</p>
+          <p className={cn("text-sm text-center py-6", isDark ? "text-white/30" : "text-slate-400")}>{t('no_data')}</p>
         ) : (
           <div className="space-y-2">
             {byInspector.map(item => {
@@ -848,11 +857,11 @@ function QCMetricsTab({ isDark }) {
                     <span className="text-xs font-bold text-royal">{(item.name || '?')[0].toUpperCase()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={cn("text-xs font-bold truncate", isDark ? "text-white" : "text-navy")}>{item.name || 'Desconocido'}</p>
+                    <p className={cn("text-xs font-bold truncate", isDark ? "text-white" : "text-navy")}>{item.name || t('qc_unknown')}</p>
                     <div className="flex gap-3 mt-0.5">
-                      <span className="text-[10px] text-green-500">{item.pass} aprobadas</span>
-                      <span className="text-[10px] text-red-500">{item.fail} rechazadas</span>
-                      <span className="text-[10px] text-yellow-500">{item.conditional} cond.</span>
+                      <span className="text-[10px] text-green-500">{t('qc_n_passed', { n: item.pass })}</span>
+                      <span className="text-[10px] text-red-500">{t('qc_n_failed', { n: item.fail })}</span>
+                      <span className="text-[10px] text-yellow-500">{t('qc_n_cond', { n: item.conditional })}</span>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
@@ -874,12 +883,13 @@ function QCMetricsTab({ isDark }) {
 // ─── Pagination ───────────────────────────────────────────────────────────────
 
 function Pagination({ page, pages, total, limit, onPage, isDark }) {
+  const { t } = useLang();
   if (pages <= 1) return null;
   const from = (page - 1) * limit + 1;
   const to = Math.min(page * limit, total);
   return (
     <div className={cn("px-4 py-2.5 border-t flex items-center justify-between", isDark ? "border-white/5 text-white/40" : "border-slate-100 text-slate-400")}>
-      <span className="text-[11px]">{from}–{to} de {total} registros</span>
+      <span className="text-[11px]">{t('qc_pagination_range', { from, to, total })}</span>
       <div className="flex items-center gap-1">
         <button
           onClick={() => onPage(page - 1)} disabled={page <= 1}
@@ -902,12 +912,12 @@ function Pagination({ page, pages, total, limit, onPage, isDark }) {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 const QC_TABS = [
-  { id: 'general',     label: 'General',     icon: ClipboardList, countKey: null },
-  { id: 'inspections', label: 'Inspecciones', icon: ShieldCheck,   countKey: null,          activeText: 'text-cyan-400',   activeBorder: 'border-cyan-500' },
-  { id: 'pass',        label: 'Aprobado',    icon: CheckCircle2,  countKey: 'passed',      activeText: 'text-green-400',  activeBorder: 'border-green-500' },
-  { id: 'conditional', label: 'Condicional', icon: AlertCircle,   countKey: 'conditional', activeText: 'text-yellow-400', activeBorder: 'border-yellow-500' },
-  { id: 'fail',        label: 'Rechazado',   icon: XCircle,       countKey: 'failed',      activeText: 'text-red-400',    activeBorder: 'border-red-500' },
-  { id: 'metrics',     label: 'Métricas',    icon: BarChart2,     countKey: null,          activeText: 'text-purple-400', activeBorder: 'border-purple-500' },
+  { id: 'general',     labelKey: 'general',            icon: ClipboardList, countKey: null },
+  { id: 'inspections', labelKey: 'qc_tab_inspections', icon: ShieldCheck,   countKey: null,          activeText: 'text-cyan-400',   activeBorder: 'border-cyan-500' },
+  { id: 'pass',        labelKey: 'qc_res_pass',        icon: CheckCircle2,  countKey: 'passed',      activeText: 'text-green-400',  activeBorder: 'border-green-500' },
+  { id: 'conditional', labelKey: 'qc_res_conditional', icon: AlertCircle,   countKey: 'conditional', activeText: 'text-yellow-400', activeBorder: 'border-yellow-500' },
+  { id: 'fail',        labelKey: 'qc_res_fail',        icon: XCircle,       countKey: 'failed',      activeText: 'text-red-400',    activeBorder: 'border-red-500' },
+  { id: 'metrics',     labelKey: 'qc_tab_metrics',     icon: BarChart2,     countKey: null,          activeText: 'text-purple-400', activeBorder: 'border-purple-500' },
 ];
 
 const TAB_BORDER = { general: 'border-slate-400', pass: 'border-green-500', conditional: 'border-yellow-500', fail: 'border-red-500', metrics: 'border-purple-500' };
@@ -918,7 +928,9 @@ export default function QCDashboard() {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const { theme } = useTheme();
+  const { t } = useLang();
   const isDark = theme === 'dark';
+  const typeShort = (v) => { const k = findingTypeKey(v); return k ? t(k).split(' / ')[0] : v; };
 
   const [currentUser, setCurrentUser] = useState(null);
   const [records, setRecords] = useState([]);
@@ -1011,15 +1023,15 @@ export default function QCDashboard() {
         body: JSON.stringify({ production_status: newStatus }),
       });
       if (res.ok) {
-        toast.success(`Estatus actualizado a "${newStatus}"`);
+        toast.success(t('qc_status_updated', { status: newStatus }));
         setStatusEditOrder(null);
         fetchStats();
         fetchAll();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al actualizar estatus');
+        toast.error(err.detail || t('qc_status_update_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSavingStatus(false); }
   };
 
@@ -1088,9 +1100,9 @@ export default function QCDashboard() {
           setTotalRecords(data.total || 0);
         }
       }
-    } catch { toast.error('Error al cargar datos'); }
+    } catch { toast.error(t('qc_load_err')); }
     finally { setLoading(false); }
-  }, [search, activeTab, filterSeverity, dateFrom, dateTo, page]);
+  }, [search, activeTab, filterSeverity, dateFrom, dateTo, page, t]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -1121,30 +1133,30 @@ export default function QCDashboard() {
   };
 
   const handleDelete = async (qcId) => {
-    if (!window.confirm('¿Eliminar este registro de inspección?')) return;
+    if (!window.confirm(t('qc_delete_confirm'))) return;
     setDeleting(qcId);
     try {
       const res = await fetch(`${API}/qc/${qcId}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) { setRecords(prev => prev.filter(r => r.qc_id !== qcId)); toast.success('Registro eliminado'); fetchStats(); fetchAll(); }
-      else toast.error('Error al eliminar');
-    } catch { toast.error('Error de conexión'); }
+      if (res.ok) { setRecords(prev => prev.filter(r => r.qc_id !== qcId)); toast.success(t('record_deleted')); fetchStats(); fetchAll(); }
+      else toast.error(t('perm_del_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setDeleting(null); }
   };
 
   const handleRelease = async (order) => {
-    if (!window.confirm(`¿Liberar la orden ${order.order_number} del candado QC?\nEsto permitirá mover y editar la orden nuevamente.`)) return;
+    if (!window.confirm(t('qc_release_confirm', { n: order.order_number }))) return;
     setReleasing(order.order_id);
     try {
       const res = await fetch(`${API}/qc/orders/${order.order_id}/release`, { method: 'POST', credentials: 'include' });
       if (res.ok) {
-        toast.success(`Orden ${order.order_number} liberada`);
+        toast.success(t('qc_order_released', { n: order.order_number }));
         fetchStats();
         fetchAll();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al liberar');
+        toast.error(err.detail || t('qc_release_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setReleasing(null); }
   };
 
@@ -1166,9 +1178,9 @@ export default function QCDashboard() {
         setInspectId(data.inspection_id);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo iniciar la inspección');
+        toast.error(err.detail || t('qc_start_inspection_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const handleMarkRead = async (notifId) => {
@@ -1207,9 +1219,9 @@ export default function QCDashboard() {
         setGlobalResults(list.filter(o => o.board !== 'PAPELERA DE RECICLAJE'));
       } else {
         setGlobalResults([]);
-        toast.error('Error al buscar órdenes');
+        toast.error(t('qc_search_orders_err'));
       }
-    } catch { toast.error('Error de conexión'); setGlobalResults([]); }
+    } catch { toast.error(t('ceo_err_connection')); setGlobalResults([]); }
     finally { setGlobalSearching(false); }
   };
 
@@ -1232,7 +1244,7 @@ export default function QCDashboard() {
       <div className={cn("px-6 py-4 flex items-center justify-between", isDark ? "bg-navy-dark border-none" : "border-b bg-white border-slate-200 shadow-sm")}>
         <div className="flex items-center gap-3">
           {isIsolated ? (
-            <button onClick={logout} title="Cerrar sesión" className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-red-500/15 text-red-400" : "hover:bg-red-50 text-red-500")}>
+            <button onClick={logout} title={t('logout')} className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-red-500/15 text-red-400" : "hover:bg-red-50 text-red-500")}>
               <LogOut className="w-4 h-4" />
             </button>
           ) : (
@@ -1246,9 +1258,9 @@ export default function QCDashboard() {
             </div>
             <div>
               <h1 className={cn("font-barlow font-bold text-lg leading-tight", isDark ? "text-white" : "text-navy")}>
-                Control de Calidad
+                {t('qc_title')}
               </h1>
-              <p className={cn("text-[11px]", isDark ? "text-white/40" : "text-slate-400")}>Registro de inspecciones y hallazgos QC</p>
+              <p className={cn("text-[11px]", isDark ? "text-white/40" : "text-slate-400")}>{t('qc_subtitle')}</p>
             </div>
           </div>
         </div>
@@ -1259,7 +1271,7 @@ export default function QCDashboard() {
 
           {/* Export button */}
           {activeTab !== 'general' && activeTab !== 'metrics' && (
-            <button onClick={handleExportCSV} title="Exportar CSV"
+            <button onClick={handleExportCSV} title={t('qc_export_csv')}
               className={cn("p-2 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/50" : "hover:bg-slate-100 text-slate-400")}>
               <Download className="w-4 h-4" />
             </button>
@@ -1296,7 +1308,7 @@ export default function QCDashboard() {
               className="flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-xl font-bold text-sm hover:bg-royal/90 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              Nueva Inspección
+              {t('qc_new_inspection')}
             </button>
           )}
         </div>
@@ -1313,18 +1325,18 @@ export default function QCDashboard() {
               value={globalSearch}
               onChange={e => setGlobalSearch(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') runGlobalSearch(); }}
-              placeholder="Buscar cualquier orden por # / cliente / PO..."
+              placeholder={t('qc_global_search_placeholder')}
               className="w-full bg-transparent border-none text-sm outline-none focus:ring-0 placeholder:text-muted-foreground/50 font-medium py-2"
             />
             {globalSearching && <Loader2 className="w-4 h-4 animate-spin text-royal flex-shrink-0" />}
             {globalResults !== null && !globalSearching && (
-              <button onClick={clearGlobalSearch} className={cn("flex-shrink-0 p-1 rounded transition-colors", isDark ? "hover:bg-white/10 text-white/50" : "hover:bg-slate-200 text-slate-400")} title="Limpiar búsqueda">
+              <button onClick={clearGlobalSearch} className={cn("flex-shrink-0 p-1 rounded transition-colors", isDark ? "hover:bg-white/10 text-white/50" : "hover:bg-slate-200 text-slate-400")} title={t('qc_clear_search')}>
                 <X className="w-4 h-4" />
               </button>
             )}
             <button onClick={runGlobalSearch} disabled={globalSearching || !globalSearch.trim()}
               className="flex-shrink-0 px-3 py-1.5 my-1 bg-royal text-white rounded-lg text-xs font-bold hover:bg-royal/90 disabled:opacity-40 transition-colors">
-              Buscar
+              {t('search')}
             </button>
           </div>
 
@@ -1332,17 +1344,17 @@ export default function QCDashboard() {
             <div className="mt-3">
               {globalResults.length === 0 ? (
                 <p className={cn("text-sm text-center py-6", isDark ? "text-white/40" : "text-slate-400")}>
-                  Sin órdenes que coincidan con “{globalSearch.trim()}”
+                  {t('qc_no_orders_match_query', { q: globalSearch.trim() })}
                 </p>
               ) : (
                 <div className="overflow-x-auto">
                   <div className={cn("text-[11px] font-bold uppercase tracking-wide px-1 pb-2", isDark ? "text-white/40" : "text-slate-400")}>
-                    {globalResults.length} resultado{globalResults.length !== 1 ? 's' : ''}
+                    {globalResults.length !== 1 ? t('qc_results_many', { n: globalResults.length }) : t('qc_results_one', { n: globalResults.length })}
                   </div>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
-                        {['Orden', 'Cliente', 'Estatus', 'Tablero', 'Cantidad', 'Job Title', 'Acción'].map(h => (
+                        {[t('order'), t('client'), t('qc_status'), t('board'), t('quantity'), 'Job Title', t('action_label')].map(h => (
                           <th key={h} className="text-left px-4 py-2 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1382,28 +1394,28 @@ export default function QCDashboard() {
                               {canWrite && (
                                 <button onClick={() => openNewQC(order)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-royal/10 text-royal border border-royal/20 rounded-lg text-xs font-bold hover:bg-royal hover:text-white transition-all">
-                                  <Plus className="w-3 h-3" /> Crear QC
+                                  <Plus className="w-3 h-3" /> {t('qc_create_qc')}
                                 </button>
                               )}
                               {canWrite && inspectionsEnabled && (
                                 <button onClick={() => startInspection(order)}
                                   className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
                                     isDark ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20 hover:bg-cyan-500 hover:text-white" : "bg-cyan-50 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white")}
-                                  title="Inspección por puntos (checklist)">
-                                  <ShieldCheck className="w-3 h-3" /> Inspección
+                                  title={t('qc_point_inspection_title')}>
+                                  <ShieldCheck className="w-3 h-3" /> {t('qc_inspection')}
                                 </button>
                               )}
                               {canWrite && (
                                 <button onClick={() => openStatusEditor(order)}
                                   className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
                                     isDark ? "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500 hover:text-white" : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-500 hover:text-white")}
-                                  title="Cambiar production status">
-                                  <Tag className="w-3 h-3" /> Estatus
+                                  title={t('qc_change_prod_status')}>
+                                  <Tag className="w-3 h-3" /> {t('qc_status')}
                                 </button>
                               )}
                               <button onClick={() => setCommentsOrder(order)}
                                 className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
-                                title="Comentarios">
+                                title={t('comments')}>
                                 <MessageSquare className="w-3.5 h-3.5" />
                               </button>
                             </div>
@@ -1420,10 +1432,10 @@ export default function QCDashboard() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard isDark={isDark} icon={ClipboardList} label="Total Inspecciones" value={stats.total} color="bg-royal/10 text-royal" />
-          <StatCard isDark={isDark} icon={CheckCircle2} label="Aprobadas" value={stats.passed} sub={`${stats.pass_rate}% tasa`} color="bg-green-500/10 text-green-500" />
-          <StatCard isDark={isDark} icon={AlertCircle} label="Condicional" value={stats.conditional ?? 0} color="bg-yellow-500/10 text-yellow-500" />
-          <StatCard isDark={isDark} icon={BadgeX} label="Rechazadas" value={stats.failed} color="bg-red-500/10 text-red-500" />
+          <StatCard isDark={isDark} icon={ClipboardList} label={t('qc_total_inspections')} value={stats.total} color="bg-royal/10 text-royal" />
+          <StatCard isDark={isDark} icon={CheckCircle2} label={t('qc_passed')} value={stats.passed} sub={t('qc_pass_rate', { rate: stats.pass_rate })} color="bg-green-500/10 text-green-500" />
+          <StatCard isDark={isDark} icon={AlertCircle} label={t('qc_res_conditional')} value={stats.conditional ?? 0} color="bg-yellow-500/10 text-yellow-500" />
+          <StatCard isDark={isDark} icon={BadgeX} label={t('qc_failed')} value={stats.failed} color="bg-red-500/10 text-red-500" />
         </div>
 
         {/* Tabs + Content */}
@@ -1447,7 +1459,7 @@ export default function QCDashboard() {
                   )}
                 >
                   <Icon className="w-4 h-4" />
-                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="hidden sm:inline">{t(tab.labelKey)}</span>
                   {count !== null && (
                     <span className={cn("px-1.5 py-0.5 rounded-full text-[10px] font-bold min-w-[18px] text-center bg-current/10")}>
                       {count}
@@ -1463,21 +1475,21 @@ export default function QCDashboard() {
             <div className={cn("px-4 py-3 border-b flex flex-wrap gap-3 items-center", isDark ? "border-white/5" : "border-slate-50")}>
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input className={cn(inputCls, "pl-9 w-full")} placeholder="Buscar orden o cliente..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+                <input className={cn(inputCls, "pl-9 w-full")} placeholder={t('qc_search_order_client')} value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
               </div>
               {activeTab !== 'general' && (
                 <>
                   <select className={inputCls} value={filterSeverity} onChange={e => { setFilterSeverity(e.target.value); setPage(1); }}>
-                    <option value="">Todas las severidades</option>
-                    {SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    <option value="">{t('qc_all_severities')}</option>
+                    {SEVERITIES.map(s => <option key={s.value} value={s.value}>{t(s.labelKey)}</option>)}
                   </select>
-                  <input type="date" className={inputCls} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} title="Desde" />
-                  <input type="date" className={inputCls} value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} title="Hasta" />
+                  <input type="date" className={inputCls} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} title={t('qc_from')} />
+                  <input type="date" className={inputCls} value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} title={t('qc_to')} />
                 </>
               )}
               {hasFilters && (
                 <button onClick={clearFilters} className={cn("flex items-center gap-1.5 px-3 h-9 rounded-lg text-sm font-semibold transition-colors", isDark ? "bg-white/8 text-white/60 hover:bg-white/12" : "bg-slate-100 text-slate-500 hover:bg-slate-200")}>
-                  <X className="w-3.5 h-3.5" /> Limpiar
+                  <X className="w-3.5 h-3.5" /> {t('clear')}
                 </button>
               )}
             </div>
@@ -1499,7 +1511,7 @@ export default function QCDashboard() {
               <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <CheckCircle2 className={cn("w-12 h-12", isDark ? "text-green-500/30" : "text-green-300")} />
                 <p className={cn("text-sm font-medium", isDark ? "text-white/40" : "text-slate-400")}>
-                  {search ? 'No hay órdenes que coincidan' : 'Todas las órdenes han sido auditadas'}
+                  {search ? t('qc_no_orders_match') : t('qc_all_audited')}
                 </p>
               </div>
             ) : (
@@ -1508,7 +1520,7 @@ export default function QCDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
-                        {['', 'Orden', 'Cliente', 'Estatus', 'Cantidad', 'Fecha', 'Acción'].map(h => (
+                        {['', t('order'), t('client'), t('qc_status'), t('quantity'), t('date'), t('action_label')].map(h => (
                           <th key={h} className="text-left px-4 py-3 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1517,7 +1529,7 @@ export default function QCDashboard() {
                       {unauditedOrders.map(order => (
                         <tr key={order.order_id} className={cn("transition-colors", isDark ? "hover:bg-white/3" : "hover:bg-slate-50/80")}>
                           <td className="px-3 py-3">
-                            <Lock className={cn("w-3.5 h-3.5", isDark ? "text-yellow-400/70" : "text-yellow-500/80")} title="Orden bloqueada por QC" />
+                            <Lock className={cn("w-3.5 h-3.5", isDark ? "text-yellow-400/70" : "text-yellow-500/80")} title={t('qc_order_locked')} />
                           </td>
                           <td className={cn("px-4 py-3 font-bold", isDark ? "text-white" : "text-navy")}>{order.order_number || '—'}</td>
                           <td className={cn("px-4 py-3 max-w-[160px] truncate", isDark ? "text-white/80" : "text-slate-700")}>{order.client || '—'}</td>
@@ -1535,28 +1547,28 @@ export default function QCDashboard() {
                               {canWrite && (
                                 <button onClick={() => openNewQC(order)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-royal/10 text-royal border border-royal/20 rounded-lg text-xs font-bold hover:bg-royal hover:text-white transition-all">
-                                  <Plus className="w-3 h-3" /> Crear QC
+                                  <Plus className="w-3 h-3" /> {t('qc_create_qc')}
                                 </button>
                               )}
                               {canWrite && inspectionsEnabled && (
                                 <button onClick={() => startInspection(order)}
                                   className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
                                     isDark ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20 hover:bg-cyan-500 hover:text-white" : "bg-cyan-50 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white")}
-                                  title="Inspección por puntos (checklist)">
-                                  <ShieldCheck className="w-3 h-3" /> Inspección
+                                  title={t('qc_point_inspection_title')}>
+                                  <ShieldCheck className="w-3 h-3" /> {t('qc_inspection')}
                                 </button>
                               )}
                               {canWrite && (
                                 <button onClick={() => openStatusEditor(order)}
                                   className={cn("flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all",
                                     isDark ? "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500 hover:text-white" : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-500 hover:text-white")}
-                                  title="Cambiar production status">
-                                  <Tag className="w-3 h-3" /> Cambiar estatus
+                                  title={t('qc_change_prod_status')}>
+                                  <Tag className="w-3 h-3" /> {t('qc_change_status')}
                                 </button>
                               )}
                               <button onClick={() => setCommentsOrder(order)}
                                 className={cn("p-1.5 rounded-lg transition-colors relative", isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
-                                title="Comentarios">
+                                title={t('comments')}>
                                 <MessageSquare className="w-3.5 h-3.5" />
                                 {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full" />}
                               </button>
@@ -1567,7 +1579,7 @@ export default function QCDashboard() {
                     </tbody>
                   </table>
                   <div className={cn("px-4 py-2 border-t text-[11px]", isDark ? "border-white/5 text-white/30" : "border-slate-100 text-slate-400")}>
-                    {unauditedOrders.length} orden{unauditedOrders.length !== 1 ? 'es' : ''} sin auditar
+                    {unauditedOrders.length !== 1 ? t('qc_unaudited_many', { n: unauditedOrders.length }) : t('qc_unaudited_one', { n: unauditedOrders.length })}
                   </div>
                 </div>
               </>
@@ -1577,11 +1589,11 @@ export default function QCDashboard() {
               <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <ShieldCheck className={cn("w-12 h-12", isDark ? "text-white/20" : "text-slate-300")} />
                 <p className={cn("text-sm font-medium", isDark ? "text-white/40" : "text-slate-400")}>
-                  {hasFilters ? 'No hay registros que coincidan con los filtros' : 'No hay inspecciones en esta categoría'}
+                  {hasFilters ? t('qc_no_records_filters') : t('qc_no_inspections_category')}
                 </p>
                 {!hasFilters && canWrite && (
                   <button onClick={() => openNewQC(null)} className="mt-2 px-4 py-2 bg-royal text-white rounded-lg text-sm font-bold hover:bg-royal/90 transition-colors">
-                    Registrar primera inspección
+                    {t('qc_register_first')}
                   </button>
                 )}
               </div>
@@ -1591,7 +1603,7 @@ export default function QCDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className={cn("border-b text-[11px] font-bold uppercase tracking-wide", isDark ? "border-white/8 text-white/40" : "border-slate-100 text-slate-400")}>
-                        {['Fecha', 'Orden', 'Cliente', 'Inspector', 'Tipo', 'Severidad', 'Resultado', 'Insp.', 'Rech.', 'Acciones'].map(h => (
+                        {[t('date'), t('order'), t('client'), t('qc_inspector'), t('qc_type'), t('qc_severity'), t('qc_result'), t('qc_insp_short'), t('qc_rej_short'), t('actions')].map(h => (
                           <th key={h} className="text-left px-4 py-3 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1605,7 +1617,7 @@ export default function QCDashboard() {
                           <td className={cn("px-4 py-3 text-xs max-w-[120px] truncate", isDark ? "text-white/60" : "text-slate-500")}>{rec.inspector || '—'}</td>
                           <td className="px-4 py-3 text-xs">
                             <span className={cn("px-2 py-0.5 rounded font-semibold", isDark ? "bg-white/8 text-white/70" : "bg-slate-100 text-slate-600")}>
-                              {FINDING_TYPES.find(f => f.value === rec.finding_type)?.label?.split(' / ')[0] || rec.finding_type}
+                              {typeShort(rec.finding_type)}
                             </span>
                           </td>
                           <td className="px-4 py-3"><SeverityBadge value={rec.severity} /></td>
@@ -1615,24 +1627,24 @@ export default function QCDashboard() {
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1">
                               <button onClick={() => { setSelectedRecord(rec); setDetailModalOpen(true); }}
-                                className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title="Ver detalles">
+                                className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title={t('qc_view_details')}>
                                 <ImageIcon className="w-3.5 h-3.5" />
                               </button>
                               {rec.order_id && (
                                 <button onClick={() => setCommentsOrder({ order_id: rec.order_id, order_number: rec.order_number, client: rec.client })}
                                   className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
-                                  title="Comentarios de la orden">
+                                  title={t('qc_order_comments')}>
                                   <MessageSquare className="w-3.5 h-3.5" />
                                 </button>
                               )}
                               {canWrite && (
                                 <>
                                   <button onClick={() => { setEditRecord(rec); setPrefillOrder(null); setModalOpen(true); }}
-                                    className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title="Editar">
+                                    className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")} title={t('edit')}>
                                     <Pencil className="w-3.5 h-3.5" />
                                   </button>
                                   <button onClick={() => handleDelete(rec.qc_id)} disabled={deleting === rec.qc_id}
-                                    className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-red-500/20 text-white/30 hover:text-red-400" : "hover:bg-red-50 text-slate-300 hover:text-red-500")} title="Eliminar">
+                                    className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-red-500/20 text-white/30 hover:text-red-400" : "hover:bg-red-50 text-slate-300 hover:text-red-500")} title={t('delete')}>
                                     {deleting === rec.qc_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                                   </button>
                                 </>
@@ -1691,7 +1703,7 @@ export default function QCDashboard() {
             <div className={cn("flex items-center justify-between px-5 py-4 border-b", isDark ? "border-white/10" : "border-slate-100")}>
               <div className="flex items-center gap-2">
                 <Tag className={cn("w-4 h-4", isDark ? "text-blue-400" : "text-blue-600")} />
-                <h3 className={cn("font-bold text-sm", isDark ? "text-white" : "text-navy")}>Cambiar production status</h3>
+                <h3 className={cn("font-bold text-sm", isDark ? "text-white" : "text-navy")}>{t('qc_change_prod_status')}</h3>
               </div>
               <button onClick={() => !savingStatus && setStatusEditOrder(null)} className={cn("p-1 rounded transition-colors", isDark ? "hover:bg-white/10 text-white/40" : "hover:bg-slate-100 text-slate-400")}>
                 <X className="w-4 h-4" />
@@ -1699,16 +1711,16 @@ export default function QCDashboard() {
             </div>
             <div className="px-5 py-4 space-y-4">
               <div className={cn("text-xs", isDark ? "text-white/60" : "text-slate-500")}>
-                Orden <span className={cn("font-bold", isDark ? "text-white" : "text-navy")}>{statusEditOrder.order_number}</span> — {statusEditOrder.client || '—'}
+                {t('order')} <span className={cn("font-bold", isDark ? "text-white" : "text-navy")}>{statusEditOrder.order_number}</span> — {statusEditOrder.client || '—'}
               </div>
               <div className="space-y-1">
-                <label className={cn("text-[11px] font-bold uppercase tracking-wide", isDark ? "text-white/40" : "text-slate-400")}>Estatus actual</label>
+                <label className={cn("text-[11px] font-bold uppercase tracking-wide", isDark ? "text-white/40" : "text-slate-400")}>{t('qc_current_status')}</label>
                 <div className={cn("px-3 py-2 rounded-lg text-sm font-semibold", isDark ? "bg-white/8 text-white/70" : "bg-slate-100 text-slate-600")}>
                   {statusEditOrder.production_status || statusEditOrder.status || '—'}
                 </div>
               </div>
               <div className="space-y-1">
-                <label className={cn("text-[11px] font-bold uppercase tracking-wide", isDark ? "text-white/40" : "text-slate-400")}>Nuevo estatus</label>
+                <label className={cn("text-[11px] font-bold uppercase tracking-wide", isDark ? "text-white/40" : "text-slate-400")}>{t('qc_new_status')}</label>
                 <select
                   value={newStatus}
                   onChange={e => setNewStatus(e.target.value)}
@@ -1716,7 +1728,7 @@ export default function QCDashboard() {
                   className={cn("w-full px-3 py-2 rounded-lg border text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/40",
                     isDark ? "bg-slate-800 border-white/10 text-white" : "bg-white border-slate-200 text-navy")}
                 >
-                  <option value="">— Selecciona —</option>
+                  <option value="">{t('qc_select_dash')}</option>
                   {productionStatuses.map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -1726,12 +1738,12 @@ export default function QCDashboard() {
             <div className={cn("flex items-center justify-end gap-2 px-5 py-3 border-t", isDark ? "border-white/10 bg-white/3" : "border-slate-100 bg-slate-50")}>
               <button onClick={() => setStatusEditOrder(null)} disabled={savingStatus}
                 className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-colors", isDark ? "bg-white/8 text-white/70 hover:bg-white/12" : "bg-slate-200 text-slate-600 hover:bg-slate-300")}>
-                Cancelar
+                {t('cancel')}
               </button>
               <button onClick={handleUpdateStatus} disabled={savingStatus || !newStatus || newStatus === (statusEditOrder.production_status || statusEditOrder.status)}
                 className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 {savingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                Guardar
+                {t('save')}
               </button>
             </div>
           </div>

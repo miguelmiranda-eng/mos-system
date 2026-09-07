@@ -4,6 +4,7 @@ import { ArrowLeft, Boxes, RefreshCw, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../App";
 import { API } from "../lib/constants";
+import { useLang } from "../contexts/LanguageContext";
 import OrderComponentsModal, { ComponentsSummary } from "./OrderComponentsModal";
 
 /* Tablero de seguimiento: TODAS las órdenes abiertas y en qué etapa van.
@@ -78,6 +79,7 @@ const Lifeline = ({ stages, actual, ahead }) => {
 const OrderComponentsBoard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLang();
   // Borrar componentes pierde el rastro de lo que se estaba esperando; el
   // backend lo exige admin y aquí se refleja para no ofrecer lo que va a fallar.
   const canDelete = ['admin', 'supersu', 'ceo'].includes(user?.role);
@@ -102,7 +104,7 @@ const OrderComponentsBoard = () => {
       // mostrando cuántas hay en cada una aunque estés viendo sólo una.
       setStages(d.stages || []);
     } catch {
-      toast.error("No se pudo cargar el tablero");
+      toast.error(t('comp_load_board_err'));
     } finally {
       setLoading(false);
     }
@@ -133,20 +135,20 @@ const OrderComponentsBoard = () => {
         <div className="max-w-[1500px] mx-auto px-4 md:px-8 py-4 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/home')}
             className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
-            title="Volver" data-testid="ocb-back">
+            title={t('comp_back')} data-testid="ocb-back">
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="leading-none mr-auto">
             <h1 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2">
-              <Boxes className="w-6 h-6 text-blue-600" /> Seguimiento de Órdenes
+              <Boxes className="w-6 h-6 text-blue-600" /> {t('comp_title')}
             </h1>
-            <span className="block text-xs text-slate-500 mt-1">Todas las órdenes abiertas y en qué parte del proceso van</span>
+            <span className="block text-xs text-slate-500 mt-1">{t('comp_subtitle')}</span>
           </div>
 
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input value={busca} onChange={e => setBusca(e.target.value)}
-              placeholder="Orden o cliente…"
+              placeholder={t('comp_search_placeholder')}
               className="h-10 pl-9 pr-3 rounded-xl border border-slate-200 text-sm w-56"
               data-testid="ocb-search" />
           </div>
@@ -154,7 +156,7 @@ const OrderComponentsBoard = () => {
           <button onClick={cargar} disabled={loading}
             className="h-10 px-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 flex items-center gap-2 hover:border-blue-300 disabled:opacity-60">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Actualizar
+            {t('comp_refresh')}
           </button>
         </div>
       </header>
@@ -162,10 +164,10 @@ const OrderComponentsBoard = () => {
       <main className="max-w-[1500px] mx-auto px-4 md:px-8 py-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
           {[
-            ["Órdenes abiertas", totales.ordenes, "text-slate-900"],
-            ["Señales discrepantes", totales.discrepan, "text-amber-600"],
-            ["Detenidas", totales.detenidas, "text-red-600"],
-            ["Con detalle capturado", totales.conDetalle, "text-blue-600"],
+            [t('comp_open_orders'), totales.ordenes, "text-slate-900"],
+            [t('comp_discrepant'), totales.discrepan, "text-amber-600"],
+            [t('comp_stalled'), totales.detenidas, "text-red-600"],
+            [t('comp_with_detail'), totales.conDetalle, "text-blue-600"],
           ].map(([k, v, color]) => (
             <div key={k} className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{k}</div>
@@ -182,7 +184,7 @@ const OrderComponentsBoard = () => {
             className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${
               !etapa ? "bg-slate-900 border-slate-900 text-white" : "bg-white border-slate-200 text-slate-600 hover:border-slate-400"}`}
             data-testid="ocb-stage-all">
-            Todas <span className="opacity-60">{stages.reduce((a, e) => a + e.count, 0)}</span>
+            {t('all')} <span className="opacity-60">{stages.reduce((a, e) => a + e.count, 0)}</span>
           </button>
           {stages.filter(e => e.count > 0).map(e => (
             <button key={e.key} onClick={() => setEtapa(etapa === e.key ? "" : e.key)}
@@ -200,12 +202,12 @@ const OrderComponentsBoard = () => {
           ) : visibles.length === 0 ? (
             <div className="py-20 text-center">
               <div className="text-sm font-bold text-slate-700">
-                {rows.length === 0 ? "No hay órdenes abiertas" : "Nada coincide con la búsqueda"}
+                {rows.length === 0 ? t('comp_no_open_orders') : t('comp_no_match')}
               </div>
               <div className="text-sm text-slate-500 mt-1">
                 {rows.length === 0
-                  ? "Todas salieron de producción: su estatus ya es listo para envío o para inventario."
-                  : "Prueba con otro número de orden o cliente."}
+                  ? t('comp_no_open_orders_hint')
+                  : t('comp_no_match_hint')}
               </div>
             </div>
           ) : (
@@ -225,13 +227,13 @@ const OrderComponentsBoard = () => {
                       <div className="flex items-baseline gap-2">
                         <span className="font-black text-slate-900">{r.order_number}</span>
                         {r.quantity ? (
-                          <span className="text-xs text-slate-400 tabular-nums">{r.quantity.toLocaleString("es-MX")} pzs</span>
+                          <span className="text-xs text-slate-400 tabular-nums">{r.quantity.toLocaleString("es-MX")} {t('comp_pcs')}</span>
                         ) : null}
                       </div>
                       <div className="text-xs text-slate-500 truncate">{r.client || "—"}</div>
                       {r.cancel_date && (
                         <div className={`text-[11px] ${vencida ? "text-red-600 font-bold" : "text-slate-400"}`}>
-                          cancel {r.cancel_date}{vencida ? " · vencida" : ""}
+                          cancel {r.cancel_date}{vencida ? ` · ${t('comp_overdue')}` : ""}
                         </div>
                       )}
                     </div>
@@ -249,11 +251,11 @@ const OrderComponentsBoard = () => {
                       </div>
                       {st.ahead && (
                         <div className="text-[11px] text-amber-600 font-bold">
-                          el status dice {st.ahead_stage}
+                          {t('comp_status_says', { stage: st.ahead_stage })}
                         </div>
                       )}
                       {st.stalled && (
-                        <div className="text-[11px] text-red-600 font-bold">detenida</div>
+                        <div className="text-[11px] text-red-600 font-bold">{t('comp_stalled_badge')}</div>
                       )}
                       {r.summary && (
                         <div className="flex justify-end mt-1">

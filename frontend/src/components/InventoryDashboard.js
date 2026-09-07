@@ -8,6 +8,7 @@ import {
   Layers, MapPin, Box, Loader2, ArrowUpRight, Search
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useLang } from '../contexts/LanguageContext';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
@@ -185,6 +186,7 @@ const CustomerInventory = ({ customer, apiBase }) => {
 };
 
 const InventoryDashboard = ({ customer = '', apiBase }) => {
+  const { t } = useLang();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [chartData, setChartData] = useState(null);
@@ -202,11 +204,11 @@ const InventoryDashboard = ({ customer = '', apiBase }) => {
         setSummary(await summRes.json());
         setChartData(await chartRes.json());
       } else {
-        toast.error('Error al cargar datos del dashboard');
+        toast.error(t('admin_err_load_dashboard'));
       }
     } catch (error) {
       console.error('Dashboard error:', error);
-      toast.error('Error de conexión con el servidor');
+      toast.error(t('admin_err_server_connection'));
     } finally {
       setLoading(false);
     }

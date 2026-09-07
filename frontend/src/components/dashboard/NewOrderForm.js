@@ -59,18 +59,18 @@ export const NewOrderForm = ({
         if (data.exists && !data.in_trash) {
           setTwinStatus({ found: true, board: data.order?.board });
         } else if (data.exists && data.in_trash) {
-          setTwinStatus({ found: false, message: 'Esa orden esta en la papelera' });
+          setTwinStatus({ found: false, message: t('dash_twin_in_trash') });
         } else {
-          setTwinStatus({ found: false, message: 'No existe una orden activa con ese numero' });
+          setTwinStatus({ found: false, message: t('dash_twin_not_active') });
         }
       }
-    } catch { setTwinStatus({ found: false, message: 'Error de conexion' }); }
+    } catch { setTwinStatus({ found: false, message: t('ceo_err_connection') }); }
     finally { setTwinChecking(false); }
   };
 
   const handlePrintavoAnalyze = async () => {
     if (!printavoUrl.trim()) {
-      toast.error("Por favor ingresa un enlace o ubicación de PDF");
+      toast.error(t('dash_enter_link_or_pdf'));
       return;
     }
     
@@ -85,16 +85,16 @@ export const NewOrderForm = ({
       });
       
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Error analizando enlace");
-      
+      if (!res.ok) throw new Error(data.detail || t('dash_analyze_link_err'));
+
       if (data.items && data.items.length > 0) {
         setImportedItems(data.items);
-        toast.success(`Se encontraron ${data.items.length} artículos en Printavo`);
+        toast.success(t('dash_printavo_items_found', { n: data.items.length }));
         if (data.items.length === 1) {
           applyImportedData(data.items[0]);
         }
       } else {
-        toast.warning("No se detectaron prendas o datos de talla automáticamente");
+        toast.warning(t('dash_no_garments_detected'));
       }
     } catch (err) {
       toast.error(err.message);
@@ -113,7 +113,7 @@ export const NewOrderForm = ({
       if (res.ok) {
         const data = await res.json();
         if (data.found) {
-          toast.success("¡Pre-orden encontrada! Datos cargados.");
+          toast.success(t('dash_preorder_found'));
           setLinkedPreorderId(data.data.preorder_id);
           
           setFormData(prev => ({
@@ -127,11 +127,11 @@ export const NewOrderForm = ({
             linked_preorder_id: data.data.preorder_id // Para enviar al backend
           }));
         } else {
-          toast.warning("No se encontró ninguna pre-orden activa con ese número");
+          toast.warning(t('dash_preorder_not_found'));
         }
       }
     } catch (err) {
-      toast.error("Error consultando pre-orden");
+      toast.error(t('dash_preorder_err'));
     } finally {
       setCheckingDesign(false);
     }
@@ -194,7 +194,7 @@ export const NewOrderForm = ({
     
     setShowImportPanel(false);
     setImportedItems([]);
-    toast.success("Datos aplicados al formulario");
+    toast.success(t('dash_data_applied'));
   };
 
   // Sync form data structure when keys change
@@ -242,7 +242,7 @@ export const NewOrderForm = ({
             />
             <span className="text-[10px] text-muted-foreground/70">
               {activas.length === 0
-                ? 'sin marcar — el avance por talla no se podrá calcular'
+                ? t('dash_positions_unmarked')
                 : activas.join(' + ')}
             </span>
           </div>
@@ -259,7 +259,7 @@ export const NewOrderForm = ({
             options={opts}
             value={value}
             onChange={(v) => !isPreview && set(key, v)}
-            placeholder={`Seleccionar ${col.label}...`}
+            placeholder={t('dash_select_field', { field: col.label })}
             allowCreate={true}
           />
         </div>
@@ -288,7 +288,7 @@ export const NewOrderForm = ({
               type="checkbox" checked={!!value} onChange={(e) => set(key, e.target.checked)} 
               disabled={isPreview}
               className="w-4 h-4 cursor-pointer" />
-            <span className="text-sm text-foreground">{value ? 'Si' : 'No'}</span>
+            <span className="text-sm text-foreground">{value ? t('yes') : t('no')}</span>
           </label>
         </div>
       );
@@ -302,7 +302,7 @@ export const NewOrderForm = ({
             value={value} onChange={(e) => set(key, e.target.value)}
             disabled={isPreview}
             style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
-            placeholder={isPreview ? "Area de notas..." : "Notas adicionales..."}
+            placeholder={isPreview ? t('dash_notes_area') : t('dash_additional_notes')}
             className="w-full border border-border rounded px-3 py-2 text-sm resize-none h-20" />
         </div>
       );
@@ -322,7 +322,7 @@ export const NewOrderForm = ({
             type="text" value={parsed.desc} onChange={(e) => set(key, { ...parsed, desc: e.target.value })}
             disabled={isPreview}
             style={{ backgroundColor: 'hsl(var(--secondary))', color: 'hsl(var(--foreground))' }}
-            placeholder="Descripcion..." className="w-full border border-border rounded px-3 py-1.5 h-8 text-xs mt-1" />
+            placeholder={t('dash_description_ph')} className="w-full border border-border rounded px-3 py-1.5 h-8 text-xs mt-1" />
         </div>
       );
     }
@@ -363,8 +363,8 @@ export const NewOrderForm = ({
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             <span className="leading-tight">
               {duplicateWarning.in_trash 
-                ? <><strong>ADVERTENCIA:</strong> Esta orden existe en <strong>PAPELERA</strong>.</>
-                : <><strong>ERROR:</strong> Esta orden ya existe en <strong>{duplicateWarning.board}</strong>.</>
+                ? <><strong>{t('dash_warning_label')}</strong> {t('dash_order_exists_in')} <strong>PAPELERA</strong>.</>
+                : <><strong>ERROR:</strong> {t('dash_order_already_exists_in')} <strong>{duplicateWarning.board}</strong>.</>
               }
             </span>
           </div>
@@ -414,8 +414,8 @@ export const NewOrderForm = ({
                   <Zap className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">Importación Externa</h3>
-                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">Extrae datos desde Printavo (Enlace o PDF)</p>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">{t('dash_external_import')}</h3>
+                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">{t('dash_external_import_desc')}</p>
                 </div>
               </div>
               <button 
@@ -423,7 +423,7 @@ export const NewOrderForm = ({
                 onClick={() => setShowImportPanel(!showImportPanel)}
                 className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline relative z-10"
               >
-                {showImportPanel ? "Ocultar" : "Abrir Motor"}
+                {showImportPanel ? t('dash_hide') : t('dash_open_engine')}
               </button>
             </div>
 
@@ -445,13 +445,13 @@ export const NewOrderForm = ({
                     disabled={importLoading}
                     className="px-6 py-2.5 bg-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg active:scale-95 disabled:opacity-50"
                   >
-                    {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Analizar"}
+                    {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t('dash_analyze')}
                   </button>
                 </div>
 
                 {importedItems.length > 1 && (
                   <div className="space-y-2 border-t border-border/20 pt-4">
-                    <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tighter">Múltiples estilos detectados. Selecciona uno:</p>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground tracking-tighter">{t('dash_multiple_styles')}</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {importedItems.map((item, idx) => (
                         <button 
@@ -463,8 +463,8 @@ export const NewOrderForm = ({
                             {idx + 1}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-black truncate">{item.style || "Sin Estilo"}</p>
-                            <p className="text-[9px] uppercase font-bold text-muted-foreground">{Object.keys(item.sizes || {}).length} Tallas • {item.quantity} Uni.</p>
+                            <p className="text-xs font-black truncate">{item.style || t('dash_no_style')}</p>
+                            <p className="text-[9px] uppercase font-bold text-muted-foreground">{t('dash_sizes_units', { n: Object.keys(item.sizes || {}).length, q: item.quantity })}</p>
                           </div>
                           <Plus className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                         </button>
@@ -477,7 +477,7 @@ export const NewOrderForm = ({
                   <div className="flex items-center gap-2 px-3 py-2 bg-secondary/50 rounded-lg border border-border/30">
                     <Info className="w-3.5 h-3.5 text-primary" />
                     <p className="text-[9px] font-bold text-muted-foreground uppercase leading-relaxed">
-                      Carga el enlace de la Work Order o el PDF de Invoice para extraer tallas y cantidades automáticamente.
+                      {t('dash_import_hint')}
                     </p>
                   </div>
                 )}
@@ -495,8 +495,8 @@ export const NewOrderForm = ({
                 <Link2 className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-xs font-black uppercase tracking-widest text-amber-900">Vincular Pre-Orden</h3>
-                <p className="text-[9px] uppercase font-bold text-amber-700/60">Ingresa el Design # para jalar el arte</p>
+                <h3 className="text-xs font-black uppercase tracking-widest text-amber-900">{t('dash_link_preorder')}</h3>
+                <p className="text-[9px] uppercase font-bold text-amber-700/60">{t('dash_link_preorder_desc')}</p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -510,7 +510,7 @@ export const NewOrderForm = ({
                     set('design_#', e.target.value.toUpperCase());
                   }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleDesignCheck(); } }}
-                  placeholder="Ej: DES-999"
+                  placeholder={t('dash_design_placeholder')}
                   className="w-full bg-white border border-amber-200 rounded-lg pl-10 pr-4 py-2.5 text-sm font-black text-slate-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all outline-none uppercase"
                 />
               </div>
@@ -520,12 +520,12 @@ export const NewOrderForm = ({
                 disabled={checkingDesign || (!formData.design_number && !formData["design_#"])}
                 className="px-6 py-2.5 bg-amber-500 text-white rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
               >
-                {checkingDesign ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
+                {checkingDesign ? <Loader2 className="w-4 h-4 animate-spin" /> : t('search')}
               </button>
             </div>
             {linkedPreorderId && (
               <div className="mt-2.5 flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Vinculado a Pre-Orden Exitosamente
+                <CheckCircle2 className="w-3.5 h-3.5" /> {t('dash_preorder_linked')}
               </div>
             )}
           </div>
@@ -541,8 +541,8 @@ export const NewOrderForm = ({
                   <Users className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">Orden Gemela (Twin)</h3>
-                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">Marca esta orden como gemela de otra existente</p>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-foreground">{t('dash_twin_order')}</h3>
+                  <p className="text-[9px] uppercase font-bold text-muted-foreground/60">{t('dash_twin_desc')}</p>
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -557,7 +557,7 @@ export const NewOrderForm = ({
                   className="w-4 h-4 cursor-pointer"
                 />
                 <span className="text-[10px] font-black uppercase tracking-widest text-fuchsia-500">
-                  {twinEnabled ? 'Activado' : 'Activar'}
+                  {twinEnabled ? t('dash_enabled') : t('dash_enable')}
                 </span>
               </label>
             </div>
@@ -572,7 +572,7 @@ export const NewOrderForm = ({
                       onChange={(e) => { setTwinOrderNumber(e.target.value); setTwinStatus(null); }}
                       onBlur={handleTwinCheck}
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTwinCheck(); } }}
-                      placeholder="Numero de la orden gemela"
+                      placeholder={t('dash_twin_number_ph')}
                       disabled={isPreview}
                       className="w-full bg-background border border-fuchsia-500/30 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all outline-none"
                     />
@@ -583,13 +583,13 @@ export const NewOrderForm = ({
                     disabled={twinChecking || !twinOrderNumber.trim() || isPreview}
                     className="px-6 py-2.5 bg-fuchsia-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-600 transition-all shadow-lg active:scale-95 disabled:opacity-50"
                   >
-                    {twinChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Verificar'}
+                    {twinChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : t('dash_verify')}
                   </button>
                 </div>
                 {twinStatus?.found && (
                   <div className="flex items-center gap-2 text-[10px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/30">
                     <CheckCircle2 className="w-3.5 h-3.5" />
-                    Orden encontrada en <span className="text-emerald-600">{twinStatus.board}</span> — se vinculara al crear
+                    {t('dash_order_found_in')} <span className="text-emerald-600">{twinStatus.board}</span> {t('dash_will_link_on_create')}
                   </div>
                 )}
                 {twinStatus && !twinStatus.found && (
@@ -619,7 +619,7 @@ export const NewOrderForm = ({
                 Tallas / Sizes
               </h3>
               <div className="flex items-center gap-3 bg-secondary/30 px-3 py-1.5 rounded-lg border border-border/40">
-                <span className="text-[9px] font-black uppercase text-muted-foreground/60 tracking-widest">Total</span>
+                <span className="text-[9px] font-black uppercase text-muted-foreground/60 tracking-widest">{t('total')}</span>
                 <span className="text-xl font-black text-primary tabular-nums">
                   {Object.values(sizes).reduce((s, v) => s + (parseInt(v) || 0), 0)}
                 </span>
@@ -678,7 +678,7 @@ export const NewOrderForm = ({
               ) : (duplicateWarning && !duplicateWarning.in_trash) ? (
                 <AlertTriangle className="w-4 h-4" />
               ) : null} 
-              {(duplicateWarning && !duplicateWarning.in_trash) ? 'Orden Duplicada' : t('create_order')}
+              {(duplicateWarning && !duplicateWarning.in_trash) ? t('dash_duplicate_order') : t('create_order')}
             </button>
           </div>
         </div>

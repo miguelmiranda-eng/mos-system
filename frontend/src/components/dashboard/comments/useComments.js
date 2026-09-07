@@ -73,9 +73,9 @@ export function useComments(order, isOpen, currentUser) {
           const key = data.storage_key || data.url;
           return img.isImage ? `[img]${key}[/img]` : `[file]${img.name}|${key}[/file]`;
         }
-        toast.error(`Error subiendo ${img.name}`);
+        toast.error(t('comment_upload_err', { name: img.name }));
       } catch {
-        toast.error(`Error de conexion subiendo ${img.name}`);
+        toast.error(t('comment_upload_conn_err', { name: img.name }));
       }
       return null;
     });
@@ -120,13 +120,13 @@ export function useComments(order, isOpen, currentUser) {
       });
       if (res.ok) {
         fetchComments();
-        toast.success("Comentario editado");
+        toast.success(t('comment_edited'));
         return true;
       }
       const err = await res.json();
-      toast.error(err.detail || "Error al editar");
+      toast.error(err.detail || t('comment_edit_err_short'));
     } catch {
-      toast.error("Error al editar comentario");
+      toast.error(t('comment_edit_err'));
     }
     return false;
   };
@@ -139,13 +139,13 @@ export function useComments(order, isOpen, currentUser) {
       });
       if (res.ok) {
         fetchComments();
-        toast.success("Comentario eliminado");
+        toast.success(t('comment_deleted'));
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Error al eliminar");
+        toast.error(err.detail || t('rule_del_err'));
       }
     } catch {
-      toast.error("Error al eliminar comentario");
+      toast.error(t('comment_delete_err'));
     }
   };
 
@@ -162,22 +162,22 @@ export function useComments(order, isOpen, currentUser) {
       if (res.ok) {
         const data = await res.json();
         fetchComments();
-        toast.success(data.action === "pinned" ? "📌 Comentario anclado" : "Comentario desanclado", {
+        toast.success(data.action === "pinned" ? t('comment_pinned') : t('comment_unpinned'), {
           duration: 2000,
         });
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Error al anclar");
+        toast.error(err.detail || t('comment_pin_err_short'));
         fetchComments(); // revierte
       }
     } catch {
-      toast.error("Error al anclar comentario");
+      toast.error(t('comment_pin_err'));
       fetchComments();
     }
   };
 
   const reactToComment = async (commentId, emoji) => {
-    if (!currentUser) return toast.error("Inicia sesión para reaccionar");
+    if (!currentUser) return toast.error(t('comment_login_to_react'));
 
     // Optimista
     const userId = String(currentUser.user_id);
@@ -205,7 +205,7 @@ export function useComments(order, isOpen, currentUser) {
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || "Error en el servidor");
+        throw new Error(errorData.detail || t('dash_server_error'));
       }
       // Sincroniza en silencio con lo confirmado por el servidor
       const data = await res.json();
@@ -213,12 +213,12 @@ export function useComments(order, isOpen, currentUser) {
         prev.map((c) => (c.comment_id === commentId ? { ...c, reactions: data.reactions } : c))
       );
       if (data.action === "added") {
-        toast.success(`Reaccionaste con ${emoji}`, { icon: emoji, duration: 1500 });
+        toast.success(t('comment_reacted', { emoji }), { icon: emoji, duration: 1500 });
       } else {
-        toast.info(`Quitaste tu reacción ${emoji}`, { duration: 1500 });
+        toast.info(t('comment_unreacted', { emoji }), { duration: 1500 });
       }
     } catch (err) {
-      toast.error(err.message || "Error al reaccionar");
+      toast.error(err.message || t('comment_react_err'));
       fetchComments(); // revierte al estado del servidor
     }
   };
@@ -234,11 +234,11 @@ export function useComments(order, isOpen, currentUser) {
       });
       if (res.ok) {
         fetchLinks();
-        toast.success("Enlace agregado");
+        toast.success(t('comment_link_added'));
         return true;
       }
     } catch {
-      toast.error("Error al agregar enlace");
+      toast.error(t('comment_link_add_err'));
     }
     return false;
   };
@@ -251,10 +251,10 @@ export function useComments(order, isOpen, currentUser) {
       });
       if (res.ok) {
         fetchLinks();
-        toast.success("Enlace eliminado");
+        toast.success(t('comment_link_deleted'));
       }
     } catch {
-      toast.error("Error al eliminar enlace");
+      toast.error(t('comment_link_delete_err'));
     }
   };
 

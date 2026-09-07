@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { API } from "../lib/constants";
 import { useAuth } from "../App";
+import { useLang } from "../contexts/LanguageContext";
 
 const PAGE_SIZE = 100;
 const SHIFTS = ['', 'TURNO 1', 'TURNO 2'];
@@ -20,6 +21,7 @@ const MACHINES = ['', ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`)
 const LogsCenter = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLang();
   const isAdmin = user?.role === 'admin';
 
   const [tab, setTab] = useState('production'); // 'production' | 'neck'
@@ -65,10 +67,10 @@ const LogsCenter = () => {
         setLogs(data.logs || []);
         setTotal(data.total || 0);
       } else {
-        toast.error('Error al cargar registros');
+        toast.error(t('logs_err_load'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     } finally { setLoading(false); }
   }, [tab, dateFrom, dateTo, operator, shift, machine, orderNumber, skip]);
 
@@ -81,13 +83,13 @@ const LogsCenter = () => {
 
   const handleDelete = async (logId) => {
     if (!isAdmin) return;
-    if (!window.confirm('¿Eliminar este registro?')) return;
+    if (!window.confirm(t('logs_confirm_delete'))) return;
     const endpoint = tab === 'production' ? `/production-logs/${logId}` : `/neck-logs/${logId}`;
     try {
       const res = await fetch(`${API}${endpoint}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) { toast.success('Registro eliminado'); fetchLogs(); }
-      else toast.error('Error al eliminar');
-    } catch { toast.error('Error de conexión'); }
+      if (res.ok) { toast.success(t('record_deleted')); fetchLogs(); }
+      else toast.error(t('perm_del_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const handleExport = async () => {
@@ -146,9 +148,9 @@ const LogsCenter = () => {
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const tag = tab === 'production' ? 'produccion' : 'neck';
       saveAs(blob, `registros_${tag}_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success(`${rows.length} registros exportados`);
+      toast.success(t('logs_exported', { n: rows.length }));
     } catch {
-      toast.error('Error al exportar');
+      toast.error(t('logs_err_export'));
     }
   };
 
@@ -170,16 +172,16 @@ const LogsCenter = () => {
             <button
               onClick={() => navigate('/dashboard')}
               className="p-2 rounded-lg hover:bg-secondary/60 transition-all"
-              title="Volver al tablero"
+              title={t('logs_back_board')}
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
               <h1 className="text-2xl font-black uppercase tracking-tighter flex items-center gap-2">
-                <ClipboardList className="w-6 h-6 text-primary" /> Registros
+                <ClipboardList className="w-6 h-6 text-primary" /> {t('logs_title')}
               </h1>
               <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest opacity-60">
-                Historial de capturas de producción y neck
+                {t('logs_subtitle')}
               </p>
             </div>
           </div>
@@ -189,7 +191,7 @@ const LogsCenter = () => {
             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-50 transition-all"
             data-testid="logs-export"
           >
-            <Download className="w-4 h-4" /> Exportar
+            <Download className="w-4 h-4" /> {t('action_export')}
           </button>
         </div>
 
@@ -200,7 +202,7 @@ const LogsCenter = () => {
             className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${tab === 'production' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'}`}
             data-testid="logs-tab-production"
           >
-            <Factory className="w-3.5 h-3.5" /> Producción
+            <Factory className="w-3.5 h-3.5" /> {t('production')}
           </button>
           <button
             onClick={() => setTab('neck')}
@@ -215,16 +217,16 @@ const LogsCenter = () => {
         <div className="p-4 bg-card/40 border border-border/40 rounded-2xl">
           <div className="flex items-center gap-2 mb-3">
             <Filter className="w-4 h-4 text-muted-foreground" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Filtros</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('filters')}</span>
             {hasFilters && (
               <button onClick={clearFilters} className="ml-auto text-[10px] font-bold text-destructive hover:underline uppercase">
-                Limpiar
+                {t('clear')}
               </button>
             )}
           </div>
           <div className={`grid grid-cols-2 ${tab === 'production' ? 'md:grid-cols-6' : 'md:grid-cols-5'} gap-3`}>
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Desde</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('logs_from')}</label>
               <input
                 type="date"
                 value={dateFrom}
@@ -233,7 +235,7 @@ const LogsCenter = () => {
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Hasta</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('logs_to')}</label>
               <input
                 type="date"
                 value={dateTo}
@@ -242,24 +244,24 @@ const LogsCenter = () => {
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Orden</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('order')}</label>
               <input
                 type="text"
                 value={orderNumber}
                 onChange={e => setOrderNumber(e.target.value)}
-                placeholder="Ej. 1620"
+                placeholder={t('logs_order_placeholder')}
                 className="w-full h-8 px-2 text-xs bg-secondary border border-border rounded"
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Operador</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('admin_operator')}</label>
               {operatorsList.length > 0 ? (
                 <select
                   value={operator}
                   onChange={e => setOperator(e.target.value)}
                   className="w-full h-8 px-2 text-xs bg-secondary border border-border rounded"
                 >
-                  <option value="">Todos</option>
+                  <option value="">{t('all_boards')}</option>
                   {operatorsList.map(op => <option key={op.operator_id} value={op.name}>{op.name}</option>)}
                 </select>
               ) : (
@@ -267,30 +269,30 @@ const LogsCenter = () => {
                   type="text"
                   value={operator}
                   onChange={e => setOperator(e.target.value)}
-                  placeholder="Nombre"
+                  placeholder={t('name')}
                   className="w-full h-8 px-2 text-xs bg-secondary border border-border rounded"
                 />
               )}
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Turno</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('admin_shift')}</label>
               <select
                 value={shift}
                 onChange={e => setShift(e.target.value)}
                 className="w-full h-8 px-2 text-xs bg-secondary border border-border rounded"
               >
-                {SHIFTS.map(s => <option key={s} value={s}>{s || 'Todos'}</option>)}
+                {SHIFTS.map(s => <option key={s} value={s}>{s || t('all_boards')}</option>)}
               </select>
             </div>
             {tab === 'production' && (
               <div>
-                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">Máquina</label>
+                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block mb-1">{t('machine')}</label>
                 <select
                   value={machine}
                   onChange={e => setMachine(e.target.value)}
                   className="w-full h-8 px-2 text-xs bg-secondary border border-border rounded"
                 >
-                  {MACHINES.map(m => <option key={m} value={m}>{m || 'Todas'}</option>)}
+                  {MACHINES.map(m => <option key={m} value={m}>{m || t('all')}</option>)}
                 </select>
               </div>
             )}
@@ -299,9 +301,9 @@ const LogsCenter = () => {
 
         {/* Summary chip */}
         <div className="flex items-center gap-3 text-[11px] font-mono font-bold text-muted-foreground">
-          <span>{total.toLocaleString()} registros</span>
+          <span>{total.toLocaleString()} {t('records')}</span>
           <span className="opacity-30">·</span>
-          <span>{totalQty.toLocaleString()} pz (esta página)</span>
+          <span>{totalQty.toLocaleString()} {t('logs_pcs_this_page')}</span>
         </div>
 
         {/* Table */}
@@ -310,15 +312,15 @@ const LogsCenter = () => {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-secondary/80 backdrop-blur-md border-b border-border/40">
                 <tr>
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Fecha</th>
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Orden</th>
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Operador</th>
-                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cant.</th>
-                  {tab === 'production' && <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Máquina</th>}
-                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Turno</th>
-                  {tab === 'production' && <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Diseño</th>}
-                  {tab === 'production' && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Setup</th>}
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('date')}</th>
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('order')}</th>
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('client')}</th>
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('admin_operator')}</th>
+                  <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('admin_qty_short')}</th>
+                  {tab === 'production' && <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('machine')}</th>}
+                  <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('admin_shift')}</th>
+                  {tab === 'production' && <th className="p-3 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('admin_design')}</th>}
+                  {tab === 'production' && <th className="p-3 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('setup')}</th>}
                   {isAdmin && <th className="p-3 w-10"></th>}
                 </tr>
               </thead>
@@ -333,7 +335,7 @@ const LogsCenter = () => {
                       ? <Factory className="w-12 h-12 mx-auto opacity-20 mb-2 text-emerald-500" />
                       : <Scissors className="w-12 h-12 mx-auto opacity-20 mb-2 text-pink-500" />}
                     <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                      Sin registros {hasFilters ? 'con esos filtros' : ''}
+                      {t('admin_no_records')} {hasFilters ? t('logs_with_filters') : ''}
                     </p>
                   </td></tr>
                 ) : (
@@ -369,7 +371,7 @@ const LogsCenter = () => {
                           <button
                             onClick={() => handleDelete(log.log_id)}
                             className="p-1 rounded hover:bg-destructive/20"
-                            title="Eliminar"
+                            title={t('delete')}
                           >
                             <Trash2 className="w-3.5 h-3.5 text-destructive" />
                           </button>
@@ -386,21 +388,21 @@ const LogsCenter = () => {
         {/* Pagination */}
         {total > PAGE_SIZE && (
           <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-            <div>Página {page} de {totalPages}</div>
+            <div>{t('logs_page_of', { page, total: totalPages })}</div>
             <div className="flex gap-2">
               <button
                 onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}
                 disabled={skip === 0 || loading}
                 className="px-3 py-1.5 bg-secondary border border-border rounded-lg hover:bg-secondary/60 disabled:opacity-40 flex items-center gap-1"
               >
-                <ChevronLeft className="w-3.5 h-3.5" /> Anterior
+                <ChevronLeft className="w-3.5 h-3.5" /> {t('logs_prev')}
               </button>
               <button
                 onClick={() => setSkip(skip + PAGE_SIZE)}
                 disabled={skip + PAGE_SIZE >= total || loading}
                 className="px-3 py-1.5 bg-secondary border border-border rounded-lg hover:bg-secondary/60 disabled:opacity-40 flex items-center gap-1"
               >
-                Siguiente <ChevronRight className="w-3.5 h-3.5" />
+                {t('admin_next')} <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>

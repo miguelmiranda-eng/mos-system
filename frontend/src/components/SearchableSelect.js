@@ -96,7 +96,7 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
                 </div>
                 <div className="flex flex-col">
                   <span className="font-bold tracking-tight">{t('add')} "{search.trim()}"</span>
-                  <span className="text-[10px] opacity-60 uppercase font-black">Crear nueva opción</span>
+                  <span className="text-[10px] opacity-60 uppercase font-black">{t('admin_create_new_option')}</span>
                 </div>
               </button>
             )}

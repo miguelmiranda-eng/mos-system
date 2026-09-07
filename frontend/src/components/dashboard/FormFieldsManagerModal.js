@@ -5,6 +5,7 @@ import { useRef } from "react";
 import { toast } from "sonner";
 import { API, DEFAULT_COLUMNS } from "../../lib/constants";
 import { NewOrderForm } from "./NewOrderForm";
+import { useLang } from "../../contexts/LanguageContext";
 
 const HARDCODED_DEFAULTS = [
   'order_number', 'customer_po', 'style', 'client', 'branding', 
@@ -13,6 +14,7 @@ const HARDCODED_DEFAULTS = [
 ];
 
 export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns = [] }) => {
+  const { t } = useLang();
   const [selectedFields, setSelectedFields] = useState([]);
   const [hiddenFields, setHiddenFields] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -133,9 +135,9 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ fields: fieldsToSave, hidden_fields: hiddenFields })
       });
-      if (res.ok) { toast.success("Campos del formulario actualizados"); onClose(); }
-      else toast.error("Error al guardar");
-    } catch { toast.error("Error al guardar"); } finally { setSaving(false); }
+      if (res.ok) { toast.success(t('dash_form_fields_updated')); onClose(); }
+      else toast.error(t('options_save_err'));
+    } catch { toast.error(t('options_save_err')); } finally { setSaving(false); }
   };
 
   const visibleFields = selectedFields.filter(k => !hiddenFields.includes(k));
@@ -151,12 +153,12 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
               <div className="flex items-center justify-between">
                 <DialogTitle className="font-barlow text-xl uppercase tracking-tighter font-black italic text-foreground flex items-center gap-3">
                   <ClipboardList className="w-5 h-5 text-primary" />
-                  GESTIÓN DE CAMPOS
+                  {t('dash_fields_management')}
                 </DialogTitle>
                 <X className="w-5 h-5 cursor-pointer text-muted-foreground hover:text-foreground md:hidden" onClick={onClose} />
               </div>
               <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed uppercase tracking-widest font-medium">
-                Arrastra para ordenar y usa el ojo para mostrar/ocultar en el formulario.
+                {t('dash_fields_hint')}
               </p>
             </DialogHeader>
 
@@ -164,7 +166,7 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3 opacity-50">
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Cargando campos...</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest">{t('dash_loading_fields')}</span>
                 </div>
               ) : (
                 selectedFields.map((key, idx) => {
@@ -212,14 +214,14 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
 
             <div className="p-4 bg-card border-t border-border/60 shrink-0">
               <div className="flex justify-between items-center mb-4">
-                <span className="text-[9px] text-muted-foreground uppercase font-black tracking-widest">{visibleFields.length} campos visibles</span>
+                <span className="text-[9px] text-muted-foreground uppercase font-black tracking-widest">{t('dash_visible_fields_count', { n: visibleFields.length })}</span>
               </div>
               <div className="flex gap-2">
-                <button onClick={onClose} className="flex-1 py-2 text-[10px] font-black uppercase text-muted-foreground hover:bg-secondary rounded-lg transition-colors border border-border/40">Cancelar</button>
+                <button onClick={onClose} className="flex-1 py-2 text-[10px] font-black uppercase text-muted-foreground hover:bg-secondary rounded-lg transition-colors border border-border/40">{t('cancel')}</button>
                 <button onClick={handleSave} disabled={saving || selectedFields.length === 0}
                   className="flex-[2] py-2.5 bg-primary text-black rounded-lg text-xs font-black uppercase tracking-widest hover:bg-primary/90 disabled:opacity-50 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  Guardar Cambios
+                  {t('dash_save_changes')}
                 </button>
               </div>
             </div>
@@ -231,8 +233,8 @@ export const FormFieldsManagerModal = ({ isOpen, onClose, columns: propsColumns 
             
             <div className="p-6 pb-2 flex items-center justify-between border-b border-border/40 bg-card/50 backdrop-blur-sm z-10 shrink-0">
               <div>
-                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary">Vista Previa en Vivo</h3>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">Cómo lo verá el usuario al capturar una orden</p>
+                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary">{t('dash_live_preview')}</h3>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">{t('dash_live_preview_desc')}</p>
               </div>
               <button onClick={onClose} className="p-2 rounded-full hover:bg-secondary/80 transition-colors text-muted-foreground hover:text-foreground">
                 <X className="h-5 w-5" />

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { API } from "../lib/constants";
 import { toast } from "sonner";
+import { useLang } from "../contexts/LanguageContext";
 import { Loader2, Plus, ShieldCheck, Lock, ChevronRight, Clock } from "lucide-react";
 import QCInspectionModal from "./QCInspectionModal";
 import { pointSatisfied } from "../lib/qcInspection";
 
 export default function QCInspectionsTab({ canWrite, isDark }) {
+  const { t } = useLang();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [orderNo, setOrderNo] = useState("");
@@ -24,7 +26,7 @@ export default function QCInspectionsTab({ canWrite, isDark }) {
 
   const start = async () => {
     const on = orderNo.trim();
-    if (!on) { toast.error("Escribe el número de orden"); return; }
+    if (!on) { toast.error(t("qc_enter_order_number")); return; }
     setStarting(true);
     try {
       const res = await fetch(`${API}/qc/inspections`, {
@@ -38,9 +40,9 @@ export default function QCInspectionsTab({ canWrite, isDark }) {
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo iniciar la inspección");
+        toast.error(err.detail || t("qc_start_inspection_err"));
       }
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t("ceo_err_connection")); }
     finally { setStarting(false); }
   };
 
@@ -53,12 +55,12 @@ export default function QCInspectionsTab({ canWrite, isDark }) {
             value={orderNo}
             onChange={e => setOrderNo(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") start(); }}
-            placeholder="Número de orden a inspeccionar…"
+            placeholder={t("qc_order_to_inspect_placeholder")}
             className={`flex-1 px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:border-primary ${isDark ? "bg-white/5 border-white/10 text-white" : "bg-white border-slate-200"}`}
           />
           <button onClick={start} disabled={starting}
             className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-royal text-white font-bold text-sm disabled:opacity-50 active:scale-95 transition-transform whitespace-nowrap">
-            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Nueva inspección
+            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t("qc_new_inspection_lc")}
           </button>
         </div>
       )}
@@ -68,8 +70,8 @@ export default function QCInspectionsTab({ canWrite, isDark }) {
       ) : list.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
           <ShieldCheck className="w-12 h-12 opacity-30" />
-          <p className="font-bold">Sin inspecciones por puntos todavía</p>
-          {canWrite && <p className="text-sm">Inicia una arriba con el número de orden.</p>}
+          <p className="font-bold">{t("qc_no_point_inspections")}</p>
+          {canWrite && <p className="text-sm">{t("qc_start_one_hint")}</p>}
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -89,7 +91,7 @@ export default function QCInspectionsTab({ canWrite, isDark }) {
                     {ins.inspector || "—"} · {ins.created_at ? new Date(ins.created_at).toLocaleDateString() : ""}
                     {" · "}
                     <span className={completed ? "text-emerald-500 font-bold" : "text-amber-500 font-bold"}>
-                      {completed ? "Completada" : `${done}/${total} puntos`}
+                      {completed ? t("qc_completed_f") : t("qc_points_progress", { done, total })}
                     </span>
                   </div>
                 </div>

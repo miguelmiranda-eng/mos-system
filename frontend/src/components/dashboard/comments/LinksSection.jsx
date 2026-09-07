@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link2, Plus, ExternalLink, Trash2, Loader2, FileSpreadsheet } from "lucide-react";
 import { esUrlGoogleSheets } from "../../../sheets/engine/gsheets";
+import { useLang } from "../../../contexts/LanguageContext";
 
 // Sección de enlaces de la orden: lista + formulario para agregar. Los Google
 // Sheets (packing lists) ofrecen además un atajo para abrirse dentro de MOS
 // Sheet. onAddLink devuelve true si se guardó, para limpiar el formulario.
 export function LinksSection({ links, onAddLink, onDeleteLink }) {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [showAddLink, setShowAddLink] = useState(false);
   const [newLinkUrl, setNewLinkUrl] = useState("");
   const [newLinkDesc, setNewLinkDesc] = useState("");
@@ -35,14 +37,14 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
     <div className="border-b border-border pb-3" data-testid="links-section">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-          <Link2 className="w-3.5 h-3.5" /> Enlaces
+          <Link2 className="w-3.5 h-3.5" /> {t('comment_links')}
         </span>
         <button
           onClick={() => setShowAddLink(!showAddLink)}
           className="text-xs text-primary hover:underline flex items-center gap-1"
           data-testid="toggle-add-link"
         >
-          <Plus className="w-3.5 h-3.5" /> Agregar enlace
+          <Plus className="w-3.5 h-3.5" /> {t('comment_add_link')}
         </button>
       </div>
 
@@ -64,14 +66,14 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
             onKeyDown={(e) => {
               if (e.key === "Enter") handleAdd();
             }}
-            placeholder="Descripcion del enlace..."
+            placeholder={t('comment_link_desc_placeholder')}
             style={{ backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
             className="w-full border border-border rounded px-3 py-1.5 text-sm"
             data-testid="link-desc-input"
           />
           <div className="flex justify-end gap-2">
             <button onClick={cancelAdd} className="px-3 py-1 text-xs text-muted-foreground hover:text-foreground">
-              Cancelar
+              {t('cancel')}
             </button>
             <button
               onClick={handleAdd}
@@ -79,7 +81,7 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
               className="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
               data-testid="save-link-btn"
             >
-              {linkLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Guardar
+              {linkLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} {t('save')}
             </button>
           </div>
         </div>
@@ -117,7 +119,7 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
                     )
                   }
                   className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-semibold hover:bg-primary/20 flex-shrink-0"
-                  title="Abrir en MOS Sheet"
+                  title={t('comment_open_mos_sheet')}
                 >
                   <FileSpreadsheet className="w-3 h-3" /> MOS
                 </button>
@@ -125,7 +127,7 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
               <button
                 onClick={() => onDeleteLink(idx)}
                 className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
-                title="Eliminar"
+                title={t('delete')}
                 data-testid={`delete-link-${idx}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -134,7 +136,7 @@ export function LinksSection({ links, onAddLink, onDeleteLink }) {
           ))}
         </div>
       ) : (
-        !showAddLink && <p className="text-xs text-muted-foreground text-center py-1">Sin enlaces</p>
+        !showAddLink && <p className="text-xs text-muted-foreground text-center py-1">{t('comment_no_links')}</p>
       )}
     </div>
   );

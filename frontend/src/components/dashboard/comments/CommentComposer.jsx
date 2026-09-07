@@ -102,7 +102,7 @@ export function CommentComposer({
           data-testid="drop-overlay"
         >
           <Camera className="w-6 h-6 mx-auto mb-1 text-primary" />
-          <p className="text-sm text-primary font-medium">Suelta las imagenes aqui</p>
+          <p className="text-sm text-primary font-medium">{t('comment_drop_images')}</p>
         </div>
       )}
 
@@ -111,7 +111,7 @@ export function CommentComposer({
           <div className="flex items-center gap-2">
             <AtSign className="w-3 h-3 text-primary" />
             <span className="text-[10px] font-black uppercase text-primary">
-              Respondiendo a {replyingTo.user_name}
+              {t('comment_replying_to', { name: replyingTo.user_name })}
             </span>
           </div>
           <button onClick={onCancelReply} className="p-1 hover:bg-primary/20 rounded text-primary">
@@ -176,7 +176,7 @@ export function CommentComposer({
             value={newComment}
             onChange={mentions.handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={`${t("write_comment")} (usa @ para mencionar)`}
+            placeholder={`${t("write_comment")} ${t("comment_mention_hint")}`}
             style={{ backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
             className="w-full border border-border rounded px-3 py-2 text-sm resize-none h-16"
             data-testid="comment-input"

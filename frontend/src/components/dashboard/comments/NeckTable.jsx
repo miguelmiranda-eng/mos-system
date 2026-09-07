@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Scissors, Loader2, RefreshCw, Save, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../../../lib/constants";
+import { useLang } from "../../../contexts/LanguageContext";
 
 // Mismo criterio de tallas/países que la tabla de surtido.
 const SIZE_ORDER = ["XS", "S", "M", "L", "XL", "2X", "3X", "4X", "5X"];
@@ -30,6 +31,7 @@ const cFlag = (c) => COUNTRY_META[c]?.flag || "";
 // neck a mano (el sistema no lo mide). Al guardar compara contra lo surtido y
 // marca/describe las discrepancias.
 function TicketNeck({ ticket, orderNumber, onSaved }) {
+  const { t } = useLang();
   const surtidoBy = useMemo(() => {
     const m = {};
     ticket.rows.forEach((r) => { m[`${r.size}|${r.country}`] = r.surtido; });
@@ -80,9 +82,9 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
         { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
           body: JSON.stringify({ ticket_id: ticket.ticket_id, counts }) }
       );
-      if (res.ok) { toast.success("Neck guardado"); setCompared(true); onSaved?.(); }
-      else toast.error("Error al guardar");
-    } catch { toast.error("Error de conexión"); }
+      if (res.ok) { toast.success(t('comment_neck_saved')); setCompared(true); onSaved?.(); }
+      else toast.error(t('options_save_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSaving(false); }
   };
 
@@ -94,10 +96,10 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-border/50 bg-secondary/30">
         <span className="font-bold text-sm text-foreground">{ticket.style} {ticket.color}</span>
         {ticket.fabric && <span className="text-[11px] text-muted-foreground uppercase">{ticket.fabric}</span>}
-        {ticket.counted_by && <span className="text-[10px] text-muted-foreground">contó: {ticket.counted_by}</span>}
+        {ticket.counted_by && <span className="text-[10px] text-muted-foreground">{t('comment_counted_by')} {ticket.counted_by}</span>}
         <button onClick={save} disabled={saving}
           className="ml-auto flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded bg-pink-500/15 text-pink-400 hover:bg-pink-500/25 disabled:opacity-50">
-          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Guardar y comparar
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} {t('comment_save_compare')}
         </button>
       </div>
 
@@ -105,7 +107,7 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              <th className="text-left font-bold px-3 py-1">Talla</th>
+              <th className="text-left font-bold px-3 py-1">{t('wms_label_size')}</th>
               {countries.map((c) => (
                 <th key={c} className="text-center font-bold px-2 py-1 whitespace-nowrap" title={c}>{cFlag(c)} {cLabel(c)}</th>
               ))}
@@ -130,7 +132,7 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
                           inputMode="numeric"
                           placeholder="—"
                           className={`w-16 text-center rounded border px-1 py-0.5 text-sm font-mono bg-secondary ${bad ? "border-amber-500 text-amber-500" : "border-border text-foreground"}`}
-                          title={bad ? `Surtido: ${surtidoBy[key]} · dif ${neck - surtidoBy[key] > 0 ? "+" : ""}${neck - surtidoBy[key]}` : ""}
+                          title={bad ? t('comment_picked_diff', { s: surtidoBy[key], d: `${neck - surtidoBy[key] > 0 ? "+" : ""}${neck - surtidoBy[key]}` }) : ""}
                         />
                       ) : (
                         <span className="text-muted-foreground/30">—</span>
@@ -144,7 +146,7 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border/60 bg-secondary/30 font-bold">
-              <td className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">Total neck</td>
+              <td className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t('comment_total_neck')}</td>
               <td className="text-center px-2 py-1" colSpan={countries.length} />
               <td className="text-right px-3 py-1 font-mono text-foreground">{grandNeck}</td>
             </tr>
@@ -156,17 +158,17 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
         discrepancias.length ? (
           <div className="px-3 py-2 border-t border-amber-500/30 bg-amber-500/5 space-y-1">
             <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-500">
-              <AlertTriangle className="w-3.5 h-3.5" /> Discrepancias contra lo surtido ({discrepancias.length})
+              <AlertTriangle className="w-3.5 h-3.5" /> {t('comment_discrepancies', { n: discrepancias.length })}
             </div>
             {discrepancias.map((d, i) => (
               <p key={i} className="text-[11px] text-amber-600 dark:text-amber-400">
-                <b>{d.size} · {cLabel(d.country)}</b>: contaste <b>{d.neck}</b>, surtido <b>{d.surtido}</b> → {d.diff > 0 ? `sobran ${d.diff}` : `faltan ${-d.diff}`}
+                <b>{d.size} · {cLabel(d.country)}</b>{t('comment_you_counted')} <b>{d.neck}</b>{t('comment_picked_lower')} <b>{d.surtido}</b> → {d.diff > 0 ? t('comment_surplus', { n: d.diff }) : t('comment_missing', { n: -d.diff })}
               </p>
             ))}
           </div>
         ) : (
           <div className="px-3 py-2 border-t border-emerald-500/30 bg-emerald-500/5 flex items-center gap-1.5 text-[11px] font-bold text-emerald-500">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Neck cuadra con lo surtido
+            <CheckCircle2 className="w-3.5 h-3.5" /> {t('comment_neck_matches')}
           </div>
         )
       )}
@@ -178,6 +180,7 @@ function TicketNeck({ ticket, orderNumber, onSaved }) {
 // estructura que el surtido, pero para que el operador cuente y capture. Marca
 // discrepancias contra lo surtido al guardar.
 export function NeckTable({ order, isOpen }) {
+  const { t } = useLang();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -213,20 +216,20 @@ export function NeckTable({ order, isOpen }) {
     <div className="mx-6 mt-3 space-y-2" data-testid="neck-table">
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-          <Scissors className="w-3.5 h-3.5" /> Neck (captura manual)
+          <Scissors className="w-3.5 h-3.5" /> {t('comment_neck_manual')}
         </span>
         <button onClick={fetchNeck} disabled={loading}
           className="text-[11px] text-primary hover:underline flex items-center gap-1 disabled:opacity-50">
-          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refrescar
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} {t('comment_refresh')}
         </button>
       </div>
       {loading && tickets.length === 0 ? (
         <div className="flex items-center justify-center py-4 text-muted-foreground text-xs gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" /> Cargando…
+          <Loader2 className="w-4 h-4 animate-spin" /> {t('comment_loading')}
         </div>
       ) : tickets.length === 0 ? (
         <p className="text-xs text-muted-foreground text-center py-3">
-          No hay material surtido en el WMS para capturar neck. La estructura del neck se toma del surtido.
+          {t('comment_no_neck_material')}
         </p>
       ) : (
         <div className="space-y-2">

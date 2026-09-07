@@ -42,39 +42,39 @@ export default function CatalogCenter() {
   // Grouped catalogs for the sidebar
   const CATALOG_GROUPS = [
     {
-      title: "Ventas y Clientes",
+      title: t('catalog_grp_sales'),
       icon: <Tags className="w-4 h-4" />,
       items: [
-        { id: "clients", label: "Clientes", desc: "Base de la cartera de clientes" },
-        { id: "brandings", label: "Brandings", desc: "Marcas / Submarcas de clientes" },
-        { id: "priorities", label: "Prioridades (Flags)", desc: "Indicadores visuales de urgencia" }
+        { id: "clients", label: t('clients_label'), desc: t('catalog_clients_desc') },
+        { id: "brandings", label: "Brandings", desc: t('catalog_brandings_desc') },
+        { id: "priorities", label: t('catalog_priorities'), desc: t('catalog_priorities_desc') }
       ]
     },
     {
-      title: "Inventario y Material",
+      title: t('catalog_grp_inventory'),
       icon: <Box className="w-4 h-4" />,
       items: [
-        { id: "blank_sources", label: "Fuentes de Blanks", desc: "Proveedores de ropa (Gildan, etc)" },
-        { id: "blank_statuses", label: "Estados de Blanks", desc: "Control del almacén temporal" },
-        { id: "trim_boxes", label: "Cajas de Trims", desc: "Ubicaciones para accesorios" },
-        { id: "trim_statuses", label: "Estados de Trims", desc: "Control de estatus de accesorios" }
+        { id: "blank_sources", label: t('catalog_blank_sources'), desc: t('catalog_blank_sources_desc') },
+        { id: "blank_statuses", label: t('catalog_blank_statuses'), desc: t('catalog_blank_statuses_desc') },
+        { id: "trim_boxes", label: t('catalog_trim_boxes'), desc: t('catalog_trim_boxes_desc') },
+        { id: "trim_statuses", label: t('catalog_trim_statuses'), desc: t('catalog_trim_statuses_desc') }
       ]
     },
     {
-      title: "Producción y Arte",
+      title: t('catalog_grp_production'),
       icon: <Layers className="w-4 h-4" />,
       items: [
-        { id: "production_statuses", label: "Estados de Producción", desc: "Estatus de cada prenda (Impreso, etc)" },
-        { id: "artwork_statuses", label: "Estados de Arte", desc: "Aprobaciones y pre-prensa" },
-        { id: "samples", label: "Muestras de Arte", desc: "Aprobaciones de clientes" },
-        { id: "betty_columns", label: "Betty Columns", desc: "Soporte para integraciones externas" }
+        { id: "production_statuses", label: t('catalog_production_statuses'), desc: t('catalog_production_statuses_desc') },
+        { id: "artwork_statuses", label: t('catalog_artwork_statuses'), desc: t('catalog_artwork_statuses_desc') },
+        { id: "samples", label: t('catalog_samples'), desc: t('catalog_samples_desc') },
+        { id: "betty_columns", label: "Betty Columns", desc: t('catalog_betty_desc') }
       ]
     },
     {
-      title: "Logística",
+      title: t('catalog_grp_logistics'),
       icon: <Truck className="w-4 h-4" />,
       items: [
-        { id: "shippings", label: "Métodos de Envío", desc: "UPS, Local Pickup, FedEx, etc" }
+        { id: "shippings", label: t('catalog_shippings'), desc: t('catalog_shippings_desc') }
       ]
     }
   ];
@@ -118,7 +118,7 @@ export default function CatalogCenter() {
         setGroupColors(gData.group_colors || {});
       }
     } catch {
-      toast.error("Error cargando base de datos");
+      toast.error(t('catalog_err_loading_db'));
     } finally {
       setLoading(false);
     }
@@ -146,7 +146,7 @@ export default function CatalogCenter() {
     if (!newName) return;
     
     if (newName !== oldVal) {
-      if (values.includes(newName)) return toast.error("La etiqueta ya existe");
+      if (values.includes(newName)) return toast.error(t('catalog_label_exists'));
       // Rename: update values, migrate color, description, and group
       setValues(prev => prev.map(v => v === oldVal ? newName : v));
       setCustomColors(prev => {
@@ -205,19 +205,19 @@ export default function CatalogCenter() {
       return next;
     });
     
-    toast.success(`${labelNames.length > 1 ? "Etiquetas movidas" : "Etiqueta movida"} a ${targetGroup || "SIN GRUPO"}`);
+    toast.success(t(labelNames.length > 1 ? 'catalog_labels_moved_to' : 'catalog_label_moved_to', { group: targetGroup || "SIN GRUPO" }));
     setSelectedLabels([]);
   };
 
   const createEmptyFolder = () => {
     const name = newFolderName.trim().toUpperCase();
     if (!name) return;
-    if (groupColors[name]) return toast.error("La carpeta ya existe");
+    if (groupColors[name]) return toast.error(t('catalog_folder_exists'));
     
     setGroupColors(prev => ({ ...prev, [name]: newFolderColor }));
     setNewFolderName("");
     setShowFolderCreator(false);
-    toast.success(`Carpeta "${name}" creada`);
+    toast.success(t('catalog_folder_created', { name }));
   };
 
   const handleSaveToDatabase = async () => {
@@ -241,14 +241,14 @@ export default function CatalogCenter() {
       });
 
       if (res.ok) {
-        toast.success("Catálogo guardado exitosamente");
+        toast.success(t('catalog_saved'));
         // Actualizamos nuestro state base de options con el valor modificado
         setOptions(prev => ({ ...prev, [selectedCatalog]: values }));
       } else {
         throw new Error();
       }
     } catch {
-      toast.error("Error al guardar en la base de datos");
+      toast.error(t('catalog_err_saving_db'));
     } finally {
       setSaving(false);
     }
@@ -268,17 +268,17 @@ export default function CatalogCenter() {
           <button
             onClick={() => navigate("/home")}
             className="w-10 h-10 flex flex-shrink-0 items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5 transition-all text-muted-foreground hover:text-foreground hover:shadow-lg hover:-translate-x-0.5"
-            title="Volver a MOS Home"
+            title={t('admin_back_mos_home')}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <h1 className="text-xl font-black uppercase tracking-widest text-foreground flex items-center gap-2">
               <Layers className="w-5 h-5 text-primary" />
-              CENTRO DE CATÁLOGOS
+              {t('catalog_title')}
             </h1>
             <p className="text-xs text-muted-foreground font-mono leading-none mt-1">
-              Gestión Maestra de Campos Desplegables y Opciones de Estado
+              {t('catalog_subtitle')}
             </p>
           </div>
         </div>
@@ -289,7 +289,7 @@ export default function CatalogCenter() {
           className="px-6 py-2 bg-gradient-to-r from-primary to-orange-500 hover:from-primary/90 hover:to-orange-500/90 text-white rounded-lg font-black tracking-widest text-sm transition-all shadow-[0_4px_20px_rgba(255,193,7,0.3)] hover:shadow-[0_4px_25px_rgba(255,193,7,0.5)] flex items-center gap-2 disabled:opacity-50"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-          GUARDAR CATÁLOGO
+          {t('catalog_save_btn')}
         </button>
       </header>
 
@@ -336,14 +336,13 @@ export default function CatalogCenter() {
               {/* Header Context for selected catalog */}
               <div className="p-6 md:p-10 border-b border-white/5 bg-gradient-to-b from-card/30 to-transparent flex-shrink-0">
                 <div className="inline-flex items-center gap-2 px-3 py-1 bg-primary/10 border border-primary/20 rounded-full text-xs font-black uppercase tracking-widest text-primary mb-4">
-                  <LayoutDashboard className="w-3.5 h-3.5" /> Estructura del Dropdown
+                  <LayoutDashboard className="w-3.5 h-3.5" /> {t('catalog_dropdown_structure')}
                 </div>
                 <h2 className="text-3xl font-black uppercase tracking-tighter text-foreground mb-2">
                   {currentCatalogObj.label}
                 </h2>
                 <p className="text-muted-foreground font-medium max-w-2xl">
-                  {currentCatalogObj.desc}. Aquí defines las opciones que aparecerán en los menús desplegables 
-                  correspondientes dentro de las tarjetas de las órdenes en todo el sistema.
+                  {currentCatalogObj.desc}. {t('catalog_desc_help')}
                 </p>
               </div>
 
@@ -353,12 +352,12 @@ export default function CatalogCenter() {
                 <div className="flex-1 max-w-2xl space-y-3">
                   <div className="flex items-center justify-between mb-4 border-b border-border pb-2">
                     <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                      ETIQUETAS ACTUALES ({values.length})
+                      {t('catalog_current_labels', { n: values.length })}
                     </h3>
                     <div className="flex items-center gap-2">
                       {selectedLabels.length > 0 && (
                         <div className="px-3 py-1 bg-primary/20 text-primary text-[10px] font-black rounded-full animate-pulse">
-                          {selectedLabels.length} SELECCIONADAS
+                          {t('catalog_n_selected', { n: selectedLabels.length })}
                         </div>
                       )}
                       <button 
@@ -368,7 +367,7 @@ export default function CatalogCenter() {
                         }`}
                       >
                         {showFolderCreator ? <X className="w-3.5 h-3.5" /> : <FolderPlus className="w-3.5 h-3.5" />}
-                        {showFolderCreator ? "Cerrar" : "Nueva Carpeta"}
+                        {showFolderCreator ? t('close') : t('catalog_new_folder')}
                       </button>
                     </div>
                   </div>
@@ -377,17 +376,17 @@ export default function CatalogCenter() {
                   {showFolderCreator && (
                     <div className="mb-6 p-4 bg-secondary/30 rounded-xl border border-primary/20 flex flex-wrap gap-4 items-end animate-in slide-in-from-top-2 duration-300">
                       <div className="flex-1 min-w-[200px]">
-                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">Nombre Carpeta Deseada</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">{t('catalog_folder_name_label')}</label>
                         <input 
                           type="text" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
-                          placeholder="NOMBRE DE LA CARPETA..."
+                          placeholder={t('catalog_folder_name_placeholder')}
                           className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-1 focus:ring-primary outline-none uppercase"
                           autoFocus
                           onKeyDown={(e) => { if (e.key === "Enter") createEmptyFolder(); }}
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">Color</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">{t('wms_label_color')}</label>
                         <div className="flex items-center gap-2">
                           <div className="w-9 h-9 rounded border border-border overflow-hidden relative">
                             <input 
@@ -400,7 +399,7 @@ export default function CatalogCenter() {
                             disabled={!newFolderName.trim()}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-black uppercase tracking-widest disabled:opacity-50"
                           >
-                            Crear
+                            {t('admin_create')}
                           </button>
                         </div>
                       </div>
@@ -409,7 +408,7 @@ export default function CatalogCenter() {
 
                   {values.length === 0 ? (
                     <div className="text-center py-10 border border-dashed border-border rounded-xl bg-secondary/10">
-                      <p className="text-muted-foreground font-mono">No hay etiquetas creadas en este catálogo todavía.</p>
+                      <p className="text-muted-foreground font-mono">{t('catalog_no_labels')}</p>
                     </div>
                   ) : (
                     <div className="space-y-8 pb-32">
@@ -453,7 +452,7 @@ export default function CatalogCenter() {
                               <button 
                                 onClick={() => {
                                   if (gn === "SIN GRUPO") return;
-                                  if (window.confirm(`¿Eliminar carpeta "${gn}"? Las etiquetas volverán a SIN GRUPO.`)) {
+                                  if (window.confirm(t('catalog_confirm_delete_folder', { name: gn }))) {
                                     const labelsInGroup = grouped[gn];
                                     moveLabelsToGroup(labelsInGroup, null);
                                     setGroupColors(prev => { const n = {...prev}; delete n[gn]; return n; });
@@ -468,7 +467,7 @@ export default function CatalogCenter() {
                             <div className="space-y-2 min-h-[40px] border-2 border-transparent border-dashed rounded-xl flex flex-col">
                               {grouped[gn].length === 0 && (
                                 <div className="flex items-center justify-center py-4 text-[10px] text-muted-foreground/50 border border-dashed border-border/50 rounded-xl uppercase tracking-widest font-black">
-                                  Carpeta Vacía - Arrastra aquí para organizar
+                                  {t('catalog_empty_folder')}
                                 </div>
                               )}
                               {grouped[gn].map((val) => {
@@ -516,7 +515,7 @@ export default function CatalogCenter() {
                                         isEditingColor ? "border-primary" : "border-white/10"
                                       }`}
                                       style={{ backgroundColor: color.bg }}
-                                      title="Cambiar Color"
+                                      title={t('catalog_change_color')}
                                     >
                                       <Palette className="w-5 h-5 opacity-40 mix-blend-difference" style={{ color: "#fff" }} />
                                     </button>
@@ -531,7 +530,7 @@ export default function CatalogCenter() {
                                       {isEditingLabel ? (
                                         <div className="space-y-3 animate-in fade-in duration-200">
                                           <div>
-                                            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">Nombre de Etiqueta</label>
+                                            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">{t('catalog_label_name')}</label>
                                             <input 
                                               type="text" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
                                               className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:ring-1 focus:ring-primary outline-none" 
@@ -541,16 +540,16 @@ export default function CatalogCenter() {
                                           </div>
                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div>
-                                              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">Carpeta / Grupo</label>
+                                              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">{t('catalog_folder_group')}</label>
                                               <input 
                                                 type="text" value={groupDraft} onChange={(e) => setGroupDraft(e.target.value)}
-                                                placeholder="Ej: NECK LABELS..."
+                                                placeholder={t('catalog_folder_placeholder')}
                                                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-1 focus:ring-primary outline-none uppercase" 
                                                 onKeyDown={(e) => { if (e.key === "Enter") saveLabel(val); if (e.key === "Escape") setEditingLabel(null); }}
                                               />
                                             </div>
                                             <div>
-                                              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">Color Carpeta</label>
+                                              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">{t('catalog_folder_color')}</label>
                                               <div className="flex items-center gap-2">
                                                 <div className="w-9 h-9 rounded border border-border overflow-hidden relative">
                                                   <input 
@@ -566,10 +565,10 @@ export default function CatalogCenter() {
                                             </div>
                                           </div>
                                           <div>
-                                            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">Descripción Extendida</label>
+                                            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1 block">{t('catalog_ext_desc')}</label>
                                             <input 
                                               type="text" value={descDraft} onChange={(e) => setDescDraft(e.target.value)}
-                                              placeholder="Contexto extra..."
+                                              placeholder={t('catalog_ext_desc_placeholder')}
                                               className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-1 focus:ring-primary outline-none" 
                                               onKeyDown={(e) => { if (e.key === "Enter") saveLabel(val); if (e.key === "Escape") setEditingLabel(null); }}
                                             />
@@ -580,9 +579,9 @@ export default function CatalogCenter() {
                                               disabled={!nameDraft.trim()}
                                               className="px-4 py-1.5 bg-primary/20 hover:bg-primary text-primary hover:text-white rounded-md text-xs font-black tracking-widest uppercase transition-colors"
                                             >
-                                              Guardar
+                                              {t('save')}
                                             </button>
-                                            <button onClick={() => setEditingLabel(null)} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors">Cancelar</button>
+                                            <button onClick={() => setEditingLabel(null)} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors">{t('cancel')}</button>
                                           </div>
                                         </div>
                                       ) : isEditingColor ? (
@@ -599,7 +598,7 @@ export default function CatalogCenter() {
                                           <div className="flex items-center gap-3 pt-3 border-t border-border">
                                             <span className="text-xs text-muted-foreground font-mono">HEX:</span>
                                             <input type="color" value={color.bg} onChange={(e) => handleSetColor(val, e.target.value)} />
-                                            <button onClick={() => setEditingColor(null)} className="ml-auto text-xs px-3 py-1 bg-secondary rounded hover:bg-white/10">Cerrar</button>
+                                            <button onClick={() => setEditingColor(null)} className="ml-auto text-xs px-3 py-1 bg-secondary rounded hover:bg-white/10">{t('close')}</button>
                                           </div>
                                         </div>
                                       ) : (
@@ -640,13 +639,13 @@ export default function CatalogCenter() {
                   <div className="mt-8 bg-card/40 backdrop-blur-md rounded-xl p-6 border border-primary/20 shadow-[0_4px_30px_rgba(0,0,0,0.1)] relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 blur-3xl pointer-events-none" />
                     <h4 className="text-xs font-black tracking-widest text-primary uppercase mb-4 flex items-center gap-2">
-                      <Plus className="w-4 h-4" /> Crear Nueva Opción
+                      <Plus className="w-4 h-4" /> {t('catalog_create_new_option')}
                     </h4>
                     
                     <div className="flex flex-col sm:flex-row gap-4 items-start">
                       {/* Color Picker for New */}
                       <div className="flex-shrink-0">
-                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">Color</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">{t('wms_label_color')}</label>
                         <div className="w-12 h-12 rounded-lg border border-border shadow-inner relative overflow-hidden cursor-pointer hover:border-white transition-colors" style={{ backgroundColor: newColor }}>
                           <input 
                             type="color" 
@@ -659,7 +658,7 @@ export default function CatalogCenter() {
                       
                       {/* Input for New */}
                       <div className="flex-1 w-full">
-                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">Etiqueta Principal</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">{t('catalog_main_label')}</label>
                         <input 
                            type="text" 
                           value={newValue} 
@@ -674,19 +673,19 @@ export default function CatalogCenter() {
                               setNewValue(""); setGroupDraft("");
                             }
                           }} 
-                          placeholder="Escribe el nombre y presiona Enter..." 
+                          placeholder={t('catalog_new_value_placeholder')} 
                           className="w-full h-12 bg-background border border-border rounded-lg px-4 text-sm font-bold text-foreground focus:ring-1 focus:ring-primary outline-none tracking-wide" 
                         />
                       </div>
 
                       {/* Group Assignment for New */}
                       <div className="w-full sm:w-48">
-                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">Carpeta (Opcional)</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-black block mb-1">{t('catalog_folder_optional')}</label>
                         <input 
                           type="text" 
                           value={groupDraft} 
                           onChange={(e) => setGroupDraft(e.target.value)} 
-                          placeholder="Carpeta..." 
+                          placeholder={t('catalog_folder_short_placeholder')} 
                           className="w-full h-12 bg-background border border-border rounded-lg px-4 text-sm text-foreground focus:ring-1 focus:ring-primary outline-none uppercase" 
                         />
                       </div>
@@ -702,7 +701,7 @@ export default function CatalogCenter() {
                           disabled={!newValue.trim()}
                           className="h-full px-6 bg-primary text-primary-foreground rounded-lg font-black tracking-wider text-xs uppercase transition-all hover:bg-primary/80 disabled:opacity-50 flex items-center gap-2"
                         >
-                          Añadir
+                          {t('catalog_add_btn')}
                         </button>
                       </div>
                     </div>
@@ -713,13 +712,13 @@ export default function CatalogCenter() {
                 <div className="hidden xl:block w-80 self-start sticky top-10">
                   <div className="bg-secondary/40 rounded-xl p-5 border border-white/5 space-y-4">
                     <h3 className="text-xs font-black text-muted-foreground tracking-widest uppercase flex items-center gap-2">
-                       <Tags className="w-4 h-4" /> Buenas Prácticas
+                       <Tags className="w-4 h-4" /> {t('catalog_best_practices')}
                     </h3>
                     <div className="text-xs text-muted-foreground leading-relaxed space-y-3">
-                      <p>➤ Mantén la consistencia visual usando la paleta predefinida para opciones similares.</p>
-                      <p>➤ Evita etiquetas demasiado largas. Usa el campo "Descripción" extra para notas complejas.</p>
-                      <p>➤ Toca <strong>Guardar Catálogo</strong> en el encabezado cuando hayas finalizado tus cambios.</p>
-                      <p className="text-primary font-bold"><br/>Aviso: Cambiar el nombre de una etiqueta aquí afectará los reportes futuros sobre este campo.</p>
+                      <p>{t('catalog_tip_1')}</p>
+                      <p>{t('catalog_tip_2')}</p>
+                      <p>{t('catalog_tip_3a')} <strong>{t('catalog_save_title')}</strong> {t('catalog_tip_3b')}</p>
+                      <p className="text-primary font-bold"><br/>{t('catalog_warning')}</p>
                     </div>
                   </div>
                 </div>
@@ -733,11 +732,11 @@ export default function CatalogCenter() {
                       <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center font-black text-white text-sm">
                         {selectedLabels.length}
                       </div>
-                      <span className="text-xs font-black uppercase tracking-widest">Seleccionadas</span>
+                      <span className="text-xs font-black uppercase tracking-widest">{t('catalog_selected_label')}</span>
                     </div>
                     
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-black uppercase text-muted-foreground">Mover a:</span>
+                      <span className="text-[10px] font-black uppercase text-muted-foreground">{t('catalog_move_to')}</span>
                       <div className="flex flex-wrap gap-2 max-w-[400px]">
                         {["SIN GRUPO", ...Object.keys(groupColors)].map(gn => (
                           <button

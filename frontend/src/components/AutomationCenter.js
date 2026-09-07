@@ -5,6 +5,7 @@ import {
   ChevronRight, Check, CheckCircle2, Factory, X, Play, Loader2
 } from 'lucide-react';
 import { API, BOARDS, DEFAULT_COLUMNS } from '../lib/constants';
+import { useLang } from '../contexts/LanguageContext';
 
 
 const TRIGGER_LABELS = {
@@ -46,6 +47,7 @@ const buildWatchFields = (colData = {}) => {
 
 const AutomationCenter = () => {
   const navigate = useNavigate();
+  const { t } = useLang();
 
   const OPTIONS_MAPPING = { 
     'blank_status': 'blank_statuses', 
@@ -127,31 +129,31 @@ const AutomationCenter = () => {
 
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
-    if (!conds) return 'Cualquier cambio';
+    if (!conds) return t('auto_any_change');
     const parts = [];
     if (conds.watch_field && conds.watch_value) {
-      if (conds.watch_value === 'date_updated') parts.push(`Cualquier cambio en ${fieldLabel(conds.watch_field)}`);
-      else if (conds.watch_value === 'is_empty') parts.push(`Si ${fieldLabel(conds.watch_field)} queda vacío`);
-      else if (conds.watch_value === 'not_empty') parts.push(`Si ${fieldLabel(conds.watch_field)} es asignado`);
-      else parts.push(`Si ${fieldLabel(conds.watch_field)} = ${conds.watch_value}`);
+      if (conds.watch_value === 'date_updated') parts.push(t('auto_any_change_in', { field: fieldLabel(conds.watch_field) }));
+      else if (conds.watch_value === 'is_empty') parts.push(t('auto_if_empty', { field: fieldLabel(conds.watch_field) }));
+      else if (conds.watch_value === 'not_empty') parts.push(t('auto_if_assigned', { field: fieldLabel(conds.watch_field) }));
+      else parts.push(t('auto_if_equals', { field: fieldLabel(conds.watch_field), value: conds.watch_value }));
     }
     Object.keys(conds)
       .filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k])
       .forEach(k => {
-        if (k === 'to_board') parts.push(`Si entra a tablero: ${conds[k]}`);
-        else if (k === 'from_board') parts.push(`Si sale de tablero: ${conds[k]}`);
-        else parts.push(`solo si ${fieldLabel(k)} = ${conds[k]}`);
+        if (k === 'to_board') parts.push(t('auto_if_enters_board', { board: conds[k] }));
+        else if (k === 'from_board') parts.push(t('auto_if_leaves_board', { board: conds[k] }));
+        else parts.push(t('auto_only_if_equals', { field: fieldLabel(k), value: conds[k] }));
       });
-    return parts.length ? parts.join(' y ') : 'Al ejecutarse el disparador';
+    return parts.length ? parts.join(t('auto_and_join')) : t('auto_on_trigger');
   };
 
   const getActionParamString = (type, params) => {
     if (!params) return '';
-    if (type === 'move_board') return `A tablero: ${params.target_board || '?'}`;
-    if (type === 'change_status') return `Cambiar ${params.field || '?'} a: ${params.value || '?'}`;
-    if (type === 'send_email') return `A: ${params.to_email || '?'}`;
+    if (type === 'move_board') return t('auto_to_board', { board: params.target_board || '?' });
+    if (type === 'change_status') return t('auto_change_to', { field: params.field || '?', value: params.value || '?' });
+    if (type === 'send_email') return t('auto_to_email', { email: params.to_email || '?' });
     if (type === 'assign_field') return `${params.field || '?'} = ${params.value || '?'}`;
-    if (type === 'notify_slack') return `Mensaje a Slack`;
+    if (type === 'notify_slack') return t('auto_slack_message');
     return JSON.stringify(params);
   };
 
@@ -211,7 +213,7 @@ const AutomationCenter = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('¿Eliminar automatización?')) return;
+    if (!window.confirm(t('auto_confirm_delete'))) return;
     try {
       await fetch(`${API}/automations/${id}`, { method: 'DELETE', credentials: 'include' });
       fetchAutomations();
@@ -251,7 +253,7 @@ const AutomationCenter = () => {
   const saveAutomation = async () => {
     try {
       if (!currentAuto.name) {
-        alert("El nombre es requerido");
+        alert(t('auto_name_required'));
         return;
       }
       // Reconstruir la condición adicional: limpiar cualquier clave extra vieja
@@ -274,7 +276,7 @@ const AutomationCenter = () => {
         closeWizard();
         fetchAutomations();
       } else {
-        alert("Error al guardar");
+        alert(t('options_save_err'));
       }
     } catch (e) {
       console.error(e);
@@ -286,7 +288,7 @@ const AutomationCenter = () => {
     <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl p-6 md:p-8 max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-200">
       <div className="flex justify-between items-center mb-8 border-b border-border/50 pb-4">
         <h2 className="text-2xl font-black uppercase text-foreground">
-          {isEditing ? 'Editar Regla' : 'Nueva Regla'}
+          {isEditing ? t('auto_edit_rule') : t('new_rule')}
         </h2>
         <button onClick={closeWizard} className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors">
           <X className="w-6 h-6" />
@@ -304,7 +306,7 @@ const AutomationCenter = () => {
               {step < wizardStep ? <Check className="w-6 h-6" /> : step}
             </div>
             <span className={`mt-2 font-bold uppercase text-[10px] md:text-xs tracking-wider ${wizardStep >= step ? 'text-primary' : 'text-muted-foreground'}`}>
-              {step === 1 ? 'Disparador' : step === 2 ? 'Acción' : 'Revisión'}
+              {step === 1 ? t('auto_step_trigger') : step === 2 ? t('action_label') : t('auto_step_review')}
             </span>
           </div>
         ))}
@@ -317,11 +319,11 @@ const AutomationCenter = () => {
             <div className="inline-flex items-center justify-center p-4 bg-yellow-500/10 rounded-full mb-4">
               <Zap className="w-12 h-12 text-yellow-500" />
             </div>
-            <h3 className="text-xl font-bold uppercase tracking-wide">¿Qué evento debe ocurrir? (SI)</h3>
+            <h3 className="text-xl font-bold uppercase tracking-wide">{t('auto_q_event')}</h3>
           </div>
 
           <div className="w-full max-w-lg space-y-4">
-            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Tipo de Disparador</label>
+            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_trigger_type')}</label>
             <select 
               value={currentAuto.trigger_type}
               onChange={e => setCurrentAuto({...currentAuto, trigger_type: e.target.value})}
@@ -334,16 +336,16 @@ const AutomationCenter = () => {
 
             {(currentAuto.trigger_type === 'update' || currentAuto.trigger_type === 'status_change') && (
               <div className="p-4 border border-yellow-500/20 bg-yellow-500/5 rounded-xl space-y-4">
-                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Condición del Cambio</label>
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_change_condition')}</label>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Campo a observar</span>
+                    <span className="text-xs text-muted-foreground mb-1 block">{t('auto_watch_field')}</span>
                     <select 
                       value={currentAuto.trigger_conditions.watch_field || ''}
                       onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, watch_field: e.target.value}})}
                       className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                     >
-                      <option value="">-- Seleccionar --</option>
+                      <option value="">{t('auto_select_dash')}</option>
                       {watchFields.map(f => (
                         <option key={f.key} value={f.key}>{f.label}</option>
                       ))}
@@ -357,30 +359,30 @@ const AutomationCenter = () => {
                     </select>
                   </div>
                   <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Condición</span>
+                    <span className="text-xs text-muted-foreground mb-1 block">{t('auto_condition')}</span>
                     <select
                       value={condMode}
                       onChange={e => onCondModeChange(e.target.value)}
                       className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                     >
-                      <option value="">-- Seleccionar --</option>
-                      <option value="date_updated">Cambia (cualquier valor)</option>
-                      <option value="equals">Es igual a…</option>
-                      <option value="not_empty">Es asignado (recibe valor)</option>
-                      <option value="is_empty">Queda vacío</option>
+                      <option value="">{t('auto_select_dash')}</option>
+                      <option value="date_updated">{t('auto_cond_changes')}</option>
+                      <option value="equals">{t('auto_cond_equals')}</option>
+                      <option value="not_empty">{t('auto_cond_assigned')}</option>
+                      <option value="is_empty">{t('auto_cond_empty')}</option>
                     </select>
                   </div>
                 </div>
                 {condMode === 'equals' && (
                   <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Nuevo valor esperado</span>
+                    <span className="text-xs text-muted-foreground mb-1 block">{t('auto_new_expected_value')}</span>
                     {getValueOptions(currentAuto.trigger_conditions.watch_field) ? (
                       <select
                         value={currentAuto.trigger_conditions.watch_value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, watch_value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                       >
-                        <option value="">-- Seleccionar --</option>
+                        <option value="">{t('auto_select_dash')}</option>
                         {getValueOptions(currentAuto.trigger_conditions.watch_field).map(v => (
                           <option key={v} value={v}>{v}</option>
                         ))}
@@ -391,21 +393,21 @@ const AutomationCenter = () => {
                         value={currentAuto.trigger_conditions.watch_value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, watch_value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
-                        placeholder="Ej. LISTO PARA ENVIO"
+                        placeholder={t('auto_value_placeholder')}
                       />
                     )}
                   </div>
                 )}
                 <p className="text-[10px] text-muted-foreground italic">
                   {condMode === 'date_updated'
-                    ? `La regla se activa con CUALQUIER cambio en ${fieldLabel(currentAuto.trigger_conditions.watch_field) || 'el campo'}.`
+                    ? t('auto_help_any_change', { field: fieldLabel(currentAuto.trigger_conditions.watch_field) || t('auto_the_field') })
                     : condMode === 'not_empty'
-                    ? 'Se activa cuando el campo pasa de vacío a tener un valor.'
+                    ? t('auto_help_assigned')
                     : condMode === 'is_empty'
-                    ? 'Se activa cuando el campo queda vacío tras el cambio.'
+                    ? t('auto_help_empty')
                     : condMode === 'equals'
-                    ? 'Se activa cuando el campo cambia y queda con exactamente ese valor.'
-                    : 'Elige el campo y la condición que disparan la regla.'}
+                    ? t('auto_help_equals')
+                    : t('auto_help_default')}
                 </p>
 
                 <div className="border-t border-border/50 pt-3 space-y-3">
@@ -417,20 +419,20 @@ const AutomationCenter = () => {
                       className="w-4 h-4 accent-yellow-500"
                     />
                     <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">
-                      Condición adicional (Y si…)
+                      {t('auto_extra_condition')}
                     </span>
                   </label>
                   {extraCond.enabled && (
                     <>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <span className="text-xs text-muted-foreground mb-1 block">Si la columna</span>
+                          <span className="text-xs text-muted-foreground mb-1 block">{t('auto_if_column')}</span>
                           <select
                             value={extraCond.field}
                             onChange={e => setExtraCond({ ...extraCond, field: e.target.value, value: '' })}
                             className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                           >
-                            <option value="">-- Seleccionar --</option>
+                            <option value="">{t('auto_select_dash')}</option>
                             {watchFields.map(f => (
                               <option key={f.key} value={f.key}>{f.label}</option>
                             ))}
@@ -440,14 +442,14 @@ const AutomationCenter = () => {
                           </select>
                         </div>
                         <div>
-                          <span className="text-xs text-muted-foreground mb-1 block">Tiene el valor</span>
+                          <span className="text-xs text-muted-foreground mb-1 block">{t('auto_has_value')}</span>
                           {getValueOptions(extraCond.field) ? (
                             <select
                               value={extraCond.value}
                               onChange={e => setExtraCond({ ...extraCond, value: e.target.value })}
                               className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                             >
-                              <option value="">-- Seleccionar --</option>
+                              <option value="">{t('auto_select_dash')}</option>
                               {getValueOptions(extraCond.field).map(v => (
                                 <option key={v} value={v}>{v}</option>
                               ))}
@@ -458,13 +460,13 @@ const AutomationCenter = () => {
                               value={extraCond.value}
                               onChange={e => setExtraCond({ ...extraCond, value: e.target.value })}
                               className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
-                              placeholder="Ej. GOODIE TWO SLEEVES"
+                              placeholder={t('auto_extra_value_placeholder')}
                             />
                           )}
                         </div>
                       </div>
                       <p className="text-[10px] text-muted-foreground italic">
-                        La regla solo dispara si, al momento del cambio, {extraCond.field ? fieldLabel(extraCond.field) : 'esa columna'} tiene exactamente ese valor.
+                        {t('auto_extra_help', { field: extraCond.field ? fieldLabel(extraCond.field) : t('auto_that_column') })}
                       </p>
                     </>
                   )}
@@ -474,25 +476,25 @@ const AutomationCenter = () => {
 
             {currentAuto.trigger_type === 'move' && (
               <div className="p-4 border border-yellow-500/20 bg-yellow-500/5 rounded-xl space-y-4">
-                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Condición del Movimiento</label>
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_move_condition')}</label>
                 <div>
-                  <span className="text-xs text-muted-foreground mb-1 block">Tablero Destino</span>
+                  <span className="text-xs text-muted-foreground mb-1 block">{t('auto_target_board')}</span>
                   <select 
                     value={currentAuto.trigger_conditions.to_board || ''}
                     onChange={e => setCurrentAuto({...currentAuto, trigger_conditions: {...currentAuto.trigger_conditions, to_board: e.target.value}})}
                     className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                   >
-                    <option value="">-- Cualquier tablero --</option>
+                    <option value="">{t('auto_any_board')}</option>
                     {(options.boards || BOARDS).map(b => (
                       <option key={b} value={b}>{b}</option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-muted-foreground mt-1">La regla se activará cuando la orden entre a este tablero.</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{t('auto_move_help')}</p>
                 </div>
               </div>
             )}
 
-            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest pt-4">Tableros que aplican (Opcional)</label>
+            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest pt-4">{t('auto_boards_apply')}</label>
             <select 
               multiple
               value={currentAuto.boards || []}
@@ -507,11 +509,11 @@ const AutomationCenter = () => {
                 <option key={b} value={b}>{b}</option>
               ))}
             </select>
-            <p className="text-xs text-muted-foreground">Si no seleccionas nada, aplicará a todos los tableros.</p>
+            <p className="text-xs text-muted-foreground">{t('auto_boards_help')}</p>
 
             <div className="flex justify-end pt-6">
               <button onClick={() => setWizardStep(2)} className="bg-primary text-black px-6 py-2 rounded-xl font-bold flex items-center">
-                Siguiente <ChevronRight className="w-5 h-5 ml-1" />
+                {t('admin_next')} <ChevronRight className="w-5 h-5 ml-1" />
               </button>
             </div>
           </div>
@@ -525,11 +527,11 @@ const AutomationCenter = () => {
             <div className="inline-flex items-center justify-center p-4 bg-cyan-500/10 rounded-full mb-4">
               <Settings className="w-12 h-12 text-cyan-500" />
             </div>
-            <h3 className="text-xl font-bold uppercase tracking-wide">¿Qué acción se ejecutará? (ENTONCES)</h3>
+            <h3 className="text-xl font-bold uppercase tracking-wide">{t('auto_q_action')}</h3>
           </div>
 
           <div className="w-full max-w-lg space-y-4">
-            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Tipo de Acción</label>
+            <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_action_type')}</label>
             <select 
               value={currentAuto.action_type}
               onChange={e => setCurrentAuto({...currentAuto, action_type: e.target.value})}
@@ -541,17 +543,17 @@ const AutomationCenter = () => {
             </select>
 
             <div className="p-4 border border-cyan-500/20 bg-cyan-500/5 rounded-xl space-y-4">
-              <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Configuración de la acción</label>
+              <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_action_config')}</label>
               
               {currentAuto.action_type === 'move_board' && (
                 <div>
-                  <span className="text-xs text-muted-foreground mb-1 block">Tablero Destino</span>
+                  <span className="text-xs text-muted-foreground mb-1 block">{t('auto_target_board')}</span>
                   <select 
                     value={currentAuto.action_params.target_board || ''}
                     onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, target_board: e.target.value}})}
                     className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                   >
-                     <option value="">-- Seleccionar --</option>
+                     <option value="">{t('auto_select_dash')}</option>
                      {(options.boards || BOARDS).map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
@@ -560,25 +562,25 @@ const AutomationCenter = () => {
               {currentAuto.action_type === 'change_status' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Columna de Estado</span>
+                    <span className="text-xs text-muted-foreground mb-1 block">{t('auto_status_column')}</span>
                     <select 
                       value={currentAuto.action_params.field || ''}
                       onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, field: e.target.value, value: ''}})}
                       className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                     >
-                      <option value="">-- Seleccionar --</option>
+                      <option value="">{t('auto_select_dash')}</option>
                       {['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority'].map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                   </div>
                   <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Nuevo Estado</span>
+                    <span className="text-xs text-muted-foreground mb-1 block">{t('auto_new_status')}</span>
                     {currentAuto.action_params.field && options[OPTIONS_MAPPING[currentAuto.action_params.field]] ? (
                       <select 
                         value={currentAuto.action_params.value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
                       >
-                        <option value="">-- Seleccionar --</option>
+                        <option value="">{t('auto_select_dash')}</option>
                         {options[OPTIONS_MAPPING[currentAuto.action_params.field]].map(v => (
                           <option key={v} value={v}>{v}</option>
                         ))}
@@ -589,7 +591,7 @@ const AutomationCenter = () => {
                         value={currentAuto.action_params.value || ''}
                         onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})}
                         className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
-                        placeholder="Valor manual"
+                        placeholder={t('auto_manual_value')}
                       />
                     )}
                   </div>
@@ -598,33 +600,33 @@ const AutomationCenter = () => {
               
               {currentAuto.action_type === 'send_email' && (
                 <div className="space-y-3">
-                  <input type="email" placeholder="Email destino" value={currentAuto.action_params.to_email || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, to_email: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
-                  <input type="text" placeholder="Asunto" value={currentAuto.action_params.subject || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, subject: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
-                  <textarea placeholder="Contenido HTML" value={currentAuto.action_params.html_content || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, html_content: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground min-h-[100px]"></textarea>
+                  <input type="email" placeholder={t('auto_email_to')} value={currentAuto.action_params.to_email || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, to_email: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <input type="text" placeholder={t('auto_subject')} value={currentAuto.action_params.subject || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, subject: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <textarea placeholder={t('auto_html_content')} value={currentAuto.action_params.html_content || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, html_content: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground min-h-[100px]"></textarea>
                 </div>
               )}
               
               {currentAuto.action_type === 'assign_field' && (
                 <div className="grid grid-cols-2 gap-4">
-                  <input type="text" placeholder="Campo" value={currentAuto.action_params.field || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, field: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
-                  <input type="text" placeholder="Valor" value={currentAuto.action_params.value || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <input type="text" placeholder={t('auto_field')} value={currentAuto.action_params.field || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, field: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <input type="text" placeholder={t('auto_value')} value={currentAuto.action_params.value || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, value: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
                 </div>
               )}
 
               {currentAuto.action_type === 'notify_slack' && (
                  <div className="space-y-3">
-                  <input type="text" placeholder="Webhook URL (opcional si hay global)" value={currentAuto.action_params.webhook_url || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, webhook_url: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
-                  <input type="text" placeholder="Mensaje" value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, message: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <input type="text" placeholder={t('auto_webhook_placeholder')} value={currentAuto.action_params.webhook_url || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, webhook_url: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
+                  <input type="text" placeholder={t('auto_message')} value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, message: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
                 </div>
               )}
             </div>
 
             <div className="flex justify-between pt-6">
               <button onClick={() => setWizardStep(1)} className="bg-secondary text-foreground px-6 py-2 rounded-xl font-bold flex items-center hover:bg-secondary/80">
-                Atrás
+                {t('admin_back')}
               </button>
               <button onClick={() => setWizardStep(3)} className="bg-primary text-black px-6 py-2 rounded-xl font-bold flex items-center">
-                Revisar <ChevronRight className="w-5 h-5 ml-1" />
+                {t('auto_review_btn')} <ChevronRight className="w-5 h-5 ml-1" />
               </button>
             </div>
           </div>
@@ -638,7 +640,7 @@ const AutomationCenter = () => {
             <div className="inline-flex items-center justify-center p-4 bg-primary/20 rounded-full mb-4 text-primary">
               <CheckCircle2 className="w-12 h-12" />
             </div>
-            <h3 className="text-xl font-bold uppercase tracking-wide">Revisión Final</h3>
+            <h3 className="text-xl font-bold uppercase tracking-wide">{t('auto_final_review')}</h3>
           </div>
 
           <div className="w-full max-w-lg space-y-6">
@@ -651,10 +653,10 @@ const AutomationCenter = () => {
                     <Zap className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-black uppercase tracking-wider text-yellow-500 mb-1">SI Ocurre: {TRIGGER_LABELS[currentAuto.trigger_type]}</div>
+                    <div className="text-xs font-black uppercase tracking-wider text-yellow-500 mb-1">{t('auto_if_occurs')} {TRIGGER_LABELS[currentAuto.trigger_type]}</div>
                     <div className="text-sm font-medium text-foreground">{getTriggerCondString(currentAuto.trigger_conditions)}</div>
                     {currentAuto.boards && currentAuto.boards.length > 0 && (
-                      <div className="text-xs text-muted-foreground mt-1">En tableros: {currentAuto.boards.join(', ')}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t('auto_in_boards')} {currentAuto.boards.join(', ')}</div>
                     )}
                   </div>
                 </div>
@@ -666,7 +668,7 @@ const AutomationCenter = () => {
                     <Settings className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-black uppercase tracking-wider text-cyan-500 mb-1">ENTONCES Ejecuta: {ACTION_LABELS[currentAuto.action_type]}</div>
+                    <div className="text-xs font-black uppercase tracking-wider text-cyan-500 mb-1">{t('auto_then_execute')} {ACTION_LABELS[currentAuto.action_type]}</div>
                     <div className="text-sm font-medium text-foreground">{getActionParamString(currentAuto.action_type, currentAuto.action_params)}</div>
                   </div>
                 </div>
@@ -674,27 +676,27 @@ const AutomationCenter = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">Nombre de la Regla</label>
+              <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">{t('auto_rule_name')}</label>
               <input 
                 type="text" 
                 value={currentAuto.name}
                 onChange={e => setCurrentAuto({...currentAuto, name: e.target.value})}
                 className="w-full bg-secondary/50 border border-border p-4 rounded-xl text-lg font-bold text-foreground focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-inner"
-                placeholder="Ej. Mover a Completados"
+                placeholder={t('auto_rule_name_placeholder')}
               />
             </div>
 
             <div className="flex items-center gap-3 p-4 border border-border rounded-xl">
               <input type="checkbox" id="isActiveCheck" checked={currentAuto.is_active} onChange={e => setCurrentAuto({...currentAuto, is_active: e.target.checked})} className="w-5 h-5 accent-primary" />
-              <label htmlFor="isActiveCheck" className="font-bold cursor-pointer">Activar inmediatamente al guardar</label>
+              <label htmlFor="isActiveCheck" className="font-bold cursor-pointer">{t('auto_activate_on_save')}</label>
             </div>
 
             <div className="flex justify-between pt-6">
               <button onClick={() => setWizardStep(2)} className="bg-secondary text-foreground px-6 py-2 rounded-xl font-bold flex items-center hover:bg-secondary/80">
-                Atrás
+                {t('admin_back')}
               </button>
               <button onClick={saveAutomation} className="bg-primary text-black px-8 py-3 rounded-xl font-bold flex items-center shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] hover:scale-105 transition-all text-lg">
-                {isEditing ? 'Actualizar Regla' : 'Crear Regla'} <Check className="w-5 h-5 ml-2" />
+                {isEditing ? t('auto_update_rule') : t('auto_create_rule')} <Check className="w-5 h-5 ml-2" />
               </button>
             </div>
           </div>
@@ -745,10 +747,10 @@ const AutomationCenter = () => {
                 ) : 'Global'}
               </div>
               <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => openEditWizard(auto)} className="p-2 bg-secondary text-foreground hover:bg-primary/20 hover:text-primary rounded-lg transition-colors" title="Editar">
+                <button onClick={() => openEditWizard(auto)} className="p-2 bg-secondary text-foreground hover:bg-primary/20 hover:text-primary rounded-lg transition-colors" title={t('edit')}>
                   <Edit2 className="w-4 h-4" />
                 </button>
-                <button onClick={() => handleDelete(auto.automation_id)} className="p-2 bg-secondary text-foreground hover:bg-destructive/20 hover:text-destructive rounded-lg transition-colors" title="Eliminar">
+                <button onClick={() => handleDelete(auto.automation_id)} className="p-2 bg-secondary text-foreground hover:bg-destructive/20 hover:text-destructive rounded-lg transition-colors" title={t('delete')}>
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -759,7 +761,7 @@ const AutomationCenter = () => {
         {/* Add New Card Slot */}
         <div onClick={openNewWizard} className="bg-card/20 backdrop-blur-xl border-2 border-dashed border-border/50 rounded-2xl p-6 flex flex-col justify-center items-center text-muted-foreground hover:bg-card/40 hover:border-primary/50 hover:text-primary cursor-pointer transition-all min-h-[300px]">
           <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center mb-4"><Plus className="w-8 h-8" /></div>
-          <span className="font-bold uppercase tracking-widest">Crear Nueva Regla</span>
+          <span className="font-bold uppercase tracking-widest">{t('auto_create_new_rule')}</span>
         </div>
       </div>
     );
@@ -774,7 +776,7 @@ const AutomationCenter = () => {
       <header className="mb-8 relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <button onClick={() => navigate('/dashboard')} className="mb-4 text-muted-foreground hover:text-foreground flex items-center text-sm transition-colors group">
-            <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> Volver al Dashboard
+            <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> {t('admin_back_dashboard')}
           </button>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30 shadow-[0_0_20px_rgba(255,193,7,0.3)]">
@@ -785,14 +787,14 @@ const AutomationCenter = () => {
                 AUTOMATION <span className="text-primary">CENTER</span>
               </h1>
               <p className="text-muted-foreground font-medium text-sm">
-                Panel de control de reglas lógicas de la fábrica. {automations.filter(a => a.is_active).length} activas.
+                {t('auto_subtitle', { n: automations.filter(a => a.is_active).length })}
               </p>
             </div>
           </div>
         </div>
         {!showWizard && (
           <button onClick={openNewWizard} className="bg-primary text-black px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-sm hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] flex items-center gap-2">
-            <Plus className="w-5 h-5" /> Nueva Regla
+            <Plus className="w-5 h-5" /> {t('new_rule')}
           </button>
         )}
       </header>

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useLang } from "../../contexts/LanguageContext";
 
 /**
  * Celda de posiciones de impresión: tres casillas F / E / M por orden.
@@ -82,11 +83,12 @@ export const PositionsPicker = ({ value, onChange, readOnly = false, tamano = 's
 };
 
 export const PositionsCell = ({ value, orderId, inferred = false, onUpdate, readOnly = false }) => {
+  const { t } = useLang();
   const activas = useMemo(() => normalizarPosiciones(value), [value]);
   const sinCapturar = activas.length === 0;
   const titulo = sinCapturar
-    ? 'Sin posiciones capturadas — el avance por talla no se puede calcular'
-    : `${activas.join(' + ')}${inferred ? '  (deducido de la producción registrada, sin confirmar)' : ''}`;
+    ? t('dash_positions_none')
+    : `${activas.join(' + ')}${inferred ? t('dash_positions_inferred_suffix') : ''}`;
 
   return (
     <div className="flex items-center gap-1 min-h-[32px] px-1" title={titulo}
@@ -99,7 +101,7 @@ export const PositionsCell = ({ value, orderId, inferred = false, onUpdate, read
       {/* Punto ámbar = lo dedujo el sistema, nadie lo confirmó. */}
       {inferred && !sinCapturar && (
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0"
-              title="Deducido de la producción registrada — confírmalo tocando las casillas" />
+              title={t('dash_positions_inferred_title')} />
       )}
     </div>
   );

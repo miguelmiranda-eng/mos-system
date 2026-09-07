@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { API } from '../lib/constants';
 import { useTheme } from '../contexts/ThemeContext';
+import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 
 // Espejo de routers/samples.py. La ETAPA la calcula el backend (`task.stage`);
@@ -107,6 +108,7 @@ const ResChip = ({ ok, icon: Icon, label, extra }) => {
 export default function SamplesModule() {
   const navigate = useNavigate();
   const { theme } = useTheme();
+  const { t } = useLang();
   const isDark = theme === 'dark';
   useEffect(() => { injectRBCStyles(isDark); }, [isDark]);
 
@@ -192,7 +194,7 @@ export default function SamplesModule() {
     try {
       const d = await api('GET', `/samples/by-stage?stage=${which}`);
       setStageData({ items: d?.items || [], counts: d?.counts || {} });
-    } catch { toast.error('No se pudieron cargar los ejemplos de esta pestaña'); }
+    } catch { toast.error(t('samples_load_stage_err')); }
     finally { setStageLoading(false); }
   }, []);
 
@@ -204,7 +206,7 @@ export default function SamplesModule() {
       setStageData(sd => ({ ...sd, items: sd.items.map(t => t.sample_task_id === upd.sample_task_id ? upd : t) }));
       setTasks(ts => ts.map(t => t.sample_task_id === upd.sample_task_id ? upd : t));
       setBacklog(bs => bs.map(t => t.sample_task_id === upd.sample_task_id ? upd : t));
-    } catch { toast.error('No se pudo guardar el palomeo'); }
+    } catch { toast.error(t('samples_flag_save_err')); }
   }, []);
 
   const changeApproval = useCallback(async (task, value) => {
@@ -212,13 +214,13 @@ export default function SamplesModule() {
       const upd = await api('PUT', `/samples/tasks/${task.sample_task_id}/approval`,
                             { approval: value });
       toast.success(value === 'APROBADO'
-        ? `${task.order_number} aprobado`
-        : `${task.order_number} regresó a recibido`);
+        ? t('samples_approved_toast', { order: task.order_number })
+        : t('samples_back_to_received_toast', { order: task.order_number }));
       setDetail(d => (d && d.sample_task_id === task.sample_task_id ? upd : d));
       // Cambiar la aprobación puede MOVER el ejemplo de pestaña, así que se
       // recarga la lista en vez de parchear el renglón en su lugar.
       return upd;
-    } catch { toast.error('No se pudo cambiar la aprobación'); return null; }
+    } catch { toast.error(t('samples_approval_err')); return null; }
   }, []);
 
   // Los conteos de las tres pestañas se piden siempre, aunque estés en el
@@ -247,7 +249,7 @@ export default function SamplesModule() {
       if (Array.isArray(cfg?.priorities) && cfg.priorities.length) setPrioritiesCatalog(cfg.priorities);
     } catch (e) {
       console.error(e);
-      toast.error('Error al cargar el calendario');
+      toast.error(t('samples_load_calendar_err'));
     } finally { setLoading(false); }
   }, [rangeStart, rangeEnd]);
   useEffect(() => { load(); }, [load]);
@@ -298,7 +300,7 @@ export default function SamplesModule() {
 
   // ─── Acciones ─────────────────────────────────────────────────────────────
   const addByOrder = async (orderId) => {
-    try { setBusy(true); await api('POST', '/samples/tasks', { order_id: orderId }); setAddOrder(''); await load(); toast.success('Ejemplo agregado'); }
+    try { setBusy(true); await api('POST', '/samples/tasks', { order_id: orderId }); setAddOrder(''); await load(); toast.success(t('samples_added')); }
     catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -307,7 +309,7 @@ export default function SamplesModule() {
       setBusy(true);
       await api('POST', '/samples/tasks', { provisional: true, ...payload });
       setShowProv(false); await load();
-      toast.success('Ejemplo PROV- creado');
+      toast.success(t('samples_prov_created'));
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -321,7 +323,7 @@ export default function SamplesModule() {
       const r = await api('PUT', `/samples/tasks/${id}/assign`, { operator_id });
       await load();
       if (detail?.sample_task_id === id) setDetail({ ...detail, ...r });
-      toast.success(operator_id ? 'Operador asignado' : 'Sin operador');
+      toast.success(operator_id ? t('samples_operator_assigned') : t('samples_no_operator'));
     } catch (e) { toast.error(e.message); }
   };
 
@@ -330,18 +332,18 @@ export default function SamplesModule() {
       const r = await api('PUT', `/samples/tasks/${id}/status`, { status });
       await load();
       if (detail?.sample_task_id === id) setDetail({ ...detail, ...r });
-      toast.success(`Estatus: ${status}`);
+      toast.success(t('samples_status_toast', { status }));
     } catch (e) { toast.error(e.message); }
   };
 
-  const removeTask = async (t) => {
-    if (!window.confirm(`¿Quitar el ejemplo ${t.order_number}?`)) return;
-    try { await api('DELETE', `/samples/tasks/${t.sample_task_id}`); setDetail(null); await load(); toast.success('Ejemplo eliminado'); }
+  const removeTask = async (task) => {
+    if (!window.confirm(t('samples_remove_confirm', { order: task.order_number }))) return;
+    try { await api('DELETE', `/samples/tasks/${task.sample_task_id}`); setDetail(null); await load(); toast.success(t('samples_removed')); }
     catch (e) { toast.error(e.message); }
   };
 
   const promoteProv = async (task, orderNumber) => {
-    try { await api('POST', `/samples/tasks/${task.sample_task_id}/promote`, { order_number: orderNumber }); await load(); setDetail(null); toast.success(`Fusionado a ${orderNumber}`); }
+    try { await api('POST', `/samples/tasks/${task.sample_task_id}/promote`, { order_number: orderNumber }); await load(); setDetail(null); toast.success(t('samples_merged_to', { order: orderNumber })); }
     catch (e) { toast.error(e.message); }
   };
 
@@ -350,8 +352,8 @@ export default function SamplesModule() {
     try {
       await api('PUT', `/samples/tasks/${taskId}`, { scheduled_date: date });
       await load();
-      toast.success(date ? `Programado el ${fmtDate(date)}` : 'Movido al backlog');
-    } catch (e) { toast.error(e.message || 'No se pudo reprogramar'); }
+      toast.success(date ? t('samples_scheduled_on', { date: fmtDate(date) }) : t('samples_moved_to_backlog'));
+    } catch (e) { toast.error(e.message || t('samples_reschedule_err')); }
   };
   const todayIso = () => isoDate(new Date());
   const tomorrowIso = () => isoDate(addDays(new Date(), 1));
@@ -363,7 +365,7 @@ export default function SamplesModule() {
     try {
       const params = new URLSearchParams({ scope, filter });
       const res = await fetch(`${API}/samples/export.xlsx?${params}`, { credentials: 'include' });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Error al exportar'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || t('samples_export_err')); }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -376,7 +378,7 @@ export default function SamplesModule() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success('Reporte descargado');
+      toast.success(t('samples_report_downloaded'));
     } catch (e) { toast.error(e.message); }
     finally { setExporting(false); }
   };
@@ -403,8 +405,8 @@ export default function SamplesModule() {
           <button onClick={() => navigate('/home')} className="p-2 rounded-lg hover:bg-secondary/40"><ArrowLeft size={18} /></button>
           <div className="w-9 h-9 rounded-xl bg-indigo-500/15 flex items-center justify-center text-indigo-400"><Beaker size={19} /></div>
           <div>
-            <h1 className="text-lg font-black uppercase tracking-widest">Calendario de Ejemplos</h1>
-            <p className="text-xs text-muted-foreground">Programa muestras por día — recursos, operadores y alertas de vencimiento en vivo</p>
+            <h1 className="text-lg font-black uppercase tracking-widest">{t('samples_title')}</h1>
+            <p className="text-xs text-muted-foreground">{t('samples_subtitle')}</p>
           </div>
           <div className="ml-auto flex items-center gap-1.5">
             {/* Exportar Excel — dropdown */}
@@ -418,35 +420,35 @@ export default function SamplesModule() {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
                   <div className="absolute right-0 top-full mt-1 w-64 bg-card border border-border rounded-xl shadow-xl z-20 p-1">
-                    <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground px-2 py-1.5">Alcance</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground px-2 py-1.5">{t('samples_scope')}</div>
                     <button onClick={() => exportXlsx('all', 'all')} className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/50 rounded-lg flex items-center gap-2">
                       <Download size={13} className="text-emerald-500" />
                       <div>
-                        <div className="font-black">Todos los ejemplos</div>
-                        <div className="text-[10px] text-muted-foreground">Backlog + programados</div>
+                        <div className="font-black">{t('samples_export_all')}</div>
+                        <div className="text-[10px] text-muted-foreground">{t('samples_export_all_hint')}</div>
                       </div>
                     </button>
                     <button onClick={() => exportXlsx('scheduled', 'all')} className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/50 rounded-lg flex items-center gap-2">
                       <CalendarDays size={13} className="text-indigo-400" />
                       <div>
-                        <div className="font-black">Solo programados</div>
-                        <div className="text-[10px] text-muted-foreground">Los que tienen fecha asignada</div>
+                        <div className="font-black">{t('samples_export_scheduled')}</div>
+                        <div className="text-[10px] text-muted-foreground">{t('samples_export_scheduled_hint')}</div>
                       </div>
                     </button>
                     <button onClick={() => exportXlsx('backlog', 'all')} className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/50 rounded-lg flex items-center gap-2">
                       <Package size={13} className="text-amber-500" />
                       <div>
-                        <div className="font-black">Solo backlog</div>
-                        <div className="text-[10px] text-muted-foreground">Sin programar</div>
+                        <div className="font-black">{t('samples_export_backlog')}</div>
+                        <div className="text-[10px] text-muted-foreground">{t('samples_unscheduled')}</div>
                       </div>
                     </button>
                     <div className="border-t border-border/60 my-1" />
-                    <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground px-2 py-1.5">Por estilo</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground px-2 py-1.5">{t('samples_export_by_style')}</div>
                     <button onClick={() => exportXlsx('all', 'with_style')} className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/50 rounded-lg">
-                      <div className="font-black">Solo con estilo</div>
+                      <div className="font-black">{t('samples_only_with_style')}</div>
                     </button>
                     <button onClick={() => exportXlsx('all', 'no_style')} className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/50 rounded-lg">
-                      <div className="font-black">Solo sin estilo</div>
+                      <div className="font-black">{t('samples_only_no_style')}</div>
                     </button>
                   </div>
                 </>
@@ -455,14 +457,14 @@ export default function SamplesModule() {
 
             <button onClick={() => setShowAuto(true)}
               className="px-3 py-2 rounded-lg text-xs font-black uppercase tracking-widest bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-sm hover:opacity-90 flex items-center gap-1.5">
-              <Wand2 size={14} /> Auto-programar
+              <Wand2 size={14} /> {t('samples_auto_schedule')}
             </button>
             <div className="flex items-center gap-0.5 bg-secondary/30 border border-border rounded-lg p-0.5">
               {[
-                [Views.DAY, 'Día'],
-                [Views.WEEK, 'Semana'],
-                [Views.MONTH, 'Mes'],
-                [Views.AGENDA, 'Lista'],
+                [Views.DAY, t('samples_day')],
+                [Views.WEEK, t('week')],
+                [Views.MONTH, t('month')],
+                [Views.AGENDA, t('samples_list')],
               ].map(([v, label]) => (
                 <button key={v} onClick={() => setView(v)}
                   className={`px-2.5 py-1.5 rounded-md text-[11px] font-black uppercase tracking-widest transition-colors ${
@@ -480,7 +482,7 @@ export default function SamplesModule() {
                   ? format(anchor, "d 'de' MMM", { locale: es })
                   : `${format(startOfWeek(anchor, { locale: es }), 'd MMM', { locale: es })} – ${format(addDays(startOfWeek(anchor, { locale: es }), 6), 'd MMM', { locale: es })}`}
             </div>
-            <button onClick={() => setAnchor(new Date())} className="px-3 py-2 rounded-lg border border-border hover:bg-secondary/40 text-sm font-bold">Hoy</button>
+            <button onClick={() => setAnchor(new Date())} className="px-3 py-2 rounded-lg border border-border hover:bg-secondary/40 text-sm font-bold">{t('today')}</button>
             <button onClick={() => shiftAnchor(1)}
               className="p-2 rounded-lg border border-border hover:bg-secondary/40"><ChevronRight size={16} /></button>
             <button onClick={load} className="p-2 rounded-lg border border-border hover:bg-secondary/40"><RefreshCw size={16} /></button>
@@ -516,7 +518,7 @@ export default function SamplesModule() {
 
         {stage === 'ejemplos' && (
           <div className="flex items-center gap-1.5 mb-3">
-            {[['lista', 'Lista'], ['calendario', 'Calendario']].map(([v, label]) => (
+            {[['lista', t('samples_list')], ['calendario', t('calendar_view')]].map(([v, label]) => (
               <button
                 key={v}
                 onClick={() => setEjemplosViewSaved(v)}
@@ -528,8 +530,8 @@ export default function SamplesModule() {
             ))}
             <span className="text-[11px] text-muted-foreground ml-1">
               {ejemplosView === 'calendario'
-                ? 'El calendario sólo muestra los del rango visible'
-                : `Los ${stageData.counts?.ejemplos ?? 0} ejemplos de la etapa, sin importar su fecha`}
+                ? t('samples_calendar_range_hint')
+                : t('samples_stage_count_hint', { n: stageData.counts?.ejemplos ?? 0 })}
             </span>
           </div>
         )}
@@ -547,10 +549,10 @@ export default function SamplesModule() {
           <>
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Ejemplos en rango</div><div className="text-2xl font-black">{metrics.total}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Urgentes</div><div className="text-2xl font-black text-red-400">{metrics.hot}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Vencidos</div><div className="text-2xl font-black text-orange-500">{metrics.overdue}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Sin programar</div><div className="text-2xl font-black">{metrics.backlog}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('samples_in_range')}</div><div className="text-2xl font-black">{metrics.total}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('samples_hot')}</div><div className="text-2xl font-black text-red-400">{metrics.hot}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('samples_overdue')}</div><div className="text-2xl font-black text-orange-500">{metrics.overdue}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('samples_unscheduled')}</div><div className="text-2xl font-black">{metrics.backlog}</div></div>
         </div>
 
         {/* Layout: calendar + backlog */}
@@ -568,7 +570,7 @@ export default function SamplesModule() {
               date={anchor}
               onNavigate={setAnchor}
               views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
-              messages={{ day: 'Día', week: 'Semana', month: 'Mes', agenda: 'Lista', today: 'Hoy', previous: '<', next: '>', date: 'Fecha', time: 'Hora', event: 'Ejemplo', noEventsInRange: 'Sin ejemplos en el rango.' }}
+              messages={{ day: t('samples_day'), week: t('week'), month: t('month'), agenda: t('samples_list'), today: t('today'), previous: '<', next: '>', date: t('date'), time: t('rs_hour'), event: t('samples_event'), noEventsInRange: t('samples_no_events_in_range') }}
               length={30}
               step={30}
               timeslots={2}
@@ -606,13 +608,13 @@ export default function SamplesModule() {
                   className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded transition-colors ${
                     backlogTab === 'with_style' ? 'bg-indigo-500 text-white' : 'text-muted-foreground hover:text-foreground'
                   }`}>
-                  Con estilo <span className="ml-1 opacity-70">{backlogWithStyle.length}</span>
+                  {t('samples_with_style')} <span className="ml-1 opacity-70">{backlogWithStyle.length}</span>
                 </button>
                 <button onClick={() => setBacklogTab('no_style')}
                   className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded transition-colors ${
                     backlogTab === 'no_style' ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:text-foreground'
                   }`}>
-                  Sin estilo <span className="ml-1 opacity-70">{backlogNoStyle.length}</span>
+                  {t('samples_no_style')} <span className="ml-1 opacity-70">{backlogNoStyle.length}</span>
                 </button>
               </div>
               <button onClick={() => setShowProv({})} className="text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 flex items-center gap-1"><Plus size={11} />PROV-</button>
@@ -621,18 +623,18 @@ export default function SamplesModule() {
             {/* Búsqueda de orden real */}
             <div>
               <input value={addOrder} onChange={e => setAddOrder(e.target.value)}
-                placeholder="Buscar orden (# / cliente / style)…"
+                placeholder={t('samples_search_order_placeholder')}
                 className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400" />
               {addOrder.trim() && (
                 <div className="flex flex-col gap-1 max-h-52 overflow-auto mt-2">
                   {results.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground px-1 py-2">Sin resultados</div>
+                    <div className="text-[11px] text-muted-foreground px-1 py-2">{t('no_results')}</div>
                   ) : results.map(o => (
                     <div key={o.order_id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-border/40">
                       <span className="font-mono font-bold text-xs">{o.order_number}</span>
                       <span className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">{o.client}</span>
                       {o.in_samples
-                        ? <span className="text-[10px] text-muted-foreground/70">En cola</span>
+                        ? <span className="text-[10px] text-muted-foreground/70">{t('samples_in_queue')}</span>
                         : <button disabled={busy} onClick={() => addByOrder(o.order_id)} className="p-1 rounded bg-indigo-500 text-white disabled:opacity-40"><Plus size={13} /></button>}
                     </div>
                   ))}
@@ -644,43 +646,43 @@ export default function SamplesModule() {
             <div className="flex flex-col gap-1.5 overflow-y-auto flex-1 pr-1">
               <div className="text-[10px] text-muted-foreground/70 px-1 pb-1">
                 {backlogTab === 'no_style'
-                  ? 'Ejemplos sin estilo definido — programa igual o completa datos primero'
-                  : 'Arrastra al calendario ➜ o usa los botones'}
+                  ? t('samples_no_style_hint')
+                  : t('samples_drag_hint')}
               </div>
               {currentBacklog.length === 0 ? (
                 <div className="text-[11px] text-muted-foreground px-1 py-6 text-center border border-dashed border-border/50 rounded-lg">
-                  {backlogTab === 'no_style' ? 'No hay ejemplos sin estilo' : 'No hay ejemplos con estilo por programar'}
+                  {backlogTab === 'no_style' ? t('samples_empty_no_style') : t('samples_empty_with_style')}
                 </div>
-              ) : currentBacklog.map(t => {
-                const o = t.order || {};
-                const bg = t.color_tag || (t.is_hot ? '#ef4444' : t.overdue ? '#f97316' : '#4f46e5');
+              ) : currentBacklog.map(tk => {
+                const o = tk.order || {};
+                const bg = tk.color_tag || (tk.is_hot ? '#ef4444' : tk.overdue ? '#f97316' : '#4f46e5');
                 return (
-                  <div key={t.sample_task_id} className="flex flex-col gap-1">
+                  <div key={tk.sample_task_id} className="flex flex-col gap-1">
                     {/* Pill igual que en el calendario */}
                     <div
                       draggable
-                      onDragStart={(e) => { setDraggedTaskId(t.sample_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', t.sample_task_id); } catch (_) {} }}
+                      onDragStart={(e) => { setDraggedTaskId(tk.sample_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', tk.sample_task_id); } catch (_) {} }}
                       onDragEnd={() => setDraggedTaskId(null)}
-                      onClick={() => setDetail(t)}
-                      title={`${t.order_number} · ${o.client || ''} · ${o.style || ''} ${o.color || ''}`}
+                      onClick={() => setDetail(tk)}
+                      title={`${tk.order_number} · ${o.client || ''} · ${o.style || ''} ${o.color || ''}`}
                       style={{ background: bg }}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-white text-xs font-mono font-black cursor-grab active:cursor-grabbing hover:opacity-90 overflow-hidden ${draggedTaskId === t.sample_task_id ? 'opacity-50' : ''}`}>
-                      {t.is_hot && <Flame size={12} />}
-                      {t.overdue && <AlertTriangle size={12} />}
-                      <span className="truncate">{t.order_number}</span>
-                      {t.is_provisional && <span className="text-[8px] font-black uppercase bg-white/25 px-1 rounded">P</span>}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-white text-xs font-mono font-black cursor-grab active:cursor-grabbing hover:opacity-90 overflow-hidden ${draggedTaskId === tk.sample_task_id ? 'opacity-50' : ''}`}>
+                      {tk.is_hot && <Flame size={12} />}
+                      {tk.overdue && <AlertTriangle size={12} />}
+                      <span className="truncate">{tk.order_number}</span>
+                      {tk.is_provisional && <span className="text-[8px] font-black uppercase bg-white/25 px-1 rounded">P</span>}
                       {o.style && <span className="text-[10px] font-normal opacity-80 truncate">{o.style}</span>}
                       {o.color && <span className="text-[10px] font-normal opacity-70 truncate">· {o.color}</span>}
                       {o.cancel_date && <span className="ml-auto text-[9px] opacity-80">{fmtDate(o.cancel_date)}</span>}
                     </div>
                     {/* Acciones inline: Hoy · Mañana · Date-picker */}
                     <div className="flex items-center gap-1 px-1">
-                      <button onClick={(e) => { e.stopPropagation(); scheduleAt(t.sample_task_id, todayIso()); }}
-                        className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25">Hoy</button>
-                      <button onClick={(e) => { e.stopPropagation(); scheduleAt(t.sample_task_id, tomorrowIso()); }}
-                        className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-secondary text-muted-foreground hover:bg-secondary/80">Mañana</button>
+                      <button onClick={(e) => { e.stopPropagation(); scheduleAt(tk.sample_task_id, todayIso()); }}
+                        className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25">{t('today')}</button>
+                      <button onClick={(e) => { e.stopPropagation(); scheduleAt(tk.sample_task_id, tomorrowIso()); }}
+                        className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-secondary text-muted-foreground hover:bg-secondary/80">{t('samples_tomorrow')}</button>
                       <input type="date" onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => { if (e.target.value) scheduleAt(t.sample_task_id, e.target.value); }}
+                        onChange={(e) => { if (e.target.value) scheduleAt(tk.sample_task_id, e.target.value); }}
                         className="text-[10px] bg-background border border-border rounded px-1 py-0.5 flex-1 min-w-0" />
                     </div>
                   </div>
@@ -692,12 +694,12 @@ export default function SamplesModule() {
 
         {/* Legend */}
         <div className="flex items-center gap-3 mt-3 flex-wrap text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1"><Shirt size={11} /> Playera</span>
-          <span className="flex items-center gap-1"><Palette size={11} /> Arte</span>
+          <span className="flex items-center gap-1"><Shirt size={11} /> {t('samples_blank')}</span>
+          <span className="flex items-center gap-1"><Palette size={11} /> {t('samples_art')}</span>
           <span className="flex items-center gap-1"><Scissors size={11} /> Neck</span>
           <span className="flex items-center gap-1"><Layers size={11} /> Screens</span>
-          <span className="flex items-center gap-1"><Droplet size={11} /> Tinta</span>
-          <span className="ml-auto">Verde = listo · Rojo = falta · Gris = no aplica</span>
+          <span className="flex items-center gap-1"><Droplet size={11} /> {t('samples_ink')}</span>
+          <span className="ml-auto">{t('samples_legend')}</span>
         </div>
 
           </>
@@ -759,6 +761,7 @@ export default function SamplesModule() {
 // mismo: en el piso se palomea de corrido sobre la lista, y obligar a abrir el
 // detalle de cada ejemplo para marcar una casilla vuelve inservible la pantalla.
 function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval }) {
+  const { t } = useLang();
   if (loading && !items.length) {
     return <div className="py-16 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-indigo-400" /></div>;
   }
@@ -766,8 +769,8 @@ function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval })
     return (
       <div className="py-16 text-center text-sm text-muted-foreground">
         {stage === 'aprobados'
-          ? 'Ningún ejemplo aprobado sin número de orden.'
-          : 'Ningún ejemplo con número de orden todavía.'}
+          ? t('samples_empty_approved')
+          : t('samples_empty_ready')}
       </div>
     );
   }
@@ -777,25 +780,25 @@ function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval })
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-secondary/40 border-b border-border">
-              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Orden</th>
-              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('order')}</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('client')}</th>
               <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Style</th>
               <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Color</th>
               {SAMPLE_FLAGS.map(f => (
                 <th key={f.key} className="px-2 py-2.5 text-center text-[10px] font-black uppercase tracking-widest text-muted-foreground">{f.label}</th>
               ))}
-              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">Aprobado</th>
-              <th className="px-3 py-2.5 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">Detalle</th>
+              <th className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('samples_approved')}</th>
+              <th className="px-3 py-2.5 text-right text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('samples_detail')}</th>
             </tr>
           </thead>
           <tbody>
-            {items.map(t => {
-              const o = t.order || {};
+            {items.map(tk => {
+              const o = tk.order || {};
               return (
-                <tr key={t.sample_task_id} className="border-b border-border/60 last:border-0 hover:bg-secondary/20">
+                <tr key={tk.sample_task_id} className="border-b border-border/60 last:border-0 hover:bg-secondary/20">
                   <td className="px-3 py-2.5 font-mono font-black">
-                    {t.order_number}
-                    {t.is_provisional && <span className="ml-1.5 text-[9px] font-black uppercase bg-amber-500/20 text-amber-500 px-1 py-0.5 rounded">PROV</span>}
+                    {tk.order_number}
+                    {tk.is_provisional && <span className="ml-1.5 text-[9px] font-black uppercase bg-amber-500/20 text-amber-500 px-1 py-0.5 rounded">PROV</span>}
                   </td>
                   <td className="px-3 py-2.5 text-muted-foreground">{o.client || '—'}</td>
                   <td className="px-3 py-2.5">{o.style || '—'}</td>
@@ -804,30 +807,30 @@ function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval })
                     <td key={f.key} className="px-2 py-2.5 text-center">
                       <input
                         type="checkbox"
-                        checked={!!t.flags?.[f.key]}
-                        onChange={(e) => onToggleFlag(t, f.key, e.target.checked)}
-                        title={t.flags_meta?.[f.key]?.by_name
-                          ? `${t.flags_meta[f.key].by_name} · ${new Date(t.flags_meta[f.key].at).toLocaleString()}`
+                        checked={!!tk.flags?.[f.key]}
+                        onChange={(e) => onToggleFlag(tk, f.key, e.target.checked)}
+                        title={tk.flags_meta?.[f.key]?.by_name
+                          ? `${tk.flags_meta[f.key].by_name} · ${new Date(tk.flags_meta[f.key].at).toLocaleString()}`
                           : f.label}
                         className="w-4 h-4 rounded border-border accent-indigo-500"
-                        data-testid={`flag-${f.key}-${t.order_number}`}
+                        data-testid={`flag-${f.key}-${tk.order_number}`}
                       />
                     </td>
                   ))}
                   <td className="px-3 py-2.5">
                     <select
-                      value={t.approval || 'RECIBIDO'}
-                      onChange={(e) => onApproval(t, e.target.value)}
+                      value={tk.approval || 'RECIBIDO'}
+                      onChange={(e) => onApproval(tk, e.target.value)}
                       className="px-2 py-1 rounded-lg bg-background border border-border text-xs font-bold"
-                      data-testid={`approval-${t.order_number}`}
+                      data-testid={`approval-${tk.order_number}`}
                     >
-                      <option value="RECIBIDO">Recibido</option>
-                      <option value="APROBADO">Aprobado</option>
+                      <option value="RECIBIDO">{t('samples_received')}</option>
+                      <option value="APROBADO">{t('samples_approved')}</option>
                     </select>
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    <button onClick={() => onOpen(t)} className="px-2 py-1 rounded-lg border border-border text-xs font-bold hover:bg-secondary/40">
-                      Abrir
+                    <button onClick={() => onOpen(tk)} className="px-2 py-1 rounded-lg border border-border text-xs font-bold hover:bg-secondary/40">
+                      {t('samples_open')}
                     </button>
                   </td>
                 </tr>
@@ -841,6 +844,7 @@ function StageTable({ items, loading, stage, onOpen, onToggleFlag, onApproval })
 }
 
 function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, onStatus, onDelete, onPromote, onToggleFlag, onApproval }) {
+  const { t } = useLang();
   const o = task.order || {};
   const r = task.resources || {};
   const [promoteNum, setPromoteNum] = useState('');
@@ -871,7 +875,7 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
               <h3 className="text-lg font-black uppercase tracking-widest font-mono">{task.order_number}</h3>
               {task.is_provisional && <span className="text-[10px] font-black uppercase bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded">PROV</span>}
               {task.is_hot && <span className="text-[10px] font-black uppercase bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded flex items-center gap-1"><Flame size={10} />HOT</span>}
-              {task.overdue && <span className="text-[10px] font-black uppercase bg-orange-500/20 text-orange-500 px-1.5 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={10} />Vencido</span>}
+              {task.overdue && <span className="text-[10px] font-black uppercase bg-orange-500/20 text-orange-500 px-1.5 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={10} />{t('samples_overdue_badge')}</span>}
               {jUrl && <a href={jUrl} target="_blank" rel="noreferrer" className="text-indigo-400 hover:opacity-70"><ExternalLink size={14} /></a>}
             </div>
             <div className="text-xs text-muted-foreground mt-1">{o.client || '—'}{o.branding ? ` · ${o.branding}` : ''}{o.style ? ` · ${o.style}` : ''}</div>
@@ -882,7 +886,7 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
         {/* Avance del ejemplo — propio del ejemplo, NO son los campos de arte
             de la orden de producción (ver samples.py::SAMPLE_FLAGS). */}
         <div className="bg-secondary/30 rounded-xl p-3 mb-3">
-          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Avance del ejemplo</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">{t('samples_progress_title')}</div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {SAMPLE_FLAGS.map(({ key, label, Icon }) => {
               const on = !!task.flags?.[key];
@@ -891,7 +895,7 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
                 <button
                   key={key}
                   onClick={() => onToggleFlag && onToggleFlag(task, key, !on)}
-                  title={meta?.by_name ? `${meta.by_name} · ${new Date(meta.at).toLocaleString()}` : `Marcar ${label}`}
+                  title={meta?.by_name ? `${meta.by_name} · ${new Date(meta.at).toLocaleString()}` : t('samples_mark_flag', { label })}
                   className={`p-2 rounded-lg border text-center transition-colors ${
                     on ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-500'
                        : 'bg-background border-border text-muted-foreground hover:border-indigo-400/50'
@@ -906,19 +910,19 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
             })}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Aprobado</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('samples_approved')}</span>
             <select
               value={task.approval || 'RECIBIDO'}
               onChange={(e) => onApproval && onApproval(task, e.target.value)}
               className="px-2 py-1 rounded-lg bg-background border border-border text-xs font-bold"
               data-testid="detail-approval"
             >
-              <option value="RECIBIDO">Recibido</option>
-              <option value="APROBADO">Aprobado</option>
+              <option value="RECIBIDO">{t('samples_received')}</option>
+              <option value="APROBADO">{t('samples_approved')}</option>
             </select>
             {task.approved_by_name && (
               <span className="text-[11px] text-muted-foreground">
-                por {task.approved_by_name}{task.approved_at ? ` · ${new Date(task.approved_at).toLocaleDateString()}` : ''}
+                {t('samples_by_name', { name: task.approved_by_name })}{task.approved_at ? ` · ${new Date(task.approved_at).toLocaleDateString()}` : ''}
               </span>
             )}
           </div>
@@ -926,14 +930,14 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
 
         {/* Recursos */}
         <div className="bg-secondary/30 rounded-xl p-3 mb-3">
-          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Recursos</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">{t('samples_resources')}</div>
           <div className="grid grid-cols-5 gap-2 text-center">
             {[
-              { key: 'blank_ok', label: 'Playera', icon: Shirt, extra: `${r.blank_on_hand||0}/${r.blank_needed||0}` },
-              { key: 'art_ok', label: 'Arte', icon: Palette },
+              { key: 'blank_ok', label: t('samples_blank'), icon: Shirt, extra: `${r.blank_on_hand||0}/${r.blank_needed||0}` },
+              { key: 'art_ok', label: t('samples_art'), icon: Palette },
               { key: 'neck_ok', label: 'Neck', icon: Scissors },
               { key: 'screens_ok', label: 'Screens', icon: Layers },
-              { key: 'paint_ok', label: 'Tinta', icon: Droplet, extra: r.paint_status },
+              { key: 'paint_ok', label: t('samples_ink'), icon: Droplet, extra: r.paint_status },
             ].map(({ key, label, icon: Icon, extra }) => {
               const ok = r[key];
               const cls = ok === true ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/30'
@@ -958,27 +962,27 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
         </div>
 
         {/* Estatus */}
-        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Estatus</label>
+        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_status_label')}</label>
         <select value={task.status || ''} onChange={e => onStatus(e.target.value)}
           className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm mb-3">
           {statuses.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
 
         {/* Operador */}
-        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Operador de ejemplos</label>
+        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_operator_label')}</label>
         <select value={task.operator_id || ''} onChange={e => onAssign(e.target.value || null)}
           className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm mb-3">
-          <option value="">Sin asignar</option>
+          <option value="">{t('unassigned')}</option>
           {operators.filter(op => op.active).map(op => <option key={op.operator_id} value={op.operator_id}>{op.name}</option>)}
         </select>
         {operators.length === 0 && (
-          <div className="text-[10px] text-amber-500 -mt-2 mb-3">No hay operadores con rol "sample". Agrégales el rol en /operators-center.</div>
+          <div className="text-[10px] text-amber-500 -mt-2 mb-3">{t('samples_no_operators_hint')}</div>
         )}
 
         {/* Día programado + color + notas */}
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Día</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_day')}</label>
             <input type="date" value={task.scheduled_date || ''}
               onChange={e => onUpdate({ scheduled_date: e.target.value || null })}
               className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm" />
@@ -991,7 +995,7 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
           </div>
         </div>
 
-        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Notas</label>
+        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_notes')}</label>
         <textarea value={task.notes || ''} rows={2} onBlur={e => onUpdate({ notes: e.target.value })}
           defaultValue={task.notes || ''}
           className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm mb-3" />
@@ -999,22 +1003,22 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
         {/* Promote PROV → orden real */}
         {task.is_provisional && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
-            <div className="text-[11px] font-black uppercase text-amber-400 mb-1 flex items-center gap-1"><Sparkles size={12} />Fusionar con orden real</div>
-            <div className="text-[10px] text-muted-foreground mb-2">Cuando Printavo traiga el número real, escríbelo aquí y ambas se fusionarán en una sola orden. Lo trabajado en el ejemplo se conserva y llena los huecos del CRM.</div>
+            <div className="text-[11px] font-black uppercase text-amber-400 mb-1 flex items-center gap-1"><Sparkles size={12} />{t('samples_merge_title')}</div>
+            <div className="text-[10px] text-muted-foreground mb-2">{t('samples_merge_hint')}</div>
 
             {/* Candidatas cazadas por número de diseño. Al fusionar, el ejemplo
                 pasa a apuntar a la orden real y su info del CRM (cliente,
                 cantidad, fechas, prioridad) se une en vivo. */}
             {matchesLoading && (
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-2">
-                <Loader2 size={12} className="animate-spin" /> Buscando órdenes con el mismo diseño…
+                <Loader2 size={12} className="animate-spin" /> {t('samples_searching_matches')}
               </div>
             )}
             {matches && !matchesLoading && (
               matches.matches?.length ? (
                 <div className="mb-2 space-y-1.5">
                   <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1">
-                    <Search size={11} /> Diseño {matches.design} — {matches.matches.length} candidata(s)
+                    <Search size={11} /> {t('samples_design_candidates', { design: matches.design, n: matches.matches.length })}
                   </div>
                   {matches.matches.slice(0, 5).map(m => (
                     <div key={m.order_id} className="flex items-center gap-2 bg-background/60 border border-border rounded-lg px-2 py-1.5">
@@ -1028,29 +1032,29 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
                         onClick={() => onPromote(m.order_number)}
                         className="px-2 py-1 rounded-lg bg-amber-500 text-black font-black text-[10px] uppercase flex items-center gap-1 shrink-0"
                         data-testid={`match-${m.order_number}`}
-                      ><Link2 size={11} /> Fusionar</button>
+                      ><Link2 size={11} /> {t('samples_merge')}</button>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="text-[10px] text-muted-foreground mb-2">
-                  {matches.hint || `Sin órdenes con el diseño ${matches.design || '—'}. Escribe el número a mano.`}
+                  {matches.hint || t('samples_no_matches', { design: matches.design || '—' })}
                 </div>
               )
             )}
 
             <div className="flex gap-2">
-              <input value={promoteNum} onChange={e => setPromoteNum(e.target.value)} placeholder="# de orden real"
+              <input value={promoteNum} onChange={e => setPromoteNum(e.target.value)} placeholder={t('samples_real_order_placeholder')}
                 className="flex-1 bg-background border border-border rounded-lg px-2 py-1.5 text-sm" />
               <button disabled={!promoteNum.trim()} onClick={() => onPromote(promoteNum.trim())}
-                className="px-3 py-1.5 rounded-lg bg-amber-500 text-black font-black text-xs uppercase disabled:opacity-40">Fusionar</button>
+                className="px-3 py-1.5 rounded-lg bg-amber-500 text-black font-black text-xs uppercase disabled:opacity-40">{t('samples_merge')}</button>
             </div>
           </div>
         )}
 
         <div className="flex justify-between items-center pt-2 border-t border-border">
-          <button onClick={onDelete} className="text-xs font-black uppercase text-red-400 hover:text-red-300 flex items-center gap-1"><X size={13} /> Eliminar</button>
-          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-indigo-500 text-white font-black text-xs uppercase">Cerrar</button>
+          <button onClick={onDelete} className="text-xs font-black uppercase text-red-400 hover:text-red-300 flex items-center gap-1"><X size={13} /> {t('delete')}</button>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-indigo-500 text-white font-black text-xs uppercase">{t('close')}</button>
         </div>
       </div>
     </div>
@@ -1059,6 +1063,7 @@ function DetailModal({ task, operators, statuses, onClose, onUpdate, onAssign, o
 
 // ═════════════ ProvModal ════════════════════════════════════════════════════
 function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate, busy }) {
+  const { t } = useLang();
   const [f, setF] = useState({
     order_number: '',       // opcional: si lo pones, NO se crea PROV-, se usa ese número real
     client: '', style: '', color: '', quantity: 0,
@@ -1070,7 +1075,7 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
 
   const submit = () => {
     if (!f.style.trim() || !f.client.trim()) {
-      toast.error('Cliente y style son requeridos');
+      toast.error(t('samples_client_style_req'));
       return;
     }
     // El backend acepta order_number opcional: con → orden real, sin → PROV-nnnn
@@ -1084,32 +1089,32 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
       <div className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-black uppercase tracking-widest">
-            {hasNumber ? 'Nuevo ejemplo' : 'Ejemplo provisional (PROV-)'}
+            {hasNumber ? t('samples_new_sample') : t('samples_prov_title')}
           </h3>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-secondary/40"><X size={18} /></button>
         </div>
         <div className="text-[11px] text-muted-foreground mb-4">
           {hasNumber
-            ? <>Se creará una orden <b>{f.order_number.trim()}</b> con estos datos.</>
-            : <>Sin número: se creará <b>PROV-nnnn</b> temporal que podrás fusionar con el número real después.</>}
+            ? <>{t('samples_will_create_prefix')} <b>{f.order_number.trim()}</b> {t('samples_will_create_suffix')}</>
+            : <>{t('samples_will_create_prov_prefix')} <b>PROV-nnnn</b> {t('samples_will_create_prov_suffix')}</>}
         </div>
 
         {/* Número de orden (opcional) */}
         <div className="mb-3">
           <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-            Número de orden <span className="text-muted-foreground/60 normal-case tracking-normal">(opcional)</span>
+            {t('samples_order_number')} <span className="text-muted-foreground/60 normal-case tracking-normal">{t('samples_optional')}</span>
           </label>
           <input value={f.order_number} onChange={e => upd('order_number', e.target.value)}
-            placeholder="Ej. 2145 · déjalo vacío para PROV-"
+            placeholder={t('samples_order_number_placeholder')}
             className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono" />
         </div>
 
         {/* Cliente — dropdown del CRM */}
         <div className="mb-2.5">
-          <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente *</label>
+          <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_client_req')}</label>
           <select value={f.client} onChange={e => upd('client', e.target.value)}
             className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm">
-            <option value="">Selecciona un cliente…</option>
+            <option value="">{t('samples_select_client')}</option>
             {clients.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
@@ -1117,9 +1122,9 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
         {[
           ['style', 'Style *', 'text'],
           ['color', 'Color', 'text'],
-          ['quantity', 'Cantidad', 'number'],
+          ['quantity', t('quantity'), 'number'],
           ['cancel_date', 'Cancel date', 'date'],
-          ['scheduled_date', 'Día en calendario', 'date'],
+          ['scheduled_date', t('samples_calendar_day'), 'date'],
         ].map(([k, label, type]) => (
           <div key={k} className="mb-2.5">
             <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{label}</label>
@@ -1128,7 +1133,7 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
           </div>
         ))}
         <div className="mb-2.5">
-          <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Prioridad</label>
+          <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('priority')}</label>
           <select value={f.priority} onChange={e => upd('priority', e.target.value)}
             className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm">
             {(priorities.length ? priorities : ['RUSH','OVERSOLD','PRIORITY 1','PRIORITY 2','EVENT','SPECIAL RUSH']).map(p => <option key={p} value={p}>{p}</option>)}
@@ -1136,13 +1141,13 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-2 rounded-lg border border-border text-xs font-bold">Cancelar</button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg border border-border text-xs font-bold">{t('cancel')}</button>
           <button disabled={busy} onClick={submit}
             className={`px-4 py-2 rounded-lg font-black text-xs uppercase disabled:opacity-40 flex items-center gap-2 ${
               hasNumber ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-black'
             }`}>
             {busy && <Loader2 size={13} className="animate-spin" />}
-            {hasNumber ? 'Crear ejemplo' : 'Crear PROV-'}
+            {hasNumber ? t('samples_create_sample') : t('samples_create_prov')}
           </button>
         </div>
       </div>
@@ -1152,6 +1157,7 @@ function ProvModal({ defaults, clients = [], priorities = [], onClose, onCreate,
 
 // ═════════════ AutoScheduleModal ════════════════════════════════════════════
 function AutoScheduleModal({ api, onClose, onApplied }) {
+  const { t } = useLang();
   const [daysBefore, setDaysBefore] = useState(14);
   const [targetPerDay, setTargetPerDay] = useState(7);
   const [maxPerDay, setMaxPerDay] = useState(15);
@@ -1183,7 +1189,7 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
     setApplying(true);
     try {
       const r = await api('POST', '/samples/auto-schedule', { ...payload(), apply: true });
-      toast.success(`${r.scheduled_count} ejemplos programados${r.over_cap_count ? ` (${r.over_cap_count} sobre capacidad)` : ''}`);
+      toast.success(`${t('samples_scheduled_toast', { n: r.scheduled_count })}${r.over_cap_count ? t('samples_over_cap_suffix', { n: r.over_cap_count }) : ''}`);
       onApplied();
     } catch (e) { toast.error(e.message); }
     finally { setApplying(false); }
@@ -1199,8 +1205,8 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
               <Wand2 size={19} />
             </div>
             <div>
-              <h3 className="text-sm font-black uppercase tracking-widest">Auto-programar ejemplos</h3>
-              <p className="text-[11px] text-muted-foreground">Basado en su cancel date · N días de antelación</p>
+              <h3 className="text-sm font-black uppercase tracking-widest">{t('samples_auto_title')}</h3>
+              <p className="text-[11px] text-muted-foreground">{t('samples_auto_subtitle')}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-secondary/40"><X size={18} /></button>
@@ -1209,54 +1215,54 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
         {/* Controles */}
         <div className="p-5 border-b border-border grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div className="sm:col-span-3">
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Días antes del cancel date</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_days_before')}</label>
             <div className="flex items-center gap-2">
               <input type="range" min="1" max="60" value={daysBefore} onChange={e => setDaysBefore(Number(e.target.value))} className="flex-1" />
               <input type="number" min="0" max="90" value={daysBefore} onChange={e => setDaysBefore(Number(e.target.value)||0)} className="w-14 bg-background border border-border rounded px-1.5 py-1 text-sm text-center font-mono font-black" />
             </div>
           </div>
           <div>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Target por día</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_target_per_day')}</label>
             <input type="number" min="1" max={maxPerDay} value={targetPerDay}
               onChange={e => setTargetPerDay(Math.min(maxPerDay, Math.max(1, Number(e.target.value)||1)))}
               className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm text-center font-mono font-black text-emerald-500" />
-            <div className="text-[9px] text-muted-foreground mt-0.5 text-center">promedio ideal</div>
+            <div className="text-[9px] text-muted-foreground mt-0.5 text-center">{t('samples_ideal_avg')}</div>
           </div>
           <div>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Máx por día</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_max_per_day')}</label>
             <input type="number" min={targetPerDay} max="100" value={maxPerDay}
               onChange={e => setMaxPerDay(Math.max(targetPerDay, Number(e.target.value)||1))}
               className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm text-center font-mono font-black text-red-400" />
-            <div className="text-[9px] text-muted-foreground mt-0.5 text-center">cap duro (4 op.)</div>
+            <div className="text-[9px] text-muted-foreground mt-0.5 text-center">{t('samples_hard_cap')}</div>
           </div>
           <div>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Filtrar</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('filter')}</label>
             <select value={filter} onChange={e => setFilter(e.target.value)}
               className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm">
-              <option value="all">Todos</option>
-              <option value="with_style">Solo con estilo</option>
-              <option value="no_style">Solo sin estilo</option>
+              <option value="all">{t('all_boards')}</option>
+              <option value="with_style">{t('samples_only_with_style')}</option>
+              <option value="no_style">{t('samples_only_no_style')}</option>
             </select>
           </div>
           <div>
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Fines de semana</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_weekends')}</label>
             <label className="flex items-center gap-2 text-sm bg-background border border-border rounded-lg px-2 py-2 cursor-pointer">
               <input type="checkbox" checked={skipWeekends} onChange={e => setSkipWeekends(e.target.checked)} />
-              <span>Mover a viernes</span>
+              <span>{t('samples_move_to_friday')}</span>
             </label>
           </div>
           <div className="sm:col-span-2">
-            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Alcance</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('samples_scope')}</label>
             <label className={`flex items-center gap-2 text-sm border rounded-lg px-2 py-2 cursor-pointer transition-colors ${includeScheduled ? 'bg-indigo-500/10 border-indigo-500/40 text-indigo-400' : 'bg-background border-border'}`}>
               <input type="checkbox" checked={includeScheduled} onChange={e => setIncludeScheduled(e.target.checked)} />
-              <span><b>Incluir ya programados</b> — rebalancea todo el calendario, no solo el backlog</span>
+              <span><b>{t('samples_include_scheduled')}</b> — {t('samples_include_scheduled_hint')}</span>
             </label>
           </div>
           <div className="sm:col-span-3">
             <button onClick={runPreview} disabled={loading}
               className="w-full py-2 rounded-lg border border-border bg-secondary/40 text-xs font-black uppercase tracking-widest hover:bg-secondary/60 flex items-center justify-center gap-2">
               {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              Recalcular preview
+              {t('samples_recalc_preview')}
             </button>
           </div>
         </div>
@@ -1273,22 +1279,22 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
                   <div className="text-xl font-black font-mono">{preview.total_backlog}</div>
                 </div>
                 <div className="bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20">
-                  <div className="text-[10px] font-black uppercase text-emerald-500">A programar</div>
+                  <div className="text-[10px] font-black uppercase text-emerald-500">{t('samples_to_schedule')}</div>
                   <div className="text-xl font-black font-mono text-emerald-400">{preview.scheduled_count}</div>
                 </div>
                 <div className="bg-indigo-500/10 rounded-xl p-3 border border-indigo-500/20">
-                  <div className="text-[10px] font-black uppercase text-indigo-400">Desplazados</div>
+                  <div className="text-[10px] font-black uppercase text-indigo-400">{t('samples_shifted')}</div>
                   <div className="text-xl font-black font-mono text-indigo-400">{preview.shifted_count}</div>
-                  <div className="text-[9px] text-muted-foreground">del ideal</div>
+                  <div className="text-[9px] text-muted-foreground">{t('samples_from_ideal')}</div>
                 </div>
                 <div className={`rounded-xl p-3 border ${preview.over_cap_count ? 'bg-red-500/10 border-red-500/20' : 'bg-secondary/30 border-border'}`}>
-                  <div className={`text-[10px] font-black uppercase ${preview.over_cap_count ? 'text-red-400' : 'text-muted-foreground'}`}>Sobre cap</div>
+                  <div className={`text-[10px] font-black uppercase ${preview.over_cap_count ? 'text-red-400' : 'text-muted-foreground'}`}>{t('samples_over_cap')}</div>
                   <div className={`text-xl font-black font-mono ${preview.over_cap_count ? 'text-red-400' : ''}`}>{preview.over_cap_count}</div>
                 </div>
                 <div className="bg-amber-500/10 rounded-xl p-3 border border-amber-500/20">
-                  <div className="text-[10px] font-black uppercase text-amber-500">Omitidos</div>
+                  <div className="text-[10px] font-black uppercase text-amber-500">{t('samples_skipped')}</div>
                   <div className="text-xl font-black font-mono text-amber-400">{preview.skipped_count}</div>
-                  <div className="text-[9px] text-muted-foreground">sin cancel</div>
+                  <div className="text-[9px] text-muted-foreground">{t('samples_no_cancel')}</div>
                 </div>
               </div>
 
@@ -1296,7 +1302,7 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
               {preview.by_day.length > 0 && (
                 <div className="mb-4">
                   <div className="flex items-center gap-3 mb-2">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Carga por día</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('samples_load_per_day')}</div>
                     <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/60" />≤ {preview.target_per_day}</span>
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-amber-500/60" />≤ {preview.max_per_day}</span>
@@ -1305,16 +1311,16 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {preview.by_day.map(d => {
-                      const t = d.total;
-                      const level = t <= preview.target_per_day
+                      const tot = d.total;
+                      const level = tot <= preview.target_per_day
                         ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
-                        : t <= preview.max_per_day
+                        : tot <= preview.max_per_day
                         ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
                         : 'bg-red-500/20 text-red-400 border-red-500/40';
                       return (
                         <span key={d.date} className={`text-[10px] font-mono border rounded px-1.5 py-1 ${level}`}
-                          title={`Existentes: ${d.existing} · Nuevos: ${d.added} · Total: ${t}`}>
-                          {d.date.slice(5)} <b className="ml-1">{t}</b>
+                          title={t('samples_day_tooltip', { existing: d.existing, added: d.added, total: tot })}>
+                          {d.date.slice(5)} <b className="ml-1">{tot}</b>
                           {d.added > 0 && <span className="opacity-70 ml-0.5">(+{d.added})</span>}
                         </span>
                       );
@@ -1324,20 +1330,20 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
               )}
 
               {/* Lista detallada */}
-              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Detalle</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">{t('samples_detail')}</div>
               <div className="border border-border rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-secondary/40 text-[10px] uppercase tracking-widest">
                     <tr>
-                      <th className="text-left px-2 py-1.5">Orden</th>
-                      <th className="text-left px-2 py-1.5">Cliente / Style</th>
+                      <th className="text-left px-2 py-1.5">{t('order')}</th>
+                      <th className="text-left px-2 py-1.5">{t('samples_client_style')}</th>
                       <th className="text-left px-2 py-1.5">Cancel</th>
-                      {includeScheduled && <th className="text-left px-2 py-1.5">Anterior</th>}
+                      {includeScheduled && <th className="text-left px-2 py-1.5">{t('samples_previous')}</th>}
                       <th className="text-left px-2 py-1.5">Ideal</th>
-                      <th className="text-left px-2 py-1.5">→ Nueva</th>
+                      <th className="text-left px-2 py-1.5">{t('samples_new_date')}</th>
                       <th className="text-right px-2 py-1.5">Shift</th>
-                      <th className="text-right px-2 py-1.5">Holgura</th>
-                      {includeScheduled && <th className="text-center px-2 py-1.5">Estado</th>}
+                      <th className="text-right px-2 py-1.5">{t('samples_slack')}</th>
+                      {includeScheduled && <th className="text-center px-2 py-1.5">{t('status')}</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1367,10 +1373,10 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
                         {includeScheduled && (
                           <td className="px-2 py-1 text-center">
                             {r.moved
-                              ? <span className="text-[9px] font-black uppercase bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded">movido</span>
+                              ? <span className="text-[9px] font-black uppercase bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded">{t('samples_moved')}</span>
                               : r.kept
-                                ? <span className="text-[9px] font-black uppercase bg-emerald-500/15 text-emerald-500 px-1.5 py-0.5 rounded">se mantiene</span>
-                                : <span className="text-[9px] font-black uppercase bg-amber-500/15 text-amber-500 px-1.5 py-0.5 rounded">nuevo</span>}
+                                ? <span className="text-[9px] font-black uppercase bg-emerald-500/15 text-emerald-500 px-1.5 py-0.5 rounded">{t('samples_kept')}</span>
+                                : <span className="text-[9px] font-black uppercase bg-amber-500/15 text-amber-500 px-1.5 py-0.5 rounded">{t('samples_new_badge')}</span>}
                           </td>
                         )}
                       </tr>
@@ -1379,14 +1385,14 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
                 </table>
                 {preview.scheduled.length > 200 && (
                   <div className="text-[10px] text-muted-foreground text-center py-2 border-t border-border/60">
-                    ... y {preview.scheduled.length - 200} más
+                    {t('samples_and_more', { n: preview.scheduled.length - 200 })}
                   </div>
                 )}
               </div>
 
               {preview.skipped_count > 0 && (
                 <div className="mt-3 text-[11px] text-amber-400">
-                  <b>{preview.skipped_count}</b> tasks omitidos porque su orden no tiene cancel_date.
+                  <b>{preview.skipped_count}</b> {t('samples_skipped_reason')}
                 </div>
               )}
             </>
@@ -1396,20 +1402,20 @@ function AutoScheduleModal({ api, onClose, onApplied }) {
         {/* Footer */}
         <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-secondary/20">
           <div className="text-[10px] text-muted-foreground">
-            {!preview ? 'Cargando preview…' : (
+            {!preview ? t('samples_loading_preview') : (
               includeScheduled
-                ? `${preview.moved_count} se moverán · ${preview.kept_count} se mantienen. HOT si holgura < 3 días.`
-                : `Se programarán ${preview.scheduled_count} ejemplos. HOT si holgura < 3 días.`
+                ? t('samples_footer_rebalance', { moved: preview.moved_count, kept: preview.kept_count })
+                : t('samples_footer_schedule', { n: preview.scheduled_count })
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="px-3 py-2 rounded-lg border border-border text-xs font-bold">Cancelar</button>
+            <button onClick={onClose} className="px-3 py-2 rounded-lg border border-border text-xs font-bold">{t('cancel')}</button>
             <button
               onClick={apply}
               disabled={applying || !preview || preview.scheduled_count === 0}
               className="px-4 py-2 rounded-lg bg-indigo-500 text-white font-black text-xs uppercase disabled:opacity-40 flex items-center gap-2">
               {applying && <Loader2 size={13} className="animate-spin" />}
-              <Zap size={13} /> Aplicar programación
+              <Zap size={13} /> {t('samples_apply_schedule')}
             </button>
           </div>
         </div>

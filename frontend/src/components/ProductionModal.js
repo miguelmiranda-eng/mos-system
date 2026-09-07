@@ -163,12 +163,12 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
       // aunque el usuario mencionó "después de las 5", lo cual es confuso. 
       // Implementamos el rango base por ahora).
       if (hour < 7 || (hour >= 19 && min > 10)) {
-        if (!isAdmin && !confirm("Estás fuera del horario de Turno 1. ¿Deseas continuar?")) return;
+        if (!isAdmin && !confirm(t('admin_prod_confirm_shift1'))) return;
       }
     } else if (shift === 'TURNO 2') {
        const isMonToThuNight = (hour >= 19 && day >= 1 && day <= 4) || (hour < 7 && day >= 2 && day <= 5);
        if (!isMonToThuNight) {
-         if (!isAdmin && !confirm("Estás fuera del horario de Turno 2 (Lun-Jue). ¿Deseas continuar?")) return;
+         if (!isAdmin && !confirm(t('admin_prod_confirm_shift2'))) return;
        }
     }
 
@@ -224,11 +224,11 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
               <div>
                 <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground"
                        title={cuentaPrendas
-                         ? `Cuenta PRENDAS: la orden lleva ${posiciones.join(' + ')}, y una prenda no esta lista hasta que todas sus posiciones estan impresas. Impresiones registradas en total: ${totalProduced}.`
-                         : 'Esta orden no tiene posiciones de impresion capturadas, asi que esto suma impresiones, no prendas: si lleva frente y espalda, puede decir 100% con la mitad pendiente. Capturalas en la columna Posiciones del tablero.'}>
+                         ? t('admin_prod_tooltip_garments', { positions: posiciones.join(' + '), total: totalProduced })
+                         : t('admin_prod_tooltip_no_positions')}>
                   {t('remaining')} {cuentaPrendas
-                    ? <span className="text-primary/70 normal-case font-normal">· prendas</span>
-                    : <span className="text-amber-500 normal-case font-normal">· sin posiciones</span>}
+                    ? <span className="text-primary/70 normal-case font-normal">· {t('admin_prod_garments')}</span>
+                    : <span className="text-amber-500 normal-case font-normal">· {t('admin_prod_no_positions')}</span>}
                 </label>
                 <div className="h-8 px-3 flex items-center text-sm bg-secondary/60 border border-border rounded font-mono font-bold">
                   {remaining} pz
@@ -242,34 +242,34 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
           <div className="grid grid-cols-3 gap-3">
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('quantity_produced')}</label><input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} min="1" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-quantity-input" /></div>
             <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('machine')}</label>
-              <Select value={machine} onValueChange={setMachine}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-machine-select"><SelectValue placeholder="Maquina" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{MACHINES.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+              <Select value={machine} onValueChange={setMachine}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-machine-select"><SelectValue placeholder={t('machine')} /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{MACHINES.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
             </div>
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Setup</label><input type="number" value={setup} onChange={(e) => setSetup(e.target.value)} min="0" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-setup-input" /></div>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('setup')}</label><input type="number" value={setup} onChange={(e) => setSetup(e.target.value)} min="0" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-setup-input" /></div>
           </div>
           {/* Row 2: operator, shift, design_type */}
           <div className="grid grid-cols-3 gap-3">
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Operador</label>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('admin_operator')}</label>
               {operatorsList.length > 0 ? (
-                <Select value={operator} onValueChange={setOperator}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-operator-select"><SelectValue placeholder="Seleccionar operador" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{operatorsList.map(op => <SelectItem key={op.operator_id} value={op.name}>{op.name}</SelectItem>)}</SelectContent></Select>
+                <Select value={operator} onValueChange={setOperator}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-operator-select"><SelectValue placeholder={t('admin_select_operator')} /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{operatorsList.map(op => <SelectItem key={op.operator_id} value={op.name}>{op.name}</SelectItem>)}</SelectContent></Select>
               ) : (
-                <input type="text" value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Nombre operador" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-operator-input" />
+                <input type="text" value={operator} onChange={(e) => setOperator(e.target.value)} placeholder={t('admin_operator_name')} className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-operator-input" />
               )}
             </div>
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Turno</label>
-              <Select value={shift} onValueChange={setShift}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-shift-select"><SelectValue placeholder="Turno" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{SHIFTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('admin_shift')}</label>
+              <Select value={shift} onValueChange={setShift}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-shift-select"><SelectValue placeholder={t('admin_shift')} /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{SHIFTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
             </div>
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Tipo Diseno</label>
-              <Select value={designType} onValueChange={setDesignType}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-design-select"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{DESIGN_TYPES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent></Select>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('admin_design_type')}</label>
+              <Select value={designType} onValueChange={setDesignType}><SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-design-select"><SelectValue placeholder={t('admin_type')} /></SelectTrigger><SelectContent className="bg-popover border-border z-[1001]">{DESIGN_TYPES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent></Select>
             </div>
           </div>
           {/* Row 2.5: talla que se esta pintando + avance de esa talla */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Talla</label>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('wms_label_size')}</label>
               {orderSizes.length > 0 ? (
                 <Select value={size} onValueChange={setSize}>
                   <SelectTrigger className="h-8 text-sm bg-secondary border-border" data-testid="production-size-select">
-                    <SelectValue placeholder="Talla" />
+                    <SelectValue placeholder={t('wms_label_size')} />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border z-[1001]">
                     {orderSizes.map(({ sz, qty }) => (
@@ -320,8 +320,8 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
           </div>
           {/* Row 3: supervisor, stop_cause */}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Supervisor</label><input type="text" value={supervisor} onChange={(e) => setSupervisor(e.target.value)} placeholder="Nombre supervisor" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-supervisor-input" /></div>
-            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Causa de Parada</label><input type="text" value={stopCause} onChange={(e) => setStopCause(e.target.value)} placeholder="Opcional" className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-stop-input" /></div>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Supervisor</label><input type="text" value={supervisor} onChange={(e) => setSupervisor(e.target.value)} placeholder={t('admin_supervisor_name')} className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-supervisor-input" /></div>
+            <div><label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('admin_stop_cause')}</label><input type="text" value={stopCause} onChange={(e) => setStopCause(e.target.value)} placeholder={t('admin_optional')} className="w-full h-8 px-3 text-sm bg-secondary border border-border rounded text-foreground" data-testid="production-stop-input" /></div>
           </div>
           <button type="submit" disabled={submitting || !matchedOrder || !quantity || !machine} className="w-full py-2 bg-primary text-primary-foreground rounded text-sm font-bold hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2" data-testid="production-submit-btn">
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('register_production')}
@@ -334,13 +334,13 @@ const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin 
             <table className="w-full text-sm">
               <thead><tr className="border-b border-border">
                 <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('date_time')}</th>
-                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Operador</th>
-                <th className="text-right py-1 px-2 text-[10px] text-muted-foreground font-bold">Cant.</th>
+                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('admin_operator')}</th>
+                <th className="text-right py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('admin_qty_short')}</th>
                 <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('machine')}</th>
-                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Turno</th>
-                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Diseno</th>
-                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">Talla</th>
-                <th className="text-right py-1 px-2 text-[10px] text-muted-foreground font-bold">Setup</th>
+                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('admin_shift')}</th>
+                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('admin_design')}</th>
+                <th className="text-left py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('wms_label_size')}</th>
+                <th className="text-right py-1 px-2 text-[10px] text-muted-foreground font-bold">{t('setup')}</th>
                 {isAdmin && <th className="w-6"></th>}
               </tr></thead>
               <tbody>{logs.map(log => (

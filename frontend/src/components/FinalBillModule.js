@@ -8,6 +8,7 @@ import {
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../App';
+import { useLang } from '../contexts/LanguageContext';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -16,9 +17,9 @@ const API = `${BACKEND_URL}/api`;
 // que le tocan a Final Bill; la tercera es el archivo de lo que el encargado ya
 // selló — vive de la bandera `final_bill_review`, no de un status.
 const TABS = [
-  { key: 'envio', label: 'Listo para envío' },
-  { key: 'inventario', label: 'Listo para inventario' },
-  { key: 'revisadas', label: 'Revisadas' },
+  { key: 'envio', labelKey: 'fb_tab_envio' },
+  { key: 'inventario', labelKey: 'fb_tab_inventario' },
+  { key: 'revisadas', labelKey: 'fb_tab_revisadas' },
 ];
 
 // key = llave que entiende el backend para ordenar (NO el campo de Mongo).
@@ -27,7 +28,7 @@ const COLUMNS = [
   { key: 'customer_po', label: 'Customer PO', sortable: true },
   { key: 'cancel_date', label: 'Cancel Date', sortable: true },
   { key: 'final_bill', label: 'Final Bill', sortable: true },
-  { key: 'status_at', label: 'Fecha de estatus', sortable: true },
+  { key: 'status_at', labelKey: 'fb_status_date', sortable: true },
   { key: 'design', label: 'Design', sortable: true },
   { key: 'client', label: 'Client', sortable: true },
   { key: 'branding', label: 'Branding', sortable: true },
@@ -81,6 +82,7 @@ const fmtStamp = (iso) => {
 // segundo escritor sobre la misma orden se saltaría las tres cosas y el tablero
 // seguiría mostrando la fecha vieja.
 const DateCell = ({ value, onSave, disabled }) => {
+  const { t } = useLang();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || '');
   const ref = useRef(null);
@@ -116,7 +118,7 @@ const DateCell = ({ value, onSave, disabled }) => {
     <button
       type="button"
       onClick={() => setEditing(true)}
-      title="Clic para editar la fecha de Final Bill"
+      title={t('fb_click_edit_date')}
       className={`h-8 px-2 -mx-2 rounded-lg text-left inline-flex items-center gap-1.5 hover:bg-blue-50 hover:text-blue-700 transition-colors ${
         value ? 'text-slate-600' : 'text-slate-300'
       }`}
@@ -147,6 +149,7 @@ const StatCard = ({ icon: Icon, chip, label, value, sub }) => (
 const FinalBillModule = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLang();
   // Solo el encargado (admin/supersu) sella. El backend lo vuelve a exigir: esto
   // es para no mostrar botones que van a rebotar con 403.
   const canReview = user?.role === 'admin' || user?.role === 'supersu';
@@ -200,7 +203,7 @@ const FinalBillModule = () => {
       setData(await res.json());
       setSelected(new Set());
     } catch {
-      setError('No se pudieron cargar las órdenes. Verifica tu sesión o el servidor.');
+      setError('fb_load_err');
     } finally {
       setLoading(false);
     }
@@ -259,11 +262,11 @@ const FinalBillModule = () => {
           });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success(reviewed
-        ? `${orderIds.length} orden(es) marcadas como revisadas`
-        : `${orderIds.length} orden(es) devueltas a su bandeja`);
+        ? t('fb_marked_reviewed', { n: orderIds.length })
+        : t('fb_returned', { n: orderIds.length }));
       fetchRows();
     } catch {
-      toast.error('No se pudo guardar la revisión');
+      toast.error(t('fb_review_err'));
     } finally {
       setActing(false);
     }
@@ -290,11 +293,11 @@ const FinalBillModule = () => {
         body: JSON.stringify({ final_bill: value || '' }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success(value ? `Final Bill: ${fmtDate(value)}` : 'Final Bill vaciado');
+      toast.success(value ? `Final Bill: ${fmtDate(value)}` : t('fb_cleared'));
       if (filters.final_bill) fetchRows();
     } catch {
       paint(before);
-      toast.error('No se pudo guardar la fecha de Final Bill');
+      toast.error(t('fb_date_save_err'));
     }
   };
 
@@ -331,9 +334,9 @@ const FinalBillModule = () => {
       ws['!cols'] = [12, 16, 13, 13, 18, 12, 26, 18, 10, 15, 14, 22, 20, 20].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, ws, 'Final Bill');
       XLSX.writeFile(wb, `Final_Bill_${tab}_${todayStr()}.xlsx`);
-      toast.success(`${sheet.length} renglones exportados`);
+      toast.success(t('fb_rows_exported', { n: sheet.length }));
     } catch {
-      toast.error('No se pudo generar el Excel');
+      toast.error(t('fb_excel_err'));
     }
   };
 
@@ -360,14 +363,14 @@ const FinalBillModule = () => {
           <button
             onClick={() => navigate('/home')}
             className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
-            title="Volver"
+            title={t('fb_back')}
             data-testid="fb-back"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="leading-none mr-auto">
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">Módulo de Final Bill</h1>
-            <span className="block text-xs text-slate-500 mt-1">Consulta y administración de órdenes</span>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">{t('fb_title')}</h1>
+            <span className="block text-xs text-slate-500 mt-1">{t('fb_subtitle')}</span>
           </div>
 
           {canReview && selected.size > 0 && (
@@ -379,8 +382,8 @@ const FinalBillModule = () => {
             >
               {acting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
               {tab === 'revisadas'
-                ? `Devolver ${selected.size}`
-                : `Marcar ${selected.size} revisada(s)`}
+                ? t('fb_return_n', { n: selected.size })
+                : t('fb_mark_n_reviewed', { n: selected.size })}
             </button>
           )}
 
@@ -389,7 +392,7 @@ const FinalBillModule = () => {
             className="h-10 px-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 flex items-center gap-2 hover:border-blue-300 hover:text-blue-600 transition-colors"
             data-testid="fb-export"
           >
-            <Download className="w-4 h-4" /> Exportar
+            <Download className="w-4 h-4" /> {t('action_export')}
           </button>
 
           <div className="relative">
@@ -398,7 +401,7 @@ const FinalBillModule = () => {
               className="h-10 px-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 flex items-center gap-2 hover:border-blue-300 hover:text-blue-600 transition-colors"
               data-testid="fb-columns"
             >
-              <ColumnsIcon className="w-4 h-4" /> Columnas
+              <ColumnsIcon className="w-4 h-4" /> {t('columns')}
             </button>
             {showCols && (
               <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-lg p-2 z-50">
@@ -410,7 +413,7 @@ const FinalBillModule = () => {
                       onChange={() => toggleColumn(c.key)}
                       className="w-4 h-4 rounded border-slate-300 text-blue-600"
                     />
-                    <span className="text-sm text-slate-700">{c.label}</span>
+                    <span className="text-sm text-slate-700">{c.labelKey ? t(c.labelKey) : c.label}</span>
                   </label>
                 ))}
               </div>
@@ -425,12 +428,12 @@ const FinalBillModule = () => {
         <Card className="p-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
             <div className="lg:col-span-2">
-              <label className="text-xs font-semibold text-slate-500 block mb-1">Buscar</label>
+              <label className="text-xs font-semibold text-slate-500 block mb-1">{t('search')}</label>
               <div className="relative">
                 <input
                   value={filters.search}
                   onChange={(e) => setFilter('search', e.target.value)}
-                  placeholder="Buscar por Order#, Customer PO o Cliente..."
+                  placeholder={t('fb_search_placeholder')}
                   className="w-full h-10 pl-3 pr-9 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                   data-testid="fb-search"
                 />
@@ -468,7 +471,7 @@ const FinalBillModule = () => {
                   className="w-full h-10 px-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400"
                   data-testid={`fb-${f.key}`}
                 >
-                  <option value="">Todos</option>
+                  <option value="">{t('all_boards')}</option>
                   {(f.list || []).map(v => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
@@ -480,7 +483,7 @@ const FinalBillModule = () => {
                 className="h-10 w-full px-3 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-slate-500 flex items-center justify-center gap-2 hover:border-blue-300 hover:text-blue-600 disabled:opacity-40 transition-colors"
                 data-testid="fb-clear"
               >
-                <Filter className="w-4 h-4" /> Limpiar filtros
+                <Filter className="w-4 h-4" /> {t('wms_clear_filters')}
               </button>
             </div>
           </div>
@@ -490,47 +493,47 @@ const FinalBillModule = () => {
         <div className="flex flex-wrap gap-5">
           <StatCard
             icon={ClipboardList} chip="bg-blue-50 text-blue-600"
-            label="Órdenes Totales" value={fmt(data?.totals?.orders)}
-            sub={TABS.find(t => t.key === tab)?.label}
+            label={t('fb_total_orders')} value={fmt(data?.totals?.orders)}
+            sub={t(TABS.find(x => x.key === tab)?.labelKey)}
           />
           <StatCard
             icon={Package} chip="bg-emerald-50 text-emerald-600"
             label="Qty" value={fmt(data?.totals?.units)}
-            sub="Requerido por las órdenes"
+            sub={t('fb_required_by_orders')}
           />
           <StatCard
             icon={Package} chip="bg-teal-50 text-teal-600"
             label="Final Unido Qty" value={fmt(data?.totals?.final_unido_units)}
-            sub="Piezas del Final Bill (Printavo)"
+            sub={t('fb_pieces_final_bill')}
           />
           <StatCard
             icon={DollarSign} chip="bg-violet-50 text-violet-600"
             label="Total Amount" value={fmtMoney(data?.totals?.amount)}
             sub={data?.totals?.amount_orders
-              ? `De ${fmt(data.totals.amount_orders)} de ${fmt(data?.totals?.orders)} órdenes facturadas`
-              : 'Ninguna orden del filtro tiene factura aplicada'}
+              ? t('fb_of_invoiced', { a: fmt(data.totals.amount_orders), b: fmt(data?.totals?.orders) })
+              : t('fb_no_invoice')}
           />
         </div>
 
         {/* PESTAÑAS */}
         <div className="flex items-center gap-2 flex-wrap">
-          {TABS.map(t => (
+          {TABS.map(tb => (
             <button
-              key={t.key}
-              onClick={() => changeTab(t.key)}
+              key={tb.key}
+              onClick={() => changeTab(tb.key)}
               className={`h-10 px-4 rounded-xl text-sm font-bold flex items-center gap-2 border transition-colors ${
-                tab === t.key
+                tab === tb.key
                   ? 'bg-blue-600 text-white border-blue-600'
                   : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600'
               }`}
-              data-testid={`fb-tab-${t.key}`}
+              data-testid={`fb-tab-${tb.key}`}
             >
-              {t.key === 'revisadas' && <ShieldCheck className="w-4 h-4" />}
-              {t.label}
+              {tb.key === 'revisadas' && <ShieldCheck className="w-4 h-4" />}
+              {t(tb.labelKey)}
               <span className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
-                tab === t.key ? 'bg-white/20' : 'bg-slate-100 text-slate-500'
+                tab === tb.key ? 'bg-white/20' : 'bg-slate-100 text-slate-500'
               }`}>
-                {counts[t.key] === undefined ? '—' : fmt(counts[t.key])}
+                {counts[tb.key] === undefined ? '—' : fmt(counts[tb.key])}
               </span>
             </button>
           ))}
@@ -540,12 +543,12 @@ const FinalBillModule = () => {
         <Card className="overflow-hidden">
           <div className="px-5 py-4 flex items-center justify-between border-b border-slate-200">
             <p className="text-sm font-bold text-slate-800">
-              {TABS.find(t => t.key === tab)?.label} ({fmt(data?.total)})
+              {t(TABS.find(x => x.key === tab)?.labelKey)} ({fmt(data?.total)})
             </p>
             <button
               onClick={fetchRows}
               className="p-2 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
-              title="Actualizar"
+              title={t('fb_refresh')}
               data-testid="fb-refresh"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -553,7 +556,7 @@ const FinalBillModule = () => {
           </div>
 
           {error ? (
-            <div className="p-8 text-center text-sm text-red-600">{error}</div>
+            <div className="p-8 text-center text-sm text-red-600">{t(error)}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -579,7 +582,7 @@ const FinalBillModule = () => {
                         } ${c.sortable ? 'cursor-pointer select-none hover:text-blue-600' : ''}`}
                       >
                         <span className="inline-flex items-center gap-1">
-                          {c.label}
+                          {c.labelKey ? t(c.labelKey) : c.label}
                           {c.sortable && (
                             <ChevronsUpDown className={`w-3 h-3 ${sort.by === c.key ? 'text-blue-600' : 'text-slate-300'}`} />
                           )}
@@ -587,7 +590,7 @@ const FinalBillModule = () => {
                       </th>
                     ))}
                     <th className="sticky right-0 z-20 bg-slate-50 border-l border-slate-200 px-4 py-3 text-xs font-bold text-slate-500 text-right">
-                      Acciones
+                      {t('actions')}
                     </th>
                   </tr>
                 </thead>
@@ -599,7 +602,7 @@ const FinalBillModule = () => {
                   )}
                   {!loading && rows.length === 0 && (
                     <tr><td colSpan={visibleColumns.length + 2} className="px-4 py-12 text-center text-sm text-slate-400">
-                      {hasFilters ? 'Ninguna orden coincide con los filtros.' : 'No hay órdenes en esta bandeja.'}
+                      {hasFilters ? t('fb_no_match') : t('fb_empty_tray')}
                     </td></tr>
                   )}
                   {rows.map(r => {
@@ -633,8 +636,8 @@ const FinalBillModule = () => {
                             <span
                               className={r.status_at ? 'text-slate-600' : 'text-slate-300'}
                               title={r.status_at
-                                ? `Pasó a ${r.production_status} el ${new Date(r.status_at).toLocaleString()}`
-                                : 'Sin evento registrado del cambio de estatus'}
+                                ? t('fb_status_changed_at', { status: r.production_status, date: new Date(r.status_at).toLocaleString() })
+                                : t('fb_no_status_event')}
                             >{fmtStamp(r.status_at)}</span>
                           );
                           else if (c.key === 'qty') content = <span className="font-semibold text-slate-800">{fmt(r.qty)}</span>;
@@ -644,8 +647,8 @@ const FinalBillModule = () => {
                                 ? 'text-slate-300'
                                 : 'font-semibold text-slate-800 tabular-nums'}
                               title={r.final_unido_qty === null || r.final_unido_qty === undefined
-                                ? 'La orden todavía no tiene Final Bill aplicado desde Printavo'
-                                : 'Piezas del Final Bill (Printavo)'}
+                                ? t('fb_no_final_bill_yet')
+                                : t('fb_pieces_final_bill')}
                             >{fmt(r.final_unido_qty)}</span>
                           );
                           else if (c.key === 'total_amount') content = (
@@ -654,8 +657,8 @@ const FinalBillModule = () => {
                                 ? 'text-slate-300'
                                 : 'font-semibold text-slate-800 tabular-nums'}
                               title={r.total_amount === null || r.total_amount === undefined
-                                ? 'La orden todavía no tiene factura aplicada desde Printavo'
-                                : 'Total facturado (Printavo)'}
+                                ? t('fb_no_invoice_yet')
+                                : t('fb_total_invoiced')}
                             >{fmtMoney(r.total_amount)}</span>
                           );
                           else content = <span className="text-slate-600">{r[c.key] || '—'}</span>;
@@ -671,11 +674,11 @@ const FinalBillModule = () => {
                               <button
                                 onClick={() => review([r.order_id], false)}
                                 disabled={acting}
-                                title={`Revisada por ${r.reviewed_by_name || '—'}${r.reviewed_at ? ' el ' + new Date(r.reviewed_at).toLocaleString() : ''}`}
+                                title={`${t('fb_reviewed_by', { name: r.reviewed_by_name || '—' })}${r.reviewed_at ? ' ' + t('fb_on_date', { date: new Date(r.reviewed_at).toLocaleString() }) : ''}`}
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold hover:bg-slate-200 disabled:opacity-50"
                                 data-testid={`fb-undo-${r.order_number}`}
                               >
-                                <Undo2 className="w-3.5 h-3.5" /> Devolver
+                                <Undo2 className="w-3.5 h-3.5" /> {t('fb_return')}
                               </button>
                             ) : (
                               <button
@@ -684,12 +687,12 @@ const FinalBillModule = () => {
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 disabled:opacity-50"
                                 data-testid={`fb-review-${r.order_number}`}
                               >
-                                <Check className="w-3.5 h-3.5" /> Revisada
+                                <Check className="w-3.5 h-3.5" /> {t('fb_reviewed')}
                               </button>
                             )
                           ) : (
                             <span className="text-xs text-slate-400">
-                              {r.reviewed ? (r.reviewed_by_name || 'revisada') : '—'}
+                              {r.reviewed ? (r.reviewed_by_name || t('fb_reviewed_lc')) : '—'}
                             </span>
                           )}
                         </td>
@@ -704,7 +707,7 @@ const FinalBillModule = () => {
           {/* PAGINACIÓN */}
           <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between flex-wrap gap-3">
             <span className="text-xs text-slate-500">
-              Mostrando {fmt(from)} a {fmt(to)} de {fmt(data?.total)} registros
+              {t('fb_showing_range', { from: fmt(from), to: fmt(to), total: fmt(data?.total) })}
             </span>
             <div className="flex items-center gap-1">
               <button onClick={() => setPage(1)} disabled={page <= 1}
@@ -736,7 +739,7 @@ const FinalBillModule = () => {
               </button>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              Mostrar
+              {t('fb_show')}
               <select
                 value={pageSize}
                 onChange={(e) => { setPageSize(parseInt(e.target.value, 10)); setPage(1); }}
@@ -745,19 +748,17 @@ const FinalBillModule = () => {
               >
                 {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
-              por página
+              {t('fb_per_page')}
             </div>
           </div>
         </Card>
 
         <p className="text-[11px] text-slate-400 leading-relaxed">
-          Solo entran órdenes con production status <b>LISTO PARA ENVIO</b> o <b>LISTO PARA INVENTARIO</b>.
-          Marcar una orden como revisada la mueve a la pestaña <b>Revisadas</b> y la saca de las otras dos,
-          pero <b>no cambia su production status ni su tablero</b>: sigue igual para producción, envíos y WMS.
-          Se puede devolver con el botón <b>Devolver</b>.
-          {' '}La columna <b>Final Bill</b> se edita con un clic, igual que la columna de calendario del tablero,
-          y guarda sobre la misma orden. <b>Total Amount</b> es el total facturado que la sincronización de
-          Printavo copia sobre la orden; sale <b>—</b> en las que todavía no tienen factura aplicada.
+          {t('fb_note_1')} <b>LISTO PARA ENVIO</b> {t('fb_note_or')} <b>LISTO PARA INVENTARIO</b>.
+          {' '}{t('fb_note_2')} <b>{t('fb_tab_revisadas')}</b> {t('fb_note_3')}
+          {' '}<b>{t('fb_note_4')}</b>{t('fb_note_5')} <b>{t('fb_return')}</b>.
+          {' '}{t('fb_note_6')} <b>Final Bill</b> {t('fb_note_7')}
+          {' '}<b>Total Amount</b> {t('fb_note_8')} <b>—</b> {t('fb_note_9')}
         </p>
       </main>
     </div>

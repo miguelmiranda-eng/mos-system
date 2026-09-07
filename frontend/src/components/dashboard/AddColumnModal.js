@@ -26,7 +26,7 @@ export const AddColumnModal = ({ isOpen, onClose, onAdd, existingColumns, sample
     const key = columnName.toLowerCase().replace(/\s+/g, '_');
     if (existingColumns.some(c => c.key === key)) { toast.error(t('col_exists')); return; }
     if (columnType === 'formula' && !formulaCheck?.ok) {
-      toast.error(formulaCheck?.message || 'La fórmula no es válida');
+      toast.error(formulaCheck?.message || t('dash_formula_invalid'));
       return;
     }
     const colDef = { key, label: columnName, type: columnType, width: 150, custom: true };

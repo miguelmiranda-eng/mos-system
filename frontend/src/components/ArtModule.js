@@ -96,7 +96,7 @@ const ArtModule = () => {
       if (historyRes.ok) setHistoryStats(await historyRes.json());
       if (optionsRes.ok) setOptions(await optionsRes.json());
     } catch (error) {
-      toast.error("Error al cargar datos de arte");
+      toast.error(t('art_load_err'));
     } finally {
       setLoading(false);
     }
@@ -132,7 +132,7 @@ const ArtModule = () => {
     // Check if already done
     const alreadyDone = type === 'SEPARATION' ? order.art_sep_status : order.art_neck_status;
     if (alreadyDone) {
-      const confirm = window.confirm(`⚠️ Esta orden ya tiene un registro de ${type}. ¿Deseas registrar otro de todas formas?`);
+      const confirm = window.confirm(t('art_already_logged_confirm', { type }));
       if (!confirm) return;
     }
 
@@ -151,15 +151,15 @@ const ArtModule = () => {
       });
 
       if (res.ok) {
-        toast.success(`Trabajo de ${type === 'SEPARATION' ? 'Separación' : 'Neck'} registrado exitosamente`);
+        toast.success(t('art_work_logged', { work: type === 'SEPARATION' ? t('art_separation') : 'Neck' }));
         fetchData(); // Refresh list and stats
         setSearchQuery('');
         setSearchResults([]);
       } else {
-        toast.error("Error al guardar registro");
+        toast.error(t('art_save_log_err'));
       }
     } catch (error) {
-      toast.error("Error de conexión");
+      toast.error(t('ceo_err_connection'));
     } finally {
       setActionLoading(null);
     }
@@ -175,12 +175,12 @@ const ArtModule = () => {
       });
       if (res.ok) {
         setPendingOrders(prev => prev.map(o => o.order_id === orderId ? { ...o, [field]: value } : o));
-        toast.success("Orden actualizada");
+        toast.success(t('art_order_updated'));
       } else {
-        toast.error("Error al actualizar orden");
+        toast.error(t('art_update_order_err'));
       }
     } catch (err) {
-      toast.error("Error de conexión");
+      toast.error(t('ceo_err_connection'));
     }
   };
 
@@ -194,7 +194,7 @@ const ArtModule = () => {
         credentials: 'include'
       });
       if (res.ok) {
-        toast.success("Pre-orden creada exitosamente");
+        toast.success(t('art_preorder_created'));
         setShowPreOrderModal(false);
         setPreOrderData({ 
           client: '', 
@@ -209,7 +209,7 @@ const ArtModule = () => {
         fetchData();
       }
     } catch (err) {
-      toast.error("Error al crear pre-orden");
+      toast.error(t('art_preorder_create_err'));
     }
   };
 
@@ -217,7 +217,7 @@ const ArtModule = () => {
     const ids = Array.from(selectedOrders);
     if (ids.length === 0) return;
 
-    if (!window.confirm(`¿Mover ${ids.length} órdenes seleccionadas a LISTO PARA CUADROS?`)) return;
+    if (!window.confirm(t('art_move_screens_confirm', { n: ids.length }))) return;
 
     setActionLoading('bulk-move');
     try {
@@ -229,11 +229,11 @@ const ArtModule = () => {
           credentials: 'include'
         })
       ));
-      toast.success(`${ids.length} órdenes movidas a CUADROS`);
+      toast.success(t('art_moved_to_screens', { n: ids.length }));
       setSelectedOrders(new Set());
       fetchData();
     } catch (err) {
-      toast.error("Error al mover órdenes");
+      toast.error(t('move_err'));
     } finally {
       setActionLoading(null);
     }
@@ -269,9 +269,9 @@ const ArtModule = () => {
     const realOrders = ordersToDelete.filter(o => !o.is_preorder);
 
     if (realOrders.length > 0) {
-      if (!window.confirm(`Has seleccionado ${realOrders.length} órdenes reales. Por seguridad, solo las pre-órdenes se pueden eliminar en masa desde aquí. ¿Deseas eliminar solo las ${preOrderIds.length} pre-órdenes seleccionadas?`)) return;
+      if (!window.confirm(t('art_bulk_delete_real_confirm', { real: realOrders.length, pre: preOrderIds.length }))) return;
     } else {
-      if (!window.confirm(`¿Estás seguro de eliminar las ${preOrderIds.length} pre-órdenes seleccionadas?`)) return;
+      if (!window.confirm(t('art_bulk_delete_confirm', { n: preOrderIds.length }))) return;
     }
 
     if (preOrderIds.length === 0) return;
@@ -280,11 +280,11 @@ const ArtModule = () => {
       await Promise.all(preOrderIds.map(id => 
         fetch(`${API}/orders/${id}`, { method: 'DELETE', credentials: 'include' })
       ));
-      toast.success(`${preOrderIds.length} pre-órdenes eliminadas`);
+      toast.success(t('art_preorders_deleted', { n: preOrderIds.length }));
       setSelectedOrders(new Set());
       fetchData();
     } catch (err) {
-      toast.error("Error al eliminar órdenes");
+      toast.error(t('art_delete_orders_err'));
     }
   };
 
@@ -393,28 +393,28 @@ const ArtModule = () => {
 
   const OPS_COL_DEFS = {
     selection: { label: '', width: 'w-10' },
-    order_number: { label: 'Orden' },
-    client: { label: 'Cliente' },
-    artwork_status: { label: 'Status Arte' },
+    order_number: { label: t('order') },
+    client: { label: t('client') },
+    artwork_status: { label: t('art_status_art') },
     betty_column: { label: 'Betty' },
     job_title_a: { label: 'Job Title A' },
     job_title_b: { label: 'Job Title B' },
     cancel_date: { label: 'Cancel' },
-    actions: { label: 'Acciones', align: 'center' }
+    actions: { label: t('actions'), align: 'center' }
   };
 
   const PRE_COL_DEFS = {
     selection: { label: '', width: 'w-10' },
-    order_number: { label: 'ID Temp' },
+    order_number: { label: t('art_temp_id') },
     design_number: { label: 'Design #' },
-    client: { label: 'Cliente' },
+    client: { label: t('client') },
     screens: { label: 'Screens', align: 'center' },
     sample: { label: 'Sample' },
-    artwork_status: { label: 'Status Arte' },
+    artwork_status: { label: t('art_status_art') },
     betty_column: { label: 'Betty' },
     ref_link: { label: 'Ref. Link' },
     cancel_date: { label: 'Cancel' },
-    actions: { label: 'Acciones', align: 'center' }
+    actions: { label: t('actions'), align: 'center' }
   };
 
   if (loading) {
@@ -442,8 +442,8 @@ const ArtModule = () => {
                 <Palette className="w-5 h-5 md:w-7 md:h-7 text-white" />
               </div>
               <div className="flex flex-col">
-                <h1 className="text-lg md:text-2xl font-black uppercase tracking-tighter text-slate-900">Módulo de <span className="text-emerald-500">Arte</span></h1>
-                <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-0.5 hidden sm:block">Medición de Productividad</span>
+                <h1 className="text-lg md:text-2xl font-black uppercase tracking-tighter text-slate-900">{t('art_title_prefix')} <span className="text-emerald-500">{t('art_title_accent')}</span></h1>
+                <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-0.5 hidden sm:block">{t('art_subtitle')}</span>
               </div>
             </div>
           </div>
@@ -462,31 +462,31 @@ const ArtModule = () => {
               onClick={() => setActiveTab('ops')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'ops' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
-              Operaciones
+              {t('art_tab_ops')}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('preorders')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'preorders' ? 'bg-amber-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
-              Pre-Órdenes
+              {t('art_tab_preorders')}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('screens')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'screens' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
-              Listo para Cuadros
+              {t('art_ready_for_screens')}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('kpis')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'kpis' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
-              KPIs y Productividad
+              {t('art_tab_kpis')}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('converted')}
               className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'converted' ? 'bg-slate-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
-              Muertas
+              {t('art_tab_dead')}
             </button>
             
             {activeTab === 'ops' && (
@@ -495,13 +495,13 @@ const ArtModule = () => {
                   onClick={() => setOpsFilter('pending')}
                   className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${opsFilter === 'pending' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
-                  Pendientes
+                  {t('wms_picking_pending')}
                 </button>
-                <button 
+                <button
                   onClick={() => setOpsFilter('worked')}
                   className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${opsFilter === 'worked' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
-                  Completadas / Trabajadas
+                  {t('art_filter_worked')}
                 </button>
               </div>
             )}
@@ -512,11 +512,11 @@ const ArtModule = () => {
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
                     <Settings2 className="w-4 h-4" />
-                    Columnas
+                    {t('columns')}
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56 bg-white p-2 rounded-2xl shadow-2xl border border-slate-100">
-                  <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-widest text-slate-400 p-2">Visibilidad de Columnas</DropdownMenuLabel>
+                  <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-widest text-slate-400 p-2">{t('art_column_visibility')}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   {Object.entries(activeTab === 'ops' ? OPS_COL_DEFS : PRE_COL_DEFS).map(([key, def]) => (
                     def.label && (
@@ -550,14 +550,14 @@ const ArtModule = () => {
                 <button 
                   onClick={handleExportPdf}
                   className="p-2 hover:bg-white rounded-lg text-red-600 transition-all"
-                  title="Exportar PDF"
+                  title={t('art_export_pdf')}
                 >
                   <Printer className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={handleBulkMoveToScreens}
                   className="p-2 hover:bg-white rounded-lg text-blue-600 transition-all"
-                  title="Mover a Cuadros"
+                  title={t('art_move_to_screens')}
                 >
                   <Grid className="w-4 h-4" />
                 </button>
@@ -588,13 +588,13 @@ const ArtModule = () => {
             <section className="bg-white rounded-2xl md:rounded-[2rem] border border-slate-200 p-4 md:p-8 shadow-xl shadow-slate-200/40 relative">
             <div className="flex items-center gap-4 mb-6">
                <Search className="w-5 h-5 text-emerald-500" />
-               <h2 className="text-lg font-black uppercase tracking-tight text-slate-900">Registrar Trabajo de Orden</h2>
+               <h2 className="text-lg font-black uppercase tracking-tight text-slate-900">{t('art_log_work_title')}</h2>
             </div>
-            
+
             <div className="relative">
-              <input 
+              <input
                 type="text"
-                placeholder="Escribe el número de orden (ej: 12345)..."
+                placeholder={t('art_search_placeholder')}
                 className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl py-4 px-6 text-lg font-bold text-slate-900 focus:border-emerald-500 outline-none transition-all"
                 value={searchQuery}
                 onChange={(e) => handleSearch(e.target.value)}
@@ -622,7 +622,7 @@ const ArtModule = () => {
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${order.art_sep_status ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                       >
                         {actionLoading === `${order.order_id}-SEPARATION` ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
-                        {order.art_sep_status ? 'Separación Hecha' : 'Log Separación'}
+                        {order.art_sep_status ? t('art_sep_done') : t('art_log_sep')}
                       </button>
                       <button 
                         onClick={() => logWork(order, 'NECK')}
@@ -630,7 +630,7 @@ const ArtModule = () => {
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${order.art_neck_status ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                       >
                         {actionLoading === `${order.order_id}-NECK` ? <Loader2 size={12} className="animate-spin" /> : <Tag size={12} />}
-                        {order.art_neck_status ? 'Neck Hecho' : 'Log Neck'}
+                        {order.art_neck_status ? t('art_neck_done') : t('art_log_neck')}
                       </button>
                     </div>
                   </div>
@@ -645,10 +645,10 @@ const ArtModule = () => {
               <div className="flex items-center gap-3">
                 <div className="w-1.5 h-6 bg-emerald-500 rounded-full" />
                 <h2 className="text-xl font-black uppercase tracking-tighter text-slate-900">
-                  Pendientes de Arte ({pendingOrders.filter(o => !o.is_preorder).length})
+                  {t('art_pending_title')} ({pendingOrders.filter(o => !o.is_preorder).length})
                 </h2>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Priorizado por entrega</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('art_prioritized_by_due')}</span>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-xl shadow-slate-200/40 mb-10">
@@ -775,8 +775,8 @@ const ArtModule = () => {
                               <CheckCircle2 className="w-8 h-8" />
                             </div>
                             <div className="text-center">
-                              <p className="text-sm font-black uppercase tracking-widest text-slate-900">¡Todo al día!</p>
-                              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">No hay órdenes con arte pendiente.</p>
+                              <p className="text-sm font-black uppercase tracking-widest text-slate-900">{t('art_all_clear')}</p>
+                              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">{t('art_no_pending')}</p>
                             </div>
                           </div>
                         </td>
@@ -792,8 +792,8 @@ const ArtModule = () => {
         <div className="space-y-10">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Gestión de Pre-Órdenes (v2)</h1>
-              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Adelanta el arte de trabajos que aún no tienen número de orden oficial.</p>
+              <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{t('art_preorders_title')}</h1>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">{t('art_preorders_subtitle')}</p>
             </div>
             <div className="flex items-center gap-4">
               {/* SCREENS FILTER TOGGLE */}
@@ -802,19 +802,19 @@ const ArtModule = () => {
                   onClick={() => setScreensFilter('all')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
                 >
-                  Todos
+                  {t('all_boards')}
                 </button>
                 <button 
                   onClick={() => setScreensFilter('ready')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'ready' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400'}`}
                 >
-                  Listo (✅)
+                  {t('art_filter_ready')}
                 </button>
                 <button 
                   onClick={() => setScreensFilter('pending')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400'}`}
                 >
-                  Pendiente (⬜)
+                  {t('art_filter_pending')}
                 </button>
               </div>
 
@@ -823,7 +823,7 @@ const ArtModule = () => {
                 className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-amber-500/20 transition-all"
               >
                 <Plus className="w-4 h-4" />
-                Nueva Pre-Orden
+                {t('art_new_preorder')}
               </button>
             </div>
           </div>
@@ -889,7 +889,7 @@ const ArtModule = () => {
                         if (colKey === 'order_number') return (
                           <td key="order_number" className="py-4 px-6">
                             <EditableCell value={order.order_number} field="order_number" orderId={order.order_id} onUpdate={handleCellUpdate} className="font-black text-slate-900" />
-                            <p className="text-[8px] font-black text-amber-600 uppercase tracking-widest mt-1">Pre-Orden</p>
+                            <p className="text-[8px] font-black text-amber-600 uppercase tracking-widest mt-1">{t('art_preorder_badge')}</p>
                           </td>
                         );
                         if (colKey === 'design_number') return (
@@ -955,7 +955,7 @@ const ArtModule = () => {
                                   className="flex items-center gap-1.5 px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-[9px] font-black uppercase tracking-tighter shadow-sm transition-all active:scale-95"
                                 >
                                   <ExternalLink className="w-3 h-3" />
-                                  Abrir
+                                  {t('samples_open')}
                                 </a>
                               )}
                             </div>
@@ -984,8 +984,8 @@ const ArtModule = () => {
                             <AlertCircle className="w-8 h-8" />
                           </div>
                           <div className="text-center">
-                            <p className="text-sm font-black uppercase tracking-widest text-slate-900">No hay pre-órdenes</p>
-                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">Crea una para empezar a adelantar trabajo.</p>
+                            <p className="text-sm font-black uppercase tracking-widest text-slate-900">{t('art_no_preorders')}</p>
+                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">{t('art_no_preorders_hint')}</p>
                           </div>
                         </div>
                       </td>
@@ -1002,9 +1002,9 @@ const ArtModule = () => {
             <div>
               <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-3">
                 <Grid className="w-8 h-8 text-blue-600" />
-                Listo para Cuadros
+                {t('art_ready_for_screens')}
               </h1>
-              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Órdenes que ya han pasado por arte y están listas para marcos.</p>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">{t('art_screens_subtitle')}</p>
             </div>
             <div className="flex items-center gap-4">
               {/* SCREENS FILTER TOGGLE */}
@@ -1013,24 +1013,24 @@ const ArtModule = () => {
                   onClick={() => setScreensFilter('all')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
                 >
-                  Todos
+                  {t('all_boards')}
                 </button>
                 <button 
                   onClick={() => setScreensFilter('ready')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'ready' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400'}`}
                 >
-                  Listo (✅)
+                  {t('art_filter_ready')}
                 </button>
                 <button 
                   onClick={() => setScreensFilter('pending')}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${screensFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400'}`}
                 >
-                  Pendiente (⬜)
+                  {t('art_filter_pending')}
                 </button>
               </div>
 
               <div className="px-4 py-2 bg-blue-50 rounded-xl border border-blue-100 flex items-center gap-2">
-                <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Total en Cuadros</span>
+                <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{t('art_total_screens')}</span>
                 <span className="text-lg font-black text-blue-700">{pendingOrders.length}</span>
               </div>
             </div>
@@ -1124,7 +1124,7 @@ const ArtModule = () => {
                           <td key="ref_link" className="py-4 px-6">
                             {order.ref_link && (
                               <a href={order.ref_link.startsWith('http') ? order.ref_link : `https://${order.ref_link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white rounded-md text-[9px] font-black uppercase w-fit">
-                                <ExternalLink size={12} /> Abrir
+                                <ExternalLink size={12} /> {t('samples_open')}
                               </a>
                             )}
                           </td>
@@ -1158,8 +1158,8 @@ const ArtModule = () => {
                             <Grid className="w-8 h-8" />
                           </div>
                           <div className="text-center">
-                            <p className="text-sm font-black uppercase tracking-widest text-slate-900">Sin órdenes en cuadros</p>
-                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">Mueve pre-órdenes aquí para organizarlas.</p>
+                            <p className="text-sm font-black uppercase tracking-widest text-slate-900">{t('art_no_screens')}</p>
+                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tight">{t('art_no_screens_hint')}</p>
                           </div>
                         </div>
                       </td>
@@ -1176,12 +1176,12 @@ const ArtModule = () => {
             <div>
               <h1 className="text-2xl font-black text-slate-700 uppercase tracking-tighter flex items-center gap-3">
                 <Trash2 className="w-8 h-8 text-slate-400" />
-                Historial de Pre-Órdenes (Muertas)
+                {t('art_dead_title')}
               </h1>
-              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Pre-órdenes que ya fueron convertidas a órdenes reales de producción.</p>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">{t('art_dead_subtitle')}</p>
             </div>
             <div className="px-4 py-2 bg-slate-100 rounded-xl border border-slate-200 flex items-center gap-2">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Archivadas</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('art_total_archived')}</span>
               <span className="text-lg font-black text-slate-600">{pendingOrders.length}</span>
             </div>
           </div>
@@ -1208,7 +1208,7 @@ const ArtModule = () => {
                         if (colKey === 'order_number') return (
                           <td key="order_number" className="py-4 px-6">
                             <span className="font-black text-slate-400 italic strike-through">#{order.order_number}</span>
-                            <span className="ml-2 px-2 py-0.5 bg-slate-100 text-[8px] font-black text-slate-500 rounded uppercase">Convertida</span>
+                            <span className="ml-2 px-2 py-0.5 bg-slate-100 text-[8px] font-black text-slate-500 rounded uppercase">{t('art_converted')}</span>
                           </td>
                         );
                         if (colKey === 'design_number') return (
@@ -1238,7 +1238,7 @@ const ArtModule = () => {
                         );
                         if (colKey === 'actions') return (
                            <td key="actions" className="py-4 px-6 text-center">
-                             <span className="text-[9px] font-black text-slate-300 uppercase italic">Archivada</span>
+                             <span className="text-[9px] font-black text-slate-300 uppercase italic">{t('art_archived')}</span>
                            </td>
                         );
                         return <td key={colKey} className="py-4 px-6 text-[10px] text-slate-400">{order[colKey]}</td>;
@@ -1250,7 +1250,7 @@ const ArtModule = () => {
                       <td colSpan="10" className="py-20 text-center">
                         <div className="flex flex-col items-center justify-center text-slate-200 gap-4">
                           <Trash2 className="w-12 h-12" />
-                          <p className="text-xs font-black uppercase tracking-widest text-slate-400">No hay pre-órdenes archivadas aún.</p>
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-400">{t('art_no_archived')}</p>
                         </div>
                       </td>
                     </tr>
@@ -1268,19 +1268,19 @@ const ArtModule = () => {
               {/* STATS CARDS */}
               <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-all">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Separaciones (Periodo)</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('art_total_seps_period')}</p>
                   <p className="text-4xl font-black text-emerald-600">
                     {historyStats[historyRange].reduce((acc, curr) => acc + curr.separations, 0)}
                   </p>
                 </div>
                 <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-all">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Necks (Periodo)</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('art_total_necks_period')}</p>
                   <p className="text-4xl font-black text-blue-600">
                     {historyStats[historyRange].reduce((acc, curr) => acc + curr.necks, 0)}
                   </p>
                 </div>
                 <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-all">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Promedio Diario</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('art_daily_avg')}</p>
                   <p className="text-4xl font-black text-slate-900">
                     {Math.round(historyStats[historyRange].reduce((acc, curr) => acc + curr.separations + curr.necks, 0) / (historyStats[historyRange].length || 1))}
                   </p>
@@ -1291,7 +1291,7 @@ const ArtModule = () => {
               <aside className="lg:row-span-2 space-y-6">
                 <div className="flex items-center gap-3 px-2">
                    <div className="w-1.5 h-6 bg-slate-400 rounded-full" />
-                   <h2 className="text-lg font-black uppercase tracking-tighter text-slate-900">Actividad Reciente</h2>
+                   <h2 className="text-lg font-black uppercase tracking-tighter text-slate-900">{t('art_recent_activity')}</h2>
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm max-h-[800px] overflow-y-auto scrollbar-none">
@@ -1314,7 +1314,7 @@ const ArtModule = () => {
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight truncate">{log.client}</span>
                         </div>
                         {log.user_name && log.user_name !== user.name && (
-                          <p className="text-[9px] text-slate-300 mt-1 font-medium">Por: {log.user_name}</p>
+                          <p className="text-[9px] text-slate-300 mt-1 font-medium">{t('art_by_user', { name: log.user_name })}</p>
                         )}
                       </div>
                     ))}
@@ -1322,7 +1322,7 @@ const ArtModule = () => {
                     {dailyStats.recent_logs.length === 0 && (
                       <div className="py-10 text-center text-slate-400">
                         <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                        <p className="text-[10px] font-black uppercase tracking-widest leading-tight">No hay registros hoy</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest leading-tight">{t('art_no_logs_today')}</p>
                       </div>
                     )}
                   </div>
@@ -1338,8 +1338,8 @@ const ArtModule = () => {
                         <BarChart2 className="w-8 h-8" />
                       </div>
                       <div>
-                        <h2 className="text-2xl font-black uppercase tracking-tight text-slate-900">Métricas de Productividad</h2>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Análisis histórico detallado</p>
+                        <h2 className="text-2xl font-black uppercase tracking-tight text-slate-900">{t('art_metrics_title')}</h2>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{t('art_metrics_subtitle')}</p>
                       </div>
                     </div>
 
@@ -1350,7 +1350,7 @@ const ArtModule = () => {
                           onClick={() => setHistoryRange(range)}
                           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${historyRange === range ? 'bg-white text-slate-900 shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                          {range === 'daily' ? 'Diario' : range === 'weekly' ? 'Semanal' : 'Mensual'}
+                          {range === 'daily' ? t('art_daily') : range === 'weekly' ? t('art_weekly') : t('art_monthly')}
                         </button>
                       ))}
                     </div>
@@ -1394,7 +1394,7 @@ const ArtModule = () => {
                         />
                         <Bar 
                           stackId="a"
-                          name="Separaciones" 
+                          name={t('art_separations')}
                           dataKey="separations" 
                           fill="url(#colorSeps)" 
                           radius={[0, 0, 0, 0]} 
@@ -1438,22 +1438,22 @@ const ArtModule = () => {
             <DialogHeader className="bg-amber-500 p-8 text-white">
               <DialogTitle className="text-2xl font-black uppercase tracking-tighter flex items-center gap-3">
                 <Plus className="w-6 h-6" />
-                Nueva Pre-Orden
+                {t('art_new_preorder')}
               </DialogTitle>
-              <p className="text-amber-100 text-xs font-bold uppercase tracking-widest mt-1">Crea una orden temporal para adelantar arte</p>
+              <p className="text-amber-100 text-xs font-bold uppercase tracking-widest mt-1">{t('art_new_preorder_hint')}</p>
             </DialogHeader>
             
             <div className="p-8 space-y-6">
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <User className="w-3 h-3" /> Cliente
+                    <User className="w-3 h-3" /> {t('client')}
                   </label>
-                  <SearchableSelect 
+                  <SearchableSelect
                     options={options.clients || []}
                     value={preOrderData.client}
                     onChange={(val) => setPreOrderData({...preOrderData, client: val})}
-                    placeholder="Seleccionar Cliente"
+                    placeholder={t('art_select_client')}
                     allowCreate={false}
                   />
                 </div>
@@ -1476,18 +1476,18 @@ const ArtModule = () => {
                 </label>
                 <input 
                   type="text"
-                  placeholder="Ej: DES-999"
+                  placeholder={t('art_design_placeholder')}
                   className="w-full bg-amber-50/50 border-2 border-amber-200 rounded-xl p-3 text-lg font-black text-slate-900 outline-none focus:border-amber-500 uppercase transition-colors"
                   value={preOrderData.design_number}
                   onChange={(e) => setPreOrderData({...preOrderData, design_number: e.target.value.toUpperCase()})}
                   required
                 />
-                <p className="text-[9px] font-bold text-amber-600/70 uppercase">Llave de vinculación para orden real</p>
+                <p className="text-[9px] font-bold text-amber-600/70 uppercase">{t('art_design_hint')}</p>
               </div>
 
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <ExternalLink className="w-3 h-3" /> Ref. Link <span className="text-slate-300 font-normal">(Temporal)</span>
+                  <ExternalLink className="w-3 h-3" /> Ref. Link <span className="text-slate-300 font-normal">{t('art_temporary')}</span>
                 </label>
                 <input 
                   type="url"
@@ -1496,19 +1496,19 @@ const ArtModule = () => {
                   value={preOrderData.ref_link || ''}
                   onChange={(e) => setPreOrderData({...preOrderData, ref_link: e.target.value})}
                 />
-                <p className="text-[9px] font-bold text-slate-400/70 uppercase">Solo visible en Pre-Órdenes — no pasa a la orden real</p>
+                <p className="text-[9px] font-bold text-slate-400/70 uppercase">{t('art_ref_link_hint')}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <Image className="w-3 h-3" /> Ejemplo / Sample
+                    <Image className="w-3 h-3" /> {t('art_sample_label')}
                   </label>
-                  <SearchableSelect 
+                  <SearchableSelect
                     options={options.samples || []}
                     value={preOrderData.sample}
                     onChange={(val) => setPreOrderData({...preOrderData, sample: val})}
-                    placeholder="Seleccionar Sample"
+                    placeholder={t('art_select_sample')}
                     allowCreate={true}
                   />
                 </div>
@@ -1532,7 +1532,7 @@ const ArtModule = () => {
                     options={options.betty_columns || []}
                     value={preOrderData.betty_column}
                     onChange={(val) => setPreOrderData({...preOrderData, betty_column: val})}
-                    placeholder="Seleccionar..."
+                    placeholder={t('select_placeholder')}
                     allowCreate={false}
                   />
                 </div>
@@ -1545,13 +1545,13 @@ const ArtModule = () => {
                 onClick={() => setShowPreOrderModal(false)}
                 className="flex-1 py-4 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-all"
               >
-                Cancelar
+                {t('cancel')}
               </button>
-              <button 
+              <button
                 type="submit"
                 className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-amber-500/20 transition-all"
               >
-                Crear Pre-Orden
+                {t('art_create_preorder')}
               </button>
             </DialogFooter>
           </form>

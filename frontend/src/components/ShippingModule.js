@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Toaster, toast } from "sonner";
+import { useLang } from "../contexts/LanguageContext";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -35,6 +36,7 @@ const DAYS_FULL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábad
 const dayLabel = (d, full = false) => (d ? (full ? DAYS_FULL : DAYS)[d - 1] : 'Sin día');
 
 const ShippingModule = () => {
+  const { t } = useLang();
   const [orderNumbers, setOrderNumbers] = useState("");
   const [notes, setNotes] = useState("");
   const [files, setFiles] = useState([]);
@@ -154,9 +156,9 @@ const ShippingModule = () => {
           ...prev.filter((x) => !(x.scheduled_year === d.scheduled_year && x.scheduled_month === d.scheduled_month && x.scheduled_week === d.scheduled_week)),
           d,
         ]);
-        toast.success(`Envío movido a ${dayLabel(day, true)} (la numeración del día se reacomoda)`);
-      } else toast.error('No se pudo mover el envío de día');
-    } catch { toast.error('Error de conexión'); }
+        toast.success(t('ship_envio_moved_day', { day: dayLabel(day, true) }));
+      } else toast.error(t('ship_move_day_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
   // "+ Envío": el envío nuevo nace EN el día visible (no en "Sin día") y queda
   // marcado como destino, listo para programarle órdenes. Sin esto, el envío
@@ -170,7 +172,7 @@ const ShippingModule = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ scheduled_year: calYear, scheduled_month: m, scheduled_week: w, envios: next }),
       });
-      if (!res.ok) { toast.error('No se pudo agregar el envío'); return; }
+      if (!res.ok) { toast.error(t('ship_add_envio_err')); return; }
       let doc = await res.json();
       if (selDay > 0) {
         const res2 = await fetch(`${API}/scheduled-shipments/envio-day`, {
@@ -184,8 +186,8 @@ const ShippingModule = () => {
         doc,
       ]);
       setTargetEnvio(next);
-      toast.success(`Envío ${visibleNum} agregado a ${dayLabel(selDay, true)} · Semana ${w}`);
-    } catch { toast.error('Error de conexión'); }
+      toast.success(t('ship_envio_added', { n: visibleNum, day: dayLabel(selDay, true), week: w }));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
   const toggleEnvio = (key) => setCollapsedEnvios((prev) => {
     const n = new Set(prev);
@@ -243,10 +245,10 @@ const ShippingModule = () => {
         setShippedTotal(data.total || 0);
         setShipped(prev => reset ? (data.items || []) : [...prev, ...(data.items || [])]);
       } else {
-        toast.error('No se pudo cargar la lista de envíos');
+        toast.error(t('ship_load_list_err'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     } finally {
       setShippedLoading(false);
     }
@@ -275,7 +277,7 @@ const ShippingModule = () => {
         if (!(data.items || []).length || all.length >= (data.total || 0)) break;
         skip += BIG;
       }
-      if (!all.length) { toast.error('No hay envíos para exportar'); return; }
+      if (!all.length) { toast.error(t('ship_no_export')); return; }
       const rows = all.map(o => ({
         'Orden': o.order_number || '',
         'Cliente': o.client || '',
@@ -294,9 +296,9 @@ const ShippingModule = () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Envios_con_packing');
       XLSX.writeFile(wb, `envios_con_packing_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success(`${all.length} envío(s) exportado(s)`);
+      toast.success(t('ship_exported_count', { n: all.length }));
     } catch {
-      toast.error('No se pudo exportar');
+      toast.error(t('ship_export_err'));
     } finally {
       setExporting(false);
     }
@@ -308,10 +310,10 @@ const ShippingModule = () => {
     try {
       const res = await fetch(`${API}/scheduled-shipments`, { credentials: 'include' });
       if (res.ok) { const d = await res.json(); setScheduled(d.items || []); setWeekEnvios(d.weeks || []); }
-      else toast.error('No se pudo cargar envíos programados');
-    } catch { toast.error('Error de conexión'); }
+      else toast.error(t('ship_load_scheduled_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setScheduledLoading(false); }
-  }, []);
+  }, [t]);
 
   const loadAvailable = useCallback(async (reset, term) => {
     setAvailableLoading(true);
@@ -323,10 +325,10 @@ const ShippingModule = () => {
         const d = await res.json();
         setAvailableTotal(d.total || 0);
         setAvailable(prev => reset ? (d.items || []) : [...prev, ...(d.items || [])]);
-      } else toast.error('No se pudo cargar disponibles');
-    } catch { toast.error('Error de conexión'); }
+      } else toast.error(t('ship_load_available_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setAvailableLoading(false); }
-  }, [available.length, availableSearch]);
+  }, [available.length, availableSearch, t]);
 
   useEffect(() => {
     if (activeTab === 'programados') loadScheduled();
@@ -335,12 +337,12 @@ const ShippingModule = () => {
 
   // Programa la orden DONDE ESTÁS PARADO: mes/semana visibles + envío destino.
   const scheduleOrder = async (orderNumber) => {
-    if (!calMonth) { toast.error('Abre un mes del calendario para programar'); return; }
+    if (!calMonth) { toast.error(t('ship_open_month_to_schedule')); return; }
     // El destino debe ser un envío del día que estás viendo — si cayera en un
     // envío de otro día, la orden aterrizaría fuera de pantalla y parecería
     // que el botón no hizo nada.
     if (!dayEnvsOf(calMonth, selWeek, selDay).includes(targetEnvio)) {
-      toast.error(`Marca "programar aquí" en un envío de ${dayLabel(selDay, true)}, o créalo con + Envío`);
+      toast.error(t('ship_mark_target_err', { day: dayLabel(selDay, true) }));
       return;
     }
     try {
@@ -358,8 +360,8 @@ const ShippingModule = () => {
         toast.success(`#${orderNumber} → ${MONTHS[calMonth - 1]} S${selWeek} · ${envioLabel(calYear, calMonth, selWeek, targetEnvio)}`);
         loadScheduled();
         if (availableSearch.trim()) loadAvailable(true);
-      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'No se pudo programar'); }
-    } catch { toast.error('Error de conexión'); }
+      } else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('ship_schedule_err')); }
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const updateScheduled = async (shipmentId, patch) => {
@@ -369,17 +371,17 @@ const ShippingModule = () => {
         body: JSON.stringify(patch),
       });
       if (res.ok) { const row = await res.json(); setScheduled(prev => prev.map(r => r.shipment_id === shipmentId ? row : r)); }
-      else toast.error('No se pudo actualizar');
-    } catch { toast.error('Error de conexión'); }
+      else toast.error(t('ship_update_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const unschedule = async (shipmentId, orderNumber) => {
-    if (!window.confirm(`¿Quitar #${orderNumber} de envíos programados?`)) return;
+    if (!window.confirm(t('ship_unschedule_confirm', { order: orderNumber }))) return;
     try {
       const res = await fetch(`${API}/scheduled-shipments/${shipmentId}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) { toast.success(`#${orderNumber} desprogramado`); loadScheduled(); if (availableSearch.trim()) loadAvailable(true); }
-      else toast.error('No se pudo desprogramar');
-    } catch { toast.error('Error de conexión'); }
+      if (res.ok) { toast.success(t('ship_unscheduled', { order: orderNumber })); loadScheduled(); if (availableSearch.trim()) loadAvailable(true); }
+      else toast.error(t('ship_unschedule_err'));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   // Fila de Excel de una programación — compartida por el export global y el
@@ -409,15 +411,15 @@ const ShippingModule = () => {
   };
 
   const exportScheduled = () => {
-    if (!scheduled.length) { toast.error('No hay envíos programados'); return; }
+    if (!scheduled.length) { toast.error(t('ship_no_scheduled')); return; }
     setSchedExporting(true);
     try {
       const ws = XLSX.utils.json_to_sheet(scheduled.map(schedExcelRow));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Envios_programados');
       XLSX.writeFile(wb, `envios_programados_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success(`${scheduled.length} programado(s) exportado(s)`);
-    } catch { toast.error('No se pudo exportar'); }
+      toast.success(t('ship_scheduled_exported', { n: scheduled.length }));
+    } catch { toast.error(t('ship_export_err')); }
     finally { setSchedExporting(false); }
   };
 
@@ -425,7 +427,7 @@ const ShippingModule = () => {
   // con nombre de archivo que dice exactamente qué es (mes, semana, día y
   // número visible del envío en su día).
   const exportEnvio = (m, w, env, glist) => {
-    if (!glist.length) { toast.error('Este envío no tiene órdenes'); return; }
+    if (!glist.length) { toast.error(t('ship_envio_no_orders')); return; }
     try {
       const { day, num } = envioDayNum(calYear, m, w, env);
       const ws = XLSX.utils.json_to_sheet(glist.map(schedExcelRow));
@@ -433,8 +435,8 @@ const ShippingModule = () => {
       XLSX.utils.book_append_sheet(wb, ws, `Envio ${num}`);
       const dia = day ? DAYS_FULL[day - 1] : 'SinDia';
       XLSX.writeFile(wb, `envio_${calYear}_${MONTHS[m - 1]}_S${w}_${dia}_E${num}.xlsx`);
-      toast.success(`Envío ${num} (${dayLabel(day, true)}) exportado · ${glist.length} orden(es)`);
-    } catch { toast.error('No se pudo exportar el envío'); }
+      toast.success(t('ship_envio_exported', { n: num, day: dayLabel(day, true), count: glist.length }));
+    } catch { toast.error(t('ship_export_envio_err')); }
   };
 
   // Tabla de órdenes de un grupo (envío). `w` = semana, para las opciones de reprogramar.
@@ -443,11 +445,11 @@ const ShippingModule = () => {
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/60 border-b border-slate-200">
-            <th className="py-2.5 px-3">Orden</th>
+            <th className="py-2.5 px-3">{t('order')}</th>
             <th className="py-2.5 px-3">Cust. PO</th>
             <th className="py-2.5 px-3">Design #</th>
             <th className="py-2.5 px-3">Cancel Date</th>
-            <th className="py-2.5 px-3">Cliente</th>
+            <th className="py-2.5 px-3">{t('client')}</th>
             <th className="py-2.5 px-3">Branding</th>
             <th className="py-2.5 px-3 text-right">Qty</th>
             <th className="py-2.5 px-3">Status</th>
@@ -456,7 +458,7 @@ const ShippingModule = () => {
             <th className="py-2.5 px-3">Delivery to</th>
             <th className="py-2.5 px-3 text-right">Days Com.</th>
             <th className="py-2.5 px-3">Notes</th>
-            <th className="py-2.5 px-3">Reprogramar</th>
+            <th className="py-2.5 px-3">{t('ship_reschedule')}</th>
             <th className="py-2.5 px-3"></th>
           </tr>
         </thead>
@@ -490,7 +492,7 @@ const ShippingModule = () => {
                   className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
               </td>
               <td className="py-2.5 px-3">
-                <input defaultValue={r.delivery_to || ''} placeholder="Destino"
+                <input defaultValue={r.delivery_to || ''} placeholder={t('ship_destination_placeholder')}
                   onBlur={(e) => { const v = e.target.value.trim(); if (v !== (r.delivery_to || '')) updateScheduled(r.shipment_id, { delivery_to: v }); }}
                   className="w-32 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:border-blue-400 outline-none" />
               </td>
@@ -500,13 +502,13 @@ const ShippingModule = () => {
                 <div className="flex items-center gap-1">
                   <select value={r.scheduled_month || calMonth}
                     onChange={(e) => updateScheduled(r.shipment_id, { scheduled_month: Number(e.target.value) })}
-                    title="Mover a mes"
+                    title={t('ship_move_to_month')}
                     className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
                     {MONTHS.map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
                   </select>
                   <select value={r.scheduled_week || 1}
                     onChange={(e) => updateScheduled(r.shipment_id, { scheduled_week: Number(e.target.value) })}
-                    title="Mover a semana"
+                    title={t('ship_move_to_week')}
                     className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
                     {WEEKS.map((wk) => <option key={wk} value={wk}>S{wk}</option>)}
                   </select>
@@ -515,7 +517,7 @@ const ShippingModule = () => {
                       número interno de semana. */}
                   <select value={r.shipment_no || 1}
                     onChange={(e) => updateScheduled(r.shipment_id, { shipment_no: Number(e.target.value) })}
-                    title="Mover a otro envío (día · número)"
+                    title={t('ship_move_to_other_envio')}
                     className="bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-400 outline-none">
                     {Array.from({ length: Math.max(enviosForWeek(calMonth, w), r.shipment_no || 1) }, (_, i) => i + 1).map((n) => {
                       const { day, num } = envioDayNum(calYear, calMonth, w, n);
@@ -525,7 +527,7 @@ const ShippingModule = () => {
                 </div>
               </td>
               <td className="py-2.5 px-3">
-                <button onClick={() => unschedule(r.shipment_id, r.order_number)} title="Quitar"
+                <button onClick={() => unschedule(r.shipment_id, r.order_number)} title={t('ship_remove')}
                   className="p-1.5 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors">
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -548,7 +550,7 @@ const ShippingModule = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!orderNumbers.trim()) return toast.error("Ingresa al menos un número de orden");
+    if (!orderNumbers.trim()) return toast.error(t('ship_order_required'));
 
     setLoading(true);
     const formData = new FormData();
@@ -566,17 +568,17 @@ const ShippingModule = () => {
       });
 
       if (res.ok) {
-        toast.success("Envío registrado exitosamente");
+        toast.success(t('ship_registered_ok'));
         setOrderNumbers("");
         setNotes("");
         setFiles([]);
         fetchRecords();
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Error al registrar envío");
+        toast.error(err.detail || t('ship_register_err'));
       }
     } catch (err) {
-      toast.error("Error de conexión");
+      toast.error(t('ceo_err_connection'));
     } finally {
       setLoading(false);
     }
@@ -604,7 +606,7 @@ const ShippingModule = () => {
           </div>
           <div>
             <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight leading-none mb-1">
-              REGISTRO DE <span className="text-blue-600">ENVÍOS</span>
+              {t('ship_title_1')} <span className="text-blue-600">{t('ship_title_2')}</span>
             </h1>
             <p className="text-slate-500 font-semibold text-sm">PROSPER MANUFACTURING SYSTEM</p>
           </div>
@@ -633,7 +635,7 @@ const ShippingModule = () => {
               : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'
           }`}
         >
-          <Package className="w-4 h-4" /> Registro de envíos
+          <Package className="w-4 h-4" /> {t('ship_tab_register')}
         </button>
         <button
           onClick={() => setActiveTab('packing')}
@@ -643,7 +645,7 @@ const ShippingModule = () => {
               : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'
           }`}
         >
-          <Truck className="w-4 h-4" /> Con packing cargado
+          <Truck className="w-4 h-4" /> {t('ship_tab_packing')}
         </button>
         <button
           onClick={() => setActiveTab('programados')}
@@ -653,7 +655,7 @@ const ShippingModule = () => {
               : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'
           }`}
         >
-          <Clock className="w-4 h-4" /> Envíos programados
+          <Clock className="w-4 h-4" /> {t('ship_tab_scheduled')}
         </button>
       </div>
 
@@ -668,14 +670,14 @@ const ShippingModule = () => {
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600 flex items-center gap-2">
                   <Layers className="w-4 h-4" />
-                  Números de Órdenes
+                  {t('ship_order_numbers')}
                 </label>
                 <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
-                  Separar por espacio
+                  {t('ship_separate_space')}
                 </span>
               </div>
               <textarea 
-                placeholder="Ej: 505050 505051"
+                placeholder={t('ship_order_numbers_placeholder')}
                 value={orderNumbers}
                 onChange={(e) => setOrderNumbers(e.target.value)}
                 className="w-full h-36 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] p-5 text-slate-900 text-lg placeholder:text-slate-300 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 transition-all resize-none font-mono font-bold leading-relaxed"
@@ -683,10 +685,10 @@ const ShippingModule = () => {
             </div>
 
             <div className="space-y-4">
-              <label className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">Notas Adicionales</label>
-              <input 
+              <label className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">{t('ship_additional_notes')}</label>
+              <input
                 type="text"
-                placeholder="Detalles del transportista, etc."
+                placeholder={t('ship_notes_placeholder')}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-slate-900 text-sm font-bold placeholder:text-slate-300 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 transition-all"
@@ -694,14 +696,14 @@ const ShippingModule = () => {
             </div>
 
             <div className="space-y-4">
-              <label className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">Adjuntar Evidencia</label>
+              <label className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">{t('ship_attach_evidence')}</label>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="relative group h-28">
                   <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                   <div className="h-full border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 group-hover:border-blue-600 group-hover:bg-blue-50 transition-all">
                     <Upload className="w-6 h-6 text-blue-600" />
-                    <span className="text-[10px] font-black text-slate-500 uppercase">Documentos</span>
+                    <span className="text-[10px] font-black text-slate-500 uppercase">{t('ship_documents')}</span>
                   </div>
                 </div>
 
@@ -709,7 +711,7 @@ const ShippingModule = () => {
                   <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                   <div className="h-full border-2 border-dashed border-blue-200 bg-blue-50/50 rounded-2xl flex flex-col items-center justify-center gap-2 group-hover:border-blue-600 group-hover:bg-blue-100 transition-all">
                     <Camera className="w-6 h-6 text-blue-600 animate-pulse" />
-                    <span className="text-[10px] font-black text-blue-700 uppercase">Tomar Foto</span>
+                    <span className="text-[10px] font-black text-blue-700 uppercase">{t('ship_take_photo')}</span>
                   </div>
                 </div>
               </div>
@@ -742,7 +744,7 @@ const ShippingModule = () => {
               ) : (
                 <>
                   <CheckCircle2 className="w-6 h-6" />
-                  GUARDAR ENVÍO
+                  {t('ship_save_btn')}
                 </>
               )}
             </button>
@@ -755,10 +757,10 @@ const ShippingModule = () => {
             <div className="flex items-center justify-between mb-8">
               <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
                 <Clock className="w-6 h-6 text-blue-600" />
-                SALIDAS DEL DÍA
+                {t('ship_day_outputs')}
               </h3>
               <div className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-full uppercase">
-                {records.length} Registros
+                {t('ship_records_count', { n: records.length })}
               </div>
             </div>
 
@@ -769,7 +771,7 @@ const ShippingModule = () => {
             ) : records.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-300">
                 <Package className="w-24 h-24 mb-4 opacity-20" />
-                <p className="font-black uppercase tracking-widest text-slate-400">Sin movimientos</p>
+                <p className="font-black uppercase tracking-widest text-slate-400">{t('ship_no_movements')}</p>
               </div>
             ) : (
               <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1">
@@ -789,7 +791,7 @@ const ShippingModule = () => {
                     </div>
 
                     <div className="flex gap-4 items-center">
-                      <p className="flex-1 text-sm text-slate-700 font-bold line-clamp-1">{rec.notes || "Envío sin notas"}</p>
+                      <p className="flex-1 text-sm text-slate-700 font-bold line-clamp-1">{rec.notes || t('ship_no_notes')}</p>
                       
                       {rec.evidence?.length > 0 && (
                         <div className="flex -space-x-2">
@@ -829,7 +831,7 @@ const ShippingModule = () => {
                         onClick={() => setSelectedRecord(rec)}
                         className="flex items-center gap-1 text-[10px] font-black text-blue-600 hover:text-blue-700 transition-colors uppercase tracking-widest"
                       >
-                        Detalles <ChevronRight className="w-3 h-3" />
+                        {t('details')} <ChevronRight className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -848,9 +850,9 @@ const ShippingModule = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
                 <Truck className="w-6 h-6 text-blue-600" />
-                ENVÍOS CON PACKING
+                {t('ship_with_packing_title')}
                 <span className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-full uppercase">
-                  {shipped.length} de {shippedTotal}
+                  {t('ship_x_of_y', { a: shipped.length, b: shippedTotal })}
                 </span>
               </h3>
               <div className="flex items-center gap-2">
@@ -859,7 +861,7 @@ const ShippingModule = () => {
                   disabled={shippedLoading}
                   className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[11px] uppercase tracking-widest hover:bg-slate-200 transition-all disabled:opacity-50"
                 >
-                  <Search className="w-4 h-4" /> Refrescar
+                  <Search className="w-4 h-4" /> {t('ship_refresh')}
                 </button>
                 <button
                   onClick={exportShipped}
@@ -867,7 +869,7 @@ const ShippingModule = () => {
                   className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-black text-[11px] uppercase tracking-widest hover:bg-emerald-700 transition-all disabled:opacity-50"
                 >
                   {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  Exportar Excel
+                  {t('export_excel')}
                 </button>
               </div>
             </div>
@@ -879,7 +881,7 @@ const ShippingModule = () => {
             ) : shipped.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-300">
                 <Truck className="w-24 h-24 mb-4 opacity-20" />
-                <p className="font-black uppercase tracking-widest text-slate-400">Sin envíos con packing</p>
+                <p className="font-black uppercase tracking-widest text-slate-400">{t('ship_no_with_packing')}</p>
               </div>
             ) : (
               <>
@@ -887,13 +889,13 @@ const ShippingModule = () => {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-200">
-                        <th className="py-3 px-3">Orden</th>
-                        <th className="py-3 px-3">Cliente</th>
+                        <th className="py-3 px-3">{t('order')}</th>
+                        <th className="py-3 px-3">{t('client')}</th>
                         <th className="py-3 px-3">Style</th>
-                        <th className="py-3 px-3 text-right">Cant.</th>
+                        <th className="py-3 px-3 text-right">{t('ship_qty_short')}</th>
                         <th className="py-3 px-3">Packing</th>
-                        <th className="py-3 px-3">Fecha</th>
-                        <th className="py-3 px-3">Tablero</th>
+                        <th className="py-3 px-3">{t('date')}</th>
+                        <th className="py-3 px-3">{t('board')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -933,7 +935,7 @@ const ShippingModule = () => {
                       className="flex items-center gap-2 px-8 py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all disabled:opacity-50"
                     >
                       {shippedLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
-                      Cargar 50 más ({shipped.length}/{shippedTotal})
+                      {t('ship_load_more_50', { a: shipped.length, b: shippedTotal })}
                     </button>
                   </div>
                 )}
@@ -951,7 +953,7 @@ const ShippingModule = () => {
               {calMonth && (
                 <button onClick={() => setCalMonth(null)}
                   className="flex items-center gap-1 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200">
-                  ‹ Meses
+                  {t('ship_months_back')}
                 </button>
               )}
               <div className="flex items-center gap-1">
@@ -961,17 +963,17 @@ const ShippingModule = () => {
               </div>
               {calMonth && <span className="text-xl font-black text-blue-600">{MONTHS_FULL[calMonth - 1]}</span>}
               <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-full uppercase tracking-widest">
-                {scheduled.filter((r) => r.scheduled_year === calYear).length} programadas
+                {t('ship_scheduled_count', { n: scheduled.filter((r) => r.scheduled_year === calYear).length })}
               </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => setShowAvailable((v) => !v)}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${showAvailable ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                <Search className="w-3.5 h-3.5" /> Buscar orden
+                <Search className="w-3.5 h-3.5" /> {t('ship_search_order')}
               </button>
               <button onClick={loadScheduled} disabled={scheduledLoading}
                 className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 disabled:opacity-50">
-                <Search className="w-3.5 h-3.5" /> Refrescar
+                <Search className="w-3.5 h-3.5" /> {t('ship_refresh')}
               </button>
               <button onClick={exportScheduled} disabled={schedExporting || !scheduled.length}
                 className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-50">
@@ -985,7 +987,7 @@ const ShippingModule = () => {
             {showAvailable && (
               <aside className="w-80 flex-shrink-0 bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col sticky top-4" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
                 <h3 className="text-sm font-black text-slate-800 flex items-center gap-2 mb-3 uppercase tracking-wide">
-                  <Search className="w-4 h-4 text-blue-600" /> Buscar orden
+                  <Search className="w-4 h-4 text-blue-600" /> {t('ship_search_order')}
                 </h3>
                 <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 mb-2">
                   <Search className="w-4 h-4 text-slate-400" />
@@ -993,26 +995,26 @@ const ShippingModule = () => {
                     value={availableSearch}
                     onChange={(e) => setAvailableSearch(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') loadAvailable(true, availableSearch); }}
-                    placeholder="# orden, cliente o PO + Enter"
+                    placeholder={t('ship_available_search_placeholder')}
                     className="bg-transparent text-sm w-full outline-none text-slate-700"
                   />
                 </div>
                 {calMonth ? (
-                  <p className="text-[10px] font-bold text-slate-400 mb-3">Caen en <span className="text-blue-600 font-black">{MONTHS[calMonth - 1]} · Semana {selWeek} · {envioLabel(calYear, calMonth, selWeek, targetEnvio)} · {calYear}</span></p>
+                  <p className="text-[10px] font-bold text-slate-400 mb-3">{t('ship_land_in')} <span className="text-blue-600 font-black">{MONTHS[calMonth - 1]} · {t('ship_week_n', { n: selWeek })} · {envioLabel(calYear, calMonth, selWeek, targetEnvio)} · {calYear}</span></p>
                 ) : (
-                  <p className="text-[10px] font-bold text-slate-400 mb-3">Abre un mes del calendario para elegir dónde caen.</p>
+                  <p className="text-[10px] font-bold text-slate-400 mb-3">{t('ship_open_month_hint')}</p>
                 )}
                 <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-2">
                   {!availableSearch.trim() ? (
                     <div className="h-full flex items-center justify-center px-2">
                       <p className="text-center text-xs text-slate-400 font-semibold leading-relaxed">
-                        Escribe un <span className="font-black text-slate-500"># de orden</span>, cliente o PO y presiona <span className="font-black text-slate-500">Enter</span> para encontrarla y programarla.
+                        {t('ship_search_hint_1')} <span className="font-black text-slate-500">{t('ship_search_hint_order')}</span>{t('ship_search_hint_2')} <span className="font-black text-slate-500">Enter</span> {t('ship_search_hint_3')}
                       </p>
                     </div>
                   ) : availableLoading ? (
                     <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 text-blue-400 animate-spin" /></div>
                   ) : available.length === 0 ? (
-                    <p className="text-center text-slate-300 font-black uppercase text-xs tracking-widest py-10">Sin coincidencias</p>
+                    <p className="text-center text-slate-300 font-black uppercase text-xs tracking-widest py-10">{t('ship_no_matches')}</p>
                   ) : (
                     <>
                       {available.map((o) => (
@@ -1026,7 +1028,7 @@ const ShippingModule = () => {
                             onClick={() => scheduleOrder(o.order_number)}
                             className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[10px] uppercase tracking-wider hover:bg-blue-700 transition-all flex-shrink-0"
                           >
-                            <ChevronRight className="w-3.5 h-3.5" /> Programar
+                            <ChevronRight className="w-3.5 h-3.5" /> {t('ship_schedule_btn')}
                           </button>
                         </div>
                       ))}
@@ -1036,7 +1038,7 @@ const ShippingModule = () => {
                           disabled={availableLoading}
                           className="w-full py-2 text-xs font-black uppercase tracking-widest text-blue-600 hover:bg-blue-50 rounded-xl disabled:opacity-50"
                         >
-                          {availableLoading ? 'Cargando...' : `Cargar más (${available.length}/${availableTotal})`}
+                          {availableLoading ? t('loading') : t('ship_load_more', { a: available.length, b: availableTotal })}
                         </button>
                       )}
                     </>
@@ -1057,7 +1059,7 @@ const ShippingModule = () => {
                         className={`flex flex-col items-start p-5 rounded-2xl border transition-all ${c ? 'border-blue-200 bg-blue-50/50 hover:bg-blue-50 hover:shadow-md' : 'border-slate-100 hover:border-slate-300'}`}>
                         <span className="text-sm font-black text-slate-700 uppercase tracking-wide">{MONTHS_FULL[i]}</span>
                         <span className={`mt-3 text-3xl font-black ${c ? 'text-blue-600' : 'text-slate-200'}`}>{c}</span>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-0.5">órdenes</span>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-0.5">{t('orders_unit')}</span>
                       </button>
                     );
                   })}
@@ -1083,7 +1085,7 @@ const ShippingModule = () => {
                               active ? 'bg-blue-600 text-white shadow-sm'
                                 : n ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
                                   : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}>
-                            Semana {w}{n ? ` · ${n}` : ''}
+                            {t('ship_week_n', { n: w })}{n ? ` · ${n}` : ''}
                           </button>
                         );
                       })}
@@ -1096,7 +1098,7 @@ const ShippingModule = () => {
                         const active = selDay === d;
                         return (
                           <button key={d} onClick={() => selectDay(calMonth, selWeek, d)}
-                            title={`${dayLabel(d, true)}: ${nE} envío(s) · ${nO} órdenes`}
+                            title={t('ship_day_title', { day: dayLabel(d, true), e: nE, o: nO })}
                             className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${
                               active ? 'bg-blue-600 text-white shadow-sm'
                                 : nE ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
@@ -1110,17 +1112,17 @@ const ShippingModule = () => {
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-black uppercase tracking-widest text-slate-700">{dayLabel(selDay, true)}</span>
-                        <span className="text-[11px] font-bold text-slate-400">Semana {selWeek} · {dayEnvs.length} envío(s) · {ordersOfDay(selDay)} órdenes</span>
+                        <span className="text-[11px] font-bold text-slate-400">{t('ship_week_summary', { week: selWeek, e: dayEnvs.length, o: ordersOfDay(selDay) })}</span>
                       </div>
                       <button onClick={() => addEnvio(calMonth, selWeek)}
                         className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700">
-                        + Envío
+                        {t('ship_add_envio_btn')}
                       </button>
                     </div>
                     <div className="space-y-3">
                       {dayEnvs.length === 0 && (
                         <p className="text-[12px] text-slate-300 font-bold italic px-1 py-4">
-                          Sin envíos en {dayLabel(selDay, true)} — mueve uno aquí con su selector de día, o créalo con "+ Envío".
+                          {t('ship_no_envios_day', { day: dayLabel(selDay, true) })}
                         </p>
                       )}
                       {dayEnvs.map((env, envIdx) => {
@@ -1134,34 +1136,34 @@ const ShippingModule = () => {
                             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50/70 border-b border-slate-200">
                               <button onClick={() => toggleEnvio(gkey)} className="flex items-center gap-2 flex-1 text-left">
                                 <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
-                                <span className="text-xs font-black uppercase tracking-widest text-slate-600">Envío {envIdx + 1}</span>
-                                <span className="text-[10px] font-bold text-slate-400">({glist.length} órdenes)</span>
+                                <span className="text-xs font-black uppercase tracking-widest text-slate-600">{t('ship_envio_n', { n: envIdx + 1 })}</span>
+                                <span className="text-[10px] font-bold text-slate-400">{t('ship_orders_paren', { n: glist.length })}</span>
                               </button>
                               <div className="flex items-center gap-1.5">
                                 {/* Excel de SOLO este envío */}
                                 <button onClick={() => exportEnvio(calMonth, selWeek, env, glist)}
                                   disabled={!glist.length}
-                                  title={glist.length ? `Descargar Excel del Envío ${envIdx + 1} (${glist.length} órdenes)` : 'Sin órdenes que exportar'}
+                                  title={glist.length ? t('ship_download_envio_excel', { n: envIdx + 1, count: glist.length }) : t('ship_no_orders_export')}
                                   className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
                                   <FileSpreadsheet className="w-3 h-3" /> Excel
                                 </button>
                                 {/* Mover el envío COMPLETO (con sus órdenes) a otro día */}
                                 <select value={selDay} onChange={(e) => moveEnvioDay(calMonth, selWeek, env, Number(e.target.value))}
-                                  title="Mover envío a otro día"
+                                  title={t('ship_move_envio_day')}
                                   className="bg-white border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 focus:border-blue-400 outline-none">
-                                  <option value={0}>Sin día</option>
+                                  <option value={0}>{t('ship_no_day')}</option>
                                   {DAYS.map((dn, i) => <option key={i} value={i + 1}>{dn}</option>)}
                                 </select>
                                 <button onClick={() => setTargetEnvio(env)}
-                                  title="Las órdenes del buscador caen en este envío"
+                                  title={t('ship_target_hint')}
                                   className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isEnvTarget ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
-                                  {isEnvTarget ? 'destino' : 'programar aquí'}
+                                  {isEnvTarget ? t('ship_target') : t('ship_schedule_here')}
                                 </button>
                               </div>
                             </div>
                             {!collapsed && (
                               glist.length === 0
-                                ? <p className="text-[12px] text-slate-300 font-bold italic px-3 py-3">Sin órdenes en este envío — márcalo "programar aquí" y usa el buscador</p>
+                                ? <p className="text-[12px] text-slate-300 font-bold italic px-3 py-3">{t('ship_no_orders_envio')}</p>
                                 : renderOrderTable(glist, selWeek)
                             )}
                           </div>
@@ -1186,7 +1188,7 @@ const ShippingModule = () => {
                 <div>
                   <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                     <Package className="w-6 h-6 text-blue-600" />
-                    DETALLES DEL ENVÍO
+                    {t('ship_details_title')}
                   </h2>
                   <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">
                     {new Date(selectedRecord.created_at).toLocaleString()}
@@ -1202,7 +1204,7 @@ const ShippingModule = () => {
 
               <div className="space-y-4">
                 <div className="bg-slate-50 p-4 rounded-2xl">
-                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">Órdenes Asociadas</span>
+                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">{t('ship_associated_orders')}</span>
                   <div className="flex flex-wrap gap-2">
                     {selectedRecord.order_numbers.map(ono => (
                       <span key={ono} className="px-4 py-1.5 bg-blue-600 text-white text-xs font-black rounded-xl shadow-md">
@@ -1213,15 +1215,15 @@ const ShippingModule = () => {
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-2xl">
-                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">Notas</span>
+                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">{t('ship_notes')}</span>
                   <p className="text-slate-800 font-bold leading-relaxed">
-                    {selectedRecord.notes || "No se ingresaron notas para este envío."}
+                    {selectedRecord.notes || t('ship_no_notes_detail')}
                   </p>
                 </div>
 
                 {selectedRecord.evidence?.length > 0 && (
                   <div className="space-y-2">
-                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block px-1">Evidencia Multimedia</span>
+                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block px-1">{t('ship_evidence_media')}</span>
                     <div className="grid grid-cols-2 gap-4">
                       {selectedRecord.evidence.map((ev) => (
                         <a 
@@ -1260,7 +1262,7 @@ const ShippingModule = () => {
                     {selectedRecord.created_by_name?.charAt(0).toUpperCase()}
                   </div>
                   <div className="flex flex-col">
-                     <span className="text-[10px] text-slate-400 font-black uppercase leading-none">Registrado por</span>
+                     <span className="text-[10px] text-slate-400 font-black uppercase leading-none">{t('ship_registered_by')}</span>
                      <span className="text-sm text-slate-800 font-black">{selectedRecord.created_by_name}</span>
                   </div>
                 </div>
@@ -1268,7 +1270,7 @@ const ShippingModule = () => {
                   onClick={() => setSelectedRecord(null)}
                   className="px-8 py-3 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all"
                 >
-                  Cerrar
+                  {t('close')}
                 </button>
               </div>
             </div>

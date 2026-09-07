@@ -4,6 +4,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Loader2, Plus, Trash2, X, AlertTriangle, CheckCircle2, Boxes } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../lib/constants";
+import { useLang } from "../contexts/LanguageContext";
 
 /* Componentes de una orden: qué piezas necesita y cuál la está frenando.
 
@@ -39,8 +40,9 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 /* Barra de avance + quién frena. Es el resumen que calcula el backend; aquí
    solo se pinta, para que no existan dos maneras de contarlo. */
 export const ComponentsSummary = ({ summary, compact = false }) => {
+  const { t } = useLang();
   if (!summary || !summary.total) {
-    return <span className="text-xs text-slate-400">Sin componentes</span>;
+    return <span className="text-xs text-slate-400">{t('comp_none')}</span>;
   }
   const b = summary.blocking;
   return (
@@ -58,17 +60,17 @@ export const ComponentsSummary = ({ summary, compact = false }) => {
       </div>
       {b ? (
         <span className="text-xs text-slate-600">
-          Frena: <b>{TYPE_LABEL[b.type] || b.type}</b>
+          {t('comp_blocking')} <b>{TYPE_LABEL[b.type] || b.type}</b>
           <span className="text-slate-400"> · {STATE_LABEL[b.state] || b.state}</span>
         </span>
       ) : (
         <span className="text-xs text-emerald-600 flex items-center gap-1">
-          <CheckCircle2 className="w-3.5 h-3.5" /> Nada la frena
+          <CheckCircle2 className="w-3.5 h-3.5" /> {t('comp_nothing_blocking')}
         </span>
       )}
       {summary.late > 0 && (
         <span className="text-xs text-red-600 font-bold flex items-center gap-1">
-          <AlertTriangle className="w-3.5 h-3.5" /> {summary.late} atrasado{summary.late > 1 ? "s" : ""}
+          <AlertTriangle className="w-3.5 h-3.5" /> {summary.late > 1 ? t('comp_late_plural', { n: summary.late }) : t('comp_late_singular', { n: summary.late })}
         </span>
       )}
     </div>
@@ -76,6 +78,7 @@ export const ComponentsSummary = ({ summary, compact = false }) => {
 };
 
 const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = false }) => {
+  const { t } = useLang();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -95,7 +98,7 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
       setRows(d.components || []);
       setSummary(d.summary || null);
     } catch {
-      toast.error("No se pudieron cargar los componentes");
+      toast.error(t('comp_load_err'));
     } finally {
       setLoading(false);
     }
@@ -117,7 +120,7 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
       onChanged?.();
       if (mensaje) toast.success(mensaje);
     } catch (e) {
-      toast.error(e.message === "error" ? "No se pudo guardar" : e.message);
+      toast.error(e.message === "error" ? t('comp_save_err') : e.message);
     } finally {
       setBusy("");
     }
@@ -135,12 +138,12 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
     setBusy("seed");
     return tras(() => fetch(`${API}/order-components/order/${orderId}/seed`, {
       method: "POST", credentials: "include",
-    }), "Componentes de la plantilla agregados");
+    }), t('comp_seeded'));
   };
 
   const agregar = () => {
     if (nuevoTipo === "OTHER" && !nuevoNombre.trim()) {
-      toast.error("Ponle nombre al componente");
+      toast.error(t('comp_name_req'));
       return;
     }
     setBusy("new");
@@ -148,14 +151,14 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
       method: "POST", headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ order_id: orderId, type: nuevoTipo, name: nuevoNombre.trim() }),
-    }), "Componente agregado").then(() => setNuevoNombre(""));
+    }), t('comp_added')).then(() => setNuevoNombre(""));
   };
 
   const borrar = (id) => {
     setBusy(id);
     return tras(() => fetch(`${API}/order-components/${id}`, {
       method: "DELETE", credentials: "include",
-    }), "Componente borrado");
+    }), t('comp_deleted'));
   };
 
   if (!order) return null;
@@ -171,7 +174,7 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
           <DialogHeader className="px-6 pt-5 pb-3 border-b border-border">
             <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-2">
               <Boxes className="w-5 h-5 text-royal" />
-              Componentes · {order.order_number}
+              {t('comp_components')} · {order.order_number}
             </DialogTitle>
             <div className="flex items-center gap-3 flex-wrap mt-1">
               <span className="text-xs text-muted-foreground">{order.client || "—"}</span>
@@ -187,9 +190,9 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
               <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-royal" /></div>
             ) : rows.length === 0 ? (
               <div className="py-14 text-center">
-                <div className="text-sm font-semibold text-foreground/80">Esta orden no tiene componentes</div>
+                <div className="text-sm font-semibold text-foreground/80">{t('comp_empty')}</div>
                 <div className="text-sm text-muted-foreground mt-1 mb-5">
-                  Siembra la plantilla y ajusta lo que aplique.
+                  {t('comp_empty_hint')}
                 </div>
                 <button
                   onClick={sembrar}
@@ -198,7 +201,7 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
                   data-testid="oc-seed"
                 >
                   {busy === "seed" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Sembrar plantilla
+                  {t('comp_seed')}
                 </button>
               </div>
             ) : (
@@ -206,14 +209,14 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-[10px] uppercase tracking-widest text-muted-foreground border-b border-border">
-                      <th className="text-left py-2 pr-3 font-bold">Componente</th>
-                      <th className="text-left py-2 px-3 font-bold">Estado</th>
-                      <th className="text-right py-2 px-3 font-bold">Pedido</th>
-                      <th className="text-right py-2 px-3 font-bold">Recibido</th>
-                      <th className="text-left py-2 px-3 font-bold">Compromiso</th>
-                      <th className="text-left py-2 px-3 font-bold">Proveedor</th>
-                      <th className="text-left py-2 px-3 font-bold">Nota</th>
-                      <th className="text-center py-2 pl-3 font-bold">Frena</th>
+                      <th className="text-left py-2 pr-3 font-bold">{t('comp_component')}</th>
+                      <th className="text-left py-2 px-3 font-bold">{t('status')}</th>
+                      <th className="text-right py-2 px-3 font-bold">{t('comp_ordered')}</th>
+                      <th className="text-right py-2 px-3 font-bold">{t('samples_received')}</th>
+                      <th className="text-left py-2 px-3 font-bold">{t('comp_due')}</th>
+                      <th className="text-left py-2 px-3 font-bold">{t('comp_supplier')}</th>
+                      <th className="text-left py-2 px-3 font-bold">{t('comp_note')}</th>
+                      <th className="text-center py-2 pl-3 font-bold">{t('comp_blocks')}</th>
                       {canDelete && <th className="w-8" />}
                     </tr>
                   </thead>
@@ -261,7 +264,7 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
                                 se desincroniza en cuanto cambia cualquiera de los dos. */}
                             {r.qty_required != null && r.qty_received != null && r.qty_received < r.qty_required && (
                               <div className="text-[10px] text-amber-600 font-bold">
-                                faltan {r.qty_required - r.qty_received}
+                                {t('comp_missing', { n: r.qty_required - r.qty_received })}
                               </div>
                             )}
                           </td>
@@ -290,14 +293,14 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
                             <input
                               type="checkbox" checked={!!r.blocks}
                               onChange={e => editar(r.component_id, { blocks: e.target.checked })}
-                              title="Si está marcado, este componente detiene la producción"
+                              title={t('comp_blocks_hint')}
                             />
                           </td>
                           {canDelete && (
                             <td className="py-2">
                               <button onClick={() => borrar(r.component_id)} disabled={busy === r.component_id}
                                 className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                                title="Borrar componente">
+                                title={t('comp_delete')}>
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </td>
@@ -319,19 +322,19 @@ const OrderComponentsModal = ({ order, isOpen, onClose, onChanged, canDelete = f
               </select>
               <input
                 value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)}
-                placeholder="Nombre (para distinguir dos del mismo tipo)"
+                placeholder={t('comp_name_placeholder')}
                 className="h-9 px-3 rounded-lg border border-border bg-card text-sm flex-1 min-w-[220px]"
               />
               <button onClick={agregar} disabled={busy === "new"}
                 className="h-9 px-4 rounded-lg border border-border text-sm font-bold inline-flex items-center gap-2 hover:border-royal hover:text-royal disabled:opacity-60"
                 data-testid="oc-add">
                 {busy === "new" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Agregar
+                {t('add')}
               </button>
               <button onClick={sembrar} disabled={busy === "seed"}
                 className="h-9 px-4 rounded-lg border border-border text-sm font-bold hover:border-royal hover:text-royal disabled:opacity-60"
-                title="Agrega los tipos de la plantilla que falten. No duplica ni pisa lo capturado.">
-                Completar plantilla
+                title={t('comp_complete_template_hint')}>
+                {t('comp_complete_template')}
               </button>
             </div>
           )}

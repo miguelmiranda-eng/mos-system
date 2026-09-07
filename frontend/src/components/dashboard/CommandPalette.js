@@ -26,15 +26,15 @@ const CommandPalette = ({
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const actions = [
-    { id: 'new-order', title: 'Nueva Orden', icon: <Plus size={18} />, shortcut: 'N', action: onNewOrder },
-    { id: 'automations', title: 'Automatización', icon: <Zap size={18} />, shortcut: 'A', action: onShowAutomations },
-    { id: 'analytics', title: 'Análisis de Datos', icon: <BarChart3 size={18} />, shortcut: 'D', action: onShowAnalytics },
-    { id: 'settings', title: 'Configuración', icon: <Settings size={18} />, shortcut: 'S', action: () => {} },
+    { id: 'new-order', title: t('new_order'), icon: <Plus size={18} />, shortcut: 'N', action: onNewOrder },
+    { id: 'automations', title: t('landing_feature_2_title'), icon: <Zap size={18} />, shortcut: 'A', action: onShowAutomations },
+    { id: 'analytics', title: t('dash_data_analysis'), icon: <BarChart3 size={18} />, shortcut: 'D', action: onShowAnalytics },
+    { id: 'settings', title: t('dash_settings'), icon: <Settings size={18} />, shortcut: 'S', action: () => {} },
   ];
 
   const boards = BOARDS.filter(b => b.toLowerCase().includes(query.toLowerCase())).map(b => ({
     id: `board-${b}`,
-    title: `Ir a: ${b}`,
+    title: t('dash_go_to', { board: b }),
     icon: <List size={18} />,
     action: () => onNavigateBoard(b)
   }));
@@ -88,7 +88,7 @@ const CommandPalette = ({
           <input
             autoFocus
             type="text"
-            placeholder="Escribe un comando o busca un tablero..."
+            placeholder={t('dash_command_placeholder')}
             className="flex-1 h-14 bg-transparent border-none outline-none text-base placeholder:text-muted-foreground/50"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -104,7 +104,7 @@ const CommandPalette = ({
           {filteredItems.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <Search className="mx-auto mb-3 opacity-20" size={32} />
-              <p className="text-sm">No se encontraron resultados para "{query}"</p>
+              <p className="text-sm">{t('dash_no_results_for', { q: query })}</p>
             </div>
           ) : (
             <div className="space-y-1">
@@ -141,11 +141,11 @@ const CommandPalette = ({
           <div className="flex items-center gap-4 text-[10px] font-bold text-muted-foreground">
             <div className="flex items-center gap-1">
               <span className="p-1 bg-card border border-border rounded shadow-sm">⏎</span>
-              <span>Seleccionar</span>
+              <span>{t('select')}</span>
             </div>
             <div className="flex items-center gap-1">
               <span className="p-1 bg-card border border-border rounded shadow-sm">↑↓</span>
-              <span>Navegar</span>
+              <span>{t('dash_navigate')}</span>
             </div>
           </div>
           <span className="text-[10px] font-bold text-royal">Enterprise MOS Suite</span>

@@ -5,6 +5,7 @@ import { Download, Loader2, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { API } from "../lib/constants";
+import { useLang } from "../contexts/LanguageContext";
 
 /* Reporte de órdenes pintadas.
 
@@ -30,14 +31,15 @@ const hace30 = () => {
 };
 
 const PrintedReportModal = ({ isOpen, onClose }) => {
+  const { t } = useLang();
   // Arranca en los últimos 30 días porque es el corte con el que se factura.
   const [desde, setDesde] = useState(hace30);
   const [hasta, setHasta] = useState(hoyLocal);
   const [busy, setBusy] = useState(false);
 
   const generar = async () => {
-    if (!desde || !hasta) { toast.error("Elige el rango de fechas"); return; }
-    if (desde > hasta) { toast.error("La fecha inicial es posterior a la final"); return; }
+    if (!desde || !hasta) { toast.error(t('report_pick_range')); return; }
+    if (desde > hasta) { toast.error(t('report_range_invalid')); return; }
     setBusy(true);
     try {
       const qs = new URLSearchParams({ date_from: desde, date_to: hasta });
@@ -49,7 +51,7 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
       const out = await res.json();
       const rows = out.rows || [];
       if (!rows.length) {
-        toast.error("No hay capturas de producción en ese rango");
+        toast.error(t('report_no_captures'));
         return;
       }
 
@@ -94,10 +96,10 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
       ws["!cols"] = Object.keys(sheet[0]).map((k) => ({ wch: Math.max(12, Math.min(28, k.length + 4)) }));
       XLSX.utils.book_append_sheet(wb, ws, "Pintadas");
       XLSX.writeFile(wb, `Ordenes_pintadas_${desde}_a_${hasta}.xlsx`);
-      toast.success(`${rows.length} órdenes exportadas`);
+      toast.success(t('report_exported_count', { n: rows.length }));
       onClose?.();
     } catch (e) {
-      toast.error(e.message === "error" ? "No se pudo generar el reporte" : e.message);
+      toast.error(e.message === "error" ? t('report_generate_err') : e.message);
     } finally {
       setBusy(false);
     }
@@ -113,18 +115,17 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
         >
           <DialogHeader>
             <DialogTitle className="font-barlow text-xl uppercase tracking-wide flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-amber-500" /> Órdenes pintadas
+              <CalendarDays className="w-5 h-5 text-amber-500" /> {t('report_printed_orders')}
             </DialogTitle>
           </DialogHeader>
 
           <p className="text-xs text-muted-foreground leading-relaxed mt-1">
-            Todo lo que registró producción en el rango, agrupado por número de orden:
-            una orden con varias capturas sale en un solo renglón con la suma.
+            {t('report_intro')}
           </p>
 
           <div className="grid grid-cols-2 gap-3 mt-4">
             <label className="text-xs uppercase tracking-wider font-bold text-muted-foreground">
-              Desde
+              {t('report_from')}
               <input
                 type="date"
                 value={desde}
@@ -135,7 +136,7 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
               />
             </label>
             <label className="text-xs uppercase tracking-wider font-bold text-muted-foreground">
-              Hasta
+              {t('report_to')}
               <input
                 type="date"
                 value={hasta}
@@ -154,13 +155,12 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
             data-testid="printed-report-run"
           >
             {busy
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generando…</>
-              : <><Download className="w-4 h-4" /> Generar Excel</>}
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> {t('report_generating')}</>
+              : <><Download className="w-4 h-4" /> {t('report_generate_excel')}</>}
           </button>
 
           <p className="text-[11px] text-muted-foreground mt-3 leading-relaxed">
-            Las cifras son <b>impresiones</b>, no prendas: una orden impresa por frente y
-            espalda cuenta doble. El Excel trae el desglose por posición.
+            {t('report_note_1')} <b>{t('report_note_bold')}</b>{t('report_note_2')}
           </p>
         </DialogPrimitive.Content>
       </DialogPortal>

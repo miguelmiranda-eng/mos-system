@@ -65,7 +65,7 @@ export default function OperatorsCenter() {
       const res = await fetch(`${API}/operators`, { credentials: "include" });
       if (res.ok) setOperators(await res.json());
     } catch {
-      toast.error("Error al cargar operadores");
+      toast.error(t("prod_ops_load_err"));
     } finally {
       setLoading(false);
     }
@@ -73,7 +73,7 @@ export default function OperatorsCenter() {
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
-    if (newRoles.length === 0) { toast.error("Selecciona al menos un rol"); return; }
+    if (newRoles.length === 0) { toast.error(t("prod_ops_select_role")); return; }
     setAdding(true);
     try {
       const res = await fetch(`${API}/operators`, {
@@ -81,16 +81,16 @@ export default function OperatorsCenter() {
         body: JSON.stringify({ name: newName.trim(), roles: newRoles })
       });
       if (res.ok) {
-        toast.success(`Operador "${newName.trim()}" agregado al sistema`);
+        toast.success(t("prod_ops_added", { name: newName.trim() }));
         setNewName("");
         setNewRoles(["machine"]);
         fetchOperators();
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Error al crear");
+        toast.error(err.detail || t("prod_ops_create_err"));
       }
     } catch {
-      toast.error("Error al agregar operador");
+      toast.error(t("prod_ops_add_err"));
     } finally {
       setAdding(false);
     }
@@ -105,22 +105,22 @@ export default function OperatorsCenter() {
 
   const handleUpdate = async (id) => {
     if (!editName.trim()) return;
-    if (editRoles.length === 0) { toast.error("Selecciona al menos un rol"); return; }
+    if (editRoles.length === 0) { toast.error(t("prod_ops_select_role")); return; }
     try {
       const res = await fetch(`${API}/operators/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ name: editName.trim(), roles: editRoles })
       });
       if (res.ok) { 
-        toast.success("Nombre del operador actualizado"); 
-        setEditingId(null); 
-        fetchOperators(); 
-      } else { 
-        const err = await res.json(); 
-        toast.error(err.detail || "Error"); 
+        toast.success(t("prod_ops_updated"));
+        setEditingId(null);
+        fetchOperators();
+      } else {
+        const err = await res.json();
+        toast.error(err.detail || t("error"));
       }
-    } catch { 
-      toast.error("Error al actualizar"); 
+    } catch {
+      toast.error(t("update_err"));
     }
   };
 
@@ -131,26 +131,26 @@ export default function OperatorsCenter() {
         body: JSON.stringify({ active: !op.active })
       });
       if (res.ok) {
-        toast.success(`Operador ${!op.active ? 'activado' : 'desactivado'}`);
+        toast.success(!op.active ? t("prod_ops_activated") : t("prod_ops_deactivated"));
         fetchOperators();
       }
-    } catch { 
-      toast.error("Error al cambiar estado"); 
+    } catch {
+      toast.error(t("prod_ops_toggle_err"));
     }
   };
 
   const handleDelete = async (op) => {
-    if (!window.confirm(`¿Estás seguro de eliminar PERMANENTEMENTE al operador "${op.name}"? Los datos históricos de producción que usen este nombre podrían perder su referencia.`)) return;
+    if (!window.confirm(t("prod_ops_delete_confirm", { name: op.name }))) return;
     try {
       const res = await fetch(`${API}/operators/${op.operator_id}`, { method: "DELETE", credentials: "include" });
-      if (res.ok) { 
-        toast.success(`Operador "${op.name}" eliminado`); 
-        fetchOperators(); 
+      if (res.ok) {
+        toast.success(t("prod_ops_deleted", { name: op.name }));
+        fetchOperators();
       } else {
-        toast.error("Error al eliminar");
+        toast.error(t("perm_del_err"));
       }
-    } catch { 
-      toast.error("Error al eliminar"); 
+    } catch {
+      toast.error(t("perm_del_err"));
     }
   };
 
@@ -172,26 +172,26 @@ export default function OperatorsCenter() {
           <button
             onClick={() => navigate("/home")}
             className="w-10 h-10 flex flex-shrink-0 items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5 transition-all text-muted-foreground hover:text-foreground hover:shadow-lg hover:-translate-x-0.5"
-            title="Volver a MOS Home"
+            title={t("prod_back_home")}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <h1 className="text-xl font-black uppercase tracking-widest text-foreground flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-500" />
-              CENTRO DE OPERADORES
+              {t("prod_ops_center_title")}
             </h1>
             <p className="text-xs text-muted-foreground font-mono leading-none mt-1">
-              Catálogo General de Recursos Humanos para Máquinas
+              {t("prod_ops_center_subtitle")}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-secondary rounded-lg border border-border mr-2">
-             <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div> <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{activeOperators} Activos</span></div>
+             <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div> <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t("prod_n_active", { n: activeOperators })}</span></div>
              <div className="w-px h-3 bg-border mx-1"></div>
-             <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500/50"></div> <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{inactiveOperators} Inactivos</span></div>
+             <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500/50"></div> <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t("prod_n_inactive", { n: inactiveOperators })}</span></div>
            </div>
         </div>
       </header>
@@ -204,17 +204,17 @@ export default function OperatorsCenter() {
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
           
           <div className="p-5 border-b border-white/5 bg-secondary/30 relative z-10 flex items-center justify-between flex-wrap gap-3">
-            <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Directorio de Operadores</h3>
+            <h3 className="text-sm font-black uppercase tracking-widest text-foreground">{t("prod_ops_directory")}</h3>
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-1 bg-background border border-border rounded-lg p-0.5">
-                {[{ id: 'all', label: 'Todos' }, ...ROLE_META].map(r => (
+                {[{ id: 'all', label: t("all_boards") }, ...ROLE_META].map(r => (
                   <button key={r.id} onClick={() => setFilterRole(r.id)}
                     className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded transition-colors ${
                       filterRole === r.id ? 'bg-blue-500 text-white' : 'text-muted-foreground hover:text-foreground'
                     }`}>{r.label}</button>
                 ))}
               </div>
-              <span className="text-xs font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border border-border">Total: {displayed.length}</span>
+              <span className="text-xs font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border border-border">{t("prod_total_n", { n: displayed.length })}</span>
             </div>
           </div>
 
@@ -225,13 +225,13 @@ export default function OperatorsCenter() {
               <div className="text-center py-16 border border-dashed border-border rounded-xl bg-secondary/10">
                 <p className="text-muted-foreground font-mono">
                   {filterRole === 'all'
-                    ? 'No hay operadores registrados'
-                    : `Ningún operador con el rol ${ROLE_META.find(r => r.id === filterRole)?.label || filterRole}`}
+                    ? t("prod_ops_none")
+                    : t("prod_ops_none_role", { role: ROLE_META.find(r => r.id === filterRole)?.label || filterRole })}
                 </p>
                 <p className="text-xs text-muted-foreground/60 mt-2">
                   {filterRole === 'all'
-                    ? 'Crea uno usando el panel de la derecha.'
-                    : 'Créalo en el panel de la derecha, o edita a un operador existente y agrégale el rol.'}
+                    ? t("prod_ops_create_hint")
+                    : t("prod_ops_create_role_hint")}
                 </p>
               </div>
             ) : (
@@ -264,10 +264,10 @@ export default function OperatorsCenter() {
                               className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none"
                               autoFocus
                             />
-                            <button onClick={() => handleUpdate(op.operator_id)} className="p-1.5 hover:bg-green-500/20 rounded-md transition-colors" title="Guardar">
+                            <button onClick={() => handleUpdate(op.operator_id)} className="p-1.5 hover:bg-green-500/20 rounded-md transition-colors" title={t("save")}>
                               <Check className="w-4 h-4 text-green-500" />
                             </button>
-                            <button onClick={() => setEditingId(null)} className="p-1.5 hover:bg-secondary rounded-md" title="Cancelar">
+                            <button onClick={() => setEditingId(null)} className="p-1.5 hover:bg-secondary rounded-md" title={t("cancel")}>
                               <X className="w-4 h-4 text-muted-foreground" />
                             </button>
                           </div>
@@ -303,7 +303,7 @@ export default function OperatorsCenter() {
                               : 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20'
                           }`}
                         >
-                          {op.active ? "Activo" : "Inactivo"}
+                          {op.active ? t("prod_active") : t("prod_inactive")}
                         </button>
 
                         <div className="w-px h-5 bg-border mx-1"></div>
@@ -311,14 +311,14 @@ export default function OperatorsCenter() {
                         <button
                           onClick={() => { setEditingId(op.operator_id); setEditName(op.name); setEditRoles(op.roles && op.roles.length ? [...op.roles] : ['machine']); }}
                           className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-blue-500/10 hover:text-blue-500 transition-colors text-muted-foreground"
-                          title="Editar nombre y roles"
+                          title={t("prod_ops_edit_title")}
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button 
                           onClick={() => handleDelete(op)}
                           className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-red-500/10 hover:text-red-500 transition-colors text-muted-foreground"
-                          title="Eliminar de la base de datos"
+                          title={t("prod_ops_delete_title")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -336,26 +336,26 @@ export default function OperatorsCenter() {
           {/* Add Form */}
           <div className="bg-card/40 flex-shrink-0 backdrop-blur-md rounded-2xl p-6 border border-blue-500/20 shadow-[0_4px_30px_rgba(0,0,0,0.1)] relative overflow-hidden group">
             <h4 className="text-xs font-black tracking-widest text-blue-500 uppercase mb-5 flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Registrar Nuevo
+              <Plus className="w-4 h-4" /> {t("prod_ops_register_new")}
             </h4>
-            
+
             <div className="space-y-4 relative z-10">
               <div>
-                <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">Nombre del Operador</label>
+                <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">{t("prod_ops_name_label")}</label>
                 <input
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
-                  placeholder="Ej. Juan Pérez"
+                  placeholder={t("prod_ops_name_placeholder")}
                   className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm font-bold text-foreground focus:ring-1 focus:ring-blue-500 outline-none tracking-wide shadow-inner"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">Roles funcionales</label>
+                <label className="text-[10px] text-muted-foreground uppercase font-black block mb-2 tracking-widest">{t("prod_ops_roles_label")}</label>
                 <RoleChips selected={newRoles} onToggle={toggleNewRole} size="md" />
-                <div className="text-[10px] text-muted-foreground/60 mt-1.5">Un operador puede tener varios roles (aparece en el desplegable de cada módulo).</div>
+                <div className="text-[10px] text-muted-foreground/60 mt-1.5">{t("prod_ops_roles_hint")}</div>
               </div>
 
               <button
@@ -363,7 +363,7 @@ export default function OperatorsCenter() {
                 disabled={adding || !newName.trim()}
                 className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg font-black tracking-widest text-xs uppercase transition-all hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(59,130,246,0.5)] disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none flex items-center justify-center gap-2"
               >
-                {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : "Registrar en el sistema"}
+                {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : t("prod_ops_register_btn")}
               </button>
             </div>
           </div>
@@ -371,12 +371,12 @@ export default function OperatorsCenter() {
           {/* Context Info */}
           <div className="bg-secondary/40 flex-shrink-0 rounded-2xl p-6 border border-white/5 space-y-4">
             <h3 className="text-xs font-black text-muted-foreground tracking-widest uppercase flex items-center gap-2">
-               <ShieldAlert className="w-4 h-4 text-orange-500" /> Información Importante
+               <ShieldAlert className="w-4 h-4 text-orange-500" /> {t("prod_ops_info_title")}
             </h3>
             <div className="text-xs text-muted-foreground leading-relaxed space-y-4">
-              <p>➤ <strong>Disponibilidad:</strong> Los operadores marcados como <span className="text-green-500 font-bold uppercase">Activos</span> son los únicos que aparecerán en la lista desplegable de las tarjetas de las Máquinas cuando los colaboradores intenten registrar progreso.</p>
-              <p>➤ <strong>Rotación / Bajas:</strong> Si un operador se enferma o deja la empresa temporalmente, <span className="text-red-500 font-bold uppercase">desactívalo</span> en lugar de borrarlo. Así sus registros históricos de producción se mantienen perfectos.</p>
-              <p>➤ <strong>Eliminación Definitiva:</strong> Solo uses el bote de basura 🗑️ si el operador fue creado por error y aún no tiene registros de impresión; de lo contrario, la base de datos podría marcar inconsistencias en el historial de las órdenes.</p>
+              <p>➤ <strong>{t("prod_ops_info_1_title")}</strong> {t("prod_ops_info_1_pre")} <span className="text-green-500 font-bold uppercase">{t("prod_ops_info_1_hl")}</span> {t("prod_ops_info_1_post")}</p>
+              <p>➤ <strong>{t("prod_ops_info_2_title")}</strong> {t("prod_ops_info_2_pre")} <span className="text-red-500 font-bold uppercase">{t("prod_ops_info_2_hl")}</span> {t("prod_ops_info_2_post")}</p>
+              <p>➤ <strong>{t("prod_ops_info_3_title")}</strong> {t("prod_ops_info_3_text")}</p>
             </div>
           </div>
 

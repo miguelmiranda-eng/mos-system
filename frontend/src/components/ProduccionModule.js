@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { API } from "../lib/constants";
 import { useTheme } from "../contexts/ThemeContext";
+import { useLang } from "../contexts/LanguageContext";
 
 // ── Producción — tablero muy visual de la nave. Toda la data sale de endpoints
 // que ya existen: /production-analytics (por hora/turno/máquina/PO, meta y
@@ -60,6 +61,7 @@ const LOAD_TONE = {
 
 export default function ProduccionModule() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
@@ -156,9 +158,9 @@ export default function ProduccionModule() {
       if (a) setAnalytics(a);
       if (c) setCapacity(c);
       if (b) setBoards(b.counts || b || {});
-    } catch { toast.error("Error al cargar producción"); }
+    } catch { toast.error(t("prod_load_err")); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [query, rangeReady]);
+  }, [query, rangeReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const id = setInterval(() => load(true), 60000); return () => clearInterval(id); }, [load]);
@@ -214,8 +216,8 @@ export default function ProduccionModule() {
             <Activity className="w-5 h-5 text-primary" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold tracking-tight leading-none">Producción</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Tablero de la nave en tiempo casi real</p>
+            <h1 className="text-lg font-bold tracking-tight leading-none">{t("production")}</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">{t("prod_subtitle")}</p>
           </div>
 
           <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
@@ -234,19 +236,19 @@ export default function ProduccionModule() {
                   onChange={e => setRangeFrom(e.target.value)}
                   data-testid="produccion-range-from"
                   className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
-                <span className="text-xs text-muted-foreground">a</span>
+                <span className="text-xs text-muted-foreground">{t("prod_range_to")}</span>
                 <input type="date" value={rangeTo} max={isoDay(new Date())}
                   onChange={e => setRangeTo(e.target.value)}
                   data-testid="produccion-range-to"
                   className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
               </div>
             )}
-            <button onClick={() => load(true)} title="Actualizar"
+            <button onClick={() => load(true)} title={t("prod_refresh")}
               className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
             </button>
             <button onClick={tvMode ? exitTv : enterTv}
-              title={tvMode ? "Salir del modo TV (Esc)" : "Modo TV — pantalla completa, rotación de pestañas cada 20s"}
+              title={tvMode ? t("prod_tv_exit") : t("prod_tv_enter")}
               data-testid="produccion-tv-toggle"
               className={`p-2 rounded-md transition-colors ${tvMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
               <Tv className="w-5 h-5" />
@@ -285,7 +287,7 @@ export default function ProduccionModule() {
           <span className="mx-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
             {TABS.find(t => t.id === tab)?.label}
           </span>
-          <button onClick={exitTv} title="Salir del modo TV (Esc)"
+          <button onClick={exitTv} title={t("prod_tv_exit")}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -420,10 +422,11 @@ function Panel({ title, icon: Icon, right, children, className = "", bodyClassNa
 
 // Ranking horizontal sin recharts: etiqueta + barra proporcional + valor.
 function RankBars({ rows, colorAt }) {
+  const { t } = useLang();
   const max = Math.max(1, ...rows.map(r => r.value));
   return (
     <div className="space-y-2">
-      {rows.length === 0 && <div className="text-sm text-muted-foreground py-2">Sin datos en el periodo.</div>}
+      {rows.length === 0 && <div className="text-sm text-muted-foreground py-2">{t("prod_no_data_period")}</div>}
       {rows.map((r, i) => (
         <div key={r.label + i} className="flex items-center gap-3">
           <div className="w-28 shrink-0 text-xs font-medium truncate" title={r.label}>{r.label}</div>
@@ -480,22 +483,23 @@ function ProgressRow({ label, produced, target }) {
 /* ── Pestañas ────────────────────────────────────────────────────────────── */
 
 function GeneralTab({ a, trend, singleDay, chart }) {
+  const { t } = useLang();
   if (!a) return null;
   const shifts = (a.by_shift || []).map(s => ({ label: s._id || s.shift || "?", value: s.produced }));
   return (
     <div className="h-full min-h-[520px] flex flex-col gap-3">
       {/* KPIs */}
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={TrendingUp} label="Producido" value={fmtInt(a.total_produced)} sub={`${fmtInt(a.total_logs)} registros`} accent="text-emerald-500" />
-        <Kpi icon={Target} label="Meta (órdenes)" value={fmtInt(a.total_target)} sub={`Restan ${fmtInt(a.total_remaining)}`} accent="text-blue-500" />
-        <Kpi icon={Zap} label="Eficiencia" value={`${a.efficiency ?? 0}%`} sub="producido vs meta" accent="text-violet-500" />
-        <Kpi icon={Clock} label="Setup prom." value={`${fmtInt(a.avg_setup)} min`} sub="por registro" accent="text-amber-500" />
+        <Kpi icon={TrendingUp} label={t("prod_produced")} value={fmtInt(a.total_produced)} sub={t("prod_n_records", { n: fmtInt(a.total_logs) })} accent="text-emerald-500" />
+        <Kpi icon={Target} label={t("prod_target_orders")} value={fmtInt(a.total_target)} sub={t("prod_remain_n", { n: fmtInt(a.total_remaining) })} accent="text-blue-500" />
+        <Kpi icon={Zap} label={t("prod_efficiency")} value={`${a.efficiency ?? 0}%`} sub={t("prod_produced_vs_target")} accent="text-violet-500" />
+        <Kpi icon={Clock} label={t("prod_avg_setup")} value={t("prod_n_min", { n: fmtInt(a.avg_setup) })} sub={t("prod_per_record")} accent="text-amber-500" />
       </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-3 gap-3">
         <div className="xl:col-span-2 min-h-0 flex flex-col gap-3">
           {/* Trend — la gráfica absorbe el alto sobrante de la pantalla */}
-          <Panel className="flex-1" title={singleDay ? "Producción por hora" : "Producción por día"} icon={Activity}>
+          <Panel className="flex-1" title={singleDay ? t("prod_by_hour") : t("prod_by_day")} icon={Activity}>
             <div className="h-full min-h-[180px]">
               <FitChart>
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
@@ -509,31 +513,31 @@ function GeneralTab({ a, trend, singleDay, chart }) {
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
                   <Tooltip contentStyle={chart.tooltipStyle} cursor={{ stroke: chart.axis, strokeWidth: 1 }} />
-                  <Area type="monotone" dataKey="produced" name="Producido" stroke="#3b82f6" strokeWidth={2} fill="url(#prodFill)" />
+                  <Area type="monotone" dataKey="produced" name={t("prod_produced")} stroke="#3b82f6" strokeWidth={2} fill="url(#prodFill)" />
                 </AreaChart>
               </FitChart>
             </div>
           </Panel>
 
           {/* Por turno: pocos renglones (T1/T2), vive bajo el trend */}
-          <Panel className="flex-none" title="Producción por turno" icon={Clock}>
+          <Panel className="flex-none" title={t("prod_by_shift")} icon={Clock}>
             <RankBars rows={shifts} />
           </Panel>
         </div>
 
         {/* Eficiencia + meta */}
-        <Panel title="Avance vs meta" icon={Target} bodyClassName="overflow-auto">
-          <Ring pct={a.efficiency} label="Eficiencia" sub={`${fmtInt(a.total_produced)} de ${fmtInt(a.total_target)} u`} />
+        <Panel title={t("prod_progress_vs_target")} icon={Target} bodyClassName="overflow-auto">
+          <Ring pct={a.efficiency} label={t("prod_efficiency")} sub={t("prod_x_of_y_units", { a: fmtInt(a.total_produced), b: fmtInt(a.total_target) })} />
           <div className="mt-3 space-y-3">
-            <ProgressRow label="Avance global" produced={a.total_produced} target={a.total_target} />
+            <ProgressRow label={t("prod_global_progress")} produced={a.total_produced} target={a.total_target} />
             <div className="grid grid-cols-2 gap-2 pt-1">
               <div className="rounded-md border border-border p-2 text-center">
                 <div className="text-lg font-semibold tabular-nums text-emerald-500">{fmtInt(a.total_produced)}</div>
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Producido</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("prod_produced")}</div>
               </div>
               <div className="rounded-md border border-border p-2 text-center">
                 <div className="text-lg font-semibold tabular-nums text-amber-500">{fmtInt(a.total_remaining)}</div>
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Restante</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("remaining")}</div>
               </div>
             </div>
           </div>
@@ -544,6 +548,7 @@ function GeneralTab({ a, trend, singleDay, chart }) {
 }
 
 function MaquinasTab({ a, cap, chart }) {
+  const { t } = useLang();
   const byMachine = (a?.by_machine || [])
     .filter(m => (m._id || m.machine) && (m._id || m.machine) !== "?")
     .map(m => ({ label: (m._id || m.machine).replace("MAQUINA", "M"), produced: m.produced, count: m.count }))
@@ -564,18 +569,18 @@ function MaquinasTab({ a, cap, chart }) {
         <div className="mt-1.5 flex items-end justify-between">
           <div>
             <div className="text-lg font-semibold tabular-nums leading-none">{fmtInt(m.remaining_pieces)}</div>
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground mt-0.5">u restantes</div>
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground mt-0.5">{t("prod_units_remaining")}</div>
           </div>
           <div className="text-right">
-            <div className="text-xs font-semibold tabular-nums">{m.estimated_days || 0} d</div>
-            <div className="text-[9px] text-muted-foreground">{m.order_count} ord.</div>
+            <div className="text-xs font-semibold tabular-nums">{t("prod_n_days_short", { n: m.estimated_days || 0 })}</div>
+            <div className="text-[9px] text-muted-foreground">{t("prod_n_orders_short", { n: m.order_count })}</div>
           </div>
         </div>
         <div className="mt-1.5 h-1 rounded-full bg-muted overflow-hidden">
           <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct}%` }} />
         </div>
         <div className="mt-0.5 text-[9px] text-muted-foreground truncate">
-          Prom. {m.avg_daily_production || 0} u/día · máx {fmtInt(m.max_daily_production)}
+          {t("prod_avg_max", { avg: m.avg_daily_production || 0, max: fmtInt(m.max_daily_production) })}
         </div>
       </div>
     );
@@ -584,13 +589,13 @@ function MaquinasTab({ a, cap, chart }) {
   return (
     <div className="h-full min-h-[540px] flex flex-col gap-3">
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={Boxes} label="En producción" value={fmtInt(cap?.in_production)} sub="unidades en máquinas" accent="text-blue-500" />
-        <Kpi icon={CheckCircle2} label="Completado" value={fmtInt(cap?.total_completed)} sub="board COMPLETOS" accent="text-emerald-500" />
-        <Kpi icon={Cog} label="Máquinas activas" value={fmtInt(machines.filter(m => m.order_count > 0).length)} sub={`de ${machines.length}`} accent="text-violet-500" />
-        <Kpi icon={AlertTriangle} label="Saturadas" value={fmtInt(machines.filter(m => m.load_status === "red").length)} sub="> 7 días de carga" accent="text-red-500" />
+        <Kpi icon={Boxes} label={t("prod_in_production")} value={fmtInt(cap?.in_production)} sub={t("prod_units_in_machines")} accent="text-blue-500" />
+        <Kpi icon={CheckCircle2} label={t("completed")} value={fmtInt(cap?.total_completed)} sub={t("prod_board_completos")} accent="text-emerald-500" />
+        <Kpi icon={Cog} label={t("prod_active_machines")} value={fmtInt(machines.filter(m => m.order_count > 0).length)} sub={t("prod_of_n", { n: machines.length })} accent="text-violet-500" />
+        <Kpi icon={AlertTriangle} label={t("prod_saturated")} value={fmtInt(machines.filter(m => m.load_status === "red").length)} sub={t("prod_over_7_days")} accent="text-red-500" />
       </div>
 
-      <Panel className="flex-1" title="Producción por máquina (periodo)" icon={Activity}>
+      <Panel className="flex-1" title={t("prod_by_machine_period")} icon={Activity}>
         <div className="h-full min-h-[120px]">
           <FitChart>
             <BarChart data={byMachine} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
@@ -598,7 +603,7 @@ function MaquinasTab({ a, cap, chart }) {
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
               <Tooltip contentStyle={chart.tooltipStyle} cursor={{ fill: chart.grid, opacity: 0.4 }} />
-              <Bar dataKey="produced" name="Producido" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="produced" name={t("prod_produced")} radius={[4, 4, 0, 0]}>
                 {byMachine.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
               </Bar>
             </BarChart>
@@ -611,8 +616,8 @@ function MaquinasTab({ a, cap, chart }) {
           scroll interno tampoco es opción — con Windows al 150% el breakpoint
           2xl nunca aplicaba y el panel recortaba una fila entera). En <lg se
           conserva la cuadrícula scrolleable de siempre. */}
-      <Panel className="flex-none h-[38%] min-h-[150px]" title="Carga por máquina" icon={Cog}
-        right={<span className="text-xs text-muted-foreground">restante · días estimados</span>}
+      <Panel className="flex-none h-[38%] min-h-[150px]" title={t("prod_machine_load")} icon={Cog}
+        right={<span className="text-xs text-muted-foreground">{t("prod_remaining_est_days")}</span>}
         bodyClassName="p-2">
         <div className="hidden lg:block h-full">
           <FitBox>
@@ -632,6 +637,7 @@ function MaquinasTab({ a, cap, chart }) {
 }
 
 function EmpaqueTab({ a, boards }) {
+  const { t } = useLang();
   const statuses = a?.by_production_status || [];
   const empaque = statuses.filter(s => EMPAQUE_STATUSES.includes(s.status));
   const totalEmpaqueU = empaque.reduce((s, x) => s + (x.quantity || 0), 0);
@@ -644,33 +650,33 @@ function EmpaqueTab({ a, boards }) {
     <div className="h-full min-h-[480px] flex flex-col gap-3">
       <div className="flex-none rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-300">
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-        <span>El sistema aún no captura piezas empacadas por hora; el empaque se mide por <b>estado de la orden</b> y por el WIP de cada etapa. Si más adelante se registran conteos de empaque, aquí entra la serie por hora.</span>
+        <span>{t("prod_packing_notice_pre")} <b>{t("prod_packing_notice_bold")}</b> {t("prod_packing_notice_post")}</span>
       </div>
 
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={Package} label="En empaque" value={fmtInt(totalEmpaqueU)} sub={`${fmtInt(totalEmpaqueO)} órdenes`} accent="text-blue-500" />
-        <Kpi icon={CheckCircle2} label="Completos" value={fmtInt(completos)} sub="órdenes en COMPLETOS" accent="text-emerald-500" />
-        <Kpi icon={ClipboardList} label="En control de calidad" value={fmtInt(qc)} sub="órdenes en QC" accent="text-violet-500" />
-        <Kpi icon={Boxes} label="Etapas con WIP" value={fmtInt(Object.values(boards).filter(v => v > 0).length)} sub="boards con órdenes" accent="text-amber-500" />
+        <Kpi icon={Package} label={t("prod_in_packing")} value={fmtInt(totalEmpaqueU)} sub={t("prod_n_orders", { n: fmtInt(totalEmpaqueO) })} accent="text-blue-500" />
+        <Kpi icon={CheckCircle2} label={t("prod_completos")} value={fmtInt(completos)} sub={t("prod_orders_in_completos")} accent="text-emerald-500" />
+        <Kpi icon={ClipboardList} label={t("prod_in_qc")} value={fmtInt(qc)} sub={t("prod_orders_in_qc")} accent="text-violet-500" />
+        <Kpi icon={Boxes} label={t("prod_stages_with_wip")} value={fmtInt(Object.values(boards).filter(v => v > 0).length)} sub={t("prod_boards_with_orders")} accent="text-amber-500" />
       </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Panel title="Órdenes por etapa de empaque / salida" icon={Package} bodyClassName="overflow-auto">
+        <Panel title={t("prod_orders_by_packing_stage")} icon={Package} bodyClassName="overflow-auto">
           <div className="space-y-2">
-            {empaque.length === 0 && <div className="text-sm text-muted-foreground">Sin órdenes en etapas de empaque.</div>}
+            {empaque.length === 0 && <div className="text-sm text-muted-foreground">{t("prod_no_packing_orders")}</div>}
             {empaque.map((s, i) => (
               <div key={s.status} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
                 <span className="text-sm font-medium">{s.status}</span>
                 <div className="text-right">
-                  <div className="text-sm font-semibold tabular-nums">{fmtInt(s.quantity)} u</div>
-                  <div className="text-[10px] text-muted-foreground">{fmtInt(s.count)} órdenes</div>
+                  <div className="text-sm font-semibold tabular-nums">{t("prod_n_units", { n: fmtInt(s.quantity) })}</div>
+                  <div className="text-[10px] text-muted-foreground">{t("prod_n_orders", { n: fmtInt(s.count) })}</div>
                 </div>
               </div>
             ))}
           </div>
         </Panel>
 
-        <Panel title="Distribución por estado de producción (unidades)" icon={Activity} bodyClassName="overflow-auto">
+        <Panel title={t("prod_dist_by_status_units")} icon={Activity} bodyClassName="overflow-auto">
           <RankBars rows={rows.slice(0, 8)} />
         </Panel>
       </div>
@@ -679,20 +685,21 @@ function EmpaqueTab({ a, boards }) {
 }
 
 function OrdenesTab({ a }) {
+  const { t } = useLang();
   const pos = (a?.by_po || []).slice().sort((x, y) => (y.produced) - (x.produced)).slice(0, 20);
   return (
     <div className="h-full min-h-[440px] flex flex-col gap-3">
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={ClipboardList} label="Órdenes con avance" value={fmtInt((a?.by_po || []).length)} sub="en el periodo" accent="text-blue-500" />
-        <Kpi icon={TrendingUp} label="Producido" value={fmtInt(a?.total_produced)} accent="text-emerald-500" />
-        <Kpi icon={Target} label="Meta" value={fmtInt(a?.total_target)} accent="text-violet-500" />
-        <Kpi icon={Zap} label="Eficiencia" value={`${a?.efficiency ?? 0}%`} accent="text-amber-500" />
+        <Kpi icon={ClipboardList} label={t("prod_orders_with_progress")} value={fmtInt((a?.by_po || []).length)} sub={t("prod_in_period")} accent="text-blue-500" />
+        <Kpi icon={TrendingUp} label={t("prod_produced")} value={fmtInt(a?.total_produced)} accent="text-emerald-500" />
+        <Kpi icon={Target} label={t("prod_target")} value={fmtInt(a?.total_target)} accent="text-violet-500" />
+        <Kpi icon={Zap} label={t("prod_efficiency")} value={`${a?.efficiency ?? 0}%`} accent="text-amber-500" />
       </div>
 
       {/* Top 20 en dos columnas (≥lg): 10 renglones por lado caben completos
           en pantalla; el overflow-auto queda de respaldo. */}
-      <Panel className="flex-1" title="Avance por orden (top 20 del periodo)" icon={ClipboardList} bodyClassName="overflow-auto">
-        {pos.length === 0 && <div className="text-sm text-muted-foreground">Sin producción registrada en el periodo.</div>}
+      <Panel className="flex-1" title={t("prod_progress_by_order_top20")} icon={ClipboardList} bodyClassName="overflow-auto">
+        {pos.length === 0 && <div className="text-sm text-muted-foreground">{t("prod_no_production_period")}</div>}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-2.5">
           {pos.map((p, i) => (
             <ProgressRow key={(p.order_number || "?") + i} label={`#${p.order_number || "?"}`} produced={p.produced} target={p.target} />
@@ -714,6 +721,7 @@ const T2_HOURS = [19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6];
 const isT1 = (h) => h >= 7 && h <= 18;
 
 function HoraPorHoraTab({ a, multiDay, chart }) {
+  const { t } = useLang();
   const [modo, setModo] = useState("grafica");
   const matrix = useMemo(() => {
     const rows = (a?.by_machine_hour || []).filter(r => r.machine && r.machine !== "?");
@@ -744,7 +752,7 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
   const hourSeries = allHours.map(h => ({ label: hh(h), produced: colTotals[h] || 0, t1: isT1(h) }));
 
   if (machines.length === 0) {
-    return <div className="text-sm text-muted-foreground py-16 text-center">Sin capturas de producción en el periodo.</div>;
+    return <div className="text-sm text-muted-foreground py-16 text-center">{t("prod_no_captures_period")}</div>;
   }
 
   // Tarjeta por máquina (total, split T1/T2 y sparkline de 24h) — misma en la
@@ -765,7 +773,7 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
           {allHours.map(h => {
             const v = cells[`${m}|${h}`] || 0;
             return (
-              <div key={h} title={`${hh(h)} · ${fmtInt(v)} pz`}
+              <div key={h} title={t("prod_hour_pieces", { hour: hh(h), n: fmtInt(v) })}
                 className={`flex-1 rounded-sm ${v ? (isT1(h) ? "bg-blue-500" : "bg-violet-500") : "bg-muted"}`}
                 style={{ height: v ? `${Math.max(8, Math.round((v / mMax) * 100))}%` : "3px" }} />
             );
@@ -781,37 +789,37 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
   return (
     <div className="h-full min-h-[540px] flex flex-col gap-3">
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={TrendingUp} label="Producido" value={fmtInt(grandTotal)} sub="en el periodo" accent="text-emerald-500" />
-        <Kpi icon={Clock} label="Turno 1 · 7am–7pm" value={fmtInt(t1Grand)} sub={grandTotal ? `${Math.round(t1Grand / grandTotal * 100)}% del total` : ""} accent="text-blue-500" />
-        <Kpi icon={Clock} label="Turno 2 · 7pm–7am" value={fmtInt(t2Grand)} sub={grandTotal ? `${Math.round(t2Grand / grandTotal * 100)}% del total` : ""} accent="text-violet-500" />
-        <Kpi icon={Zap} label="Mejor hora" value={colTotals[bestHour] ? hh(bestHour) : "—"} sub={colTotals[bestHour] ? `${fmtInt(colTotals[bestHour])} pz` : ""} accent="text-amber-500" />
+        <Kpi icon={TrendingUp} label={t("prod_produced")} value={fmtInt(grandTotal)} sub={t("prod_in_period")} accent="text-emerald-500" />
+        <Kpi icon={Clock} label={t("prod_shift1_label")} value={fmtInt(t1Grand)} sub={grandTotal ? t("prod_pct_of_total", { pct: Math.round(t1Grand / grandTotal * 100) }) : ""} accent="text-blue-500" />
+        <Kpi icon={Clock} label={t("prod_shift2_label")} value={fmtInt(t2Grand)} sub={grandTotal ? t("prod_pct_of_total", { pct: Math.round(t2Grand / grandTotal * 100) }) : ""} accent="text-violet-500" />
+        <Kpi icon={Zap} label={t("prod_best_hour")} value={colTotals[bestHour] ? hh(bestHour) : "—"} sub={colTotals[bestHour] ? t("prod_n_pieces", { n: fmtInt(colTotals[bestHour]) }) : ""} accent="text-amber-500" />
       </div>
 
       {/* Switch Gráfica / Tabla — la tabla detallada no se pierde, solo deja
           de ser la cara principal. */}
       <div className="flex-none flex items-center justify-between flex-wrap gap-2">
         <span className="text-xs text-muted-foreground">
-          {multiDay ? "Suma por hora del día en el periodo · hora local Tijuana" : "Hora local Tijuana · 00–06h = madrugada del T2"}
+          {multiDay ? t("prod_hourly_note_multi") : t("prod_hourly_note_single")}
         </span>
         <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/60 border border-border">
           <button onClick={() => setModo("grafica")}
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${modo === "grafica" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            Gráfica
+            {t("prod_chart_view")}
           </button>
           <button onClick={() => setModo("tabla")}
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${modo === "tabla" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            Tabla
+            {t("table_view")}
           </button>
         </div>
       </div>
 
       {modo === "grafica" && (
         <>
-          <Panel className="flex-1" title="Ritmo del día — todas las máquinas" icon={Activity}
+          <Panel className="flex-1" title={t("prod_day_rhythm")} icon={Activity}
             right={
               <span className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500 mr-1 align-middle" />T1 · 7am–7pm</span>
-                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500 mr-1 align-middle" />T2 · 7pm–7am</span>
+                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500 mr-1 align-middle" />{t("prod_t1_legend")}</span>
+                <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500 mr-1 align-middle" />{t("prod_t2_legend")}</span>
               </span>
             }>
             <div className="h-full min-h-[120px]">
@@ -820,8 +828,8 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
                   <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: chart.axis }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11, fill: chart.axis }} axisLine={false} tickLine={false} width={44} />
-                  <Tooltip contentStyle={chart.tooltipStyle} cursor={{ fill: chart.grid, opacity: 0.4 }} formatter={(v) => [fmtInt(v), "Piezas"]} />
-                  <Bar dataKey="produced" name="Piezas" radius={[3, 3, 0, 0]}>
+                  <Tooltip contentStyle={chart.tooltipStyle} cursor={{ fill: chart.grid, opacity: 0.4 }} formatter={(v) => [fmtInt(v), t("pieces_label")]} />
+                  <Bar dataKey="produced" name={t("pieces_label")} radius={[3, 3, 0, 0]}>
                     {hourSeries.map((e, i) => <Cell key={i} fill={e.t1 ? "#3b82f6" : "#8b5cf6"} />)}
                   </Bar>
                 </BarChart>
@@ -851,8 +859,8 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
       )}
 
       {modo === "tabla" && (
-      <Panel className="flex-1" title="Hora por hora por máquina" icon={Clock}
-        right={<span className="text-xs text-muted-foreground">{multiDay ? "suma por hora del día en el periodo · hora local Tijuana" : "hora local Tijuana · 00–06h = madrugada del T2"}</span>}
+      <Panel className="flex-1" title={t("prod_hour_by_machine")} icon={Clock}
+        right={<span className="text-xs text-muted-foreground">{multiDay ? t("prod_hourly_note_multi_lc") : t("prod_hourly_note_single_lc")}</span>}
         bodyClassName="p-1">
         {/* La matriz completa (28 columnas × ~14 máquinas) va en FitBox: se
             escala para caber ENTERA en el hueco del panel — era la vista que
@@ -862,10 +870,10 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
           <table className="text-xs border-collapse">
             <thead>
               <tr>
-                <th rowSpan={2} className="sticky left-0 bg-card text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border whitespace-nowrap align-bottom">Máquina</th>
-                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-blue-600 dark:text-blue-400 border-l border-border/60">Turno 1 · 7:00 – 19:00</th>
-                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-violet-600 dark:text-violet-400 border-l border-border/60">Turno 2 · 19:00 – 7:00</th>
-                <th rowSpan={2} className="text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border border-l border-border/60 align-bottom">Total</th>
+                <th rowSpan={2} className="sticky left-0 bg-card text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border whitespace-nowrap align-bottom">{t("machine")}</th>
+                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-blue-600 dark:text-blue-400 border-l border-border/60">{t("prod_shift1_hours")}</th>
+                <th colSpan={13} className="text-center text-[10px] uppercase tracking-widest font-semibold px-2 pt-2 pb-1 text-violet-600 dark:text-violet-400 border-l border-border/60">{t("prod_shift2_hours")}</th>
+                <th rowSpan={2} className="text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium px-3 py-2 border-b border-border border-l border-border/60 align-bottom">{t("total")}</th>
               </tr>
               <tr>
                 {T1_HOURS.map(h => (
@@ -908,7 +916,7 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
             </tbody>
             <tfoot>
               <tr className="border-t border-border">
-                <td className="sticky left-0 bg-card px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Total</td>
+                <td className="sticky left-0 bg-card px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">{t("total")}</td>
                 {T1_HOURS.map(h => (
                   <td key={h} className={`px-2 py-2 text-right font-semibold tabular-nums ${h === 7 ? "border-l border-border/60" : ""}`}>{colTotals[h] ? fmtInt(colTotals[h]) : ""}</td>
                 ))}
@@ -929,6 +937,7 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
 }
 
 function OperadoresTab({ a }) {
+  const { t } = useLang();
   const ops = (a?.by_operator || [])
     .filter(o => (o._id || o.operator) && (o._id || o.operator) !== "?")
     .map(o => ({ label: o._id || o.operator, value: o.produced, count: o.count }))
@@ -940,10 +949,10 @@ function OperadoresTab({ a }) {
 
   return (
     <div className="h-full min-h-[440px] grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <Panel title="Producción por operador (top 15)" icon={Users} bodyClassName="overflow-auto">
+      <Panel title={t("prod_by_operator_top15")} icon={Users} bodyClassName="overflow-auto">
         <RankBars rows={ops} colorAt={() => "#3b82f6"} />
       </Panel>
-      <Panel title="Producción por cliente (top 12)" icon={Boxes} bodyClassName="overflow-auto">
+      <Panel title={t("prod_by_client_top12")} icon={Boxes} bodyClassName="overflow-auto">
         <RankBars rows={clients} colorAt={(i) => PALETTE[i % PALETTE.length]} />
       </Panel>
     </div>

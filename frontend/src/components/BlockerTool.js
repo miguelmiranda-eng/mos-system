@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useLang } from '../contexts/LanguageContext';
 import {
   ArrowLeft, Droplets, RefreshCw, Calculator, PackageSearch,
   AlertTriangle, CheckCircle2, Settings2, CalendarDays, ChevronLeft, ChevronRight,
@@ -20,11 +21,11 @@ const fmt = (n, d = 0) => (n === null || n === undefined || isNaN(n))
 // aparte, porque antes de que existiera esta bitácora el sistema no guardaba
 // absolutamente nada y sería mentira pintarlo en verde.
 const DAY_STATES = {
-  empty:    { label: 'Se quedó en cero',    dot: 'bg-red-600',     cell: 'bg-red-600 text-white border-red-700' },
-  below:    { label: 'Bajo el mínimo',      dot: 'bg-red-400',     cell: 'bg-red-100 text-red-700 border-red-200' },
-  short:    { label: 'No cubre el backlog', dot: 'bg-amber-400',   cell: 'bg-amber-100 text-amber-700 border-amber-200' },
-  ok:       { label: 'Con inventario sano', dot: 'bg-emerald-500', cell: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  nodata:   { label: 'Sin registro',        dot: 'bg-slate-300',   cell: 'bg-white text-slate-300 border-dashed border-slate-200' },
+  empty:    { labelKey: 'blocker_day_empty',  dot: 'bg-red-600',     cell: 'bg-red-600 text-white border-red-700' },
+  below:    { labelKey: 'blocker_day_below',  dot: 'bg-red-400',     cell: 'bg-red-100 text-red-700 border-red-200' },
+  short:    { labelKey: 'blocker_day_short',  dot: 'bg-amber-400',   cell: 'bg-amber-100 text-amber-700 border-amber-200' },
+  ok:       { labelKey: 'blocker_day_ok',     dot: 'bg-emerald-500', cell: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  nodata:   { labelKey: 'blocker_day_nodata', dot: 'bg-slate-300',   cell: 'bg-white text-slate-300 border-dashed border-slate-200' },
 };
 
 const dayState = (snap) => {
@@ -40,8 +41,9 @@ const dayState = (snap) => {
 // YYYY-MM-DD armado con los getters LOCALES: toISOString() convierte a UTC y en
 // Tijuana (UTC-7) recorre el día un día hacia atrás toda la tarde.
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
-  'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const MONTH_KEYS = ['blocker_month_1', 'blocker_month_2', 'blocker_month_3', 'blocker_month_4',
+  'blocker_month_5', 'blocker_month_6', 'blocker_month_7', 'blocker_month_8',
+  'blocker_month_9', 'blocker_month_10', 'blocker_month_11', 'blocker_month_12'];
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}>{children}</div>
@@ -58,6 +60,7 @@ const Metric = ({ label, value, unit, tone = 'text-slate-900' }) => (
 
 const BlockerTool = () => {
   const navigate = useNavigate();
+  const { t } = useLang();
 
   // ----- parámetros compartidos (recalibrados con la regla de algodón, ago 2026)
   const [mlPerHit, setMlPerHit] = useState(2.24);
@@ -80,7 +83,7 @@ const BlockerTool = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setForecast(await res.json());
     } catch (e) {
-      setError('No se pudo cargar el pronóstico. Verifica tu sesión o el servidor.');
+      setError('blocker_load_err');
     } finally {
       setLoading(false);
     }
@@ -148,7 +151,7 @@ const BlockerTool = () => {
           <button
             onClick={() => navigate('/home')}
             className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
-            title="Volver"
+            title={t('blocker_back')}
             data-testid="blocker-back"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -157,9 +160,9 @@ const BlockerTool = () => {
             <Droplets className="w-5 h-5 text-violet-600" />
           </div>
           <div className="leading-none">
-            <h1 className="text-lg font-black uppercase tracking-tight text-slate-900">Calculadora de Blocker</h1>
+            <h1 className="text-lg font-black uppercase tracking-tight text-slate-900">{t('blocker_title')}</h1>
             <span className="block text-[9px] font-bold uppercase tracking-[0.3em] text-slate-400 mt-1">
-              Velocity blocker grey · 2.24 mL por hit con blocker · algodón 70%+ (100, 90/10, 80/20) no lleva
+              {t('blocker_subtitle')}
             </span>
           </div>
         </div>
@@ -180,11 +183,11 @@ const BlockerTool = () => {
             <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0" />
             <div className="text-sm leading-relaxed">
               <b className="uppercase tracking-wide">
-                {stockNow <= 0 ? 'Sin blocker en almacén' : 'Stock por debajo del mínimo'}
+                {stockNow <= 0 ? t('blocker_none_in_stock') : t('blocker_below_min')}
               </b>
               <div className="mt-0.5">
-                Hay <b>{fmt(stockNow)} cubetas</b> y el mínimo de MaintOps es <b>{fmt(minNow)}</b>.
-                El backlog pendiente pide <b>{fmt(forecast?.totals?.buckets, 1)}</b> cubetas.
+                {t('blocker_alert_have')} <b>{fmt(stockNow)} {t('blocker_buckets')}</b> {t('blocker_alert_min_is')} <b>{fmt(minNow)}</b>.
+                {' '}{t('blocker_alert_backlog_asks')} <b>{fmt(forecast?.totals?.buckets, 1)}</b> {t('blocker_buckets')}.
               </div>
             </div>
           </div>
@@ -194,10 +197,10 @@ const BlockerTool = () => {
         <Card className="p-4 flex flex-wrap items-end gap-5">
           <div className="flex items-center gap-2 text-slate-500">
             <Settings2 className="w-4 h-4" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Parámetros</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em]">{t('blocker_params')}</span>
           </div>
           <label className="block">
-            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">Factor mL por hit</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">{t('blocker_ml_per_hit')}</span>
             <input
               type="number" step="0.01" min="0" value={mlPerHit}
               onChange={(e) => setMlPerHit(parseFloat(e.target.value) || 0)}
@@ -206,7 +209,7 @@ const BlockerTool = () => {
             />
           </label>
           <label className="block">
-            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">% de hits con blocker (proyección)</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">{t('blocker_share_label')}</span>
             <input
               type="number" step="1" min="0" max="100" value={blockerShare}
               onChange={(e) => setBlockerShare(parseFloat(e.target.value) || 0)}
@@ -215,9 +218,7 @@ const BlockerTool = () => {
             />
           </label>
           <p className="text-[10px] text-slate-400 max-w-xs leading-relaxed">
-            22% = mezcla actual: solo prenda DE MEZCLA oscura o clara con diseño de 5+ colores
-            lleva blocker; la 100% algodón no lleva. Si tu proyección es solo de hits que llevan
-            blocker, usa 100%.
+            {t('blocker_share_help')}
           </p>
         </Card>
 
@@ -225,23 +226,23 @@ const BlockerTool = () => {
         <section>
           <div className="flex items-center gap-2 mb-3">
             <Calculator className="w-4 h-4 text-blue-600" />
-            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-800">Proyección de consumo</h2>
+            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-800">{t('blocker_projection')}</h2>
           </div>
           <Card className="p-5">
             <label className="block max-w-sm">
-              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">Impresiones (hits) proyectadas</span>
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">{t('blocker_proj_hits')}</span>
               <input
-                type="number" min="0" placeholder="p. ej. 250000" value={projHits}
+                type="number" min="0" placeholder={t('blocker_proj_placeholder')} value={projHits}
                 onChange={(e) => setProjHits(e.target.value)}
                 className="mt-1 block w-full h-11 px-4 bg-slate-50 border border-slate-200 rounded-xl text-lg font-bold text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                 data-testid="blocker-proj-hits"
               />
             </label>
             <div className="mt-4 flex flex-wrap divide-x divide-slate-200 rounded-xl bg-slate-50 border border-slate-200">
-              <Metric label="Blocker necesario" value={fmt(projMl / 1000, 1)} unit="L" />
-              <Metric label="Galones" value={fmt(projMl / 3785.41, 1)} unit="gal" />
-              <Metric label="Cubetas de 5 gal" value={fmt(projBuckets, 2)} unit="cubetas" tone="text-blue-600" />
-              <Metric label="Comprar (redondeo)" value={hitsNum > 0 ? fmt(Math.ceil(projBuckets)) : '—'} unit="cubetas" />
+              <Metric label={t('blocker_needed')} value={fmt(projMl / 1000, 1)} unit="L" />
+              <Metric label={t('blocker_gallons')} value={fmt(projMl / 3785.41, 1)} unit="gal" />
+              <Metric label={t('blocker_buckets_5gal')} value={fmt(projBuckets, 2)} unit={t('blocker_buckets')} tone="text-blue-600" />
+              <Metric label={t('blocker_buy_rounded')} value={hitsNum > 0 ? fmt(Math.ceil(projBuckets)) : '—'} unit={t('blocker_buckets')} />
             </div>
           </Card>
         </section>
@@ -251,9 +252,9 @@ const BlockerTool = () => {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <PackageSearch className="w-4 h-4 text-blue-600" />
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-800">Backlog sin imprimir</h2>
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-800">{t('blocker_backlog_title')}</h2>
               <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
-                Órdenes en SCHEDULING · BLANKS · SCREENS · NECK
+                {t('blocker_backlog_boards')}
               </span>
             </div>
             <button
@@ -261,13 +262,13 @@ const BlockerTool = () => {
               className="flex items-center gap-2 px-3 h-8 rounded-lg bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
               data-testid="blocker-refresh"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('blocker_refresh')}
             </button>
           </div>
 
           {error && (
             <Card className="p-4 text-sm text-red-600 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" /> {error}
+              <AlertTriangle className="w-4 h-4" /> {t(error)}
             </Card>
           )}
 
@@ -276,20 +277,20 @@ const BlockerTool = () => {
               {/* Totales + cobertura */}
               <Card className="p-5">
                 <div className="flex flex-wrap divide-x divide-slate-200 rounded-xl bg-slate-50 border border-slate-200">
-                  <Metric label="Órdenes pendientes" value={fmt(forecast.totals.orders)} unit="órdenes" />
-                  <Metric label="Hits por imprimir" value={fmt(forecast.totals.pending_hits)} unit="hits" />
-                  <Metric label="Blocker requerido" value={fmt(forecast.totals.buckets, 1)} unit="cubetas" tone="text-blue-600" />
-                  <Metric label="Stock actual (MaintOps)" value={forecast.stock ? fmt(forecast.stock.buckets) : '—'} unit="cubetas" />
+                  <Metric label={t('blocker_pending_orders')} value={fmt(forecast.totals.orders)} unit={t('orders_unit')} />
+                  <Metric label={t('blocker_hits_to_print')} value={fmt(forecast.totals.pending_hits)} unit="hits" />
+                  <Metric label={t('blocker_required')} value={fmt(forecast.totals.buckets, 1)} unit={t('blocker_buckets')} tone="text-blue-600" />
+                  <Metric label={t('blocker_stock_now')} value={forecast.stock ? fmt(forecast.stock.buckets) : '—'} unit={t('blocker_buckets')} />
                 </div>
 
                 {/* Barra de cobertura */}
                 <div className="mt-5">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
-                      Cobertura del backlog con el stock actual
+                      {t('blocker_coverage_label')}
                     </span>
                     <span className={`text-sm font-black ${covTone}`}>
-                      {cov === null || cov === undefined ? 'sin datos de almacén' : `${fmt(Math.min(cov, 999), 0)}%`}
+                      {cov === null || cov === undefined ? t('blocker_no_stock_data') : `${fmt(Math.min(cov, 999), 0)}%`}
                     </span>
                   </div>
                   <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
@@ -301,11 +302,10 @@ const BlockerTool = () => {
                   <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
                     {cov !== null && cov !== undefined && (cov >= 100 ? (
                       <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        El stock alcanza para todo el backlog pendiente.</>
+                        {t('blocker_stock_enough')}</>
                     ) : (
                       <><AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                        Faltan ~{fmt(Math.max(0, forecast.totals.buckets - (forecast.stock?.buckets || 0)), 1)} cubetas
-                        para cubrir el backlog completo.</>
+                        {t('blocker_stock_short', { n: fmt(Math.max(0, forecast.totals.buckets - (forecast.stock?.buckets || 0)), 1) })}</>
                     ))}
                   </div>
                 </div>
@@ -314,15 +314,15 @@ const BlockerTool = () => {
               {/* Desglose por tablero */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card className="p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Por tablero</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">{t('blocker_by_board')}</p>
                   <table className="w-full text-sm">
                     <tbody>
                       {forecast.by_board.map((b) => (
                         <tr key={b.board} className="border-b border-slate-100 last:border-0">
                           <td className="py-1.5 font-bold text-slate-700">{b.board}</td>
-                          <td className="py-1.5 text-right text-slate-500">{fmt(b.orders)} órd.</td>
+                          <td className="py-1.5 text-right text-slate-500">{fmt(b.orders)} {t('blocker_orders_abbr')}</td>
                           <td className="py-1.5 text-right text-slate-500">{fmt(b.pending_hits)} hits</td>
-                          <td className="py-1.5 text-right font-bold text-blue-600">{fmt(b.ml / ML_PER_BUCKET, 2)} cub.</td>
+                          <td className="py-1.5 text-right font-bold text-blue-600">{fmt(b.ml / ML_PER_BUCKET, 2)} {t('blocker_buckets_abbr')}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -332,7 +332,7 @@ const BlockerTool = () => {
                 {/* Top órdenes */}
                 <Card className="p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">
-                    Órdenes que más blocker necesitan
+                    {t('blocker_top_orders')}
                   </p>
                   <div className="max-h-64 overflow-y-auto pr-1">
                     <table className="w-full text-xs">
@@ -343,10 +343,10 @@ const BlockerTool = () => {
                             <td className="py-1.5 text-slate-500 truncate max-w-[110px]">{o.client || '—'}</td>
                             <td className="py-1.5">
                               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${o.is_dark ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-                                {o.color || 'S/C'}
+                                {o.color || t('blocker_no_color_abbr')}
                               </span>
                               <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${o.fabric === 'ALGODON' ? 'bg-emerald-50 text-emerald-700' : o.fabric === 'MEZCLA' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-400'}`}>
-                                {o.fabric === 'SIN DATO' ? 'S/T' : o.fabric}
+                                {o.fabric === 'SIN DATO' ? t('blocker_no_fabric_abbr') : o.fabric}
                               </span>
                             </td>
                             <td className="py-1.5 text-right text-slate-500">{fmt(o.pending_hits)} hits</td>
@@ -360,11 +360,10 @@ const BlockerTool = () => {
               </div>
 
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                Hits pendientes = piezas de la orden × posiciones de impresión − hits ya registrados en producción.
-                La prenda con {Math.round(forecast.params.cotton_no_blocker_pct)}%+ de algodón (100%, 90/10, 80/20) no lleva blocker (tela resuelta vía pick tickets del WMS);
-                MEZCLA oscura cuenta al 100% y mezcla clara al {Math.round((forecast.params.light_factor) * 100)}% (diseños de 5+ colores).
-                Sin dato de tela se aplica el % de algodón medido en producción ({Math.round(forecast.params.dark_cotton_share * 100)}% oscuras / {Math.round(forecast.params.light_cotton_share * 100)}% claras).
-                Stock consultado en vivo del almacén de mantenimiento (MaintOps).
+                {t('blocker_note_1')}
+                {' '}{t('blocker_note_2', { pct: Math.round(forecast.params.cotton_no_blocker_pct), light: Math.round((forecast.params.light_factor) * 100) })}
+                {' '}{t('blocker_note_3', { dark: Math.round(forecast.params.dark_cotton_share * 100), lightShare: Math.round(forecast.params.light_cotton_share * 100) })}
+                {' '}{t('blocker_note_4')}
               </p>
             </div>
           )}
@@ -377,25 +376,25 @@ const BlockerTool = () => {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-blue-600" />
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-900">Bitácora de blocker</h2>
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-900">{t('blocker_log_title')}</h2>
               <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
-                Una foto por día · stock vs mínimo vs backlog
+                {t('blocker_log_subtitle')}
               </span>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setHistMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
                 className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300"
-                title="Mes anterior"
+                title={t('blocker_prev_month')}
                 data-testid="blocker-hist-prev"
               ><ChevronLeft className="w-4 h-4" /></button>
               <span className="px-3 text-xs font-bold uppercase tracking-widest text-slate-600 min-w-[150px] text-center">
-                {MONTHS[histMonth.getMonth()]} {histMonth.getFullYear()}
+                {t(MONTH_KEYS[histMonth.getMonth()])} {histMonth.getFullYear()}
               </span>
               <button
                 onClick={() => setHistMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
                 className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300"
-                title="Mes siguiente"
+                title={t('blocker_next_month')}
                 data-testid="blocker-hist-next"
               ><ChevronRight className="w-4 h-4" /></button>
             </div>
@@ -403,7 +402,7 @@ const BlockerTool = () => {
 
           <Card className="p-5">
             <div className="grid grid-cols-7 gap-1.5 mb-1.5">
-              {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+              {t('blocker_weekday_initials').split(',').map((d, i) => (
                 <div key={i} className="text-center text-[9px] font-bold uppercase tracking-widest text-slate-400 py-1">{d}</div>
               ))}
             </div>
@@ -421,7 +420,7 @@ const BlockerTool = () => {
                     type="button"
                     disabled={!snap}
                     onClick={() => setPickedDay(snap ? { ...snap, key } : null)}
-                    title={snap ? `${key} · ${st.label}` : `${key} · sin registro`}
+                    title={snap ? `${key} · ${t(st.labelKey)}` : `${key} · ${t('blocker_no_record_lc')}`}
                     className={`relative aspect-square rounded-lg border text-xs font-bold flex flex-col items-center justify-center transition-transform
                       ${isFuture ? 'bg-slate-50 text-slate-200 border-slate-100' : st.cell}
                       ${snap ? 'hover:scale-105 cursor-pointer' : 'cursor-default'}
@@ -444,7 +443,7 @@ const BlockerTool = () => {
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5">
               {Object.entries(DAY_STATES).map(([k, v]) => (
                 <span key={k} className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                  <span className={`w-2.5 h-2.5 rounded-full ${v.dot}`} /> {v.label}
+                  <span className={`w-2.5 h-2.5 rounded-full ${v.dot}`} /> {t(v.labelKey)}
                 </span>
               ))}
             </div>
@@ -452,7 +451,7 @@ const BlockerTool = () => {
             {(diasEnCero > 0 || diasBajoMin > 0) && (
               <div className="mt-3 text-[11px] text-slate-600 flex items-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                En {MONTHS[histMonth.getMonth()]}: <b>{diasEnCero}</b> día(s) en cero y <b>{diasBajoMin}</b> bajo el mínimo.
+                {t('blocker_in_month')} {t(MONTH_KEYS[histMonth.getMonth()])}: <b>{diasEnCero}</b> {t('blocker_days_zero_and')} <b>{diasBajoMin}</b> {t('blocker_below_min_lc')}
               </div>
             )}
 
@@ -461,31 +460,27 @@ const BlockerTool = () => {
               <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200" data-testid="blocker-day-detail">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{pickedDay.key}</p>
-                  <button onClick={() => setPickedDay(null)} className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-700">Cerrar</button>
+                  <button onClick={() => setPickedDay(null)} className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-700">{t('close')}</button>
                 </div>
                 <div className="flex flex-wrap divide-x divide-slate-200 rounded-lg bg-white border border-slate-200">
-                  <Metric label="Stock al cierre" value={fmt(pickedDay.stock_buckets)} unit="cubetas" />
-                  <Metric label="Mínimo del día" value={fmt(pickedDay.stock_low)} unit="cubetas"
+                  <Metric label={t('blocker_stock_close')} value={fmt(pickedDay.stock_buckets)} unit={t('blocker_buckets')} />
+                  <Metric label={t('blocker_day_min')} value={fmt(pickedDay.stock_low)} unit={t('blocker_buckets')}
                     tone={dayState(pickedDay) === 'ok' ? 'text-slate-900' : 'text-red-600'} />
-                  <Metric label="Mínimo MaintOps" value={fmt(pickedDay.stock_min)} unit="cubetas" />
-                  <Metric label="Backlog pedía" value={fmt(pickedDay.required_buckets, 1)} unit="cubetas" tone="text-blue-600" />
-                  <Metric label="Cobertura" value={pickedDay.coverage_pct === null || pickedDay.coverage_pct === undefined ? '—' : fmt(pickedDay.coverage_pct)} unit="%" />
+                  <Metric label={t('blocker_maintops_min')} value={fmt(pickedDay.stock_min)} unit={t('blocker_buckets')} />
+                  <Metric label={t('blocker_backlog_asked')} value={fmt(pickedDay.required_buckets, 1)} unit={t('blocker_buckets')} tone="text-blue-600" />
+                  <Metric label={t('blocker_coverage')} value={pickedDay.coverage_pct === null || pickedDay.coverage_pct === undefined ? '—' : fmt(pickedDay.coverage_pct)} unit="%" />
                 </div>
                 <p className="mt-2 text-[10px] text-slate-400">
-                  {fmt(pickedDay.orders)} órdenes · {fmt(pickedDay.pending_hits)} hits pendientes ·
-                  {' '}{fmt(pickedDay.samples)} lectura(s) ese día · última {pickedDay.captured_at ? new Date(pickedDay.captured_at).toLocaleString() : '—'}
+                  {t('blocker_day_summary', { orders: fmt(pickedDay.orders), hits: fmt(pickedDay.pending_hits), samples: fmt(pickedDay.samples), last: pickedDay.captured_at ? new Date(pickedDay.captured_at).toLocaleString() : '—' })}
                 </p>
               </div>
             )}
 
             <p className="mt-4 text-[10px] text-slate-400 leading-relaxed">
               {firstDate
-                ? <>La bitácora arranca el <b>{firstDate}</b>: antes de esa fecha el sistema no guardaba
-                    ningún registro de blocker, así que esos días salen como “sin registro” — no como días buenos.</>
-                : <>Todavía no hay ningún día archivado. Se guarda una foto automática cada mañana y otra
-                    cada vez que alguien abre esta pantalla.</>}
-              {' '}El “mínimo del día” es el valor más bajo que se vio: si el almacén cae a cero a media jornada
-              y en la tarde entra una compra, el día igual queda marcado en rojo.
+                ? <>{t('blocker_log_starts')} <b>{firstDate}</b>{t('blocker_log_starts_rest')}</>
+                : <>{t('blocker_log_empty')}</>}
+              {' '}{t('blocker_day_min_note')}
             </p>
           </Card>
         </section>

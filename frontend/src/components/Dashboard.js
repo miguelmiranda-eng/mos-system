@@ -91,7 +91,7 @@ const Dashboard = () => {
   // Helper functions for rendering detail values safely
   const renderDetailValue = (val) => {
     if (val === null || val === undefined || val === '') return '—';
-    if (typeof val === 'boolean') return val ? 'SÍ' : 'NO';
+    if (typeof val === 'boolean') return val ? t('dash_yes_upper') : t('dash_no_upper');
     // Let React render valid React elements (like links, spans, etc) directly
     if (React.isValidElement(val)) return val;
     if (typeof val === 'object') {
@@ -360,7 +360,7 @@ const Dashboard = () => {
   const WEEKDAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const DAY_LABEL_ES = { monday: 'Lunes', tuesday: 'Martes', wednesday: 'Miércoles', thursday: 'Jueves', friday: 'Viernes', saturday: 'Sábado', sunday: 'Domingo' };
   const DAY_LABEL_EN = { monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday' };
-  const DAY_SHORT = { monday: 'Lun', tuesday: 'Mar', wednesday: 'Mié', thursday: 'Jue', friday: 'Vie', saturday: 'Sáb', sunday: 'Dom' };
+  const DAY_SHORT = { monday: t('day_mon'), tuesday: t('dash_day_tue'), wednesday: t('dash_day_wed'), thursday: t('dash_day_thu'), friday: t('dash_day_fri'), saturday: t('dash_day_sat'), sunday: t('dash_day_sun') };
   const DAY_SUPPORTED_NON_MACHINE = new Set(['READY TO SCHEDULED', 'BLANKS', 'SCREENS', 'NECK']);
   // Queue support (Activa / En Cola) is broader than just machines now —
   // BLANKS and NECK share the same workflow split.
@@ -448,10 +448,7 @@ const Dashboard = () => {
   const toggleBlanksSweep = async () => {
     const next = !(blanksSweep?.enabled);
     if (next && !window.confirm(
-      '¿Encender el barrido automático a BLANKS?\n\n' +
-      'Cada ' + (blanksSweep?.sweep_minutes || 10) + ' minutos moverá TODAS las órdenes de SCHEDULING ' +
-      'que tengan fecha de cancelación al tablero BLANKS, distribuidas por su cancel date.\n' +
-      'Las órdenes sin cancel date se quedan en SCHEDULING.'
+      t('dash_sweep_confirm', { n: blanksSweep?.sweep_minutes || 10 })
     )) return;
     try {
       const res = await fetch(`${API}/blanks-sweep`, {
@@ -460,11 +457,11 @@ const Dashboard = () => {
       });
       if (res.ok) {
         setBlanksSweep(await res.json());
-        toast.success(next ? 'Barrido a BLANKS ENCENDIDO' : 'Barrido a BLANKS APAGADO');
+        toast.success(next ? t('dash_sweep_on') : t('dash_sweep_off'));
       } else {
-        toast.error('No se pudo cambiar el barrido (¿permisos?)');
+        toast.error(t('dash_sweep_change_err'));
       }
-    } catch { toast.error('Error al cambiar el barrido'); }
+    } catch { toast.error(t('dash_sweep_err')); }
   };
 
   const handleBulkMoveWithLockCheck = async (orderIds, targetBoard, onComplete, queueStatus = null, scheduledDay = undefined) => {
@@ -472,18 +469,18 @@ const Dashboard = () => {
     const isQcAdmin = ['supersu', 'inspector_qc', 'qc'].includes(user?.role);
 
     if (qcBoardOrders.length > 0 && !isQcAdmin) {
-      toast.error(`🔒 ${qcBoardOrders.length} orden(es) están en CONTROL DE CALIDAD. Solo SuperSU o Inspector QC pueden moverlas.`);
+      toast.error(`🔒 ${t('dash_qc_board_locked', { n: qcBoardOrders.length })}`);
       return;
     }
 
     const lockedOrders = orders.filter(o => orderIds.includes(o.order_id) && o.locked_by_qc);
     if (lockedOrders.length > 0) {
       if (!isQcAdmin) {
-        toast.error(`🔒 ${lockedOrders.length} orden(es) bloqueada(s) por QC: ${lockedOrders.map(o => o.order_number).join(', ')}`);
+        toast.error(`🔒 ${t('dash_qc_locked_list', { n: lockedOrders.length, list: lockedOrders.map(o => o.order_number).join(', ') })}`);
         return;
       }
       const nums = lockedOrders.map(o => o.order_number).join(', ');
-      const ok = window.confirm(`⚠️ SUPERVISOR QC: ${lockedOrders.length} orden(es) bloqueada(s) por QC (${nums}).\n\n¿Confirmas moverlas de todas formas?`);
+      const ok = window.confirm(`⚠️ ${t('dash_qc_supervisor_confirm', { n: lockedOrders.length, nums })}`);
       if (!ok) return;
     }
     await handleBulkMove(orderIds, targetBoard, queueStatus, scheduledDay);
@@ -753,7 +750,7 @@ const Dashboard = () => {
   const COLUMNAS_FIJAS = ['order_number', 'style'];
   const handleToggleColumn = (colKey) => {
     if (COLUMNAS_FIJAS.includes(colKey)) {
-      toast.error('Esta columna es obligatoria para la navegación.');
+      toast.error(t('dash_col_required_nav'));
       return;
     }
     if (arrangesGlobally) {
@@ -884,7 +881,7 @@ const Dashboard = () => {
       const res = await apiFetch(`${API}/orders/bulk-move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ order_ids: orderIds, board: targetBoard }) });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `El servidor respondió ${res.status}`);
+        throw new Error(errData.detail || t('dash_server_responded', { status: res.status }));
       }
       toast.success(`${orderIds.length} ${t('orders')} → ${targetBoard}`);
       fetchTrashOrders();
@@ -902,10 +899,10 @@ const Dashboard = () => {
         });
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.detail || 'Error en el servidor');
+          throw new Error(errData.detail || t('dash_server_error'));
         }
       }
-      toast.success(`${orderIds.length} ${t('orders')} eliminadas permanentemente`);
+      toast.success(t('dash_perm_deleted', { n: orderIds.length }));
       fetchTrashOrders();
       fetchTrashCount();
     } catch (err) {
@@ -958,7 +955,7 @@ const Dashboard = () => {
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       saveAs(blob, `orders_export_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success(`${ordersToExport.length} ${t('orders')} exported (solo visibles)`);
+      toast.success(t('dash_exported_visible', { n: ordersToExport.length }));
     } catch (e) {
       console.error('Export error:', e);
       toast.error('Error exporting: ' + (e.message || ''));
@@ -989,13 +986,13 @@ const Dashboard = () => {
   const handleExportComplete = async (withImages = true) => {
     if (selectedOrders.length === 0) { toast.error(t('select_export')); return; }
     try {
-      toast.info(`Exportando ${selectedOrders.length} órdenes${withImages ? ' con imágenes' : ''}...`);
+      toast.info(t('dash_exporting', { n: selectedOrders.length, imgs: withImages ? t('dash_with_images') : '' }));
       const res = await fetch(`${API}/orders/export-complete`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_ids: selectedOrders, include_comments: true, include_images: withImages })
       });
-      if (!res.ok) { toast.error('Error al exportar'); return; }
+      if (!res.ok) { toast.error(t('dash_export_err')); return; }
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1004,7 +1001,7 @@ const Dashboard = () => {
       a.click(); URL.revokeObjectURL(url);
       const imgCount = data.orders.reduce((sum, o) => sum + (o._image_files?.length || 0), 0);
       const commentCount = data.orders.reduce((sum, o) => sum + (o._comments?.length || 0), 0);
-      toast.success(`${data.total} órdenes, ${commentCount} comentarios${withImages ? `, ${imgCount} imágenes` : ''} exportados`);
+      toast.success(t('dash_export_done', { n: data.total, c: commentCount, imgs: withImages ? t('dash_images_count', { n: imgCount }) : '' }));
     } catch (e) { toast.error('Error: ' + e.message); }
   };
 
@@ -1013,13 +1010,13 @@ const Dashboard = () => {
     const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
     input.onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
-      toast.info('Leyendo archivo...');
+      toast.info(t('dash_reading_file'));
       try {
         const text = await file.text();
         const data = JSON.parse(text);
         const ordersData = data.orders || [];
-        if (!ordersData.length) { toast.error('No se encontraron órdenes'); return; }
-        toast.info(`Importando ${ordersData.length} órdenes...`);
+        if (!ordersData.length) { toast.error(t('dash_no_orders_found')); return; }
+        toast.info(t('dash_importing', { n: ordersData.length }));
         const res = await fetch(`${API}/orders/import-complete`, {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
@@ -1027,9 +1024,9 @@ const Dashboard = () => {
         });
         if (res.ok) {
           const stats = await res.json();
-          toast.success(`Importado: ${stats.orders} órdenes, ${stats.comments} comentarios, ${stats.images} imágenes (${stats.skipped_orders} ya existían)`);
+          toast.success(t('dash_import_done', { o: stats.orders, c: stats.comments, i: stats.images, s: stats.skipped_orders }));
           fetchOrders();
-        } else { toast.error('Error al importar'); }
+        } else { toast.error(t('dash_import_err')); }
       } catch (err) { toast.error('Error: ' + err.message); }
     };
     input.click();
@@ -1128,7 +1125,7 @@ const Dashboard = () => {
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
             {isAdmin && (
-              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title="Historial Extendido">
+              <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title={t('dash_extended_history')}>
                 <ClipboardList className="w-4 h-4" />
               </button>
             )}
@@ -1148,7 +1145,7 @@ const Dashboard = () => {
             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
               <div className="flex items-center gap-1 mt-1">
                 {order.packing_link && (
-                  <span title={`Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="inline-flex text-emerald-500" data-testid={`order-imported-${order.order_id}`}>
+                  <span title={`${t('dash_packing_imported')}${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="inline-flex text-emerald-500" data-testid={`order-imported-${order.order_id}`}>
                     <Truck className="w-3 h-3" />
                   </span>
                 )}
@@ -1171,15 +1168,15 @@ const Dashboard = () => {
                   e.stopPropagation();
                   try {
                     const res = await fetch(`${API}/orders/${encodeURIComponent(order.twin_order_number)}`, { credentials: 'include' });
-                    if (!res.ok) { toast.error(`Twin ${order.twin_order_number} no encontrada`); return; }
+                    if (!res.ok) { toast.error(t('dash_twin_not_found', { n: order.twin_order_number })); return; }
                     const twin = await res.json();
                     if (twin.board) setCurrentBoard(twin.board);
                     setHighlightedOrderId(twin.order_id);
                     toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
-                  } catch { toast.error('Error buscando la orden gemela'); }
+                  } catch { toast.error(t('dash_twin_search_err')); }
                 }}
                 className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
-                title={`Twin: ${order.twin_order_number} — click para ir`}
+                title={t('dash_twin_title', { n: order.twin_order_number })}
               >
                 TWIN
               </button>
@@ -1193,7 +1190,7 @@ const Dashboard = () => {
             <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
               ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
-              }`} title={order.art_neck_status ? "Neck Label Listo" : "Neck Label Pendiente"}>
+              }`} title={order.art_neck_status ? t('dash_neck_ready') : t('dash_neck_pending')}>
               NECK
             </span>
 
@@ -1201,7 +1198,7 @@ const Dashboard = () => {
             <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
               ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
-              }`} title={order.art_sep_status ? "Separaciones Listas" : "Separaciones Pendientes"}>
+              }`} title={order.art_sep_status ? t('dash_sep_ready') : t('dash_sep_pending')}>
               SEP
             </span>
 
@@ -1210,7 +1207,7 @@ const Dashboard = () => {
             <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.packing_link
               ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
-              }`} title={order.packing_link ? `Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}` : 'Sin packing importado'}
+              }`} title={order.packing_link ? `${t('dash_packing_imported')}${order.packing_link_label ? `: ${order.packing_link_label}` : ''}` : t('dash_no_packing')}
               data-testid={`order-pl-badge-${order.order_id}`}>
               <Truck className="w-2.5 h-2.5" />
             </span>
@@ -1224,7 +1221,7 @@ const Dashboard = () => {
               return (
                 <span
                   className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border inline-flex items-center gap-0.5 bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 border-sky-200/20"
-                  title={raw ? `Programada para envío: ${raw}` : 'Programada para envío'}
+                  title={raw ? `${t('dash_scheduled_ship')}: ${raw}` : t('dash_scheduled_ship')}
                   data-testid={`order-ship-badge-${order.order_id}`}
                 >
                   <Clock className="w-2.5 h-2.5" />
@@ -1251,7 +1248,7 @@ const Dashboard = () => {
               {isProgressCol && typeof val === 'number' ? (
                 <div className="w-full flex flex-col gap-1">
                   <div className="flex justify-between items-center mb-0.5">
-                    <span className="text-[9px] font-black font-mono text-muted-foreground/70 uppercase">{val} pz</span>
+                    <span className="text-[9px] font-black font-mono text-muted-foreground/70 uppercase">{val} {t('pieces')}</span>
                     <span className="text-[9px] font-black font-mono text-royal">{Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%</span>
                   </div>
                   <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/5">
@@ -1333,7 +1330,7 @@ const Dashboard = () => {
             const neckPct = total > 0 ? Math.min(100, Math.round((neckCut / total) * 100)) : 0;
             const color = neckPct >= 100 ? 'text-green-500' : neckPct >= 50 ? 'text-amber-500' : 'text-pink-500';
             return (
-              <span className={`text-sm font-black font-mono ${color}`} title={`Neck: ${neckCut} / ${total} pz`}>
+              <span className={`text-sm font-black font-mono ${color}`} title={`Neck: ${neckCut} / ${total} ${t('pieces')}`}>
                 {neckPct}%
               </span>
             );
@@ -1378,7 +1375,7 @@ const Dashboard = () => {
               <button
                 onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); }}
                 className="relative p-2.5 rounded-xl bg-muted/20 text-muted-foreground active:bg-muted/40 transition-colors"
-                aria-label="Comentarios"
+                aria-label={t('comments')}
               >
                 <MessageSquare className="w-4 h-4" />
                 {order._comments_count > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-royal rounded-full" />}
@@ -1401,7 +1398,7 @@ const Dashboard = () => {
               <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20 uppercase tracking-wider">{order.scheduled_day}</span>
             )}
             <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-muted-foreground/40 uppercase tracking-widest max-w-[45%]">
-              {order.packing_link && <Truck className="w-3 h-3 text-emerald-500 flex-shrink-0" title="Packing importado" />}
+              {order.packing_link && <Truck className="w-3 h-3 text-emerald-500 flex-shrink-0" title={t('dash_packing_imported')} />}
               <span className="truncate">{order.board}</span>
             </span>
           </div>
@@ -1472,7 +1469,7 @@ const Dashboard = () => {
               <span className="text-base font-black uppercase tracking-tight truncate">{currentBoard}</span>
             </span>
             <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex-shrink-0">
-              {visibleOrders.length} órd · cambiar <ChevronDown className="w-4 h-4" />
+              {t('dash_mobile_board_hint', { n: visibleOrders.length })} <ChevronDown className="w-4 h-4" />
             </span>
           </button>
           <div className="pt-2">
@@ -1483,7 +1480,7 @@ const Dashboard = () => {
               onClick={() => setMobileLimit(n => n + 50)}
               className="mx-3 mt-2 mb-1 py-3 rounded-2xl border border-border bg-card/60 text-sm font-bold text-primary active:scale-[0.99] transition-transform"
             >
-              Cargar más ({visibleOrders.length - mobileLimit} restantes)
+              {t('dash_load_more', { n: visibleOrders.length - mobileLimit })}
             </button>
           )}
         </div>
@@ -1621,8 +1618,8 @@ const Dashboard = () => {
         };
         return (
           <>
-            {renderQueueGroup('active', 'Activa', activeOrders, '▶', queueTones.active)}
-            {renderQueueGroup('queued', 'En Cola', queuedOrders, '⏸', queueTones.queued)}
+            {renderQueueGroup('active', t('active'), activeOrders, '▶', queueTones.active)}
+            {renderQueueGroup('queued', t('dash_queue_queued'), queuedOrders, '⏸', queueTones.queued)}
           </>
         );
       }
@@ -1721,7 +1718,7 @@ const Dashboard = () => {
             onDebouncedChange={handleSearchDebounced}
             onEnter={handleSearchEnter}
             clearToken={searchClearToken}
-            placeholder={isMobile ? 'Buscar...' : t('search_placeholder')}
+            placeholder={isMobile ? t('dash_search_short') : t('search_placeholder')}
             isMobile={isMobile}
           />
         </div>
@@ -1766,9 +1763,10 @@ const Dashboard = () => {
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
             {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
-            {!isMobile && <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
+            {/* Visible también en móvil: si no, el usuario de celular no puede cambiar idioma. */}
+            <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
-            </button>}
+            </button>
             <div className="relative">
               <button
                 data-testid="notifications-btn"
@@ -1781,14 +1779,14 @@ const Dashboard = () => {
               {showNotifications && (
                 <div data-testid="notifications-dropdown" className={cn("absolute top-12 right-0 w-80 md:w-96 border rounded-sm shadow-2xl z-[500] animate-in slide-in-from-top-2 overflow-hidden", isDark ? "bg-card border-white/10" : "bg-white border-border")}>
                   <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/20">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Menciones</span>
-                    {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{unreadCount} Nuevas</span>}
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">{t('dash_mentions')}</span>
+                    {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{t('dash_new_count', { n: unreadCount })}</span>}
                   </div>
                   <ScrollArea className="max-h-[350px]">
                     {(!notifications || notifications.length === 0) ? (
                       <div className="p-8 flex flex-col items-center justify-center gap-2">
                         <Bell className="w-8 h-8 text-muted-foreground/20" />
-                        <span className="text-xs text-muted-foreground font-bold uppercase tracking-tight">Sin notificaciones</span>
+                        <span className="text-xs text-muted-foreground font-bold uppercase tracking-tight">{t('dash_no_notifications')}</span>
                       </div>
                     ) : (
                       <div className="flex flex-col">
@@ -1802,8 +1800,8 @@ const Dashboard = () => {
                             )}
                           >
                             <div className="flex justify-between items-start mb-1.5">
-                              <span className={cn("text-xs font-bold uppercase tracking-tight flex-1", !n.read ? "text-foreground" : "text-muted-foreground")}>{n.title || "Aviso del Sistema"}</span>
-                              <span className="text-[9px] text-muted-foreground ml-2 font-medium">{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Ahora'}</span>
+                              <span className={cn("text-xs font-bold uppercase tracking-tight flex-1", !n.read ? "text-foreground" : "text-muted-foreground")}>{n.title || t('dash_system_notice')}</span>
+                              <span className="text-[9px] text-muted-foreground ml-2 font-medium">{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : t('dash_now')}</span>
                             </div>
                             <p className="text-xs text-muted-foreground leading-relaxed">{n.message}</p>
                           </button>
@@ -1844,20 +1842,20 @@ const Dashboard = () => {
           <div className="flex items-center gap-6 relative z-10">
             {/* Saved Views Selector */}
             <div className="flex flex-col items-center">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 text-center">Vistas Guardadas</label>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 text-center">{t('saved_views')}</label>
               <DropdownMenu>
                 <DropdownMenuTrigger className="flex items-center justify-between gap-3 px-4 py-2 bg-muted/20 border border-border/20 rounded-lg hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none min-w-[160px] w-[180px]">
                   <span className={cn("text-xs font-bold uppercase tracking-tight flex-1 text-center", activeViewName ? "text-royal" : "text-muted-foreground")}>
-                    {activeViewName || "Vista Estándar"}
+                    {activeViewName || t('dash_default_view')}
                   </span>
                   <ChevronDown className="w-4 h-4 text-muted-foreground group-hover:text-royal transition-colors" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
-                  {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">No hay vistas guardadas</div>}
+                  {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">{t('dash_no_saved_views')}</div>}
 
                   {pinnedViews.length > 0 && (
                     <div className="p-2 border-b border-border/50">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">Fijadas</div>
+                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">{t('dash_pinned_views')}</div>
                       {pinnedViews.map(view => (
                         <div key={view.view_id} className="flex items-center gap-1 group">
                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
@@ -1871,7 +1869,7 @@ const Dashboard = () => {
 
                   {unpinnedViews.length > 0 && (
                     <div className="p-2">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">Todas</div>
+                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">{t('all')}</div>
                       {unpinnedViews.map(view => (
                         <div key={view.view_id} className="flex items-center gap-1 group">
                           <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
@@ -1886,7 +1884,7 @@ const Dashboard = () => {
 
                   <DropdownMenuSeparator className="bg-border/50" />
                   <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
-                    Restablecer Vista <RefreshCw className="w-3 h-3" />
+                    {t('dash_reset_view')} <RefreshCw className="w-3 h-3" />
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1897,7 +1895,7 @@ const Dashboard = () => {
             {/* Quick Metrics */}
             <div className="flex items-center gap-8">
               <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Órdenes</span>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">{t('orders')}</span>
                 <span className="text-xl font-bold tracking-tighter">{orders.length}</span>
               </div>
               <div className="flex flex-col">
@@ -1923,8 +1921,8 @@ const Dashboard = () => {
               <button
                 onClick={toggleBlanksSweep}
                 title={blanksSweep?.enabled
-                  ? `Barrido automático a BLANKS: ENCENDIDO (cada ${blanksSweep?.sweep_minutes || 10} min). Click para apagar.`
-                  : 'Barrido automático a BLANKS: APAGADO. Click para encender.'}
+                  ? t('dash_sweep_title_on', { n: blanksSweep?.sweep_minutes || 10 })
+                  : t('dash_sweep_title_off')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md transition-all whitespace-nowrap ${blanksSweep?.enabled ? 'bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-400' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
                 data-testid="blanks-sweep-toggle"
               >
@@ -1935,18 +1933,18 @@ const Dashboard = () => {
             {currentBoard === 'SCHEDULING' && (
               <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
                 <Plus className="w-3.5 h-3.5" />
-                Nueva Orden
+                {t('new_order')}
               </button>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  title="Captura"
+                  title={t('dash_capture')}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-sm shadow-emerald-600/10 hover:bg-emerald-500 transition-all whitespace-nowrap"
                   data-testid="captura-trigger"
                 >
                   <Wrench className="w-3.5 h-3.5" />
-                  Captura
+                  {t('dash_capture')}
                   <ChevronDown className="w-3 h-3 opacity-80" />
                 </button>
               </DropdownMenuTrigger>
@@ -1957,7 +1955,7 @@ const Dashboard = () => {
                   data-testid="captura-prd"
                 >
                   <Factory className="w-3.5 h-3.5 mr-2 text-emerald-500" />
-                  Captura PRD
+                  {t('dash_capture_prd')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => { setShowNeckCapture(true); fetchAllOrders(); }}
@@ -1965,7 +1963,7 @@ const Dashboard = () => {
                   data-testid="captura-neck"
                 >
                   <Scissors className="w-3.5 h-3.5 mr-2 text-pink-500" />
-                  Captura Neck
+                  {t('dash_capture_neck')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setShowProductionScreen(true)}
@@ -1994,7 +1992,7 @@ const Dashboard = () => {
                   data-testid="herramientas-pintadas"
                 >
                   <FileDown className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                  Órdenes pintadas
+                  {t('dash_printed_orders')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2011,12 +2009,12 @@ const Dashboard = () => {
             <div className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-royal" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                {arrangesGlobally ? 'Columnas del sistema' : 'Mis columnas visibles'}
+                {arrangesGlobally ? t('dash_system_columns') : t('dash_my_visible_columns')}
               </span>
               <span className="text-[10px] text-muted-foreground/60 italic normal-case tracking-normal">
                 {arrangesGlobally
-                  ? '— lo que ocultes aquí deja de verlo todo el mundo'
-                  : '— solo afecta tu vista, no cambia la configuración global'}
+                  ? t('dash_hide_global_hint')
+                  : t('dash_hide_personal_hint')}
               </span>
             </div>
             <button onClick={() => setShowColumnPicker(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={16} /></button>
@@ -2060,7 +2058,7 @@ const Dashboard = () => {
             <button
               onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(false); }}
               className={cn("px-3 py-2 transition-all border-r border-border", !calendarMode && !readyCalendarMode && !blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
-              title="Vista de Tabla"
+              title={t('dash_table_view')}
             >
               <Table2 size={16} />
             </button>
@@ -2068,7 +2066,7 @@ const Dashboard = () => {
               <button
                 onClick={() => { setCalendarMode(true); setReadyCalendarMode(false); setBlanksTrackingMode(false); }}
                 className={cn("px-3 py-2 transition-all border-r border-border", calendarMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
-                title="Calendario"
+                title={t('calendar_view')}
               >
                 <CalendarDays size={16} />
               </button>
@@ -2085,7 +2083,7 @@ const Dashboard = () => {
                 <button
                   onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(true); }}
                   className={cn("px-3 py-2 transition-all", blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
-                  title="Seguimiento de Blanks"
+                  title={t('dash_blanks_tracking')}
                 >
                   <ClipboardList size={16} />
                 </button>
@@ -2130,37 +2128,37 @@ const Dashboard = () => {
           {/* Admin Tools */}
           {isAdmin && (
             <div className="flex items-center gap-1.5 p-1 bg-muted/20 rounded-lg border border-border/20">
-              <button onClick={() => setShowNewBoard(true)} title="Nuevo Tablero" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
+              <button onClick={() => setShowNewBoard(true)} title={t('dash_new_board')} className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><Plus size={18} /></button>
               {/* Agregar columna toca el set GLOBAL: solo supersu (el backend lo exige). */}
-              {isSuperAdmin && <button onClick={() => setShowAddColumn(true)} title="Agregar Columna" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>}
+              {isSuperAdmin && <button onClick={() => setShowAddColumn(true)} title={t('add_column')} className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all"><PlusCircle size={18} /></button>}
               {canArrangeColumns && (
                 <button
                   onClick={() => setShowColumnPicker(v => !v)}
-                  title={arrangesGlobally ? 'Mostrar u ocultar columnas (para todos)' : 'Mostrar u ocultar columnas (solo tu vista)'}
+                  title={arrangesGlobally ? t('dash_toggle_columns_all') : t('dash_toggle_columns_mine')}
                   className="p-2.5 rounded-lg hover:bg-royal/10 text-muted-foreground hover:text-royal transition-all"
                   data-testid="toggle-column-picker"
                 >
                   <Table2 size={18} />
-                  <span className="sr-only">Columnas visibles</span>
+                  <span className="sr-only">{t('dash_visible_columns')}</span>
                 </button>
               )}
 
               {/* Solo aparece cuando este usuario YA movió columnas en este
                   tablero: es la forma de volver al orden que ven los demás. */}
               {hasPersonalOrder && personalOrder[currentBoard]?.length > 0 && (
-                <button onClick={handleResetColumnOrder} title="Restablecer columnas al orden global" className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all" data-testid="reset-column-order">
+                <button onClick={handleResetColumnOrder} title={t('dash_reset_column_order')} className="p-2.5 rounded-lg hover:bg-royal/10 text-royal transition-all" data-testid="reset-column-order">
                   <Undo2 size={18} />
                 </button>
               )}
 
               <Popover open={showBoardVisibility} onOpenChange={setShowBoardVisibility}>
                 <PopoverTrigger asChild>
-                  <button className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all" title="Visibilidad de Tableros">
+                  <button className="p-2.5 rounded-lg hover:bg-muted text-muted-foreground transition-all" title={t('dash_board_visibility')}>
                     <Eye size={18} />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent className="w-64 max-h-80 overflow-y-auto rounded-lg shadow-2xl border z-[400] bg-card border-border p-0" align="end">
-                  <div className="p-3 border-b border-border font-roboto font-bold text-xs uppercase tracking-widest text-foreground">Visibilidad de Tableros</div>
+                  <div className="p-3 border-b border-border font-roboto font-bold text-xs uppercase tracking-widest text-foreground">{t('dash_board_visibility')}</div>
                   <ScrollArea className="h-60">
                     {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && !b.startsWith('MAQUINA')).map(b => {
                       const isHidden = hiddenBoards.includes(b);
@@ -2175,7 +2173,7 @@ const Dashboard = () => {
                             <button
                               onClick={() => { setShowBoardVisibility(false); setDeleteBoardConfirm({ step: 1, name: b }); }}
                               className="p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all"
-                              title={`Eliminar ${b}`}
+                              title={`${t('delete')} ${b}`}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -2187,7 +2185,7 @@ const Dashboard = () => {
                 </PopoverContent>
               </Popover>
 
-              <button onClick={() => setShowSeedLink(true)} title="Sembrar enlace de packing en órdenes" className="p-2.5 rounded-lg hover:bg-indigo-600/10 text-indigo-500 transition-all" data-testid="open-seed-link"><Link2 size={18} /></button>
+              <button onClick={() => setShowSeedLink(true)} title={t('dash_seed_packing_link')} className="p-2.5 rounded-lg hover:bg-indigo-600/10 text-indigo-500 transition-all" data-testid="open-seed-link"><Link2 size={18} /></button>
             </div>
           )}
 
@@ -2214,22 +2212,22 @@ const Dashboard = () => {
                   <button
                     onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'active')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30"
-                    title={`Mover a Activa en ${currentBoard}`}
+                    title={t('dash_move_to_active_in', { board: currentBoard })}
                     data-testid="quick-to-active"
                   >
                     <span className="text-sm leading-none">▶</span>
-                    <span className="hidden sm:inline">A Activa</span>
-                    <span className="sm:hidden">Activa</span>
+                    <span className="hidden sm:inline">{t('dash_to_active')}</span>
+                    <span className="sm:hidden">{t('active')}</span>
                   </button>
                   <button
                     onClick={() => handleBulkMoveWithLockCheck(selectedOrders, currentBoard, () => setSelectedOrders([]), 'queued')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30"
-                    title={`Mover a En Cola en ${currentBoard}`}
+                    title={t('dash_move_to_queue_in', { board: currentBoard })}
                     data-testid="quick-to-queued"
                   >
                     <span className="text-sm leading-none">⏸</span>
-                    <span className="hidden sm:inline">A Cola</span>
-                    <span className="sm:hidden">Cola</span>
+                    <span className="hidden sm:inline">{t('dash_to_queue')}</span>
+                    <span className="sm:hidden">{t('dash_queue')}</span>
                   </button>
                 </div>
               )}
@@ -2273,7 +2271,7 @@ const Dashboard = () => {
                             <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
                               <DropdownMenuSub>
                                 <DropdownMenuSubTrigger className="flex items-center justify-between py-3 px-5 font-bold cursor-pointer text-sm tracking-tight text-emerald-600 dark:text-emerald-400">
-                                  <span>▶ Activa</span>
+                                  <span>▶ {t('active')}</span>
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent className="z-[303] min-w-[140px] shadow-2xl">
                                   {DAY_KEYS.map(d => (
@@ -2291,7 +2289,7 @@ const Dashboard = () => {
                                 onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'queued')}
                                 className="font-bold py-3 px-5 text-sm tracking-tight text-amber-600 dark:text-amber-400"
                               >
-                                ⏸ A Cola
+                                ⏸ {t('dash_to_queue')}
                               </DropdownMenuItem>
                             </DropdownMenuSubContent>
                           </DropdownMenuSub>
@@ -2341,13 +2339,13 @@ const Dashboard = () => {
                         {allBoardsIncludingHidden.filter(b => b !== 'PAPELERA DE RECICLAJE' && b.startsWith('MAQUINA')).map(board => (
                           <DropdownMenuSub key={board}>
                             <DropdownMenuSubTrigger className={`flex items-center justify-between py-3.5 px-5 font-bold cursor-pointer text-sm md:text-base tracking-tight ${board === currentBoard ? 'text-primary' : ''}`}>
-                              <span>{board}{board === currentBoard ? ' (actual)' : ''}</span>
+                              <span>{board}{board === currentBoard ? t('dash_current_suffix') : ''}</span>
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent className="z-[302] min-w-[160px] shadow-2xl">
                               {/* Activa expands into a weekday picker — same as BLANKS/NECK. */}
                               <DropdownMenuSub>
                                 <DropdownMenuSubTrigger className="flex items-center justify-between py-3 px-5 font-bold cursor-pointer text-sm tracking-tight text-emerald-600 dark:text-emerald-400">
-                                  <span>▶ Activa</span>
+                                  <span>▶ {t('active')}</span>
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent className="z-[303] min-w-[140px] shadow-2xl">
                                   {DAY_KEYS.map(d => (
@@ -2365,7 +2363,7 @@ const Dashboard = () => {
                                 onClick={() => handleBulkMoveWithLockCheck(selectedOrders, board, () => setSelectedOrders([]), 'queued')}
                                 className="font-bold py-3 px-5 text-sm tracking-tight text-amber-600 dark:text-amber-400"
                               >
-                                ⏸ A Cola
+                                ⏸ {t('dash_to_queue')}
                               </DropdownMenuItem>
                             </DropdownMenuSubContent>
                           </DropdownMenuSub>
@@ -2381,8 +2379,8 @@ const Dashboard = () => {
               <div className="flex items-center gap-2">
                 <button onClick={handleExportExcel} className="p-2 md:px-4 md:py-2 flex items-center gap-2 hover:bg-secondary transition-colors border-r border-border group" title={t('export_excel')}>
                   <FileDown className="w-5 h-5 text-green-500 group-hover:scale-110 transition-transform" />
-                  <span className="hidden sm:inline text-xs font-bold">{t('export')} (visibles)</span>
-                  <span className="sm:hidden text-[10px] font-bold">Visibles</span>
+                  <span className="hidden sm:inline text-xs font-bold">{t('action_export')} ({t('dash_visible_lower')})</span>
+                  <span className="sm:hidden text-[10px] font-bold">{t('dash_visible')}</span>
                 </button>
               </div>
 
@@ -2390,7 +2388,7 @@ const Dashboard = () => {
 
               <button onClick={handleBulkDelete} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${bulkDeleteConfirm ? 'bg-red-500 text-white animate-pulse' : isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title={t('trash')} data-testid="bulk-delete-btn">
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{bulkDeleteConfirm ? '¿Confirmar?' : t('trash')}</span>
+                <span>{bulkDeleteConfirm ? t('dash_confirm_q') : t('trash')}</span>
               </button>
             </div>
 
@@ -2455,7 +2453,7 @@ const Dashboard = () => {
                             <>
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
-                                {filters['_board'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                {filters['_board'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['_board']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">{t('clear')}</button>}
                               </div>
                               <div className="max-h-60 overflow-y-auto mt-1 space-y-1">
                                 {allBoardsIncludingHidden.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).sort().map(b => {
@@ -2525,10 +2523,10 @@ const Dashboard = () => {
                           ) : (
                             <>
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Orden</span>
-                                {filters['order_number'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t('order')}</span>
+                                {filters['order_number'] && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n['order_number']; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">{t('clear')}</button>}
                               </div>
-                              <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder="Buscar orden..." className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
+                              <input type="text" value={filters['order_number'] || ''} onChange={(e) => setFilters(prev => ({ ...prev, order_number: e.target.value || undefined }))} placeholder={t('dash_search_order')} className="w-full bg-secondary border border-border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none" autoFocus />
                             </>
                           )}
                           <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
@@ -2563,7 +2561,7 @@ const Dashboard = () => {
                               <PopoverContent className="z-[600] min-w-[240px] bg-card border-border p-4 shadow-2xl overflow-y-auto max-h-[400px]">
                                 <div className="flex items-center justify-between mb-2">
                                   <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{col.label}</span>
-                                  {filterVal && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">Limpiar</button>}
+                                  {filterVal && <button onClick={() => setFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; })} className="text-[10px] font-bold text-destructive hover:underline uppercase">{t('clear')}</button>}
                                 </div>
 
                                 {isSelect ? (
@@ -2661,11 +2659,11 @@ const Dashboard = () => {
                                 ) : isDate ? (
                                   <div className="space-y-3">
                                     <div className="space-y-1">
-                                      <label className="text-[10px] uppercase font-bold opacity-60">Desde</label>
+                                      <label className="text-[10px] uppercase font-bold opacity-60">{t('dash_from')}</label>
                                       <input type="date" value={filterVal?.from || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), from: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
                                     </div>
                                     <div className="space-y-1">
-                                      <label className="text-[10px] uppercase font-bold opacity-60">Hasta</label>
+                                      <label className="text-[10px] uppercase font-bold opacity-60">{t('dash_to')}</label>
                                       <input type="date" value={filterVal?.to || ''} onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: { ...(prev[col.key] || {}), to: e.target.value } }))} className="w-full h-8 px-2 text-xs bg-secondary/50 border border-border rounded" />
                                     </div>
                                   </div>
@@ -2676,7 +2674,7 @@ const Dashboard = () => {
                                       type="text"
                                       value={typeof filterVal === 'string' ? filterVal : ''}
                                       onChange={(e) => setFilters(prev => ({ ...prev, [col.key]: e.target.value || undefined }))}
-                                      placeholder={`Buscar ${col.label.toLowerCase()}...`}
+                                      placeholder={t('dash_search_field', { field: col.label.toLowerCase() })}
                                       className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
                                       autoFocus
                                     />
@@ -2705,7 +2703,7 @@ const Dashboard = () => {
                       className="py-3 text-sm font-bold text-primary hover:bg-primary/5 transition-colors"
                       data-testid="load-more-rows"
                     >
-                      Cargar más ({(orders.length - displayLimit).toLocaleString()} restantes)
+                      {t('dash_load_more', { n: (orders.length - displayLimit).toLocaleString() })}
                     </button>
                   )}
                 </div>
@@ -2733,14 +2731,14 @@ const Dashboard = () => {
       {/* Trash Modal — exclusivo del supersu (ver Sidebar). */}
       <Dialog open={showTrash && isSuperAdmin} onOpenChange={setShowTrash}>
         <DialogContent className="max-w-4xl max-h-[85vh] bg-card border-border overflow-hidden flex flex-col" data-testid="trash-modal">
-          <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashSearch.trim() ? `${visibleTrashOrders.length} de ${trashOrders.length}` : trashOrders.length})</span></DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-roboto text-xl uppercase tracking-wide flex items-center gap-3 text-glow-primary"><Trash2 className="w-5 h-5 text-destructive" /> {t('trash_title')} <span className="text-sm font-normal text-muted-foreground">({trashSearch.trim() ? `${visibleTrashOrders.length} ${t('of')} ${trashOrders.length}` : trashOrders.length})</span></DialogTitle></DialogHeader>
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <input
               type="text"
               value={trashSearch}
               onChange={(e) => setTrashSearch(e.target.value)}
-              placeholder="Buscar por orden o cliente..."
+              placeholder={t('dash_search_order_client')}
               className="w-full pl-8 pr-2 py-1.5 bg-secondary/50 border border-border rounded text-xs focus:ring-1 focus:ring-primary outline-none"
               data-testid="trash-search"
             />
@@ -2754,7 +2752,7 @@ const Dashboard = () => {
                       <div role="cell" className="w-[120px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('order')}</div>
                       <div role="cell" className="flex-1 text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('client')}</div>
                       <div role="cell" className="w-[100px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('priority')}</div>
-                      <div role="cell" className="w-[100px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">Restante</div>
+                      <div role="cell" className="w-[100px] text-left font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('restante')}</div>
                       <div role="cell" className="w-[180px] text-right font-roboto uppercase text-[10px] text-muted-foreground tracking-widest">{t('actions')}</div>
                     </div>
                   </div>
@@ -2771,8 +2769,8 @@ const Dashboard = () => {
                           const now = new Date();
                           const diffMs = expiryDate - now;
                           const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-                          if (diffDays <= 0) return <span className="text-destructive font-bold uppercase">Expirado</span>;
-                          return <span className={diffDays <= 2 ? "text-orange-500 font-bold" : ""}>{diffDays} días</span>;
+                          if (diffDays <= 0) return <span className="text-destructive font-bold uppercase">{t('dash_expired')}</span>;
+                          return <span className={diffDays <= 2 ? "text-orange-500 font-bold" : ""}>{t('dash_days', { n: diffDays })}</span>;
                         })()}
                       </div>
                       <div role="cell" className="w-[180px] flex items-center justify-end gap-2">
@@ -2787,7 +2785,7 @@ const Dashboard = () => {
                     </div>
                   ))}</div>
                 </div>
-              ) : <p className="text-center text-muted-foreground py-8">{trashSearch.trim() ? `Sin coincidencias para "${trashSearch.trim()}"` : t('no_trash')}</p>}
+              ) : <p className="text-center text-muted-foreground py-8">{trashSearch.trim() ? t('dash_no_matches_for', { q: trashSearch.trim() }) : t('no_trash')}</p>}
           </div>
           {visibleTrashOrders.length > 0 && (
             <div className="flex justify-between items-center pt-4 border-t border-border">
@@ -2795,7 +2793,7 @@ const Dashboard = () => {
                   sobre SCHEDULING (hoy son cientos de órdenes) y no hay deshacer.
                   El borrado permanente ya pedía confirmación. Ambos operan sobre
                   lo FILTRADO, y el conteo del texto lo deja explícito. */}
-              <button onClick={() => { if (window.confirm(`¿Restaurar ${visibleTrashOrders.length} órdenes de la papelera a SCHEDULING?`)) handleRestoreFromTrash(visibleTrashOrders.map(o => o.order_id), 'SCHEDULING'); }} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} ({visibleTrashOrders.length}) → SCHEDULING</button>
+              <button onClick={() => { if (window.confirm(t('dash_restore_all_confirm', { n: visibleTrashOrders.length }))) handleRestoreFromTrash(visibleTrashOrders.map(o => o.order_id), 'SCHEDULING'); }} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} ({visibleTrashOrders.length}) → SCHEDULING</button>
               <button onClick={() => handlePermanentDelete(visibleTrashOrders.map(o => o.order_id))} className="px-4 py-2 bg-destructive/20 text-destructive rounded text-sm hover:bg-destructive/30 flex items-center gap-2" data-testid="empty-trash-btn"><Trash2 className="w-4 h-4" /> {t('empty_trash')} ({visibleTrashOrders.length})</button>
             </div>
           )}
@@ -2807,7 +2805,7 @@ const Dashboard = () => {
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[92vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
-              <Search className="w-6 h-6 text-primary" /> Resultados de busqueda <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
+              <Search className="w-6 h-6 text-primary" /> {t('dash_search_results')} <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-auto px-4 sm:px-6 pb-6">
@@ -2840,15 +2838,15 @@ const Dashboard = () => {
                         onClick={(e) => { e.stopPropagation(); setCommentsOrder(order); setSearchResults(null); clearSearch(); }}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary/60 text-muted-foreground active:bg-primary/10 active:text-primary text-[11px] font-bold"
                       >
-                        <MessageSquare className="w-4 h-4" /> Comentar
+                        <MessageSquare className="w-4 h-4" /> {t('action_add_comment')}
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary active:bg-primary active:text-white text-[11px] font-bold"
                       >
-                        <ExternalLink className="w-4 h-4" /> Ir al tablero
+                        <ExternalLink className="w-4 h-4" /> {t('dash_go_to_board')}
                       </button>
-                      <span className="ml-auto text-[11px] font-bold text-royal">Ver detalle ›</span>
+                      <span className="ml-auto text-[11px] font-bold text-royal">{t('dash_view_detail')}</span>
                     </div>
                   </div>
                 ))}
@@ -2859,11 +2857,11 @@ const Dashboard = () => {
                 <div className="sticky top-0 bg-secondary z-20 [transform:translateZ(0)]">
                   <div role="row" className="flex border-b border-border/50">
                     <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[120px] sticky left-0 bg-[#1e293b] z-[40] border-r border-border/40 shadow-[4px_0_10px_rgba(0,0,0,0.2)] !bg-secondary">{t('order')}</div>
-                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[200px] border-r border-border/40">Tablero</div>
+                    <div role="cell" className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[200px] border-r border-border/40">{t('board')}</div>
                     {columns.filter(c => c.key !== 'order_number').map(col => (
                       <div role="cell" key={col.key} className="text-left py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 border-r border-border/40" style={{ minWidth: col.width || 150 }}>{col.label}</div>
                     ))}
-                    <div role="cell" className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[80px] sticky right-0 bg-secondary z-30 border-l border-border/40 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">Accion</div>
+                    <div role="cell" className="text-center py-3 px-4 font-bold uppercase text-[10px] tracking-[0.2em] text-muted-foreground/70 min-w-[80px] sticky right-0 bg-secondary z-30 border-l border-border/40 shadow-[-4px_0_10px_rgba(0,0,0,0.1)] [transform:translateZ(0)]">{t('action_label')}</div>
                   </div>
                 </div>
                 <div>
@@ -2880,7 +2878,7 @@ const Dashboard = () => {
                       <div role="cell" className="py-3 px-4 min-w-[200px] border-r border-border/30">
                         <div className="flex items-center gap-2">
                           {order.packing_link && (
-                            <span title={`Packing importado${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="text-emerald-500 flex-shrink-0" data-testid={`search-imported-${order.order_id}`}>
+                            <span title={`${t('dash_packing_imported')}${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="text-emerald-500 flex-shrink-0" data-testid={`search-imported-${order.order_id}`}>
                               <Truck className="w-4 h-4" />
                             </span>
                           )}
@@ -2910,14 +2908,14 @@ const Dashboard = () => {
                           <button
                             onClick={() => { setCommentsOrder(order); setSearchResults(null); clearSearch(); }}
                             className="p-2 rounded-xl bg-secondary/60 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all shadow-sm"
-                            title="Ver comentarios"
+                            title={t('dash_view_comments')}
                           >
                             <MessageSquare className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => { setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
                             className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
-                            title="Ir al tablero"
+                            title={t('dash_go_to_board')}
                           >
                             <ExternalLink className="w-4 h-4" />
                           </button>
@@ -2943,17 +2941,17 @@ const Dashboard = () => {
                   <AlertTriangle className="w-8 h-8 text-destructive" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-barlow font-bold uppercase text-destructive">Eliminar Tablero</h2>
-                  <p className="text-sm text-muted-foreground mt-2">Estas a punto de eliminar el tablero <strong className="text-foreground">"{deleteBoardConfirm.name}"</strong></p>
-                  <p className="text-sm text-muted-foreground mt-1">Todas las ordenes de este tablero se moveran automaticamente a <strong className="text-primary">MASTER</strong>.</p>
+                  <h2 className="text-lg font-barlow font-bold uppercase text-destructive">{t('dash_delete_board')}</h2>
+                  <p className="text-sm text-muted-foreground mt-2">{t('dash_delete_board_msg1')} <strong className="text-foreground">"{deleteBoardConfirm.name}"</strong></p>
+                  <p className="text-sm text-muted-foreground mt-1">{t('dash_delete_board_msg2')} <strong className="text-primary">MASTER</strong>.</p>
                 </div>
                 <div className="w-full p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
-                  <p className="text-xs text-destructive font-bold uppercase tracking-wide">Esta accion no se puede deshacer</p>
+                  <p className="text-xs text-destructive font-bold uppercase tracking-wide">{t('dash_irreversible')}</p>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors text-sm" data-testid="cancel-delete-board">Cancelar</button>
-                <button onClick={() => setDeleteBoardConfirm({ ...deleteBoardConfirm, step: 2 })} className="flex-1 py-2.5 rounded bg-destructive/20 text-destructive hover:bg-destructive/30 transition-colors text-sm font-bold" data-testid="confirm-delete-step1">Si, quiero eliminar</button>
+                <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors text-sm" data-testid="cancel-delete-board">{t('cancel')}</button>
+                <button onClick={() => setDeleteBoardConfirm({ ...deleteBoardConfirm, step: 2 })} className="flex-1 py-2.5 rounded bg-destructive/20 text-destructive hover:bg-destructive/30 transition-colors text-sm font-bold" data-testid="confirm-delete-step1">{t('dash_yes_delete')}</button>
               </div>
             </>
           )}
@@ -2964,14 +2962,14 @@ const Dashboard = () => {
                   <Trash2 className="w-10 h-10 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-barlow font-bold uppercase text-destructive">Confirmacion Final</h2>
-                  <p className="text-sm text-muted-foreground mt-2">Vas a eliminar <strong className="text-destructive">"{deleteBoardConfirm.name}"</strong> permanentemente.</p>
-                  <p className="text-base font-bold text-foreground mt-3">Estas completamente seguro?</p>
+                  <h2 className="text-xl font-barlow font-bold uppercase text-destructive">{t('dash_final_confirmation')}</h2>
+                  <p className="text-sm text-muted-foreground mt-2">{t('dash_delete_board_final1')} <strong className="text-destructive">"{deleteBoardConfirm.name}"</strong> {t('dash_permanently')}</p>
+                  <p className="text-base font-bold text-foreground mt-3">{t('dash_are_you_sure')}</p>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-bold" data-testid="cancel-delete-final">No, conservar tablero</button>
-                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard('MASTER'); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-bold uppercase tracking-wide" data-testid="confirm-delete-final">Eliminar definitivamente</button>
+                <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-bold" data-testid="cancel-delete-final">{t('dash_keep_board')}</button>
+                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard('MASTER'); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-bold uppercase tracking-wide" data-testid="confirm-delete-final">{t('dash_delete_forever')}</button>
               </div>
             </>
           )}
@@ -2996,17 +2994,17 @@ const Dashboard = () => {
           </DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre de la Vista</label>
+              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">{t('dash_view_name_label')}</label>
               <input
                 value={newViewName}
                 onChange={(e) => setNewViewName(e.target.value)}
-                placeholder="Ej: Solo Prioridad Alta"
+                placeholder={t('dash_view_name_placeholder')}
                 className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all"
                 autoFocus
               />
             </div>
             <p className="text-[10px] text-muted-foreground uppercase leading-relaxed font-bold opacity-60">
-              * SE GUARDARAN LOS FILTROS ACTUALES DEL TABLERO {currentBoard}.
+              {t('dash_save_view_note', { board: currentBoard })}
             </p>
           </div>
           <DialogFooter>
@@ -3021,16 +3019,16 @@ const Dashboard = () => {
         <DialogContent className="max-w-md bg-card border-border">
           <DialogHeader>
             <DialogTitle className="font-roboto text-xl uppercase tracking-widest text-glow-primary">
-              Nuevo Tablero
+              {t('dash_new_board')}
             </DialogTitle>
           </DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">Nombre del Tablero</label>
+              <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest ml-1">{t('dash_board_name')}</label>
               <input
                 value={newBoardName}
                 onChange={(e) => setNewBoardName(e.target.value)}
-                placeholder="Ej: CALIDAD, EMBALAJE..."
+                placeholder={t('dash_board_name_placeholder')}
                 className="w-full bg-secondary border border-border rounded-sm px-4 py-2.5 text-sm outline-none focus:border-royal transition-all uppercase"
                 autoFocus
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
@@ -3038,13 +3036,13 @@ const Dashboard = () => {
             </div>
           </div>
           <DialogFooter>
-            <button onClick={() => setShowNewBoard(false)} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-all">Cancelar</button>
+            <button onClick={() => setShowNewBoard(false)} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-all">{t('cancel')}</button>
             <button
               onClick={handleCreateBoard}
               disabled={!newBoardName.trim()}
               className="px-6 py-2 bg-royal text-white rounded-sm font-bold text-xs uppercase tracking-widest shadow-lg shadow-royal/20 hover:bg-royal/90 transition-all disabled:opacity-50"
             >
-              Crear Tablero
+              {t('dash_create_board')}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -3060,11 +3058,11 @@ const Dashboard = () => {
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         {[
-          { key: 'boards', label: 'Tableros', Icon: Table2, onClick: () => setIsMobileMenuOpen(true) },
-          { key: 'search', label: 'Buscar', Icon: Search, onClick: () => { searchInputRef.current?.scrollIntoView({ block: 'start' }); searchInputRef.current?.focus(); } },
-          { key: 'new', label: 'Nueva', Icon: Plus, center: true, onClick: () => setShowNewOrder(true) },
+          { key: 'boards', label: t('dash_boards'), Icon: Table2, onClick: () => setIsMobileMenuOpen(true) },
+          { key: 'search', label: t('search'), Icon: Search, onClick: () => { searchInputRef.current?.scrollIntoView({ block: 'start' }); searchInputRef.current?.focus(); } },
+          { key: 'new', label: t('dash_new_f'), Icon: Plus, center: true, onClick: () => setShowNewOrder(true) },
           { key: 'wms', label: 'WMS', Icon: Warehouse, onClick: () => { window.location.href = '/wms'; } },
-          { key: 'alerts', label: 'Alertas', Icon: Bell, badge: unreadCount > 0, onClick: () => { setShowNotifications(true); if (unreadCount > 0) markNotificationsRead(); } },
+          { key: 'alerts', label: t('dash_alerts'), Icon: Bell, badge: unreadCount > 0, onClick: () => { setShowNotifications(true); if (unreadCount > 0) markNotificationsRead(); } },
         ].map(({ key, label, Icon, onClick, center, badge }) => (
           center ? (
             <button key={key} onClick={onClick} className="flex flex-col items-center -mt-8 active:scale-95 transition-transform min-w-[64px]" aria-label={label}>
@@ -3113,7 +3111,7 @@ const Dashboard = () => {
               )}
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: '10px', fontWeight: 900, color: '#4169e1', textTransform: 'uppercase', letterSpacing: '0.25em', marginBottom: '6px', opacity: 0.9 }}>
-                  Detalles de Orden
+                  {t('dash_order_details')}
                 </p>
                 <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px' }}>
                   {isAdmin && isEditingOrderNo ? (
@@ -3157,7 +3155,7 @@ const Dashboard = () => {
                         "text-3xl font-black uppercase tracking-tighter leading-none cursor-pointer",
                         isDark ? "text-white" : "text-navy"
                       )}
-                      title={isAdmin ? "Click para editar número de orden" : ""}
+                      title={isAdmin ? t('dash_click_edit_order_no') : ""}
                     >
                       {detailsOrder.order_number}
                     </h3>
@@ -3175,7 +3173,7 @@ const Dashboard = () => {
                 if (qty <= 0) return null;
                 return (
                   <div className="hidden sm:flex flex-col items-end gap-2 pr-4 border-r border-border/50">
-                    <span className="text-[10px] font-black text-royal uppercase tracking-widest">{pct.toFixed(0)}% Completado</span>
+                    <span className="text-[10px] font-black text-royal uppercase tracking-widest">{pct.toFixed(0)}% {t('completed')}</span>
                     <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden">
                       <div className="h-full bg-royal" style={{ width: `${pct}%` }} />
                     </div>
@@ -3212,7 +3210,7 @@ const Dashboard = () => {
                       {pct.toFixed(0)}% {t('completed') || 'Completado'}
                     </span>
                     <span className="text-[10px] font-bold" style={{ color: '#94a3b8' }}>
-                      {totalProduced.toLocaleString()} / {qty.toLocaleString()} pz
+                      {totalProduced.toLocaleString()} / {qty.toLocaleString()} {t('pieces')}
                     </span>
                   </div>
                   <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(127,127,127,0.18)' }}>
@@ -3224,7 +3222,7 @@ const Dashboard = () => {
 
             {/* Cliente */}
             <div>
-              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>Cliente</p>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '6px' }}>{t('client')}</p>
               <p style={{ fontSize: '20px', fontWeight: 900, textTransform: 'uppercase', color: isDark ? '#f1f5f9' : '#0f172a', margin: 0 }}>
                 {renderDetailValue(detailsOrder.client)}
               </p>
@@ -3235,7 +3233,7 @@ const Dashboard = () => {
 
             {/* Job Instructions */}
             <div>
-              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '10px' }}>Instrucciones del Job</p>
+              <p style={{ fontSize: '9px', fontWeight: 900, color: isDark ? '#475569' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '10px' }}>{t('dash_job_instructions')}</p>
               <div style={{ padding: '16px 18px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.04)', borderRadius: '10px', border: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.08)'}` }}>
                 <p style={{ fontSize: '14px', fontWeight: 600, lineHeight: 1.6, color: isDark ? '#cbd5e1' : '#334155', margin: 0 }}>
                   {renderDetailValue(detailsOrder.job_title_a)}
@@ -3247,7 +3245,7 @@ const Dashboard = () => {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                 <div style={{ width: '3px', height: '14px', backgroundColor: '#4169e1', borderRadius: '2px', boxShadow: '0 0 8px rgba(65,105,225,0.5)' }} />
-                <p style={{ fontSize: '10px', fontWeight: 900, color: isDark ? '#64748b' : '#475569', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>Estados de la Orden</p>
+                <p style={{ fontSize: '10px', fontWeight: 900, color: isDark ? '#64748b' : '#475569', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>{t('dash_order_statuses')}</p>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-6">
                 {columns
@@ -3280,7 +3278,7 @@ const Dashboard = () => {
               onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#3557c9'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
               onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#4169e1'; e.currentTarget.style.transform = 'translateY(0)'; }}
             >
-              Abrir Mensajería
+              {t('dash_open_messaging')}
             </button>
             <button
               onClick={() => setDetailsOrder(null)}
@@ -3293,7 +3291,7 @@ const Dashboard = () => {
               onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#fff'; }}
               onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#64748b'; }}
             >
-              Cerrar
+              {t('close')}
             </button>
           </div>
         </div>

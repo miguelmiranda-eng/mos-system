@@ -3,6 +3,7 @@ import { Brush, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Plus, X, Flame, R
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
+import { useLang } from '../contexts/LanguageContext';
 import PaintRecipes from './PaintRecipes';
 import PaintInventory from './PaintInventory';
 import { Toaster } from './ui/sonner';
@@ -29,6 +30,7 @@ const jobUrl = (v) => {
 };
 
 export default function PaintModule() {
+  const { t } = useLang();
   const navigate = useNavigate();
   const [weekRef, setWeekRef] = useState(() => new Date().toISOString().slice(0, 10));
   const [board, setBoard] = useState(null);
@@ -77,9 +79,9 @@ export default function PaintModule() {
         fetch(`${API}/paint/backlog`, { credentials: 'include' }).then(r => r.json()),
       ]);
       setBoard(b); setBacklog(bl.backlog || []); setSuggested(bl.suggested || []);
-    } catch { toast.error('Error al cargar el tablero'); }
+    } catch { toast.error(t('paint_load_board_err')); }
     finally { setLoading(false); }
-  }, [weekRef]);
+  }, [weekRef]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   const shiftWeek = (days) => {
@@ -100,7 +102,7 @@ export default function PaintModule() {
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Error'); }
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || t('error')); }
     return res.json().catch(() => ({}));
   };
 
@@ -109,7 +111,7 @@ export default function PaintModule() {
       setBusy(true);
       await api('POST', '/paint/tasks', order_id ? { order_id } : { order_number });
       setAddOrder(''); await load();
-      toast.success('Orden agregada a pinturas');
+      toast.success(t('paint_order_added'));
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -124,24 +126,24 @@ export default function PaintModule() {
     try {
       await api('POST', '/paint/reorder', { date: targetDate, ordered_ids: target.map(t => t.paint_task_id) });
       await load();
-      toast.success(targetDate ? 'Orden reprogramada' : 'Movida a sin programar');
-    } catch (e) { toast.error(e.message || 'No se pudo mover'); }
+      toast.success(targetDate ? t('paint_order_rescheduled') : t('paint_moved_to_backlog'));
+    } catch (e) { toast.error(e.message || t('paint_move_err')); }
   };
 
-  const setStatus = async (t, value) => {
-    if (!value || value === t.ink_status) return;
+  const setStatus = async (task, value) => {
+    if (!value || value === task.ink_status) return;
     try {
-      const res = await api('PUT', `/paint/tasks/${t.paint_task_id}/status`, { ink_status: value });
+      const res = await api('PUT', `/paint/tasks/${task.paint_task_id}/status`, { ink_status: value });
       const c = res?.consumption;
       if (c && (c.deducted?.length || c.missing?.length)) {
-        const d = c.deducted?.length ? `Descontado: ${c.deducted.map(x => `${x.name} (${x.qty}${x.unit || ''})`).join(', ')}` : '';
-        const m = c.missing?.length ? ` · Sin match en inventario: ${c.missing.join(', ')}` : '';
-        toast.success(`Tinta lista.${d ? ' ' + d : ''}${m}`);
+        const d = c.deducted?.length ? t('paint_deducted', { list: c.deducted.map(x => `${x.name} (${x.qty}${x.unit || ''})`).join(', ') }) : '';
+        const m = c.missing?.length ? ` · ${t('paint_no_match', { list: c.missing.join(', ') })}` : '';
+        toast.success(`${t('paint_ink_ready_dot')}${d ? ' ' + d : ''}${m}`);
       } else {
-        toast.success(`Estatus: ${value}`);
+        toast.success(t('paint_status_set', { value }));
       }
       await load();
-    } catch (e) { toast.error(e.message || 'No se pudo cambiar el estatus'); }
+    } catch (e) { toast.error(e.message || t('paint_status_err')); }
   };
   const openPicker = (t) => { setRecipeQ(''); setRecipeOpts([]); setPickerTask(t); };
   const linkRecipe = async (rid) => {
@@ -149,68 +151,68 @@ export default function PaintModule() {
     try {
       await api('PUT', `/paint/tasks/${pickerTask.paint_task_id}`, { recipe_id: rid });
       setPickerTask(null); await load();
-      toast.success(rid ? 'Receta ligada' : 'Receta quitada');
+      toast.success(rid ? t('paint_recipe_linked') : t('paint_recipe_unlinked'));
     } catch (e) { toast.error(e.message); }
   };
-  const toggleHot = async (t) => {
-    try { await api('PUT', `/paint/tasks/${t.paint_task_id}`, { is_hot: !t.is_hot }); await load(); toast.success(!t.is_hot ? 'Marcada urgente' : 'Urgente quitado'); }
-    catch (e) { toast.error(e.message || 'No se pudo actualizar'); }
+  const toggleHot = async (task) => {
+    try { await api('PUT', `/paint/tasks/${task.paint_task_id}`, { is_hot: !task.is_hot }); await load(); toast.success(!task.is_hot ? t('paint_hot_on') : t('paint_hot_off')); }
+    catch (e) { toast.error(e.message || t('paint_update_err')); }
   };
-  const remove = async (t) => {
-    if (!window.confirm(`¿Quitar la orden ${t.order_number} de pinturas?`)) return;
-    try { await api('DELETE', `/paint/tasks/${t.paint_task_id}`); await load(); }
+  const remove = async (task) => {
+    if (!window.confirm(t('paint_remove_confirm', { order: task.order_number }))) return;
+    try { await api('DELETE', `/paint/tasks/${task.paint_task_id}`); await load(); }
     catch (e) { toast.error(e.message); }
   };
 
-  const Card = (t) => {
-    const o = t.order || {};
-    const ink = INK[t.ink_status] || INK.pendiente;
-    const colors = (t.colors && t.colors.length ? t.colors.map(c => c.name || c) : (o.color ? [o.color] : []));
+  const Card = (task) => {
+    const o = task.order || {};
+    const ink = INK[task.ink_status] || INK.pendiente;
+    const colors = (task.colors && task.colors.length ? task.colors.map(c => c.name || c) : (o.color ? [o.color] : []));
     return (
-      <div key={t.paint_task_id}
+      <div key={task.paint_task_id}
         onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); moveTask(dragId, t.scheduled_date ?? null, t.paint_task_id); setDragId(null); }}
+        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); moveTask(dragId, task.scheduled_date ?? null, task.paint_task_id); setDragId(null); }}
         className="flex overflow-hidden rounded-xl border border-border bg-card/70 hover:border-primary/40 transition-colors">
-        <div style={{ width: 4, background: t.is_hot ? '#E24B4A' : ink.bar }} />
+        <div style={{ width: 4, background: task.is_hot ? '#E24B4A' : ink.bar }} />
         <div className="flex-1 min-w-0 p-2">
           <div className="flex items-center gap-1.5">
-            <span draggable onDragStart={(e) => { setDragId(t.paint_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', t.paint_task_id); } catch (_) {} }}
-              title="Arrastrar" className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground -ml-0.5 shrink-0"><GripVertical size={13} /></span>
-            <span className="font-mono font-black text-sm text-foreground">{t.order_number}</span>
+            <span draggable onDragStart={(e) => { setDragId(task.paint_task_id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', task.paint_task_id); } catch (_) {} }}
+              title={t('paint_drag')} className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground -ml-0.5 shrink-0"><GripVertical size={13} /></span>
+            <span className="font-mono font-black text-sm text-foreground">{task.order_number}</span>
             {jobUrl(o.job_title_a) && (
               <a href={jobUrl(o.job_title_a)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                title="Abrir en Printavo" className="text-primary hover:opacity-70"><ExternalLink size={12} /></a>
+                title={t('paint_open_printavo')} className="text-primary hover:opacity-70"><ExternalLink size={12} /></a>
             )}
-            {t.is_hot && <span className="ml-auto text-[9px] font-black uppercase tracking-wide bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded-full">HOT</span>}
+            {task.is_hot && <span className="ml-auto text-[9px] font-black uppercase tracking-wide bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded-full">HOT</span>}
           </div>
           <div className="text-[11px] text-muted-foreground truncate mt-0.5">{o.client || '—'}{o.branding ? ` · ${o.branding}` : ''}</div>
           <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             {colors.slice(0, 4).map((c, i) => (
               <span key={i} className="text-[9px] font-bold uppercase bg-secondary/60 text-foreground/80 px-1.5 py-0.5 rounded">{c}</span>
             ))}
-            {o.quantity != null && <span className="text-[10px] text-muted-foreground">{o.quantity} pz</span>}
+            {o.quantity != null && <span className="text-[10px] text-muted-foreground">{t('prod_n_pieces', { n: o.quantity })}</span>}
           </div>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <select value={t.ink_status} onChange={e => setStatus(t, e.target.value)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
-              title="Estatus de tinta"
+            <select value={task.ink_status} onChange={e => setStatus(task, e.target.value)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
+              title={t('paint_ink_status')}
               className={`text-[10px] font-black uppercase tracking-wide pl-2 pr-1 py-0.5 rounded-full border-0 appearance-none cursor-pointer ${ink.pill}`}>
-              <option value="pendiente">Pendiente</option>
-              <option value="mezclando">Mezclando</option>
-              <option value="lista">Lista</option>
+              <option value="pendiente">{t('pending')}</option>
+              <option value="mezclando">{t('paint_mixing')}</option>
+              <option value="lista">{t('paint_ready')}</option>
             </select>
-            {o.due_date && <span className="text-[10px] text-muted-foreground">Entrega {fmtDate(o.due_date)}</span>}
+            {o.due_date && <span className="text-[10px] text-muted-foreground">{t('paint_due', { date: fmtDate(o.due_date) })}</span>}
             <div className="ml-auto flex items-center gap-1">
-              <button onClick={() => toggleHot(t)} onMouseDown={e => e.stopPropagation()} title="Marcar urgente" className={`p-1 rounded ${t.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>
-              <button onClick={() => remove(t)} onMouseDown={e => e.stopPropagation()} title="Quitar" className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
+              <button onClick={() => toggleHot(task)} onMouseDown={e => e.stopPropagation()} title={t('paint_mark_hot')} className={`p-1 rounded ${task.is_hot ? 'text-red-400' : 'text-muted-foreground/50 hover:text-red-400'}`}><Flame size={13} /></button>
+              <button onClick={() => remove(task)} onMouseDown={e => e.stopPropagation()} title={t('paint_remove')} className="p-1 rounded text-muted-foreground/50 hover:text-red-400"><X size={13} /></button>
             </div>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
-            {t.recipe
-              ? <button onClick={() => openPicker(t)} onMouseDown={e => e.stopPropagation()} title="Cambiar receta" className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {t.recipe.color_name}</button>
-              : <button onClick={() => openPicker(t)} onMouseDown={e => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> ligar receta</button>}
-            <select value={t.scheduled_date || ''} onChange={e => moveTask(t.paint_task_id, e.target.value || null, null)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
-              title="Programar en un día" className="ml-auto text-[10px] bg-secondary/50 border border-border rounded px-1.5 py-0.5 cursor-pointer max-w-[96px]">
-              <option value="">Sin programar</option>
+            {task.recipe
+              ? <button onClick={() => openPicker(task)} onMouseDown={e => e.stopPropagation()} title={t('paint_change_recipe')} className="inline-flex items-center gap-1 text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded"><Beaker size={11} /> {task.recipe.color_name}</button>
+              : <button onClick={() => openPicker(task)} onMouseDown={e => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><Plus size={11} /> {t('paint_link_recipe')}</button>}
+            <select value={task.scheduled_date || ''} onChange={e => moveTask(task.paint_task_id, e.target.value || null, null)} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
+              title={t('paint_schedule_day')} className="ml-auto text-[10px] bg-secondary/50 border border-border rounded px-1.5 py-0.5 cursor-pointer max-w-[96px]">
+              <option value="">{t('paint_unscheduled')}</option>
               {dayOptions.map(d => <option key={d.date} value={d.date}>{d.label}</option>)}
             </select>
           </div>
@@ -229,27 +231,27 @@ export default function PaintModule() {
         <span className="text-[11px] text-muted-foreground">{tasks.length}</span>
       </div>
       <div className="flex flex-col gap-1.5 min-h-[80px]">
-        {tasks.map(t => Card(t))}
+        {tasks.map(task => Card(task))}
       </div>
       {isBacklog && (
         <div className="mt-3 space-y-2">
           <input value={addOrder} onChange={e => setAddOrder(e.target.value)}
-            placeholder="Buscar orden (# o cliente)…"
+            placeholder={t('paint_search_order_placeholder')}
             className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary" />
 
           {addOrder.trim() ? (
             <div className="flex flex-col gap-1 max-h-72 overflow-auto">
               {results.length === 0 ? (
-                <div className="text-[11px] text-muted-foreground px-1 py-2">Sin resultados</div>
+                <div className="text-[11px] text-muted-foreground px-1 py-2">{t('no_results')}</div>
               ) : results.map(o => (
                 <div key={o.order_id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-border/40">
                   <span className="font-mono font-bold text-xs">{o.order_number}</span>
                   <span className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">{o.client}</span>
                   {o.has_art
-                    ? <span className="text-[9px] font-black uppercase bg-emerald-500/15 text-emerald-500 px-1.5 py-0.5 rounded shrink-0">Con arte</span>
-                    : <span className="text-[9px] font-black uppercase bg-amber-500/15 text-amber-500 px-1.5 py-0.5 rounded shrink-0">Sin arte</span>}
+                    ? <span className="text-[9px] font-black uppercase bg-emerald-500/15 text-emerald-500 px-1.5 py-0.5 rounded shrink-0">{t('paint_has_art')}</span>
+                    : <span className="text-[9px] font-black uppercase bg-amber-500/15 text-amber-500 px-1.5 py-0.5 rounded shrink-0">{t('paint_no_art')}</span>}
                   {o.in_paint
-                    ? <span className="text-[10px] text-muted-foreground/70 shrink-0">En cola</span>
+                    ? <span className="text-[10px] text-muted-foreground/70 shrink-0">{t('paint_in_queue')}</span>
                     : <button onClick={() => addByNumber(null, o.order_id)} disabled={busy}
                         className="p-1 rounded bg-primary text-black disabled:opacity-40 shrink-0"><Plus size={13} /></button>}
                 </div>
@@ -257,7 +259,7 @@ export default function PaintModule() {
             </div>
           ) : suggested.length > 0 && (
             <div>
-              <div className="text-[10px] uppercase font-black tracking-widest text-muted-foreground/70 mb-1 mt-2">Sugeridas (arte listo)</div>
+              <div className="text-[10px] uppercase font-black tracking-widest text-muted-foreground/70 mb-1 mt-2">{t('paint_suggested')}</div>
               <div className="flex flex-col gap-1 max-h-64 overflow-auto">
                 {suggested.map(o => (
                   <button key={o.order_id} onClick={() => addByNumber(null, o.order_id)}
@@ -283,13 +285,13 @@ export default function PaintModule() {
           <button onClick={() => navigate('/dashboard')} className="p-2 rounded-lg hover:bg-secondary/40"><ArrowLeft size={18} /></button>
           <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center text-primary"><Brush size={19} /></div>
           <div>
-            <h1 className="text-lg font-black uppercase tracking-widest flex items-center gap-2">Departamento de Pinturas
+            <h1 className="text-lg font-black uppercase tracking-widest flex items-center gap-2">{t('paint_title')}
               <span className="text-[9px] font-bold bg-primary/15 text-primary px-1.5 py-0.5 rounded-full normal-case tracking-normal">{BUILD}</span></h1>
-            <p className="text-xs text-muted-foreground">Calendarización de mezcla de tinta — arrastra las órdenes por día y prioridad</p>
+            <p className="text-xs text-muted-foreground">{t('paint_subtitle')}</p>
           </div>
           <div className="ml-auto flex items-center gap-1.5">
             <button onClick={() => shiftWeek(-7)} className="p-2 rounded-lg border border-border hover:bg-secondary/40"><ChevronLeft size={16} /></button>
-            <button onClick={() => setWeekRef(new Date().toISOString().slice(0, 10))} className="px-3 py-2 rounded-lg border border-border hover:bg-secondary/40 text-sm font-bold">Hoy</button>
+            <button onClick={() => setWeekRef(new Date().toISOString().slice(0, 10))} className="px-3 py-2 rounded-lg border border-border hover:bg-secondary/40 text-sm font-bold">{t('today')}</button>
             <button onClick={() => shiftWeek(7)} className="p-2 rounded-lg border border-border hover:bg-secondary/40"><ChevronRight size={16} /></button>
             <button onClick={load} className="p-2 rounded-lg border border-border hover:bg-secondary/40"><RefreshCw size={16} /></button>
           </div>
@@ -297,7 +299,7 @@ export default function PaintModule() {
 
         {/* Tabs */}
         <div className="flex items-center gap-1 mb-4 border-b border-border">
-          {[['board', 'Calendario', CalendarDays], ['recipes', 'Recetas', Beaker], ['inventory', 'Inventario', Package]].map(([id, label, Icon]) => (
+          {[['board', t('calendar_view'), CalendarDays], ['recipes', t('paint_recipes_tab'), Beaker], ['inventory', t('paint_inventory_tab'), Package]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`flex items-center gap-1.5 px-4 py-2 text-sm font-bold border-b-2 -mb-px ${tab === id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
               <Icon size={15} /> {label}
@@ -311,28 +313,28 @@ export default function PaintModule() {
         {tab === 'board' && (<>
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Órdenes semana</div><div className="text-2xl font-black">{board?.total ?? 0}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Urgentes (HOT)</div><div className="text-2xl font-black text-red-400">{board?.hot_count ?? 0}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Tinta lista</div><div className="text-2xl font-black text-emerald-500">{board?.ready_count ?? 0}</div></div>
-          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">Sin programar</div><div className="text-2xl font-black">{backlog.length}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('paint_week_orders')}</div><div className="text-2xl font-black">{board?.total ?? 0}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('paint_hot_count')}</div><div className="text-2xl font-black text-red-400">{board?.hot_count ?? 0}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('paint_ink_ready')}</div><div className="text-2xl font-black text-emerald-500">{board?.ready_count ?? 0}</div></div>
+          <div className="bg-card/60 rounded-xl p-3"><div className="text-xs text-muted-foreground">{t('paint_unscheduled')}</div><div className="text-2xl font-black">{backlog.length}</div></div>
         </div>
 
         {loading ? (
           <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
           <div className="flex gap-3 items-start overflow-x-auto pb-4">
-            {Column({ isBacklog: true, date: null, label: 'Sin programar', tasks: backlog })}
+            {Column({ isBacklog: true, date: null, label: t('paint_unscheduled'), tasks: backlog })}
             {(board?.days || []).map((d, i) => Column({ date: d.date, label: isoToLabel(d.date, i), tasks: d.tasks }))}
           </div>
         )}
 
         {/* Legend */}
         <div className="flex items-center gap-4 mt-3 flex-wrap text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#888780' }} />Pendiente</span>
-          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#BA7517' }} />Mezclando</span>
-          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#639922' }} />Tinta lista</span>
-          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#E24B4A' }} />HOT / urgente</span>
-          <span className="ml-auto">Clic en el estatus para avanzar · arrastra para reordenar o mover de día</span>
+          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#888780' }} />{t('pending')}</span>
+          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#BA7517' }} />{t('paint_mixing')}</span>
+          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#639922' }} />{t('paint_ink_ready')}</span>
+          <span className="flex items-center gap-1.5"><span style={{ width: 10, height: 10, borderRadius: 3, background: '#E24B4A' }} />{t('paint_hot_legend')}</span>
+          <span className="ml-auto">{t('paint_legend_hint')}</span>
         </div>
         </>)}
 
@@ -340,14 +342,14 @@ export default function PaintModule() {
           <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setPickerTask(null)}>
             <div className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[80vh] overflow-auto p-5" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-black uppercase tracking-widest text-sm">Receta · orden {pickerTask.order_number}</h3>
+                <h3 className="font-black uppercase tracking-widest text-sm">{t('paint_recipe_for_order', { order: pickerTask.order_number })}</h3>
                 <button onClick={() => setPickerTask(null)} className="p-1.5 rounded hover:bg-secondary/40"><X size={18} /></button>
               </div>
-              <input value={recipeQ} onChange={e => setRecipeQ(e.target.value)} placeholder="Buscar receta (color / pantone)…"
+              <input value={recipeQ} onChange={e => setRecipeQ(e.target.value)} placeholder={t('paint_search_recipe_placeholder')}
                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm mb-3" />
               <div className="flex flex-col gap-1 max-h-72 overflow-auto">
                 {recipeOpts.length === 0 ? (
-                  <div className="text-[12px] text-muted-foreground px-1 py-3">Sin recetas. Créalas en la pestaña <b>Recetas</b>.</div>
+                  <div className="text-[12px] text-muted-foreground px-1 py-3">{t('paint_no_recipes_pre')} <b>{t('paint_recipes_tab')}</b>.</div>
                 ) : recipeOpts.map(r => (
                   <button key={r.recipe_id} onClick={() => linkRecipe(r.recipe_id)}
                     className={`flex items-center gap-2 text-left px-2 py-1.5 rounded-lg border ${pickerTask.recipe_id === r.recipe_id ? 'border-primary bg-primary/10' : 'border-border/40 hover:border-primary/40'}`}>
@@ -359,7 +361,7 @@ export default function PaintModule() {
                 ))}
               </div>
               {pickerTask.recipe_id && (
-                <button onClick={() => linkRecipe(null)} className="mt-3 text-xs text-red-400 font-bold">Quitar receta ligada</button>
+                <button onClick={() => linkRecipe(null)} className="mt-3 text-xs text-red-400 font-bold">{t('paint_unlink_recipe')}</button>
               )}
             </div>
           </div>

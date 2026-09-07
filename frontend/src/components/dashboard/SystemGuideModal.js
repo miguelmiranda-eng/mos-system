@@ -1,94 +1,97 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Zap, LayoutDashboard, Search, ArrowRight, ChevronDown, ChevronUp, Shield, Layers, Cpu, Download, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { useLang } from "../../contexts/LanguageContext";
 
-const SECTIONS = [
+// Las secciones se construyen con `t` para que la guía salga en el idioma
+// activo; el componente las memoiza por `t`.
+const getSections = (t) => [
   {
     id: "overview",
     icon: <LayoutDashboard className="w-4 h-4" />,
-    title: "Resumen del Sistema",
+    title: t('guide_overview_title'),
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30",
     content: [
-      { label: "MOS System", desc: "CRM de producción para gestión de órdenes de manufactura textil. Cada orden pasa por múltiples tableros según su estado en producción." },
-      { label: "Tableros principales", desc: "MASTER → SCHEDULING → READY TO SCHEDULED → BLANKS → SCREENS → NECK → EJEMPLOS → COMPLETOS → FINAL BILL. Las máquinas (MAQUINA1-14) son tableros de producción activa." },
-      { label: "Vista MASTER", desc: "Muestra TODAS las órdenes activas en todos los tableros (excepto PAPELERA DE RECICLAJE). Úsala para búsqueda global o supervisión general." },
-      { label: "Código secreto", desc: "Escribe '201492' en el buscador para abrir esta guía en cualquier momento." },
+      { label: "MOS System", desc: t('guide_overview_mos_desc') },
+      { label: t('guide_overview_boards_label'), desc: t('guide_overview_boards_desc') },
+      { label: t('guide_overview_master_label'), desc: t('guide_overview_master_desc') },
+      { label: t('guide_overview_secret_label'), desc: t('guide_overview_secret_desc') },
     ]
   },
   {
     id: "search",
     icon: <Search className="w-4 h-4" />,
-    title: "Búsqueda Global",
+    title: t('guide_search_title'),
     color: "text-green-400",
     bg: "bg-green-500/10 border-green-500/30",
     content: [
-      { label: "Cómo buscar", desc: "Escribe en el buscador del header y presiona Enter. Busca por: número de orden, PO, cliente, branding o notas." },
-      { label: "Resultado exacto", desc: "Si encuentra 1 sola orden, navega automáticamente al tablero donde está y muestra un toast con su ubicación." },
-      { label: "Múltiples resultados", desc: "Si hay múltiples coincidencias, se muestran en una lista de resultados para que puedas seleccionar." },
-      { label: "201492", desc: "Código especial que abre esta guía del sistema." },
+      { label: t('guide_search_how_label'), desc: t('guide_search_how_desc') },
+      { label: t('guide_search_exact_label'), desc: t('guide_search_exact_desc') },
+      { label: t('guide_search_multi_label'), desc: t('guide_search_multi_desc') },
+      { label: "201492", desc: t('guide_search_code_desc') },
     ]
   },
   {
     id: "automations",
     icon: <Zap className="w-4 h-4" />,
-    title: "Motor de Automatizaciones",
+    title: t('guide_auto_title'),
     color: "text-yellow-400",
     bg: "bg-yellow-500/10 border-yellow-500/30",
     content: [
-      { label: "¿Qué son?", desc: "Reglas que se ejecutan automáticamente cuando ocurre un evento en una orden. Sin intervención manual." },
-      { label: "Flujo de ejecución", desc: "EVENTO (trigger) → CONDICIONES (¿se cumplen?) → ACCIÓN. Si las condiciones no se cumplen, la automatización se omite silenciosamente." },
-      { label: "Triggers disponibles", desc: "create (orden creada), move (orden movida de tablero), update (campo actualizado), status_change (cambio de estado específico)." },
-      { label: "Condiciones", desc: "Se evalúan contra los campos de la orden. Puedes usar watch_field + watch_value para detectar cambios específicos, o from_board/to_board para movimientos." },
-      { label: "Acciones disponibles", desc: "send_email (via Resend), move_board (mover orden a otro tablero), assign_field (asignar valor a un campo), notify_slack (webhook)." },
-      { label: "Boards scopeadas", desc: "Cada automatización puede limitarse a tableros específicos. Si el campo 'boards' está vacío, aplica a TODOS los tableros." },
+      { label: t('guide_auto_what_label'), desc: t('guide_auto_what_desc') },
+      { label: t('guide_auto_flow_label'), desc: t('guide_auto_flow_desc') },
+      { label: t('guide_auto_triggers_label'), desc: t('guide_auto_triggers_desc') },
+      { label: t('guide_auto_conditions_label'), desc: t('guide_auto_conditions_desc') },
+      { label: t('guide_auto_actions_label'), desc: t('guide_auto_actions_desc') },
+      { label: t('guide_auto_scoped_label'), desc: t('guide_auto_scoped_desc') },
     ]
   },
   {
     id: "automation_flow",
     icon: <Cpu className="w-4 h-4" />,
-    title: "Flujo Visual de Automatizaciones",
+    title: t('guide_flow_title'),
     color: "text-purple-400",
     bg: "bg-purple-500/10 border-purple-500/30",
     isFlow: true,
     steps: [
-      { icon: "⚡", label: "Evento", desc: "Orden creada / movida / actualizada / estado cambiado" },
-      { icon: "🔍", label: "Filtrar por tablero", desc: "¿Está la orden en un tablero permitido por la auto?" },
-      { icon: "📋", label: "Verificar condiciones", desc: "watch_field, watch_value, from_board, to_board, campos del orden" },
-      { icon: "🎯", label: "Ejecutar acción", desc: "Email · Mover tablero · Asignar campo · Notificar Slack" },
-      { icon: "📝", label: "Log de actividad", desc: "Se registra en el Activity Log con nombre de la automatización" },
+      { icon: "⚡", label: t('guide_flow_step1_label'), desc: t('guide_flow_step1_desc') },
+      { icon: "🔍", label: t('guide_flow_step2_label'), desc: t('guide_flow_step2_desc') },
+      { icon: "📋", label: t('guide_flow_step3_label'), desc: t('guide_flow_step3_desc') },
+      { icon: "🎯", label: t('guide_flow_step4_label'), desc: t('guide_flow_step4_desc') },
+      { icon: "📝", label: t('guide_flow_step5_label'), desc: t('guide_flow_step5_desc') },
     ]
   },
   {
     id: "modules",
     icon: <Layers className="w-4 h-4" />,
-    title: "Módulos del Sistema",
+    title: t('guide_modules_title'),
     color: "text-cyan-400",
     bg: "bg-cyan-500/10 border-cyan-500/30",
     content: [
-      { label: "📊 Analytics", desc: "Dashboard de métricas: órdenes por tablero, velocidad de producción, distribución por cliente/branding." },
-      { label: "🏭 Producción", desc: "Registro de logs de producción por máquina y operador. Incluye cantidad producida, setup y motivos de paro." },
-      { label: "📅 Gantt", desc: "Vista de línea de tiempo de órdenes con fechas de entrega (cancel date)." },
-      { label: "📆 Capacidad", desc: "Capacity Planning: calcula si se puede cumplir con las fechas de entrega según throughput de máquinas." },
-      { label: "🏗️ WMS", desc: "Warehouse Management System: gestión de inventario, recepción de mercancía, picking y labels." },
-      { label: "💬 Comentarios", desc: "Sistema de comentarios por orden con @menciones, reacciones con emoji, adjuntos e hilos de respuesta." },
-      { label: "🔔 Notificaciones", desc: "Centro de notificaciones en tiempo real vía WebSocket. Menciones, movimientos y comentarios." },
-      { label: "📋 Activity Log", desc: "Historial completo de cambios con capacidad de deshacer (undo)." },
+      { label: "📊 Analytics", desc: t('guide_modules_analytics_desc') },
+      { label: t('guide_modules_production_label'), desc: t('guide_modules_production_desc') },
+      { label: "📅 Gantt", desc: t('guide_modules_gantt_desc') },
+      { label: t('guide_modules_capacity_label'), desc: t('guide_modules_capacity_desc') },
+      { label: "🏗️ WMS", desc: t('guide_modules_wms_desc') },
+      { label: t('guide_modules_comments_label'), desc: t('guide_modules_comments_desc') },
+      { label: t('guide_modules_notifications_label'), desc: t('guide_modules_notifications_desc') },
+      { label: "📋 Activity Log", desc: t('guide_modules_activity_desc') },
     ]
   },
   {
     id: "admin",
     icon: <Shield className="w-4 h-4" />,
-    title: "Funciones de Administrador",
+    title: t('guide_admin_title'),
     color: "text-red-400",
     bg: "bg-red-500/10 border-red-500/30",
     content: [
-      { label: "Gestión de usuarios", desc: "Invitar usuarios, asignar roles (admin/user), configurar permisos por tablero." },
-      { label: "Automatizaciones", desc: "Crear, editar y activar/desactivar reglas de automatización desde el botón ⚡ en el header." },
-      { label: "Tableros", desc: "Crear y eliminar tableros personalizados. Ocultar tableros sin eliminarlos." },
-      { label: "Columnas", desc: "Agregar columnas personalizadas (texto, número, select, fecha). Eliminar columnas existentes." },
-      { label: "Opciones", desc: "Gestionar listas de valores: clientes, brandings, estados de producción, etc." },
-      { label: "Deshacer", desc: "Botón ↩ para revertir la última acción (disponible en la mayoría de operaciones)." },
+      { label: t('guide_admin_users_label'), desc: t('guide_admin_users_desc') },
+      { label: t('automations'), desc: t('guide_admin_automations_desc') },
+      { label: t('dash_boards'), desc: t('guide_admin_boards_desc') },
+      { label: t('columns'), desc: t('guide_admin_columns_desc') },
+      { label: t('guide_admin_options_label'), desc: t('guide_admin_options_desc') },
+      { label: t('undo'), desc: t('guide_admin_undo_desc') },
     ]
   },
 ];
@@ -116,10 +119,10 @@ const sectionToHTML = (section) => {
 };
 
 /** Open a print window — user saves as PDF from the browser dialog */
-const printToPDF = (sections) => {
+const printToPDF = (sections, t) => {
   const date = new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' });
   const isSingle = sections.length === 1;
-  const title = isSingle ? sections[0].title : 'Guía Completa del Sistema';
+  const title = isSingle ? sections[0].title : t('guide_full_title');
 
   const body = sections.map(section => `
     <section class="section">
@@ -166,11 +169,11 @@ const printToPDF = (sections) => {
   <div class="cover">
     <p class="logo">MOS System · Prosper MFG</p>
     <h1>${title}</h1>
-    <p class="subtitle">Manual de operación y referencia rápida · v201492</p>
+    <p class="subtitle">${t('guide_pdf_subtitle')}</p>
     <p class="date">${date}</p>
   </div>
   ${body}
-  <div class="footer">MOS System · Prosper MFG · Código de acceso: 201492</div>
+  <div class="footer">MOS System · Prosper MFG · ${t('guide_access_code')}</div>
   <script>window.onload = () => { window.print(); };<\/script>
 </body>
 </html>`;
@@ -182,6 +185,8 @@ const printToPDF = (sections) => {
 // ── component ──────────────────────────────────────────────────────────────────
 
 export const SystemGuideModal = ({ isOpen, onClose }) => {
+  const { t } = useLang();
+  const SECTIONS = useMemo(() => getSections(t), [t]);
   const [expanded, setExpanded] = useState({ overview: true });
 
   const toggleSection = (id) => {
@@ -190,11 +195,11 @@ export const SystemGuideModal = ({ isOpen, onClose }) => {
 
   const handleDownloadSection = (e, section) => {
     e.stopPropagation(); // don't toggle accordion
-    printToPDF([section]);
+    printToPDF([section], t);
   };
 
   const handleDownloadAll = () => {
-    printToPDF(SECTIONS);
+    printToPDF(SECTIONS, t);
   };
 
   return (
@@ -206,19 +211,19 @@ export const SystemGuideModal = ({ isOpen, onClose }) => {
               <DialogTitle className="font-roboto text-lg md:text-xl uppercase tracking-widest flex items-center gap-2 md:gap-3 text-primary">
                 <span className="text-xl md:text-2xl">🔐</span>
                 <span className="leading-tight">
-                  GUÍA DEL SISTEMA <span className="text-muted-foreground text-xs md:text-sm font-mono block sm:inline mt-0.5 sm:mt-0">v201492</span>
+                  {t('guide_title')} <span className="text-muted-foreground text-xs md:text-sm font-mono block sm:inline mt-0.5 sm:mt-0">v201492</span>
                 </span>
               </DialogTitle>
-              <p className="text-[11px] md:text-xs text-muted-foreground font-mono mt-1.5 md:mt-1">MOS System · Referencia rápida</p>
+              <p className="text-[11px] md:text-xs text-muted-foreground font-mono mt-1.5 md:mt-1">{t('guide_subtitle')}</p>
             </div>
             {/* Download ALL button */}
             <button
               onClick={handleDownloadAll}
-              title="Exportar guía completa como PDF"
+              title={t('guide_export_all_title')}
               className="flex-shrink-0 self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all text-[11px] font-black uppercase tracking-wider w-full sm:w-auto justify-center"
             >
               <FileText className="w-3.5 h-3.5" />
-              PDF Completo
+              {t('guide_full_pdf')}
             </button>
           </div>
         </DialogHeader>
@@ -247,7 +252,7 @@ export const SystemGuideModal = ({ isOpen, onClose }) => {
                 {/* Per-section download button */}
                 <button
                   onClick={(e) => handleDownloadSection(e, section)}
-                  title={`Descargar "${section.title}" (.md)`}
+                  title={t('guide_download_section', { title: section.title })}
                   className="flex-shrink-0 mr-3 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-all"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -296,7 +301,7 @@ export const SystemGuideModal = ({ isOpen, onClose }) => {
 
           {/* Footer */}
           <div className="text-center py-3 text-[10px] text-muted-foreground font-mono tracking-widest">
-            MOS SYSTEM · PROSPER MFG · CÓDIGO ACCESO: 201492
+            {t('guide_footer')}
           </div>
         </div>
       </DialogContent>

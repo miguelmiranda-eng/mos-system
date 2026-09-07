@@ -72,7 +72,7 @@ const UserManagementCenter = () => {
       const res = await fetch(`${API}/users`, { credentials: 'include' });
       if (res.ok) setUsers(await res.json());
     } catch { 
-      toast.error('Error cargando usuarios');
+      toast.error(t('users_err_loading'));
     } finally { 
       setLoading(false); 
     }
@@ -119,21 +119,21 @@ const UserManagementCenter = () => {
       if (res.ok) {
         const d = await res.json();
         setModuleAccess(a => ({ ...a, levels: d.levels || nextLevels }));
-        toast.success('Acceso actualizado');
+        toast.success(t('users_access_updated'));
       } else {
         const e = await res.json().catch(() => ({}));
-        toast.error(e.detail || 'Error guardando acceso');
+        toast.error(e.detail || t('users_err_saving_access'));
         fetchModuleAccess();
       }
-    } catch { toast.error('Error de conexión'); fetchModuleAccess(); }
+    } catch { toast.error(t('ceo_err_connection')); fetchModuleAccess(); }
     finally { setSavingAccess(false); }
   };
 
   const handleCreateUser = async () => {
-    if (!newEmail.trim() || !newPassword) { toast.error('Email y contraseña requeridos'); return; }
+    if (!newEmail.trim() || !newPassword) { toast.error(t('users_email_pw_required')); return; }
     // Validate length client-side so the user gets instant feedback instead of
     // a fleeting 400 toast from the backend (which rejects passwords < 6 chars).
-    if (newPassword.length < 6) { toast.error('La contraseña debe tener al menos 6 caracteres'); return; }
+    if (newPassword.length < 6) { toast.error(t('users_pw_min_6_long')); return; }
     setCreating(true);
     try {
       const res = await fetch(`${API}/auth/create-user`, {
@@ -147,14 +147,14 @@ const UserManagementCenter = () => {
         })
       });
       if (res.ok) {
-        toast.success(`Usuario ${newEmail} creado`);
+        toast.success(t('users_user_created', { email: newEmail }));
         setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('general');
         fetchUsers();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al crear usuario');
+        toast.error(err.detail || t('users_err_create'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setCreating(false); }
   };
 
@@ -165,23 +165,23 @@ const UserManagementCenter = () => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ name: editName, email: editEmail })
       });
-      if (res.ok) { toast.success('Usuario actualizado'); setEditingUser(null); fetchUsers(); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexión'); }
+      if (res.ok) { toast.success(t('users_user_updated')); setEditingUser(null); fetchUsers(); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSavingProfile(false); }
   };
 
   const handleChangePassword = async (email) => {
-    if (!newPw || newPw.length < 6) { toast.error('Mínimo 6 caracteres'); return; }
+    if (!newPw || newPw.length < 6) { toast.error(t('users_pw_min_6')); return; }
     setSavingPw(true);
     try {
       const res = await fetch(`${API}/users/${encodeURIComponent(email)}/password`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ password: newPw })
       });
-      if (res.ok) { toast.success('Contraseña actualizada'); setChangingPwUser(null); setNewPw(''); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexión'); }
+      if (res.ok) { toast.success(t('users_pw_updated')); setChangingPwUser(null); setNewPw(''); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('ceo_err_connection')); }
     finally { setSavingPw(false); }
   };
 
@@ -216,9 +216,9 @@ const UserManagementCenter = () => {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify(perms)
       });
-      if (res.ok) toast.success('Permisos guardados');
-      else toast.error('Error guardando permisos');
-    } catch { toast.error('Error guardando permisos'); } finally { setSavingPerms(null); }
+      if (res.ok) toast.success(t('users_perms_saved'));
+      else toast.error(t('users_err_saving_perms'));
+    } catch { toast.error(t('users_err_saving_perms')); } finally { setSavingPerms(null); }
   };
 
   const handleInvite = async () => {
@@ -233,7 +233,7 @@ const UserManagementCenter = () => {
           associated_customer: inviteRole === 'customer' ? inviteCust : ''
         })
       });
-      if (res.ok) { toast.success(`${inviteEmail} invitado como ${inviteRole}`); setInviteEmail(''); setInviteRole('general'); fetchUsers(); }
+      if (res.ok) { toast.success(`${inviteEmail} ${t('invited_as')} ${inviteRole}`); setInviteEmail(''); setInviteRole('general'); fetchUsers(); }
       else { const data = await res.json(); toast.error(data.detail || t('invite_err')); }
     } catch { toast.error(t('invite_err')); } finally { setInviting(false); }
   };
@@ -248,14 +248,14 @@ const UserManagementCenter = () => {
         body: JSON.stringify({ role: currentRole, assigned_board: newBoard }),
       });
       if (res.ok) {
-        toast.success(`Operador asignado a ${newBoard}`);
+        toast.success(t('users_operator_assigned', { board: newBoard }));
         setTimeout(fetchUsers, 300);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo asignar el tablero');
+        toast.error(err.detail || t('users_err_assign_board'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     }
   };
 
@@ -268,14 +268,14 @@ const UserManagementCenter = () => {
         body: JSON.stringify({ role: currentRole, inventory_level: Number(newLevel) }),
       });
       if (res.ok) {
-        toast.success(`Nivel de inventario actualizado a ${newLevel}`);
+        toast.success(t('users_inv_level_updated', { level: newLevel }));
         setTimeout(fetchUsers, 300);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo actualizar el nivel de inventario');
+        toast.error(err.detail || t('users_err_inv_level'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     }
   };
 
@@ -288,14 +288,14 @@ const UserManagementCenter = () => {
         body: JSON.stringify({ role: currentRole, admin_level: Number(newLevel) }),
       });
       if (res.ok) {
-        toast.success(`Nivel de admin actualizado a ${newLevel}`);
+        toast.success(t('users_admin_level_updated', { level: newLevel }));
         setTimeout(fetchUsers, 300);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo actualizar el nivel');
+        toast.error(err.detail || t('users_err_level'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     }
   };
 
@@ -308,19 +308,19 @@ const UserManagementCenter = () => {
         body: JSON.stringify({ role: currentRole, [field]: next }),
       });
       if (res.ok) {
-        toast.success(next ? okMsg : 'Notificación desactivada');
+        toast.success(next ? okMsg : t('users_notify_off'));
         setTimeout(fetchUsers, 300);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo actualizar la notificación');
+        toast.error(err.detail || t('users_err_notify'));
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     }
   };
 
   const handleRoleChange = async (userId, newRole, customer = '') => {
-    if (!window.confirm(`¿Cambiar el rol a ${newRole}?`)) {
+    if (!window.confirm(t('users_confirm_role_change', { role: newRole }))) {
         fetchUsers();
         return;
     }
@@ -332,15 +332,15 @@ const UserManagementCenter = () => {
         body: JSON.stringify({ role: newRole, associated_customer: customer || undefined })
       });
       if (res.ok) { 
-        toast.success('Rol actualizado con éxito'); 
+        toast.success(t('users_role_updated')); 
         setTimeout(fetchUsers, 500); 
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al actualizar rol');
+        toast.error(err.detail || t('role_update_err'));
         fetchUsers();
       }
     } catch (err) { 
-      toast.error('Error de conexión al actualizar rol'); 
+      toast.error(t('users_err_connection_role')); 
       fetchUsers();
     } finally {
       setLoading(false);
@@ -348,11 +348,11 @@ const UserManagementCenter = () => {
   };
 
   const handleRemoveUser = async (userId) => {
-    if (!window.confirm('¿Eliminar usuario definitivamente?')) return;
+    if (!window.confirm(t('users_confirm_delete'))) return;
     try {
       const res = await fetch(`${API}/users/${userId}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) { toast.success('Usuario eliminado'); fetchUsers(); }
-    } catch { toast.error('Error eliminando usuario'); }
+      if (res.ok) { toast.success(t('user_deleted')); fetchUsers(); }
+    } catch { toast.error(t('del_user_err')); }
   };
 
   const filteredBoards = BOARDS.filter(b => b !== 'MASTER' && b !== 'PAPELERA DE RECICLAJE');
@@ -370,7 +370,7 @@ const UserManagementCenter = () => {
       <header className="mb-8 relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <button onClick={() => navigate('/home')} className="mb-4 text-muted-foreground hover:text-foreground flex items-center text-sm transition-colors group">
-            <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> Volver al Home
+            <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" /> {t('admin_back_home')}
           </button>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30 shadow-[0_0_20px_rgba(var(--primary),0.3)]">
@@ -381,7 +381,7 @@ const UserManagementCenter = () => {
                 USER <span className="text-primary">MANAGEMENT</span>
               </h1>
               <p className="text-muted-foreground font-medium text-sm">
-                Control de accesos, roles y permisos por tablero del equipo.
+                {t('users_subtitle')}
               </p>
             </div>
           </div>
@@ -401,17 +401,14 @@ const UserManagementCenter = () => {
           <button onClick={() => setShowAccess(s => !s)}
             className="w-full flex items-center justify-between px-6 py-4 hover:bg-secondary/20 transition-colors">
             <span className="flex items-center gap-2 text-lg font-black uppercase tracking-widest text-foreground">
-              <Shield className="w-5 h-5 text-primary" /> Acceso por módulo del WMS
+              <Shield className="w-5 h-5 text-primary" /> {t('users_wms_module_access')}
             </span>
             {showAccess ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
           </button>
           {showAccess && (
             <div className="px-6 pb-6 space-y-3">
               <p className="text-xs text-muted-foreground -mt-1">
-                Define qué nivel abre cada módulo del WMS en el menú. «Todos» = cualquier
-                usuario; 1–5 = nivel de admin mínimo; «Solo supersu» lo reserva al super usuario.
-                Los marcados <span className="text-primary font-semibold">backend</span> además
-                se validan en el servidor (el resto controla solo el menú).
+                {t('users_wms_module_access_help_1')} <span className="text-primary font-semibold">backend</span> {t('users_wms_module_access_help_2')}
               </p>
               {(moduleAccess.order || Object.keys(moduleAccess.defaults || {})).map(id => {
                 const soloLevel = moduleAccess.supersu_only_level || 6;
@@ -428,9 +425,9 @@ const UserManagementCenter = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
-                        <SelectItem value="0">Todos</SelectItem>
-                        {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>Admin nivel {n}+</SelectItem>)}
-                        <SelectItem value={String(soloLevel)}>Solo supersu</SelectItem>
+                        <SelectItem value="0">{t('all_boards')}</SelectItem>
+                        {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</SelectItem>)}
+                        <SelectItem value={String(soloLevel)}>{t('users_supersu_only')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -446,56 +443,56 @@ const UserManagementCenter = () => {
         <div className="xl:col-span-4 space-y-6">
           <div className="bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl p-6 shadow-xl sticky top-6">
             <h2 className="text-lg font-black uppercase tracking-widest text-foreground mb-6 flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-primary" /> Nuevo Usuario
+              <UserPlus className="w-5 h-5 text-primary" /> {t('users_new_user')}
             </h2>
             
             <div className="flex gap-1 mb-6 bg-secondary/30 p-1 rounded-xl">
               <button onClick={() => setCreateTab('google')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${createTab === 'google' ? 'bg-primary text-black shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}>
-                Invitar (Google)
+                {t('users_invite_google')}
               </button>
               <button onClick={() => setCreateTab('email')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${createTab === 'email' ? 'bg-primary text-black shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}>
-                Crear con Email
+                {t('users_create_with_email')}
               </button>
             </div>
 
             {createTab === 'google' ? (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Correo Gmail</label>
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('users_gmail')}</label>
                   <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="ejemplo@gmail.com" className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
+                    placeholder={t('users_gmail_placeholder')} className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol Inicial</label>
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('users_initial_role')}</label>
                   {canAssignRoles ? (
                     <Select value={inviteRole} onValueChange={setInviteRole}>
                       <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
-                        <SelectItem value="general">Usuario General</SelectItem>
-                        <SelectItem value="admin">Administrador</SelectItem>
-                        {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
-                        <SelectItem value="picker">Picker / Almacén</SelectItem>
-                        <SelectItem value="operator">Operador</SelectItem>
+                        <SelectItem value="general">{t('users_role_general')}</SelectItem>
+                        <SelectItem value="admin">{t('users_role_admin')}</SelectItem>
+                        {isSupersu && <SelectItem value="supersu">{t('users_role_supersu')}</SelectItem>}
+                        <SelectItem value="picker">{t('users_role_picker_wh')}</SelectItem>
+                        <SelectItem value="operator">{t('admin_operator')}</SelectItem>
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
-                        <SelectItem value="user">Usuario Estándar</SelectItem>
-                        <SelectItem value="ceo">CEO / Directivo</SelectItem>
-                        <SelectItem value="customer">Cliente (ve su inventario)</SelectItem>
+                        <SelectItem value="user">{t('users_role_standard')}</SelectItem>
+                        <SelectItem value="ceo">{t('users_role_ceo_exec')}</SelectItem>
+                        <SelectItem value="customer">{t('users_role_customer')}</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
                     <div className="w-full h-12 bg-secondary/30 border border-border rounded-xl px-4 flex items-center text-sm text-muted-foreground italic">
-                      General (solo supersu puede asignar roles)
+                      {t('users_general_only_supersu')}
                     </div>
                   )}
                 </div>
                 {inviteRole === 'customer' && (
                   <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Cliente Asociado</label>
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">{t('users_associated_customer')}</label>
                     <Select value={inviteCust} onValueChange={setInviteCust}>
                       <SelectTrigger className="w-full h-12 bg-secondary/70 border-primary/30 rounded-xl focus:ring-primary/50 text-xs">
-                        <SelectValue placeholder="Seleccionar Cliente..." />
+                        <SelectValue placeholder={t('users_select_customer')} />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
                         {customers.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -505,72 +502,72 @@ const UserManagementCenter = () => {
                 )}
                 <button onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}
                   className="w-full py-4 bg-primary text-black rounded-xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50 mt-4">
-                  {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Enviar Invitación
+                  {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} {t('users_send_invite')}
                 </button>
               </div>
             ) : (
               <div className="space-y-4">
                 <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Nombre Completo</label>
+                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('users_full_name')}</label>
                    <div className="relative">
                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                      <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-                        placeholder="Nombre del usuario" className="w-full pl-11 pr-4 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
+                        placeholder={t('users_name_placeholder')} className="w-full pl-11 pr-4 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
                    </div>
                 </div>
                 <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Correo de Acceso</label>
+                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('users_login_email')}</label>
                    <div className="relative">
                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                      <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
-                        placeholder="usuario@empresa.com" className="w-full pl-11 pr-4 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
+                        placeholder={t('users_email_placeholder')} className="w-full pl-11 pr-4 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
                    </div>
                 </div>
                 <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Contraseña Temporal</label>
+                   <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('users_temp_password')}</label>
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input type={showCreatePw ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres" className="w-full pl-11 pr-12 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
+                        placeholder={t('users_pw_min_6')} className="w-full pl-11 pr-12 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground focus:ring-2 focus:ring-primary/50" />
                       <button onClick={() => setShowCreatePw(!showCreatePw)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1" type="button">
                         {showCreatePw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
                     {newPassword.length > 0 && newPassword.length < 6 && (
-                      <p className="text-[10px] font-bold text-red-400">Mínimo 6 caracteres ({newPassword.length}/6)</p>
+                      <p className="text-[10px] font-bold text-red-400">{t('users_pw_min_6')} ({newPassword.length}/6)</p>
                     )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Rol</label>
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{t('role')}</label>
                   {canAssignRoles ? (
                     <Select value={newRole} onValueChange={setNewRole}>
                       <SelectTrigger className="w-full h-12 bg-secondary/50 border-border rounded-xl">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border z-[300]">
-                        <SelectItem value="general">Usuario General</SelectItem>
-                        <SelectItem value="admin">Administrador</SelectItem>
-                        {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
-                        <SelectItem value="picker">Picker / Almacén</SelectItem>
-                        <SelectItem value="operator">Operador</SelectItem>
+                        <SelectItem value="general">{t('users_role_general')}</SelectItem>
+                        <SelectItem value="admin">{t('users_role_admin')}</SelectItem>
+                        {isSupersu && <SelectItem value="supersu">{t('users_role_supersu')}</SelectItem>}
+                        <SelectItem value="picker">{t('users_role_picker_wh')}</SelectItem>
+                        <SelectItem value="operator">{t('admin_operator')}</SelectItem>
                         <SelectItem value="inspector_qc">Inspector QC</SelectItem>
-                        <SelectItem value="user">Usuario Estándar</SelectItem>
-                        <SelectItem value="ceo">CEO / Directivo</SelectItem>
-                        <SelectItem value="customer">Cliente (ve su inventario)</SelectItem>
+                        <SelectItem value="user">{t('users_role_standard')}</SelectItem>
+                        <SelectItem value="ceo">{t('users_role_ceo_exec')}</SelectItem>
+                        <SelectItem value="customer">{t('users_role_customer')}</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
                     <div className="w-full h-12 bg-secondary/30 border border-border rounded-xl px-4 flex items-center text-sm text-muted-foreground italic">
-                      General (solo supersu puede asignar roles)
+                      {t('users_general_only_supersu')}
                     </div>
                   )}
                 </div>
                 {newRole === 'customer' && (
                    <div className="space-y-2 animate-in slide-in-from-top-2 flex flex-col">
-                     <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Cliente Asociado</label>
+                     <label className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">{t('users_associated_customer')}</label>
                      <Select value={newCust} onValueChange={setNewCust}>
                        <SelectTrigger className="w-full h-12 bg-secondary/70 border-primary/30 rounded-xl focus:ring-primary/50 text-xs">
-                         <SelectValue placeholder="Seleccionar Cliente..." />
+                         <SelectValue placeholder={t('users_select_customer')} />
                        </SelectTrigger>
                        <SelectContent className="bg-popover border-border z-[300]">
                          {customers.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -580,7 +577,7 @@ const UserManagementCenter = () => {
                 )}
                 <button onClick={handleCreateUser} disabled={creating || !newEmail.trim() || !newPassword}
                   className="w-full py-4 bg-primary text-black rounded-xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50 mt-4">
-                  {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Crear Cuenta
+                  {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} {t('users_create_account')}
                 </button>
               </div>
             )}
@@ -593,13 +590,13 @@ const UserManagementCenter = () => {
             <Search className="w-5 h-5 text-muted-foreground" />
             <input 
               type="text" 
-              placeholder="Filtrar por nombre o email..." 
+              placeholder={t('users_filter_placeholder')} 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="bg-transparent border-none focus:ring-0 text-foreground flex-1 text-sm font-medium"
             />
             <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full">
-              {filteredUsers.length} Usuarios
+              {filteredUsers.length} {t('users_users_label')}
             </div>
           </div>
 
@@ -607,11 +604,11 @@ const UserManagementCenter = () => {
             {loading ? (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
                 <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                <p className="text-muted-foreground font-bold uppercase tracking-[0.2em] text-[10px]">Cargando base de usuarios...</p>
+                <p className="text-muted-foreground font-bold uppercase tracking-[0.2em] text-[10px]">{t('users_loading')}</p>
               </div>
             ) : filteredUsers.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 gap-4 bg-card/20 border border-dashed border-border rounded-2xl italic text-muted-foreground">
-                <Users className="w-12 h-12 opacity-20" /> No se encontraron usuarios
+                <Users className="w-12 h-12 opacity-20" /> {t('users_none_found')}
               </div>
             ) : filteredUsers.map(u => (
               <div key={u.user_id} className={`group bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl overflow-hidden transition-all hover:border-primary/30 ${expandedUser === u.email ? 'ring-1 ring-primary/20 shadow-2xl' : ''}`}>
@@ -633,12 +630,12 @@ const UserManagementCenter = () => {
                   
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-black text-foreground truncate uppercase tracking-tight flex items-center gap-2">
-                       {u.name || 'Sin Nombre'}
+                       {u.name || t('users_no_name')}
                        {u.auth_type === 'email' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black tracking-widest">EMAIL</span>}
                        {u.role === 'picker' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black tracking-widest">PICKER</span>}
-                       {u.role === 'supersu' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-black tracking-widest">SUPER USUARIO</span>}
+                       {u.role === 'supersu' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-black tracking-widest">{t('users_badge_supersu')}</span>}
                        {(u.role === 'qc' || u.role === 'inspector_qc') && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black tracking-widest">INSPECTOR QC</span>}
-                       {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">CLIENTE: {u.associated_customer}</span>}
+                       {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">{t('users_badge_customer')}: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>
                     
@@ -646,19 +643,19 @@ const UserManagementCenter = () => {
                     <div className="flex flex-wrap items-center gap-3 mt-2">
                       <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
                         <Smartphone className="w-3 h-3 text-primary/70" />
-                        <span>Sesiones: <span className="text-foreground">{u.login_count || 0}</span></span>
+                        <span>{t('users_sessions')}: <span className="text-foreground">{u.login_count || 0}</span></span>
                       </div>
                       <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
                         <ClipboardCheck className="w-3 h-3 text-primary/70" />
-                        <span>Proyectos: <span className="text-foreground">{u.projects_count || 0}</span></span>
+                        <span>{t('users_projects')}: <span className="text-foreground">{u.projects_count || 0}</span></span>
                       </div>
                       <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
                         <Activity className="w-3 h-3 text-primary/70" />
-                        <span>Tareas: <span className="text-foreground">{u.total_tasks || 0}</span></span>
+                        <span>{t('users_tasks')}: <span className="text-foreground">{u.total_tasks || 0}</span></span>
                       </div>
                       <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground tracking-widest">
                         <Clock className="w-3 h-3 text-primary/70" />
-                        <span>Actividad: <span className="text-foreground">{u.last_activity ? new Date(u.last_activity).toLocaleDateString() : 'N/D'}</span></span>
+                        <span>{t('users_activity')}: <span className="text-foreground">{u.last_activity ? new Date(u.last_activity).toLocaleDateString() : 'N/D'}</span></span>
                       </div>
                     </div>
                   </div>
@@ -670,14 +667,14 @@ const UserManagementCenter = () => {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
-                          <SelectItem value="general">General</SelectItem>
-                          <SelectItem value="admin">Administrador</SelectItem>
-                          {isSupersu && <SelectItem value="supersu">Super Usuario</SelectItem>}
-                          <SelectItem value="inventory">Inventario</SelectItem>
+                          <SelectItem value="general">{t('general')}</SelectItem>
+                          <SelectItem value="admin">{t('users_role_admin')}</SelectItem>
+                          {isSupersu && <SelectItem value="supersu">{t('users_role_supersu')}</SelectItem>}
+                          <SelectItem value="inventory">{t('users_role_inventory')}</SelectItem>
                           <SelectItem value="picker">Picker</SelectItem>
-                          <SelectItem value="operator">Operador</SelectItem>
+                          <SelectItem value="operator">{t('admin_operator')}</SelectItem>
                           <SelectItem value="inspector_qc">Inspector QC</SelectItem>
-                          <SelectItem value="user">Usuario</SelectItem>
+                          <SelectItem value="user">{t('user')}</SelectItem>
                           <SelectItem value="ceo">CEO</SelectItem>
                         </SelectContent>
                       </Select>
@@ -696,7 +693,7 @@ const UserManagementCenter = () => {
                         onValueChange={(v) => handleAssignedBoardChange(u.user_id, u.role, v)}
                       >
                         <SelectTrigger className="w-32 h-9 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500 hover:bg-emerald-500/15">
-                          <SelectValue placeholder="Sin asignar" />
+                          <SelectValue placeholder={t('unassigned')} />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300] max-h-64">
                           {OPERATOR_BOARDS.map(b => (
@@ -726,7 +723,7 @@ const UserManagementCenter = () => {
                         </SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
                           {[1, 2, 3].map(n => (
-                            <SelectItem key={n} value={String(n)}>Inv. Nivel {n}</SelectItem>
+                            <SelectItem key={n} value={String(n)}>{t('users_inv_level', { n })}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -744,14 +741,14 @@ const UserManagementCenter = () => {
                         </SelectTrigger>
                         <SelectContent className="bg-popover border-border z-[300]">
                           {[1, 2, 3, 4, 5].map(n => (
-                            <SelectItem key={n} value={String(n)}>Nivel {n}</SelectItem>
+                            <SelectItem key={n} value={String(n)}>{t('users_level', { n })}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     )}
                     {u.role === 'admin' && !isSupersu && (
                       <span className="h-9 flex items-center px-3 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary">
-                        Nivel {u.admin_level || 1}
+                        {t('users_level', { n: u.admin_level || 1 })}
                       </span>
                     )}
 
@@ -762,10 +759,10 @@ const UserManagementCenter = () => {
                     {isSupersu && (
                       <button
                         onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_packing_loaded',
-                          !u.notify_packing_loaded, 'Recibirá aviso de packing cargado')}
+                          !u.notify_packing_loaded, t('users_notify_packing_on'))}
                         title={u.notify_packing_loaded
-                          ? 'Recibe aviso al celular cuando se carga un packing (clic para desactivar)'
-                          : 'No recibe aviso de packing cargado (clic para activar)'}
+                          ? t('users_notify_packing_title_on')
+                          : t('users_notify_packing_title_off')}
                         className={`h-9 flex items-center gap-1.5 px-3 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${
                           u.notify_packing_loaded
                             ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500/25'
@@ -779,10 +776,10 @@ const UserManagementCenter = () => {
                     {isSupersu && (
                       <button
                         onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_inventory_discrepancy',
-                          !u.notify_inventory_discrepancy, 'Recibirá alertas de descuadre de stock')}
+                          !u.notify_inventory_discrepancy, t('users_notify_discrepancy_on'))}
                         title={u.notify_inventory_discrepancy
-                          ? 'Recibe alertas al celular de descuadres de inventario (clic para desactivar)'
-                          : 'No recibe alertas de descuadre (clic para activar)'}
+                          ? t('users_notify_discrepancy_title_on')
+                          : t('users_notify_discrepancy_title_off')}
                         className={`h-9 flex items-center gap-1.5 px-3 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${
                           u.notify_inventory_discrepancy
                             ? 'bg-red-500/15 border-red-500/50 text-red-500 hover:bg-red-500/25'
@@ -790,7 +787,7 @@ const UserManagementCenter = () => {
                         }`}
                       >
                         <AlertTriangle className="w-4 h-4" />
-                        {u.notify_inventory_discrepancy ? 'Descuadre ON' : 'Descuadre'}
+                        {u.notify_inventory_discrepancy ? t('users_discrepancy_on') : t('users_discrepancy')}
                       </button>
                     )}
 
@@ -798,18 +795,18 @@ const UserManagementCenter = () => {
                        {u.auth_type === 'email' && (
                          <>
                            <button onClick={() => { setEditingUser(editingUser === u.email ? null : u.email); setEditName(u.name || ''); setEditEmail(u.email); setChangingPwUser(null); }}
-                              className={`p-1.5 rounded-md transition-all ${editingUser === u.email ? 'bg-primary text-black' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title="Editar Perfil">
+                              className={`p-1.5 rounded-md transition-all ${editingUser === u.email ? 'bg-primary text-black' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title={t('users_edit_profile')}>
                               <Pencil className="w-4 h-4" />
                            </button>
                            <button onClick={() => { setChangingPwUser(changingPwUser === u.email ? null : u.email); setNewPw(''); setEditingUser(null); }}
-                              className={`p-1.5 rounded-md transition-all ${changingPwUser === u.email ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title="Cambiar Contraseña">
+                              className={`p-1.5 rounded-md transition-all ${changingPwUser === u.email ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title={t('users_change_password')}>
                               <KeyRound className="w-4 h-4" />
                            </button>
                          </>
                        )}
                        {u.role !== 'admin' && (
                          <button onClick={() => handleToggleExpand(u.email)}
-                            className={`p-1.5 rounded-md transition-all ${expandedUser === u.email ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title="Permisos de Tablero">
+                            className={`p-1.5 rounded-md transition-all ${expandedUser === u.email ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'hover:bg-secondary text-muted-foreground hover:text-foreground'}`} title={t('users_board_permissions')}>
                             <Smartphone className="w-4 h-4" />
                          </button>
                        )}
@@ -825,20 +822,20 @@ const UserManagementCenter = () => {
                   <div className="px-4 pb-4 border-t border-border animate-in slide-in-from-top-2 duration-200">
                     <div className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                        <div className="space-y-1">
-                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">Nombre</span>
+                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">{t('name')}</span>
                          <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
                            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground" />
                        </div>
                        <div className="space-y-1">
-                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">Email Actualizado</span>
+                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">{t('users_updated_email')}</span>
                          <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
                            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground" />
                        </div>
                        <div className="md:col-span-2 flex justify-end gap-2 pt-2">
-                         <button onClick={() => setEditingUser(null)} className="px-4 py-2 text-xs font-bold uppercase text-muted-foreground hover:text-foreground">Cancelar</button>
+                         <button onClick={() => setEditingUser(null)} className="px-4 py-2 text-xs font-bold uppercase text-muted-foreground hover:text-foreground">{t('cancel')}</button>
                          <button onClick={() => handleSaveProfile(u.email)} disabled={savingProfile}
                            className="bg-primary text-black px-6 py-2 rounded-lg text-xs font-black uppercase flex items-center gap-2">
-                           {savingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Guardar Perfil
+                           {savingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {t('users_save_profile')}
                          </button>
                        </div>
                     </div>
@@ -849,21 +846,21 @@ const UserManagementCenter = () => {
                   <div className="px-4 pb-4 border-t border-border animate-in slide-in-from-top-2 duration-200">
                     <div className="pt-4 flex flex-col md:flex-row gap-4 items-end">
                        <div className="flex-1 space-y-1 w-full">
-                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">Nueva Contraseña (mín. 6)</span>
+                         <span className="text-[9px] font-black uppercase text-muted-foreground ml-1">{t('users_new_password')}</span>
                          <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
                             <input type={showResetPw ? "text" : "password"} value={newPw} onChange={(e) => setNewPw(e.target.value)}
-                              className="w-full bg-secondary border border-border rounded-lg pl-9 pr-12 py-2 text-sm text-foreground" placeholder="Escribe la nueva contraseña..." />
+                              className="w-full bg-secondary border border-border rounded-lg pl-9 pr-12 py-2 text-sm text-foreground" placeholder={t('users_new_password_placeholder')} />
                             <button onClick={() => setShowResetPw(!showResetPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1" type="button">
                               {showResetPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                          </div>
                        </div>
                        <div className="flex gap-2 w-full md:w-auto">
-                         <button onClick={() => setChangingPwUser(null)} className="flex-1 px-4 py-2 text-xs font-bold uppercase text-muted-foreground hover:text-foreground">Cancelar</button>
+                         <button onClick={() => setChangingPwUser(null)} className="flex-1 px-4 py-2 text-xs font-bold uppercase text-muted-foreground hover:text-foreground">{t('cancel')}</button>
                          <button onClick={() => handleChangePassword(u.email)} disabled={savingPw || !newPw}
                            className="flex-1 bg-orange-600 text-white px-6 py-2 rounded-lg text-xs font-black uppercase flex items-center gap-2 shadow-lg shadow-orange-600/30">
-                           {savingPw ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />} Actualizar Acceso
+                           {savingPw ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />} {t('users_update_access')}
                          </button>
                        </div>
                     </div>
@@ -899,7 +896,7 @@ const UserManagementCenter = () => {
                     <div className="flex justify-end pt-6">
                        <button onClick={() => handleSavePermissions(u.email)} disabled={savingPerms === u.email}
                           className="bg-primary text-black px-8 py-3 rounded-xl text-[11px] font-black uppercase flex items-center gap-2 shadow-xl shadow-primary/20 hover:scale-[1.03] active:scale-95 transition-all">
-                          {savingPerms === u.email ? <Loader2 className="w-4 h-4 animate-spin" /> : <Smartphone className="w-4 h-4" />} Guardar Todos los Permisos
+                          {savingPerms === u.email ? <Loader2 className="w-4 h-4 animate-spin" /> : <Smartphone className="w-4 h-4" />} {t('users_save_all_perms')}
                        </button>
                     </div>
                   </div>
@@ -911,7 +908,7 @@ const UserManagementCenter = () => {
       </div>
 
        <footer className="mt-20 pt-10 border-t border-border/20 text-center">
-        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-muted-foreground opacity-20 italic">Seguridad y Gestión de Activos Humanos - MOS CORE ENGINE v5.4.2</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-muted-foreground opacity-20 italic">{t('users_footer')}</p>
       </footer>
     </div>
   );

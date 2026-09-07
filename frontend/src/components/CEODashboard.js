@@ -327,7 +327,7 @@ const CEODashboard = () => {
                         : (isDark ? 'text-muted-foreground hover:text-white' : 'text-emerald-700/60 hover:text-emerald-700')
                     }`}
                   >
-                    {s === '' ? (lang === 'es' ? 'Todos' : 'All') : s.replace('TURNO ', 'T')}
+                    {s === '' ? t('all_boards') : s.replace('TURNO ', 'T')}
                   </button>
                 ))}
               </div>

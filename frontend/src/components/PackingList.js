@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Printer, FileText, Download, Home, Box, Globe } from 'lucide-react';
 import { API } from '../lib/constants';
+import { useLang } from '../contexts/LanguageContext';
 import '../styles/packing.css';
 
 const SIZE_KEYS = ['xs', 'sm', 'md', 'lg', 'xl', 'xxl', 'xxxl', 'xxxxl'];
@@ -41,6 +42,7 @@ const ORIG_OPTIONS = [
 ];
 
 export default function PackingListTool() {
+    const { t } = useLang();
     const [activeTab, setActiveTab] = useState('packing_summary');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -292,9 +294,10 @@ export default function PackingListTool() {
 
         // Add totals to each row
         Object.keys(result).forEach(k => {
-            let t = 0;
-            SIZE_KEYS.forEach(sz => t += (parseInt(result[k][sz]) || 0));
-            result[k].total = t;
+            // `sum`, no `t`: ese nombre es el traductor de useLang en este componente.
+            let sum = 0;
+            SIZE_KEYS.forEach(sz => sum += (parseInt(result[k][sz]) || 0));
+            result[k].total = sum;
         });
 
         return result;
@@ -415,7 +418,7 @@ export default function PackingListTool() {
                     </div>
                     <div className="actions" style={{ display: 'flex', gap: '12px' }}>
                         <button type="button" className="btn-secondary" onClick={() => handlePrint('preview')}>
-                            <Printer size={20} /> Imprimir
+                            <Printer size={20} /> {t('packing_print')}
                         </button>
                         <button
                             type="button"
@@ -423,10 +426,10 @@ export default function PackingListTool() {
                             style={{ backgroundColor: '#6366f1', color: 'white', border: 'none' }}
                             onClick={() => handlePrint('pallet_label')}
                         >
-                            <FileText size={20} /> Generar Papeleta
+                            <FileText size={20} /> {t('packing_generate_slip')}
                         </button>
                         <button type="button" className="btn-primary" onClick={handleExport}>
-                            <Download size={20} /> Guardar Excel
+                            <Download size={20} /> {t('packing_save_excel')}
                         </button>
                     </div>
                 </header>

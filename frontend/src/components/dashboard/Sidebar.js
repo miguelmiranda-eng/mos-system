@@ -34,6 +34,7 @@ import {
   Table2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useLang } from '../../contexts/LanguageContext';
 import { BOARD_COLORS } from '../../lib/constants';
 import { BUILD_TAG } from '../../buildInfo';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
@@ -77,6 +78,7 @@ const Sidebar = ({
   showTrash = false,
   showAnalytics = false
 }) => {
+  const { t } = useLang();
   const isPicker = userRole === 'picker';
   const isSupersu = userRole === 'supersu';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
@@ -217,9 +219,9 @@ const Sidebar = ({
         {/* Picker Specific View */}
         {isPicker ? (
           <nav className="px-2 pt-4">
-             <button onClick={() => { navigate('/operator'); if (isMobile) onClose(); }} className={navItem(true)} title="Vista de Surtido">
+             <button onClick={() => { navigate('/operator'); if (isMobile) onClose(); }} className={navItem(true)} title={t('dash_picking_view')}>
                 <Box size={15} className={iconCls(true)} />
-                {(isOpen || !isCollapsed) && <span>Vista de Surtido</span>}
+                {(isOpen || !isCollapsed) && <span>{t('dash_picking_view')}</span>}
              </button>
           </nav>
         ) : (
@@ -227,7 +229,7 @@ const Sidebar = ({
             {/* Boards */}
             {(isOpen || !isCollapsed) && (
               <div className="flex items-center justify-between pr-2">
-                <p className={sectionLabel}>General</p>
+                <p className={sectionLabel}>{t('general')}</p>
                 {/* Mover tableros de sector: SOLO supersu. Cambia el menú de
                     todos, así que no se ofrece ni a admin. */}
                 {isSupersu && (
@@ -237,7 +239,7 @@ const Sidebar = ({
                       "mt-3 p-1 rounded transition-colors",
                       isDark ? "text-white/20 hover:text-white/60" : "text-neutral-400 hover:text-neutral-700"
                     )}
-                    title="Organizar sectores del menú"
+                    title={t('dash_organize_sectors')}
                   >
                     <SlidersHorizontal size={13} />
                   </button>
@@ -296,7 +298,7 @@ const Sidebar = ({
                   <CollapsibleTrigger asChild>
                     <button className={navItem(isAnyMachineActive)}>
                       <Cpu size={15} className={iconCls(isAnyMachineActive)} />
-                      <span className="flex-1 text-left">máquinas</span>
+                      <span className="flex-1 text-left">{t('dash_machines_lower')}</span>
                       <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isMachinesOpen && "rotate-180")} />
                     </button>
                   </CollapsibleTrigger>
@@ -310,7 +312,7 @@ const Sidebar = ({
                 <button
                   onClick={() => { setIsCollapsed(false); setIsMachinesOpen(true); }}
                   className={navItem(isAnyMachineActive)}
-                  title="Máquinas"
+                  title={t('dash_machines')}
                 >
                   <Cpu size={15} className={iconCls(isAnyMachineActive)} />
                 </button>
@@ -323,7 +325,7 @@ const Sidebar = ({
                 <button
                   onClick={() => { setIsCollapsed(false); setIsToolsOpen(true); }}
                   className={navItem(showTrash || showAnalytics)}
-                  title="Herramientas"
+                  title={t('dash_tools')}
                 >
                   <Wrench size={15} className={iconCls(showTrash || showAnalytics)} />
                 </button>
@@ -336,62 +338,62 @@ const Sidebar = ({
                   <CollapsibleTrigger asChild>
                     <button className={navItem(showTrash || showAnalytics)}>
                       <Wrench size={15} className={iconCls(showTrash || showAnalytics)} />
-                      <span className="flex-1 text-left">Herramientas</span>
+                      <span className="flex-1 text-left">{t('dash_tools')}</span>
                       <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isToolsOpen && "rotate-180")} />
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
-                    <button onClick={() => { navigate('/produccion'); if (isMobile) onClose(); }} className={navItem(false)} title="Tablero de Producción">
+                    <button onClick={() => { navigate('/produccion'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_production_board')}>
                       <Factory size={15} className={iconCls(false)} />
-                      <span>Producción</span>
+                      <span>{t('production')}</span>
                     </button>
-                    <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title="Control de Calidad">
+                    <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_quality_control')}>
                       <ShieldCheck size={15} className={iconCls(false)} />
-                      <span>Control de Calidad</span>
+                      <span>{t('dash_quality_control')}</span>
                     </button>
-                    <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title="Módulo de Arte">
+                    <button onClick={() => { navigate('/art'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_art_module')}>
                       <Palette size={15} className={iconCls(false)} />
-                      <span>Módulo de Arte</span>
+                      <span>{t('dash_art_module')}</span>
                     </button>
-                    <button onClick={() => { navigate('/paint'); if (isMobile) onClose(); }} className={navItem(false)} title="Departamento de Pinturas">
+                    <button onClick={() => { navigate('/paint'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_paint_department')}>
                       <Brush size={15} className={iconCls(false)} />
-                      <span>Depto. de Pinturas</span>
+                      <span>{t('dash_paint_dept_short')}</span>
                     </button>
-                    <button onClick={() => { navigate('/samples'); if (isMobile) onClose(); }} className={navItem(false)} title="Calendario de Ejemplos">
+                    <button onClick={() => { navigate('/samples'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_samples_calendar')}>
                       <Beaker size={15} className={iconCls(false)} />
-                      <span>Ejemplos</span>
+                      <span>{t('dash_samples')}</span>
                     </button>
                     <button onClick={() => { navigate('/insights'); if (isMobile) onClose(); }} className={navItem(false)} title="Insights">
                       <Sparkles size={15} className={iconCls(false)} />
                       <span>Insights</span>
                     </button>
-                    <button onClick={() => { navigate('/shipping'); if (isMobile) onClose(); }} className={navItem(false)} title="Envíos">
+                    <button onClick={() => { navigate('/shipping'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_shipments')}>
                       <Truck size={15} className={iconCls(false)} />
-                      <span>Envíos</span>
+                      <span>{t('dash_shipments')}</span>
                     </button>
                     <button onClick={() => { navigate('/packing'); if (isMobile) onClose(); }} className={navItem(false)} title="Packing List">
                       <Box size={15} className={iconCls(false)} />
                       <span>Packing List</span>
                     </button>
-                    <button onClick={() => { navigate('/registros'); if (isMobile) onClose(); }} className={navItem(false)} title="Registros (Producción / Neck)">
+                    <button onClick={() => { navigate('/registros'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_records_title')}>
                       <ClipboardList size={15} className={iconCls(false)} />
-                      <span>Registros</span>
+                      <span>{t('dash_records')}</span>
                     </button>
-                    <button onClick={() => { navigate('/sheets'); if (isMobile) onClose(); }} className={navItem(false)} title="Hojas de cálculo">
+                    <button onClick={() => { navigate('/sheets'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_spreadsheets')}>
                       <Table2 size={15} className={iconCls(false)} />
-                      <span>Hojas de cálculo</span>
+                      <span>{t('dash_spreadsheets')}</span>
                     </button>
                     {/* Papelera: SOLO supersu. Son cientos de órdenes muertas y
                         acciones sin deshacer (restaurar en bloque / borrado
                         permanente); abrirla desde cualquier cuenta cargaba el
                         tablero completo sin necesidad. */}
                     {isSupersu && (
-                    <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(showTrash)} title="Papelera">
+                    <button onClick={() => { onShowTrash(); if (isMobile) onClose(); }} className={navItem(showTrash)} title={t('trash')}>
                       <div className="relative flex-shrink-0">
                         <Trash2 size={15} className={iconCls(showTrash)} />
                         {trashCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-royal rounded-full" />}
                       </div>
-                      <span className="flex-1 text-left">Papelera</span>
+                      <span className="flex-1 text-left">{t('trash')}</span>
                       {trashCount > 0 && (
                         <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold tabular-nums", isDark ? "bg-royal/20 text-royal" : "bg-royal/10 text-royal/80")}>
                           {trashCount}
@@ -430,27 +432,27 @@ const Sidebar = ({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8 space-y-0.5 mt-0.5">
-                    <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title="Usuarios">
+                    <button onClick={() => { navigate('/users'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_users')}>
                       <Users size={15} className={iconCls(false)} />
-                      <span>Usuarios</span>
+                      <span>{t('dash_users')}</span>
                     </button>
-                    <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title="Log Actividad">
+                    <button onClick={() => { navigate('/activity-log'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_activity_log_short')}>
                       <History size={15} className={iconCls(false)} />
-                      <span>Log Actividad</span>
+                      <span>{t('dash_activity_log_short')}</span>
                     </button>
-                    <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title="Catálogos">
+                    <button onClick={() => { navigate('/catalog-center'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_catalogs')}>
                       <Box size={15} className={iconCls(false)} />
-                      <span>Catálogos</span>
+                      <span>{t('dash_catalogs')}</span>
                     </button>
-                    <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title="Reportes Programados">
+                    <button onClick={() => { navigate('/reportes-programados'); if (isMobile) onClose(); }} className={navItem(false)} title={t('rs_title')}>
                       <CalendarClock size={15} className={iconCls(false)} />
-                      <span>Reportes Programados</span>
+                      <span>{t('rs_title')}</span>
                     </button>
                     <button onClick={() => { navigate('/printavo-sync'); if (isMobile) onClose(); }} className={navItem(false)} title="Sync Printavo">
                       <Zap size={15} className={iconCls(false)} />
                       <span>Sync Printavo</span>
                     </button>
-                    <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title="PO a Quote">
+                    <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_po_to_quote_title')}>
                       <Package size={15} className={iconCls(false)} />
                       <span>PO → Quote</span>
                     </button>

@@ -84,12 +84,12 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
           detail = err.detail || detail;
         } catch (_) { /* response wasn't JSON */ }
         setLoadError(detail);
-        toast.error(`Error al cargar historial: ${detail}`);
+        toast.error(t('hist_load_err', { detail }));
       }
     } catch (err) {
-      const msg = err?.message || 'Error de conexión';
+      const msg = err?.message || t('ceo_err_connection');
       setLoadError(msg);
-      toast.error(`Error de conexión: ${msg}`);
+      toast.error(t('hist_conn_err', { msg }));
     } finally {
       setLoading(false);
     }
@@ -108,12 +108,12 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
         link.href = `data:${data.content_type};base64,${data.data}`;
         link.download = data.filename;
         link.click();
-        toast.success('Reporte descargado correctamente');
+        toast.success(t('hist_report_downloaded'));
       } else {
-        toast.error('Error al generar PDF');
+        toast.error(t('hist_pdf_err'));
       }
     } catch (err) {
-      toast.error('Error de conexión');
+      toast.error(t('ceo_err_connection'));
     } finally {
       setDownloading(false);
     }
@@ -163,7 +163,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
             </div>
             <div>
               <h2 className="text-xl font-black uppercase tracking-tighter text-foreground">
-                Reporte <span className="text-primary text-glow-primary">Extendido</span>
+                {t('hist_title_prefix')} <span className="text-primary text-glow-primary">{t('hist_title_accent')}</span>
               </h2>
               <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">
                 PO: <span className="text-foreground">{ord.order_number || query || '—'}</span> | {ord.client || ''}
@@ -178,7 +178,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
               className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-xs font-black uppercase tracking-widest hover:bg-primary/90 transition-all active:scale-95 disabled:opacity-50"
             >
               {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Exportar PDF
+              {t('art_export_pdf')}
             </button>
             <button 
               onClick={onClose} 
@@ -195,10 +195,10 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
           {/* Executive Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: 'Estado Actual', value: ord.board || 'N/A', icon: FileText, color: 'text-indigo-400' },
-              { label: 'Producción', value: ord.production_status || 'N/A', icon: Factory, color: 'text-emerald-400' },
-              { label: 'Cantidad', value: ord.quantity || 0, icon: Package, color: 'text-blue-400' },
-              { label: 'Fecha Entrega', value: ord.due_date || 'N/A', icon: Calendar, color: 'text-amber-400' },
+              { label: t('hist_current_state'), value: ord.board || 'N/A', icon: FileText, color: 'text-indigo-400' },
+              { label: t('production'), value: ord.production_status || 'N/A', icon: Factory, color: 'text-emerald-400' },
+              { label: t('quantity'), value: ord.quantity || 0, icon: Package, color: 'text-blue-400' },
+              { label: t('excel_due_date'), value: ord.due_date || 'N/A', icon: Calendar, color: 'text-amber-400' },
             ].map((stat, i) => (
               <div key={i} className="bg-secondary/20 border border-border/30 rounded-2xl p-4 flex flex-col gap-1">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground">
@@ -217,8 +217,8 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
                   <User className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">Creada por</div>
-                  <div className="text-base font-black text-foreground">{creator.name || 'Desconocido'}</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">{t('hist_created_by')}</div>
+                  <div className="text-base font-black text-foreground">{creator.name || t('hist_unknown')}</div>
                   {creator.email && (
                     <div className="text-[11px] text-muted-foreground font-mono">{creator.email}</div>
                   )}
@@ -226,7 +226,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
               </div>
               {creator.created_at && (
                 <div className="text-right">
-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">Fecha de creación</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/80">{t('hist_created_at')}</div>
                   <div className="text-sm font-bold text-foreground">{formatTimestamp(creator.created_at)}</div>
                 </div>
               )}
@@ -236,23 +236,23 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
           {/* Timeline Section */}
           <div className="space-y-6 relative">
             <h3 className="text-xs font-black uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
-              <History className="w-4 h-4" /> Historial de Vida de la Orden
+              <History className="w-4 h-4" /> {t('hist_timeline_title')}
             </h3>
 
             {loading ? (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
                 <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">Compilando historial completo...</p>
+                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">{t('hist_compiling')}</p>
               </div>
             ) : loadError ? (
               <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-6 text-center space-y-3">
-                <p className="text-sm font-black uppercase tracking-widest text-red-400">No se pudo cargar el historial</p>
+                <p className="text-sm font-black uppercase tracking-widest text-red-400">{t('hist_load_failed')}</p>
                 <p className="text-xs font-mono text-red-300/80 break-all">{loadError}</p>
                 <button
                   onClick={fetchHistory}
                   className="mt-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-300 transition-all"
                 >
-                  Reintentar
+                  {t('hist_retry')}
                 </button>
               </div>
             ) : history.length > 0 ? (
@@ -309,7 +309,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
                                            <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary font-mono font-bold">{fmtVal(c.to)}</span>
                                          </span>
                                        ) : (
-                                         <span className="px-1.5 py-0.5 rounded bg-secondary/60 text-muted-foreground font-mono">antes: {fmtVal(prev[f])}</span>
+                                         <span className="px-1.5 py-0.5 rounded bg-secondary/60 text-muted-foreground font-mono">{t('hist_before')} {fmtVal(prev[f])}</span>
                                        )}
                                      </div>
                                    );
@@ -328,7 +328,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
                              <p className="text-[11px] text-muted-foreground font-mono">{event.details.filename}</p>
                            )}
                            {event.type === 'activity' && (event.action === 'create_qc_record' || event.action === 'auto_create_qc') && (
-                             <p className="text-[11px] text-muted-foreground">Resultado: <span className="text-foreground/80 font-bold">{event.details?.result || event.details?.reason || '—'}</span></p>
+                             <p className="text-[11px] text-muted-foreground">{t('hist_result')} <span className="text-foreground/80 font-bold">{event.details?.result || event.details?.reason || '—'}</span></p>
                            )}
                            {event.type === 'activity' && event.action === 'automation_triggered' && (
                              <p className="text-[11px] text-muted-foreground">{event.details?.automation_name || event.details?.automation_id}</p>
@@ -342,11 +342,11 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
             ) : (
               <div className="text-center py-20 space-y-3">
                 <FileText className="w-12 h-12 mx-auto opacity-30" />
-                <p className="text-sm font-bold uppercase tracking-widest opacity-50">Sin actividad posterior a la creación</p>
+                <p className="text-sm font-bold uppercase tracking-widest opacity-50">{t('hist_no_activity')}</p>
                 <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
                   {creator?.name
-                    ? `${creator.name} creó esta orden y nadie ha hecho cambios todavía.`
-                    : 'No se ha registrado ningún cambio sobre esta orden.'}
+                    ? t('hist_no_changes_by', { name: creator.name })
+                    : t('hist_no_changes')}
                 </p>
               </div>
             )}
@@ -356,7 +356,7 @@ const OrderHistoryModal = ({ order, query, isOpen, onClose }) => {
         {/* Footer */}
         <div className="p-4 bg-secondary/10 border-t border-border/50 text-center">
           <p className="text-[8px] font-black uppercase tracking-[0.5em] text-muted-foreground/40">
-            Módulo de Auditoría Industrial Avanzada - MOS v5.4.2
+            {t('hist_footer')}
           </p>
         </div>
       </div>

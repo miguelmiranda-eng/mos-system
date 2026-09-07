@@ -6,10 +6,12 @@ import {
   LayoutDashboard, Info, Upload, Trash2, RefreshCw, Eye, ChevronRight
 } from 'lucide-react';
 import { API } from '../lib/constants';
+import { useLang } from '../contexts/LanguageContext';
 import { toast, Toaster } from 'sonner';
 
 const BackupCenter = () => {
   const navigate = useNavigate();
+  const { t } = useLang();
   const fileInputRef = useRef(null);
   
   const [viewMode, setViewMode] = useState('system'); // 'system' or 'external'
@@ -49,7 +51,7 @@ const BackupCenter = () => {
         const data = await res.json();
         setOrders(data);
       }
-    } catch (err) { toast.error("Error al cargar órdenes"); }
+    } catch (err) { toast.error(t('load_orders_err')); }
     finally { setLoading(false); }
   };
 
@@ -65,12 +67,12 @@ const BackupCenter = () => {
           setExternalOrders(data.orders);
           setViewMode('external');
           setSelectedIds([]);
-          toast.success(`Se cargaron ${data.orders.length} órdenes del archivo externo`);
+          toast.success(t('backup_loaded_external', { n: data.orders.length }));
         } else {
-          toast.error("Formato de respaldo incorrecto");
+          toast.error(t('backup_bad_format'));
         }
       } catch (err) {
-        toast.error("Error al leer el archivo JSON");
+        toast.error(t('backup_err_read_json'));
       }
     };
     reader.readAsText(file);
@@ -93,7 +95,7 @@ const BackupCenter = () => {
     setExporting('pdf');
     try {
       if (viewMode === 'external') {
-         toast.error("Restaura las órdenes primero para generar el PDF.");
+         toast.error(t('backup_restore_first'));
          setExporting(null); return;
       }
       const res = await fetch(`${API}/orders/export-pdf`, {
@@ -108,9 +110,9 @@ const BackupCenter = () => {
         link.href = `data:application/pdf;base64,${data.data}`;
         link.download = data.filename;
         link.click();
-        toast.success("PDF generado");
+        toast.success(t('backup_pdf_generated'));
       }
-    } catch (err) { toast.error("Error de conexión"); }
+    } catch (err) { toast.error(t('ceo_err_connection')); }
     finally { setExporting(null); }
   };
 
@@ -134,9 +136,9 @@ const BackupCenter = () => {
         link.href = url;
         link.download = `${filename}.json`;
         link.click();
-        toast.success("Archivo llave creado");
+        toast.success(t('backup_key_file_created'));
       }
-    } catch (err) { toast.error("Error de conexión"); }
+    } catch (err) { toast.error(t('ceo_err_connection')); }
     finally { setExporting(null); }
   };
 
@@ -153,26 +155,26 @@ const BackupCenter = () => {
       });
       if (res.ok) {
         const stats = await res.json();
-        toast.success(`Restauración completa: ${stats.orders} nuevas.`);
+        toast.success(t('backup_restore_done', { n: stats.orders }));
         setViewMode('system');
         fetchOrders();
       }
-    } catch (err) { toast.error("Error al restaurar"); }
+    } catch (err) { toast.error(t('backup_err_restore')); }
     finally { setExporting(null); }
   };
 
   const handleDeleteFromSystem = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`¿ELIMINAR PERMANENTEMENTE ${selectedIds.length} órdenes?`)) return;
+    if (!window.confirm(t('backup_confirm_delete', { n: selectedIds.length }))) return;
     setExporting('delete');
     try {
       for (const id of selectedIds) {
         await fetch(`${API}/orders/${id}/permanent`, { method: 'DELETE', credentials: 'include' });
       }
-      toast.success("Órdenes eliminadas");
+      toast.success(t('backup_orders_deleted'));
       fetchOrders();
       setSelectedIds([]);
-    } catch (err) { toast.error("Error al eliminar"); }
+    } catch (err) { toast.error(t('perm_del_err')); }
     finally { setExporting(null); }
   };
 
@@ -212,12 +214,12 @@ const BackupCenter = () => {
               <button 
                  onClick={() => setViewMode('system')}
                  className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'system' ? 'bg-white text-emerald-600 shadow-md border border-emerald-100' : 'text-slate-500 hover:text-slate-800'}`}>
-                 Archivo del Sistema
+                 {t('backup_system_archive')}
               </button>
               <button 
                  onClick={() => viewMode === 'external' ? setViewMode('system') : fileInputRef.current.click()}
                  className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${viewMode === 'external' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}>
-                 {viewMode === 'external' ? 'Archivo Externo' : <><Upload className="w-3.5 h-3.5" /> Explorar USB</>}
+                 {viewMode === 'external' ? t('backup_external_archive') : <><Upload className="w-3.5 h-3.5" /> {t('backup_browse_usb')}</>}
               </button>
            </div>
         </div>
@@ -235,21 +237,21 @@ const BackupCenter = () => {
                     disabled={exporting || selectedIds.length === 0}
                     className="px-6 py-3.5 bg-white hover:bg-emerald-50 border-2 border-slate-100 hover:border-emerald-500/20 text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-50 disabled:grayscale-[0.5] shadow-sm">
                     {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-4 h-4 text-emerald-500" />}
-                    PDF Resumen
+                    {t('backup_pdf_summary')}
                   </button>
                   <button 
                     onClick={handleExportJSON}
                     disabled={exporting || selectedIds.length === 0}
                     className="px-6 py-3.5 bg-slate-900 hover:bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-slate-900/20">
                     {exporting === 'json' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-4 h-4 text-emerald-400" />}
-                    Descargar Respaldo JSON
+                    {t('backup_download_json')}
                   </button>
                   <div className="w-px h-10 bg-slate-100 mx-2 hidden md:block"></div>
                   <button 
                     onClick={handleDeleteFromSystem}
                     disabled={exporting || selectedIds.length === 0}
                     className="px-6 py-3.5 bg-white hover:bg-red-500 hover:text-white border-2 border-red-50/50 hover:border-red-500 text-red-500 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 shadow-sm">
-                    <Trash2 className="w-4 h-4" /> Eliminar de MOS
+                    <Trash2 className="w-4 h-4" /> {t('backup_delete_from_mos')}
                   </button>
                 </>
               ) : (
@@ -259,12 +261,12 @@ const BackupCenter = () => {
                     disabled={exporting || selectedIds.length === 0}
                     className="px-8 py-3.5 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-emerald-500/20 transition-all disabled:opacity-30">
                     {exporting === 'restore' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    Restaurar Selección
+                    {t('backup_restore_selection')}
                   </button>
                   <button 
                     onClick={() => {setExternalOrders([]); setViewMode('system');}}
                     className="px-8 py-3.5 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-slate-50">
-                    Cerrar Archivo
+                    {t('backup_close_file')}
                   </button>
                 </>
               )}
@@ -275,7 +277,7 @@ const BackupCenter = () => {
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
                   <input 
                     className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 pl-12 pr-4 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500/20 transition-all placeholder:text-slate-400 font-bold"
-                    placeholder="Filtrar por número u orden..."
+                    placeholder={t('backup_filter_placeholder')}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -288,8 +290,8 @@ const BackupCenter = () => {
                       value={boardFilter}
                       onChange={(e) => setBoardFilter(e.target.value)}
                     >
-                      <option value="MASTER">TODOS ACTIVOS</option>
-                      <option value="PAPELERA DE RECICLAJE">PAPELERA</option>
+                      <option value="MASTER">{t('backup_all_active')}</option>
+                      <option value="PAPELERA DE RECICLAJE">{t('backup_trash_opt')}</option>
                       {boards.map(b => <option key={b} value={b}>{b}</option>)}
                     </select>
                   </div>
@@ -297,7 +299,7 @@ const BackupCenter = () => {
                 <button 
                   onClick={selectAll}
                   className="px-5 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-slate-50">
-                  {selectedIds.length === displayedOrders.length && displayedOrders.length > 0 ? 'Deseleccionar' : 'Seleccionar Todo'}
+                  {selectedIds.length === displayedOrders.length && displayedOrders.length > 0 ? t('backup_deselect') : t('backup_select_all')}
                 </button>
             </div>
         </div>
@@ -314,10 +316,10 @@ const BackupCenter = () => {
                 <thead>
                   <tr className="bg-slate-50/50 border-b border-slate-100">
                     <th className="px-10 py-6 w-20"></th>
-                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Orden / PO</th>
-                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Cliente</th>
-                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Contenido</th>
-                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Tablero Origen</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">{t('backup_col_order_po')}</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">{t('client')}</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">{t('backup_col_content')}</th>
+                    <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">{t('backup_col_source_board')}</th>
                     <th className="px-6 py-6 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400"></th>
                   </tr>
                 </thead>
@@ -337,7 +339,7 @@ const BackupCenter = () => {
                         <td className="px-6 py-6">
                           <div className="flex flex-col">
                             <span className="text-xl font-black text-slate-900 group-hover:text-emerald-600 transition-colors tracking-tighter">{order.order_number}</span>
-                            <span className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-1">{order.customer_po || 'SIN PO'}</span>
+                            <span className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-1">{order.customer_po || t('backup_no_po')}</span>
                           </div>
                         </td>
                         <td className="px-6 py-6">
@@ -345,13 +347,13 @@ const BackupCenter = () => {
                         </td>
                         <td className="px-6 py-6">
                           <div className="flex gap-2">
-                             {order._comments?.length > 0 && <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-blue-100">{order._comments.length} Coments</span>}
-                             {order._image_files?.length > 0 && <span className="px-3 py-1 bg-emerald-50 text-emerald-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-emerald-100">{order._image_files.length} Fotos</span>}
+                             {order._comments?.length > 0 && <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-blue-100">{order._comments.length} {t('backup_comments_short')}</span>}
+                             {order._image_files?.length > 0 && <span className="px-3 py-1 bg-emerald-50 text-emerald-600 text-[10px] font-black rounded-lg uppercase tracking-tighter border border-emerald-100">{order._image_files.length} {t('backup_photos')}</span>}
                           </div>
                         </td>
                         <td className="px-6 py-6">
                           <span className="inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 border border-slate-200">
-                            {viewMode === 'system' ? order.board : (order.production_status || 'EXTERNO')}
+                            {viewMode === 'system' ? order.board : (order.production_status || t('backup_external_upper'))}
                           </span>
                         </td>
                         <td className="px-6 py-6">
@@ -371,13 +373,13 @@ const BackupCenter = () => {
             <div className="flex flex-col items-center justify-center py-40 text-slate-300">
               <Archive className="w-24 h-24 mb-6 opacity-10" />
               <h3 className="text-2xl font-black uppercase tracking-[0.3em] opacity-20">
-                 {viewMode === 'system' ? 'Sin registros' : 'Esperando archivo USB...'}
+                 {viewMode === 'system' ? t('admin_no_records') : t('backup_waiting_usb')}
               </h3>
               {viewMode === 'external' && (
                 <button 
                   onClick={() => fileInputRef.current.click()}
                   className="mt-10 px-10 py-4 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-2xl shadow-emerald-500/30 hover:bg-emerald-600 transition-all">
-                  Cargar JSON de Respaldo
+                  {t('backup_load_json')}
                 </button>
               )}
             </div>
@@ -389,12 +391,12 @@ const BackupCenter = () => {
            <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                  <div className={`w-2 h-2 rounded-full ${viewMode === 'system' ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
-                 <span>MODO: {viewMode === 'system' ? 'INTERNO' : 'EXTERNO (USB)'}</span>
+                 <span>{t('backup_mode')} {viewMode === 'system' ? t('backup_mode_internal') : t('backup_mode_external')}</span>
               </div>
               <div className="w-1 h-1 bg-slate-300 rounded-full" />
-              <span>{selectedIds.length} ÓRDENES SELECCIONADAS</span>
+              <span>{selectedIds.length} {t('backup_orders_selected')}</span>
            </div>
-           {viewMode === 'external' && <span className="text-emerald-600 italic">Explorando almacenamiento externo con éxito.</span>}
+           {viewMode === 'external' && <span className="text-emerald-600 italic">{t('backup_exploring_external')}</span>}
         </div>
       </main>
     </div>

@@ -41,7 +41,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
 
   const handleClose = () => {
     if (newComment.trim() || imagePreviews.length > 0) {
-      if (!window.confirm("Tienes un comentario o archivos sin enviar. ¿Estás seguro de que quieres salir?")) return;
+      if (!window.confirm(t('comment_unsent_confirm'))) return;
     }
     setNewComment("");
     setImagePreviews([]);
@@ -137,7 +137,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                 className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"
                 data-testid="open-surtido"
               >
-                <Boxes className="w-4 h-4" /> Surtido WMS
+                <Boxes className="w-4 h-4" /> {t('comment_picking_wms')}
               </button>
               <button
                 onClick={() => setShowNeck(true)}
@@ -149,7 +149,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
               <button
                 onClick={handleClose}
                 className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                aria-label="Cerrar"
+                aria-label={t('close')}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -171,7 +171,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                     <div className="flex items-center gap-2 mb-2 px-1">
                       <Pin className="w-3.5 h-3.5 text-amber-500" />
                       <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">
-                        Anclados ({pinnedComments.length})
+                        {t('comment_pinned_count', { n: pinnedComments.length })}
                       </span>
                       <div className="flex-1 h-px bg-amber-500/20" />
                     </div>
@@ -180,7 +180,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
                       <div className="flex items-center gap-2 mt-4 mb-2 px-1">
                         <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                          Todos los comentarios
+                          {t('comment_all')}
                         </span>
                         <div className="flex-1 h-px bg-border/50" />
                       </div>
@@ -214,9 +214,9 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
         <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[220] w-full max-w-[95vw] md:max-w-3xl max-h-[85vh] translate-x-[-50%] translate-y-[-50%] overflow-y-auto bg-card border border-border rounded-2xl shadow-2xl">
           <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
             <div className="font-bold text-base flex items-center gap-2">
-              <Boxes className="w-5 h-5 text-indigo-400" /> Surtido (WMS) - {order.order_number}
+              <Boxes className="w-5 h-5 text-indigo-400" /> {t('comment_picking_wms_paren')} - {order.order_number}
             </div>
-            <button onClick={() => setShowSurtido(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+            <button onClick={() => setShowSurtido(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label={t('close')}>
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -236,7 +236,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             <div className="font-bold text-base flex items-center gap-2">
               <Scissors className="w-5 h-5 text-pink-400" /> Neck - {order.order_number}
             </div>
-            <button onClick={() => setShowNeck(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+            <button onClick={() => setShowNeck(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground" aria-label={t('close')}>
               <X className="w-5 h-5" />
             </button>
           </div>

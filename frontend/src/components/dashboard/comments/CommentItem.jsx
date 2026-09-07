@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { Pin, PinOff, Pencil, Trash2 } from "lucide-react";
 import { CommentContent } from "./CommentContent";
 import { canModifyComment } from "./roles";
+import { useLang } from "../../../contexts/LanguageContext";
 
 const EMOJI_LIST = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 
@@ -10,6 +11,7 @@ const EMOJI_LIST = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 // levantados en el modal, lo que hacía que editar uno ocultara la barra de
 // acciones de TODOS. Las mutaciones llegan por callbacks del hook useComments.
 export function CommentItem({ comment, repliesMap, isReply = false, currentUser, isAdmin, actions }) {
+  const { t } = useLang();
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
@@ -62,11 +64,11 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
         )}
         <span className="text-xs font-black text-foreground/80">{comment.user_name}</span>
         <span className="text-[10px] text-muted-foreground">{new Date(comment.created_at).toLocaleString()}</span>
-        {comment.edited_at && <span className="text-[10px] text-muted-foreground italic">(editado)</span>}
+        {comment.edited_at && <span className="text-[10px] text-muted-foreground italic">{t('comment_edited_mark')}</span>}
         {isPinned && (
           <span className="flex items-center gap-1 text-[10px] text-amber-500 font-bold ml-1">
-            <Pin className="w-3 h-3" /> Anclado
-            {comment.pinned_by && <span className="text-muted-foreground font-normal">por {comment.pinned_by}</span>}
+            <Pin className="w-3 h-3" /> {t('comment_pinned_label')}
+            {comment.pinned_by && <span className="text-muted-foreground font-normal">{t('comment_by')} {comment.pinned_by}</span>}
           </span>
         )}
 
@@ -79,7 +81,7 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
                   ? "text-amber-500 hover:text-muted-foreground hover:bg-secondary"
                   : "text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10"
               }`}
-              title={isPinned ? "Desanclar comentario" : "Anclar comentario"}
+              title={isPinned ? t('comment_unpin') : t('comment_pin')}
               data-testid={`pin-comment-${comment.comment_id}`}
             >
               {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
@@ -90,16 +92,16 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
               <button
                 onClick={startEdit}
                 className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
-                title="Editar"
+                title={t('edit')}
               >
                 <Pencil className="w-3 h-3" />
               </button>
               <button
                 onClick={() => {
-                  if (window.confirm("¿Eliminar?")) actions.onDelete(comment.comment_id);
+                  if (window.confirm(t('comment_delete_confirm'))) actions.onDelete(comment.comment_id);
                 }}
                 className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                title="Eliminar"
+                title={t('delete')}
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -119,14 +121,14 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
           />
           <div className="flex justify-end gap-2">
             <button onClick={() => setEditing(false)} className="px-2 py-1 text-[10px]">
-              Cancelar
+              {t('cancel')}
             </button>
             <button
               onClick={saveEdit}
               disabled={editLoading}
               className="px-3 py-1 text-[10px] bg-primary text-primary-foreground rounded disabled:opacity-50"
             >
-              Guardar
+              {t('save')}
             </button>
           </div>
         </div>
@@ -150,7 +152,7 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
             }}
           >
             <button className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors">
-              Reaccionar
+              {t('comment_react')}
             </button>
             {reactionOpen && (
               <div className="absolute bottom-full left-0 pb-3 flex animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
@@ -177,7 +179,7 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
               onClick={() => actions.onReply(comment)}
               className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors"
             >
-              Responder
+              {t('comment_reply')}
             </button>
           )}
 
@@ -193,7 +195,7 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
                       ? "bg-primary/20 border-primary/40 text-primary"
                       : "bg-secondary/40 border-border/50 hover:border-border text-muted-foreground"
                   }`}
-                  title={ids.length > 1 ? `${ids.length} personas` : "1 persona"}
+                  title={ids.length > 1 ? t('comment_people', { n: ids.length }) : t('comment_one_person')}
                 >
                   <span className="text-sm">{emoji}</span>
                   {ids.length > 0 && <span className="font-mono">{ids.length}</span>}

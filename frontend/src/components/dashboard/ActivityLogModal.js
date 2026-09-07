@@ -75,7 +75,7 @@ export const ActivityLogModal = ({ isOpen, onClose, onUndoSuccess, t }) => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input 
               type="text" 
-              placeholder="Buscar por orden (#943), usuario..." 
+              placeholder={t('admin_activity_modal_search_placeholder')} 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-8 py-2 bg-secondary/30 border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all text-foreground"
@@ -89,7 +89,7 @@ export const ActivityLogModal = ({ isOpen, onClose, onUndoSuccess, t }) => {
         </div>
         <div className="flex-1 overflow-y-auto py-2">
           {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> :
-           logs.length === 0 ? <p className="text-center text-muted-foreground py-8">No hay registros</p> : (
+           logs.length === 0 ? <p className="text-center text-muted-foreground py-8">{t('admin_no_records_yet')}</p> : (
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card z-10"><tr className="border-b border-border">
                 <th className="text-left py-2 px-3 font-roboto uppercase text-[10px] tracking-[0.2em] text-muted-foreground w-40">{t('date_time')}</th>

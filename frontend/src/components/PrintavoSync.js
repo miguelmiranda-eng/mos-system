@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { API } from "../lib/constants";
+import { useLang } from "../contexts/LanguageContext";
 import {
   ArrowLeft, Zap, Clock, RefreshCw, Save, Loader2,
   CheckCircle2, AlertTriangle, Hash, Timer,
@@ -20,6 +21,7 @@ const DEFAULT_CONFIG = {
 
 export default function PrintavoSync() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,10 +37,10 @@ export default function PrintavoSync() {
         const data = await res.json();
         setConfig({ ...DEFAULT_CONFIG, ...data });
       } else {
-        toast.error("No se pudo cargar la configuración");
+        toast.error(t('psync_err_load_config'));
       }
     } catch {
-      toast.error("Error de conexión");
+      toast.error(t('ceo_err_connection'));
     } finally {
       setLoading(false);
     }
@@ -62,13 +64,13 @@ export default function PrintavoSync() {
       if (res.ok) {
         const data = await res.json();
         setConfig({ ...DEFAULT_CONFIG, ...data });
-        toast.success("Configuración guardada");
+        toast.success(t('rs_saved'));
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "Error al guardar");
+        toast.error(err.detail || t('options_save_err'));
       }
     } catch {
-      toast.error("Error al guardar");
+      toast.error(t('options_save_err'));
     } finally {
       setSaving(false);
     }
@@ -86,23 +88,23 @@ export default function PrintavoSync() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         if (data.initialized) {
-          toast.success(`Marca inicial fijada (invoice #${data.watermark ?? "—"}). Los nuevos invoices desde aquí se importarán.`);
+          toast.success(t('psync_watermark_set', { invoice: data.watermark ?? "—" }));
         } else {
-          toast.success(`Sincronización lista: ${data.created || 0} orden(es) creada(s) de ${data.seen || 0} invoice(s) revisados`);
+          toast.success(t('psync_sync_done', { created: data.created || 0, seen: data.seen || 0 }));
         }
         fetchConfig();
       } else {
-        toast.error(data.detail || "Error al sincronizar");
+        toast.error(data.detail || t('psync_err_sync'));
       }
     } catch {
-      toast.error("Error al sincronizar");
+      toast.error(t('psync_err_sync'));
     } finally {
       setSyncing(false);
     }
   };
 
   const fmtDate = (iso) => {
-    if (!iso) return "Nunca";
+    if (!iso) return t('rs_never');
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
   };
 
@@ -125,17 +127,17 @@ export default function PrintavoSync() {
           <button
             onClick={() => navigate("/home")}
             className="w-10 h-10 flex flex-shrink-0 items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5 transition-all text-muted-foreground hover:text-foreground hover:shadow-lg hover:-translate-x-0.5"
-            title="Volver a MOS Home"
+            title={t('admin_back_mos_home')}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <h1 className="text-xl font-black uppercase tracking-widest text-foreground flex items-center gap-2">
               <Zap className="w-5 h-5 text-primary" />
-              Sincronización Printavo
+              {t('psync_title')}
             </h1>
             <p className="text-xs text-muted-foreground font-mono leading-none mt-1">
-              Crea órdenes en MOS automáticamente desde invoices de Printavo
+              {t('psync_subtitle')}
             </p>
           </div>
         </div>
@@ -146,7 +148,7 @@ export default function PrintavoSync() {
           className="px-6 py-2 bg-gradient-to-r from-primary to-orange-500 hover:from-primary/90 hover:to-orange-500/90 text-white rounded-lg font-black tracking-widest text-sm transition-all shadow-[0_4px_20px_rgba(255,193,7,0.3)] hover:shadow-[0_4px_25px_rgba(255,193,7,0.5)] flex items-center gap-2 disabled:opacity-50"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Guardar
+          {t('save')}
         </button>
       </header>
 
@@ -158,11 +160,11 @@ export default function PrintavoSync() {
           <section className="bg-destructive/10 border border-destructive/30 rounded-2xl p-5 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
             <div>
-              <h2 className="text-sm font-bold text-destructive">Credenciales de Printavo no configuradas</h2>
+              <h2 className="text-sm font-bold text-destructive">{t('psync_creds_missing')}</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Agrega <code className="text-foreground font-mono">PRINTAVO_API_EMAIL</code> y{" "}
-                <code className="text-foreground font-mono">PRINTAVO_API_TOKEN</code> en el archivo{" "}
-                <code className="text-foreground font-mono">.env</code> del backend (genera el token en Printavo → My Account → API) y reinicia el backend.
+                {t('psync_creds_help_1')} <code className="text-foreground font-mono">PRINTAVO_API_EMAIL</code> {t('psync_creds_help_2')}{" "}
+                <code className="text-foreground font-mono">PRINTAVO_API_TOKEN</code> {t('psync_creds_help_3')}{" "}
+                <code className="text-foreground font-mono">.env</code> {t('psync_creds_help_4')}
               </p>
             </div>
           </section>
@@ -171,9 +173,9 @@ export default function PrintavoSync() {
         {/* Master toggle */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-foreground">Sincronización automática</h2>
+            <h2 className="text-base font-bold text-foreground">{t('psync_auto_sync')}</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Cuando está activa, MOS revisa Printavo cada pocos minutos y crea la orden de cada invoice nuevo en el tablero SCHEDULING.
+              {t('psync_auto_sync_desc')}
             </p>
           </div>
           <button
@@ -190,11 +192,11 @@ export default function PrintavoSync() {
         {/* Interval */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
           <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            <Clock className="w-4 h-4 text-primary" /> Frecuencia
+            <Clock className="w-4 h-4 text-primary" /> {t('psync_frequency')}
           </h2>
           <div className="grid grid-cols-2 gap-4 max-w-sm">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Intervalo (minutos)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('psync_interval')}</label>
               <input
                 type="number" min="1" max="1440"
                 value={config.poll_minutes}
@@ -203,7 +205,7 @@ export default function PrintavoSync() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Invoices por revisión</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('psync_fetch_size')}</label>
               <input
                 type="number" min="1" max="100"
                 value={config.fetch_size}
@@ -213,31 +215,31 @@ export default function PrintavoSync() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground/70">
-            El cambio de intervalo aplica al reiniciar el backend. Puedes forzar una revisión ahora con el botón de abajo.
+            {t('psync_interval_note')}
           </p>
         </section>
 
         {/* Status */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
           <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            <Timer className="w-4 h-4 text-primary" /> Estado
+            <Timer className="w-4 h-4 text-primary" /> {t('status')}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-secondary/40 rounded-xl p-4">
               <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Órdenes creadas
+                <CheckCircle2 className="w-3.5 h-3.5" /> {t('psync_orders_created')}
               </p>
               <p className="text-2xl font-black text-primary mt-1 tabular-nums">{config.created_count || 0}</p>
             </div>
             <div className="bg-secondary/40 rounded-xl p-4">
               <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black flex items-center gap-1.5">
-                <Hash className="w-3.5 h-3.5" /> Último invoice
+                <Hash className="w-3.5 h-3.5" /> {t('psync_last_invoice')}
               </p>
               <p className="text-2xl font-black text-foreground mt-1 tabular-nums">{config.last_visual_id || "—"}</p>
             </div>
             <div className="bg-secondary/40 rounded-xl p-4">
               <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5" /> Última revisión
+                <Clock className="w-3.5 h-3.5" /> {t('psync_last_check')}
               </p>
               <p className="text-sm font-semibold text-foreground mt-2">{fmtDate(config.last_run_at)}</p>
             </div>
@@ -253,10 +255,10 @@ export default function PrintavoSync() {
         {/* Manual sync */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
           <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 text-primary" /> Sincronizar ahora
+            <RefreshCw className="w-4 h-4 text-primary" /> {t('psync_sync_now')}
           </h2>
           <p className="text-sm text-muted-foreground">
-            Revisa Printavo de inmediato sin esperar el intervalo. En la primera vez solo fija la marca inicial (no importa el historial); a partir de ahí crea las órdenes de los invoices nuevos.
+            {t('psync_sync_now_desc')}
           </p>
           <button
             onClick={handleSyncNow}
@@ -264,7 +266,7 @@ export default function PrintavoSync() {
             className="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold text-sm transition-all shadow-[0_4px_20px_rgba(8,145,178,0.3)] flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {syncing ? "Sincronizando..." : "Sincronizar ahora"}
+            {syncing ? t('psync_syncing') : t('psync_sync_now')}
           </button>
         </section>
       </main>

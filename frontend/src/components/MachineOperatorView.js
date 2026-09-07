@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../App";
 import { useTheme } from "../contexts/ThemeContext";
+import { useLang } from "../contexts/LanguageContext";
 import { Toaster, toast } from "sonner";
 import {
   Factory, Search, LogOut, Loader2, Package, RefreshCw, MessageSquare,
@@ -40,6 +41,7 @@ const fetcher = (path) =>
 
 export default function MachineOperatorView() {
   const { user, logout } = useAuth();
+  const { t } = useLang();
   const { setTheme } = useTheme();
   // Operator profile always starts in light theme.
   useEffect(() => { setTheme("light"); }, [setTheme]);
@@ -75,9 +77,9 @@ export default function MachineOperatorView() {
       const data = await fetcher(`/orders?board=${encodeURIComponent(board)}&limit=500`);
       setOrders(Array.isArray(data) ? data : (data.orders || []));
     } catch {
-      toast.error("No se pudieron cargar las órdenes");
+      toast.error(t("prod_mo_load_orders_err"));
     } finally { setLoading(false); }
-  }, [board]);
+  }, [board]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadOrders(); }, [loadOrders, refreshTick]);
 
   // Select options for select-type column badges (read-only EditableCell still
@@ -172,11 +174,11 @@ export default function MachineOperatorView() {
     setSearching(true);
     try {
       const res = await apiFetch(`${API}/orders?search=${encodeURIComponent(q)}`);
-      if (!res.ok) { toast.error("Error al buscar"); return; }
+      if (!res.ok) { toast.error(t("prod_mo_search_err")); return; }
       const all = await res.json();
       const filtered = (Array.isArray(all) ? all : []).filter(o => !isHiddenBoard(o.board));
       if (filtered.length === 0) {
-        toast.error("Sin coincidencias globales");
+        toast.error(t("prod_mo_no_matches"));
         return;
       }
       // Operators can navigate to any board now — jump to the first result's
@@ -187,14 +189,14 @@ export default function MachineOperatorView() {
       }
       if (filtered.length === 1) {
         const exact = String(found.order_number || "").trim().toLowerCase() === q.toLowerCase();
-        toast.success(exact ? `Orden ${found.order_number} → ${found.board}` : `Encontrada en orden ${found.order_number} (${found.board})`);
+        toast.success(exact ? t("prod_mo_order_in_board", { order: found.order_number, board: found.board }) : t("prod_mo_found_in_order", { order: found.order_number, board: found.board }));
       } else {
-        toast.info(`${filtered.length} coincidencias · mostrando ${found.board}`);
+        toast.info(t("prod_mo_n_matches", { n: filtered.length, board: found.board }));
       }
     } catch {
-      toast.error("Error de conexión");
+      toast.error(t("ceo_err_connection"));
     } finally { setSearching(false); }
-  }, [search, board]);
+  }, [search, board, t]);
 
   // Operator-scoped cell update. Only production_status is wired through —
   // every other column stays read-only on this view. Optimistic update of
@@ -204,7 +206,7 @@ export default function MachineOperatorView() {
     if (field !== "production_status") return;
     const target = orders.find(o => o.order_id === orderId);
     if (target?.locked_by_qc) {
-      toast.error("Orden bloqueada por QC — pide a un supervisor que la libere.");
+      toast.error(t("prod_mo_qc_locked"));
       return;
     }
     // Optimistic local update so the badge changes color immediately.
@@ -219,17 +221,17 @@ export default function MachineOperatorView() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo actualizar el estatus");
+        toast.error(err.detail || t("prod_mo_status_err"));
         // Revert on failure.
-        setRefreshTick(t => t + 1);
+        setRefreshTick(n => n + 1);
         return;
       }
-      toast.success(`Producción actualizada: ${value}`);
+      toast.success(t("prod_mo_status_updated", { value }));
     } catch {
-      toast.error("Error de conexión");
-      setRefreshTick(t => t + 1);
+      toast.error(t("ceo_err_connection"));
+      setRefreshTick(n => n + 1);
     }
-  }, [orders]);
+  }, [orders, t]);
 
   const openCapture = async () => {
     // First click hits /orders?limit=5000 to feed the production modal's
@@ -261,7 +263,7 @@ export default function MachineOperatorView() {
               <Factory className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Operador</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("prod_operator_label")}</div>
               <div className="text-sm font-black uppercase tracking-tight">{user?.name || user?.email}</div>
             </div>
           </div>
@@ -286,7 +288,7 @@ export default function MachineOperatorView() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleSearch}
-                placeholder="Buscar (enter para global)…"
+                placeholder={t("prod_mo_search_placeholder")}
                 className="w-full h-10 pl-9 pr-3 bg-secondary/60 border border-border rounded-lg text-sm focus:outline-none focus:border-primary"
                 data-testid="operator-search"
               />
@@ -301,12 +303,12 @@ export default function MachineOperatorView() {
               {capturaLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Cargando…
+                  {t("prod_mo_loading")}
                 </>
               ) : (
                 <>
                   <Factory className="w-4 h-4" />
-                  Captura
+                  {t("prod_mo_capture")}
                 </>
               )}
             </button>
@@ -314,7 +316,7 @@ export default function MachineOperatorView() {
             <button
               onClick={() => setRefreshTick(t => t + 1)}
               className="h-10 w-10 flex items-center justify-center bg-secondary/60 hover:bg-secondary text-muted-foreground hover:text-foreground rounded-lg transition-all"
-              title="Refrescar"
+              title={t("prod_mo_refresh")}
             >
               <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             </button>
@@ -323,7 +325,7 @@ export default function MachineOperatorView() {
               onClick={logout}
               className="h-10 px-3 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all"
             >
-              <LogOut className="w-4 h-4" /> Salir
+              <LogOut className="w-4 h-4" /> {t("prod_mo_logout")}
             </button>
           </div>
         </div>
@@ -335,7 +337,7 @@ export default function MachineOperatorView() {
           {board}
         </div>
         <div className="text-[11px] font-mono font-bold text-muted-foreground">
-          {orders.length} {orders.length === 1 ? "orden" : "órdenes"}
+          {orders.length === 1 ? t("prod_n_order_single", { n: orders.length }) : t("prod_n_orders", { n: orders.length })}
         </div>
       </div>
 
@@ -344,12 +346,12 @@ export default function MachineOperatorView() {
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
             <Loader2 className="w-8 h-8 animate-spin mb-3" />
-            <span className="text-[11px] font-bold uppercase tracking-widest">Cargando órdenes…</span>
+            <span className="text-[11px] font-bold uppercase tracking-widest">{t("prod_mo_loading_orders")}</span>
           </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground/50">
             <Package className="w-12 h-12 mb-3 opacity-40" />
-            <p className="text-sm font-black uppercase tracking-widest">Sin órdenes en {board}</p>
+            <p className="text-sm font-black uppercase tracking-widest">{t("prod_mo_no_orders_in", { board })}</p>
           </div>
         ) : (
           <div role="table" className="text-sm isolate" style={{
@@ -362,7 +364,7 @@ export default function MachineOperatorView() {
                 then RESTANTE, then NECK %. Sticky on the left two for context. */}
             <div className="py-3 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 bg-card flex items-center justify-center" style={{ width: 48 }}></div>
             <div className="py-3 px-2 sticky left-[48px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 bg-card text-muted-foreground" style={{ width: 200 }}>
-              Orden
+              {t("order")}
             </div>
             {visibleColumns.filter(c => c.key !== "order_number").map(col => (
               <div key={col.key} className="py-3 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/10 bg-card text-muted-foreground" style={{ width: col.width, minWidth: col.width }}>
@@ -370,7 +372,7 @@ export default function MachineOperatorView() {
               </div>
             ))}
             <div className="py-3 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/10 bg-card text-muted-foreground" style={{ minWidth: 180 }}>
-              Restante
+              {t("remaining")}
             </div>
             <div className="py-3 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/10 bg-card text-pink-400" style={{ width: 110 }}>
               Neck %
@@ -394,7 +396,7 @@ export default function MachineOperatorView() {
                     <button
                       onClick={() => setCommentsOrder(order)}
                       className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 hover:text-primary relative"
-                      title="Comentarios"
+                      title={t("comments")}
                       data-testid={`operator-comments-${order.order_id}`}
                     >
                       <MessageSquare className="w-5 h-5" />
@@ -438,7 +440,7 @@ export default function MachineOperatorView() {
                   <div className="py-3 px-3 border-b border-border/10 flex flex-col justify-center gap-1" style={{ minWidth: 180 }}>
                     <div className="flex justify-between items-center text-[10px] font-mono font-black">
                       <span className={remaining === 0 ? "text-green-500" : "text-muted-foreground"}>
-                        {remaining.toLocaleString()} pz
+                        {t("prod_n_pieces", { n: remaining.toLocaleString() })}
                       </span>
                       <span className={pct >= 100 ? "text-green-500" : "text-primary"}>
                         {pct}%

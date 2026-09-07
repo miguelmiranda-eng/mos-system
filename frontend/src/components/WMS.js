@@ -151,12 +151,12 @@ export default function WMS() {
         await poster('/push/unsubscribe', { endpoint: existing.endpoint });
         await existing.unsubscribe();
         setPushOn(false);
-        toast.success('Alertas desactivadas en este dispositivo');
+        toast.success(t('wms_push_off'));
         return;
       }
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
-        toast.error('Permiso de notificaciones denegado por el navegador');
+        toast.error(t('wms_push_denied'));
         return;
       }
       const { public_key } = await fetcher('/push/vapid-public-key');
@@ -167,10 +167,10 @@ export default function WMS() {
       const res = await poster('/push/subscribe', { subscription: sub.toJSON() });
       if (!res.ok) throw new Error('subscribe failed');
       setPushOn(true);
-      toast.success('Alertas activadas — te mandé una notificación de prueba');
+      toast.success(t('wms_push_on'));
       await poster('/push/test', {});
     } catch (e) {
-      toast.error('No se pudieron activar las alertas en este dispositivo');
+      toast.error(t('wms_push_err'));
     } finally {
       setPushBusy(false);
     }
@@ -312,10 +312,10 @@ export default function WMS() {
         setHistoryOrder(data.order);
         setGlobalSearch('');
       } else {
-        toast.error('Orden / PO no encontrado');
+        toast.error(t('wms_order_po_not_found'));
       }
     } catch {
-      toast.error('Error al buscar orden');
+      toast.error(t('wms_err_search_order'));
     } finally {
       setIsSearching(false);
     }
@@ -326,7 +326,7 @@ export default function WMS() {
   if (!currentUser) {
     return (
       <div className="dark wms-theme h-screen bg-background flex items-center justify-center">
-        <DropsLoader label="Cargando WMS…" />
+        <DropsLoader label={t('wms_loading')} />
       </div>
     );
   }
@@ -344,16 +344,16 @@ export default function WMS() {
             <Warehouse className="w-5 h-5 text-primary" /> MOS <span className="text-primary not-italic ml-0.5">WMS</span>
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={handleLogout} title="Cerrar Sesión"
+            <button onClick={handleLogout} title={t('logout')}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20">
-              <LogOut className="w-4 h-4" /> <span className="text-xs font-medium">Salir</span>
+              <LogOut className="w-4 h-4" /> <span className="text-xs font-medium">{t('wms_exit')}</span>
             </button>
           </div>
         </header>
         <div className="flex-1 overflow-y-auto p-6">
           <div className="min-h-full flex flex-col items-center justify-center gap-8 sm:gap-10">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-center">
-              {firstName ? `Hola, ${firstName}` : 'Hola'} — ¿Qué vas a hacer?
+              {firstName ? t('wms_hello_name', { name: firstName }) : t('wms_hello')} — {t('wms_what_to_do')}
             </h1>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6 w-full max-w-3xl">
               {opts.map(m => {
@@ -379,16 +379,16 @@ export default function WMS() {
               <button onClick={() => navigate('/pda-recon')} data-testid="picker-launch-recon"
                 className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
                 <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
-                <span className="text-xl sm:text-2xl font-semibold text-center">Conciliación</span>
-                <span className="text-xs text-muted-foreground text-center max-w-[220px]">Escanea la ubicación y sus cajas para casar el inventario físico</span>
+                <span className="text-xl sm:text-2xl font-semibold text-center">{t('wms_recon')}</span>
+                <span className="text-xs text-muted-foreground text-center max-w-[220px]">{t('wms_recon_desc')}</span>
               </button>
               {/* Inventario por foto (/pda-foto): material que no está en el
                   sistema. Mismo permiso que conciliación (backend /recon/*). */}
               <button onClick={() => navigate('/pda-foto')} data-testid="picker-launch-photo"
                 className="relative flex flex-col items-center justify-center gap-3 sm:gap-5 p-6 sm:p-14 rounded-lg border border-border bg-card hover:bg-muted/40 active:scale-95 transition-all">
                 <Camera className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
-                <span className="text-xl sm:text-2xl font-semibold text-center">Inventario por foto</span>
-                <span className="text-xs text-muted-foreground text-center max-w-[220px]">Fotografía la etiqueta del cartón y confirma la cantidad</span>
+                <span className="text-xl sm:text-2xl font-semibold text-center">{t('wms_photo_inventory')}</span>
+                <span className="text-xs text-muted-foreground text-center max-w-[220px]">{t('wms_photo_inventory_desc')}</span>
               </button>
             </div>
           </div>
@@ -447,7 +447,7 @@ export default function WMS() {
             setActiveModule(id);
           }}
           onBack={() => currentUser?.role === 'picker' ? setPickerHome(true) : navigate('/dashboard')}
-          backTitle={currentUser?.role === 'picker' ? 'Inicio' : t('wms_back_main')}
+          backTitle={currentUser?.role === 'picker' ? t('wms_home_title') : t('wms_back_main')}
           mobileOpen={mobileNav}
           onMobileClose={() => setMobileNav(false)}
           right={canPush && pushOn !== null ? (
@@ -455,8 +455,8 @@ export default function WMS() {
               onClick={togglePush}
               disabled={pushBusy}
               data-testid="wms-push-toggle"
-              title={pushOn ? "Alertas activas en este dispositivo — clic para desactivar"
-                            : "Recibir alertas de descuadre en este dispositivo"}
+              title={pushOn ? t('wms_push_title_on')
+                            : t('wms_push_title_off')}
               className={`w-8 h-8 rounded-md border flex items-center justify-center transition-colors disabled:opacity-50
                 ${pushOn ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
                          : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
@@ -480,7 +480,7 @@ export default function WMS() {
             <button
               onClick={() => currentUser?.role === 'picker' ? setPickerHome(true) : navigate('/dashboard')}
               className="p-1.5 rounded-lg bg-secondary/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-all group"
-              title={currentUser?.role === 'picker' ? 'Inicio' : t('wms_back_main')}          >
+              title={currentUser?.role === 'picker' ? t('wms_home_title') : t('wms_back_main')}          >
               <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
             </button>
             {!sidebarCollapsed && (
@@ -559,14 +559,14 @@ export default function WMS() {
               onClick={togglePush}
               disabled={pushBusy}
               data-testid="wms-push-toggle"
-              title={pushOn ? "Alertas activas en este dispositivo — clic para desactivar"
-                            : "Recibir alertas de descuadre en este dispositivo"}
+              title={pushOn ? t('wms_push_title_on')
+                            : t('wms_push_title_off')}
               className={`w-full flex items-center justify-center gap-2 p-2 rounded-md border text-xs font-medium transition-colors disabled:opacity-50
                 ${pushOn ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
                          : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
             >
               {pushOn ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-              {!sidebarCollapsed && <span>{pushOn ? 'Alertas: activas' : 'Alertas al celular'}</span>}
+              {!sidebarCollapsed && <span>{pushOn ? t('wms_alerts_active') : t('wms_alerts_mobile')}</span>}
             </button>
           )}
           {!sidebarCollapsed && (
@@ -594,7 +594,7 @@ export default function WMS() {
                 <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 py-0.5">
                   {/* Con la barra de grupos, los menus se esconden bajo lg — el boton
                       abre la hoja a partir de ese ancho, no del de md. */}
-                  <button onClick={() => setMobileNav(true)} className={`${topNav ? 'lg:hidden' : 'md:hidden'} p-2 rounded-md bg-card border border-border text-muted-foreground active:bg-muted shrink-0`} title="Menú">
+                  <button onClick={() => setMobileNav(true)} className={`${topNav ? 'lg:hidden' : 'md:hidden'} p-2 rounded-md bg-card border border-border text-muted-foreground active:bg-muted shrink-0`} title={t('wms_menu')}>
                     <Menu className="w-6 h-6" />
                   </button>
                   {/* Barra de acento: ancla el azul arriba a la izquierda, que
@@ -633,7 +633,7 @@ export default function WMS() {
           </div>
           {moduleSwitching && (
             <div className="absolute inset-0 z-20 bg-background flex items-start justify-center animate-in fade-in duration-100">
-              <DropsLoader label="Cargando módulo…" />
+              <DropsLoader label={t('wms_loading_module')} />
             </div>
           )}
         </div>
