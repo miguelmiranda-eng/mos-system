@@ -70,6 +70,38 @@ def valid_gtin(code: str) -> bool:
     return (10 - s % 10) % 10 == digits[-1]
 
 
+async def load_identity_sets(customer: str):
+    """Conjuntos para validar identidad como en el WMS (bootstrap + escape de
+    inventario): curado del cliente/global + lo que ya existe en wms_inventory."""
+    async def curated(ctype, scoped):
+        q = {"type": ctype}
+        if scoped:
+            q["$or"] = [{"customer": customer.upper()},
+                        {"customer": {"$in": [None, ""]}},
+                        {"customer": {"$exists": False}}]
+        docs = await db.wms_catalog_options.find(q, {"_id": 0, "value": 1}).to_list(20000)
+        return {(d.get("value") or "").strip().upper() for d in docs}
+    return {
+        "styles": (await curated("styles", True), {str(s).strip().upper() for s in await db.wms_inventory.distinct("style") if s}),
+        "colors": (await curated("colors", True), {str(s).strip().upper() for s in await db.wms_inventory.distinct("color") if s}),
+        "sizes":  (await curated("sizes", False), {str(s).strip().upper() for s in await db.wms_inventory.distinct("size") if s}),
+    }
+
+
+def identity_bad_field(rec: dict, sets: dict):
+    """Devuelve el campo (styles/colors/sizes) que NO pasa, o None si todo ok.
+    Vacío en catálogo = bootstrap (pasa). En catálogo o en inventario = pasa."""
+    for ctype, field in (("styles", "style"), ("colors", "color"), ("sizes", "size")):
+        cur, inv = sets[ctype]
+        v = (rec.get(field) or "").strip().upper()
+        if not v or not cur:      # sin valor, o catálogo vacío (bootstrap)
+            continue
+        if v in cur or v in inv:
+            continue
+        return field
+    return None
+
+
 def make_sku(style: str, color: str, size: str) -> str:
     parts = [
         re.sub(r"\s+", "-", style.strip().upper()),
@@ -136,6 +168,19 @@ async def main():
         print(f"[!] RECHAZADOS por UPC no-GTIN (NO se insertan): {len(rejected)}")
         for r in rejected[:15]:
             print(f"      upc={r['upc']!r}  {r['style']}/{r['color']}/{r['size']}")
+
+    # Guardia de identidad: no crear entradas de catalogo con style/color/size
+    # que no esten curados (ni ya en inventario). Mismo criterio que recepcion.
+    sets = await load_identity_sets(CUSTOMER)
+    kept, rej_identity = [], []
+    for c in candidates:
+        bad = identity_bad_field(c, sets)
+        (rej_identity if bad else kept).append((c, bad) if bad else c)
+    candidates = kept
+    if rej_identity:
+        print(f"[!] RECHAZADOS por identidad no curada (NO se insertan): {len(rej_identity)}")
+        for c, bad in rej_identity[:15]:
+            print(f"      {bad}={c.get(bad)!r}  {c['style']}/{c['color']}/{c['size']}  upc={c['upc']}")
 
     existing_codes = set()
     if candidates:
